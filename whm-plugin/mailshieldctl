@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+#
+# mailshieldctl — administrative CLI for MailShield Pro
+#
+set -euo pipefail
+
+API=${MAILSHIELD_API:-http://127.0.0.1:8001}
+
+cmd=${1:-help}; shift || true
+
+case "$cmd" in
+  status)
+    curl -sf "$API/api/stats/overview" | python3 -m json.tool
+    ;;
+  restart)
+    systemctl restart mailshield-api mailshield-milter mailshield-quarantine.timer
+    ;;
+  engine)
+    action=${1:-}; shift || true
+    engine=${1:-}; shift || true
+    if [[ -z "$action" || -z "$engine" ]]; then
+      echo "Usage: mailshieldctl engine {enable|disable} <spamassassin|clamav|dcc|razor|rspamd|ai>"; exit 1
+    fi
+    curl -sf -X POST "$API/api/engines/$engine/toggle" | python3 -m json.tool
+    ;;
+  policy)
+    action=${1:-}; shift || true
+    case "$action" in
+      import)
+        f=${1:?"policy file path required"}
+        curl -sf -X PUT "$API/api/settings" -H 'Content-Type: application/json' --data-binary "@$f" | python3 -m json.tool
+        ;;
+      show) curl -sf "$API/api/settings" | python3 -m json.tool ;;
+      *) echo "Usage: mailshieldctl policy {import <file>|show}"; exit 1 ;;
+    esac
+    ;;
+  quarantine)
+    action=${1:-}; shift || true
+    case "$action" in
+      prune)
+        perl /usr/local/mailshield/bin/quarantine-prune.pl
+        ;;
+      list) curl -sf "$API/api/quarantine?limit=50" | python3 -m json.tool ;;
+      *) echo "Usage: mailshieldctl quarantine {prune|list}"; exit 1 ;;
+    esac
+    ;;
+  bayes)
+    action=${1:-}; shift || true
+    case "$action" in
+      rebuild) sa-learn --rebuild || echo "sa-learn missing" ;;
+      *) echo "Usage: mailshieldctl bayes {rebuild}"; exit 1 ;;
+    esac
+    ;;
+  help|--help|-h|"")
+    cat <<EOF
+mailshieldctl — WHM MailShield Pro CLI
+
+Usage:
+  mailshieldctl status
+  mailshieldctl restart
+  mailshieldctl engine enable|disable <name>
+  mailshieldctl policy import <policy.json>
+  mailshieldctl policy show
+  mailshieldctl quarantine prune
+  mailshieldctl quarantine list
+  mailshieldctl bayes rebuild
+EOF
+    ;;
+  *) echo "Unknown command: $cmd (see 'mailshieldctl help')"; exit 1 ;;
+esac

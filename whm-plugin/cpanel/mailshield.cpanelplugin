@@ -1,0 +1,8 @@
+order=8
+target=mainFrame
+name=MailShield MailControl
+uri=mailshield/index.live.php
+icon=mailshield/icon.png
+featuremanager=1
+type=link
+group_id=email

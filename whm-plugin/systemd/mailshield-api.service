@@ -1,0 +1,19 @@
+[Unit]
+Description=MailShield Pro API
+After=network-online.target mongod.service
+Wants=mongod.service
+
+[Service]
+Type=simple
+User=mailshield
+Group=mailshield
+Environment=PYTHONUNBUFFERED=1
+Environment=MONGO_URL=mongodb://127.0.0.1:27017
+Environment=DB_NAME=mailshield
+WorkingDirectory=/usr/local/mailshield/api
+ExecStart=/usr/local/mailshield/api/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

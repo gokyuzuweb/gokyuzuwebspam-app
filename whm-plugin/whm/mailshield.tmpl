@@ -1,0 +1,18 @@
+[% USE Whostmgr %]
+[% Whostmgr.header('MailShield Pro') %]
+
+<style>
+  #ms-shell { position: relative; width: 100%; height: calc(100vh - 130px); border: 0; }
+</style>
+
+<div class="pageContainer">
+  <h2 style="margin: 0 0 12px 0;">MailShield Pro</h2>
+  <p style="color:#666; margin-bottom: 12px;">
+    Kapsamlı ve modern mail güvenliği paneli. Aşağıdaki iframe içindeki panel,
+    <code>/usr/local/mailshield/api</code> servisiyle konuşan tam bir Single-Page
+    dashboard'dur.
+  </p>
+  <iframe id="ms-shell" src="/usr/local/mailshield/api/index.html" title="MailShield Pro"></iframe>
+</div>
+
+[% Whostmgr.footer() %]

@@ -1,0 +1,12 @@
+{
+  "spam_threshold_low": 5.0,
+  "spam_threshold_high": 8.5,
+  "quarantine_days": 14,
+  "report_frequency": "daily",
+  "outbound_limit_per_hour": 200,
+  "outbound_block_enabled": true,
+  "bayes_learning": true,
+  "ai_classification": false,
+  "tls_enforce": true,
+  "active_engine": "spamassassin"
+}
