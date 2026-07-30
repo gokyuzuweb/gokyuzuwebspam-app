@@ -1,0 +1,18 @@
+[Unit]
+Description=MailShield Pro Milter (Exim entegrasyonu manuel olarak yapılana kadar mesajlara dokunmaz)
+After=network-online.target mailshield-api.service
+Wants=mailshield-api.service
+
+[Service]
+Type=simple
+User=mailshield
+Group=mailshield
+ExecStart=/usr/bin/perl /usr/local/mailshield/bin/mailshield-milter.pl
+Restart=on-failure
+RestartSec=5
+
+# Güvenlik: sadece localhost'ta dinler; Exim'e milter=inet:127.0.0.1:33333 satırı
+# elle eklenene kadar hiçbir e-posta akışına dokunmaz.
+
+[Install]
+WantedBy=multi-user.target

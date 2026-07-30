@@ -1,0 +1,8 @@
+[Unit]
+Description=MailShield karantina temizliği (retention süresi geçen kayıtlar)
+
+[Service]
+Type=oneshot
+User=mailshield
+Group=mailshield
+ExecStart=/usr/bin/perl /usr/local/mailshield/bin/quarantine-prune.pl

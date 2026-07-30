@@ -1,0 +1,10 @@
+[Unit]
+Description=MailShield karantina temizliği (saatlik)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+Unit=mailshield-quarantine.service
+
+[Install]
+WantedBy=timers.target
