@@ -1,0 +1,96 @@
+{
+  "theme": "dark",
+  "typography": {
+    "primary_font": "Manrope",
+    "secondary_font": "JetBrains Mono",
+    "font_pairings": {
+      "headings": "Manrope, sans-serif",
+      "body": "Manrope, sans-serif",
+      "mono": "'JetBrains Mono', monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl tracking-tight font-bold",
+      "h2": "text-2xl tracking-tight font-semibold",
+      "h3": "text-xl font-medium",
+      "body": "text-sm text-slate-300 leading-relaxed",
+      "mono_data": "font-mono text-sm tracking-tight text-slate-200",
+      "labels": "text-xs font-semibold tracking-[0.05em] uppercase text-slate-400"
+    },
+    "instructions": "Use JetBrains Mono for ALL numeric data, IP addresses, logs, score indicators, and table cells containing metrics. Use Manrope for general UI copy, headings, and descriptions. Avoid Inter, Roboto, or standard defaults."
+  },
+  "colors": {
+    "background": {
+      "base": "bg-slate-950",
+      "surface": "bg-slate-900",
+      "surface_elevated": "bg-slate-800"
+    },
+    "text": {
+      "primary": "text-slate-100",
+      "secondary": "text-slate-400",
+      "muted": "text-slate-500"
+    },
+    "border": "border-slate-800",
+    "accents": {
+      "brand": "text-indigo-400 bg-indigo-500/10 border-indigo-500/20",
+      "success": "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+      "warning": "text-amber-400 bg-amber-500/10 border-amber-500/20",
+      "danger": "text-rose-500 bg-rose-500/10 border-rose-500/20",
+      "info": "text-sky-400 bg-sky-500/10 border-sky-500/20"
+    },
+    "instructions": "Strictly follow a dark mode SOC (Security Operations Center) aesthetic. Do not use pure black (#000000). Stick to the slate scale for neutrality and high-tech feel. Accent colors must be vibrant but used sparingly, primarily for threat indicators and status (emerald=clean, amber=suspicious, rose=malicious/spam)."
+  },
+  "visual_enhancers": {
+    "surfaces": "Use flat solid surfaces (bg-slate-900) with a crisp 1px border (border-slate-800). No heavy shadows, no glassmorphism for data-heavy views. The UI should feel like a dense, technical terminal/dashboard.",
+    "effects": "Use subtle glows on active states (e.g. drop-shadow-[0_0_8px_rgba(244,63,94,0.3)] for danger actions). Use a subtle linear-gradient for the top-level app header to separate it from the main canvas.",
+    "charts": "For any Recharts/visualizations, use solid, high-contrast stroke colors (emerald, rose, indigo) with semi-transparent area fills. Do NOT use thick, muddy gradients. Remove axis lines and use dashed grid lines in slate-800."
+  },
+  "components": {
+    "cards": "Dense padding (p-4 or p-6). Always include a border-slate-800.",
+    "buttons": "Sharp corners or slightly rounded (rounded-md). High contrast on hover. Danger actions must clearly use rose/red tones.",
+    "badges": "Use font-mono with vibrant text on a deeply desaturated background block (e.g., bg-emerald-950 text-emerald-400).",
+    "tables": "Dense rows. Hover states should subtly highlight the row (hover:bg-slate-800/50). Left-align text, right-align numeric scores.",
+    "sliders": "Use Shadcn slider for Spam score thresholds. Color the track based on severity (green for low, red for high).",
+    "modals": "Quarantine preview modals must have a true dark backdrop (bg-slate-950/80) and render email headers in monospace format."
+  },
+  "grids": {
+    "dashboard_layout": "Bento-style or Datadog-style grid. 12-column base. Top row for high-level sparklines/stats (col-span-3 x 4). Middle for large threat map or time-series (col-span-8) and recent quarantine feed (col-span-4).",
+    "gap": "gap-4 or gap-6 for tight, data-heavy presentation."
+  },
+  "layouts": {
+    "sidebar": "Narrow, icon-heavy vertical sidebar on the left. Expandable but defaults to dense. Use Lucide icons.",
+    "header": "Sticky top bar containing active filters, global time range selector (e.g. 'Last 24h'), and server status indicator (Green dot = Engine Active)."
+  },
+  "motion": {
+    "transitions": "Very fast and subtle (duration-150 ease-in-out). No bouncy animations. The application must feel immediate and responsive like a CLI tool.",
+    "data_updates": "If implementing live data, use subtle flash/highlight when a number changes (e.g., new spam caught)."
+  },
+  "accessibility": {
+    "contrast": "Ensure text against slate-900 meets WCAG AA standards. Off-white (slate-200) is preferred for legibility.",
+    "focus": "focus:ring-1 focus:ring-indigo-500 focus:outline-none on all interactive elements.",
+    "data_testid": "MANDATORY. Add `data-testid` to all toggles, buttons, quarantine action menus, and threshold sliders."
+  },
+  "media": {
+    "icons": "Use lucide-react. Prefer geometric/technical icons (Shield, Activity, Terminal, ShieldAlert, Cpu, Network).",
+    "image_urls": {
+      "background_texture": {
+        "url": "https://images.pexels.com/photos/3612931/pexels-photo-3612931.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Hexagonal metallic texture, can be used at very low opacity (5-10%) via a mask-image on the Installation Guide or Auth page to give a cybersecurity hardware feel."
+      }
+    }
+  },
+  "3d_libraries": {
+    "instructions": "Do not use heavy 3D rendering for this dashboard. Stick to Recharts for time-series and Recharts/D3 for a potential Threat/IP map if needed, keeping it 2D and performant."
+  },
+  "instructions_to_main_agent": [
+    "Language MUST be Turkish (Türkçe).",
+    "Use Manrope (or similar sans) for UI, and JetBrains Mono for numbers, scores, IPs, and logs.",
+    "Build a sidebar layout with tabs: Dashboard, Karantina (Quarantine), Kurallar (Rules), Beyaz/Kara Liste (White/Black List), Ayarlar (Settings), Kurulum (Installation).",
+    "In Dashboard: Implement a real-time feel with stats (Spam/Ham ratio, Threat map or chart). Use sparklines for recent activity.",
+    "In Karantina: A detailed table showing sender, subject, score, and action. Include a modal for email preview.",
+    "In Ayarlar: Include toggles for SpamAssassin, ClamAV, DCC, Vipul's Razor, and a slider for Threshold (low/high).",
+    "Never use pure black or transparent backgrounds for popups/dropdowns.",
+    "Use Recharts for the mail traffic time-series.",
+    "Add 'data-testid' to interactive elements for testing."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": "Do not create generic centered layouts. Use grid/flex for dense, professional SOC UI. Create depth through varying shades of slate (950, 900, 800) and 1px borders, not heavy shadows. Ensure every interaction has a subtle hover state. Do not use AI emojis. Toast notifications must use 'sonner'. Component files are .js (not .tsx unless explicitly required by setup). Override Shadcn defaults to match this technical, sharp, dark-mode aesthetic."
+}
