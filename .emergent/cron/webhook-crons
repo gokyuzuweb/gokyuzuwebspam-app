@@ -1,8 +1,8 @@
 # Managed by Emergent webhook-cron (pod-local syscron). DO NOT EDIT.
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-JOB_ID=mailscanner-pro
+JOB_ID=b55f6ccf-0f14-4981-9080-5a8ad352e024
 WEBHOOK_ENV_FILE=/app/backend/.env
 CRON_API_URL=https://ea.int.apis.emergentagent.com
 
-* * * * * root JOB_ID=mailscanner-pro CRON_API_URL=https://ea.int.apis.emergentagent.com /bin/sh /app/.emergent/cron/watch_crons.sh >> /var/log/webhook-cron.log 2>&1
+* * * * * root JOB_ID=b55f6ccf-0f14-4981-9080-5a8ad352e024 CRON_API_URL=https://ea.int.apis.emergentagent.com /bin/sh /app/.emergent/cron/watch_crons.sh >> /var/log/webhook-cron.log 2>&1

@@ -1,72 +1,63 @@
-# GökyüzüWebSpam v1.4 — WHM/cPanel Mail Security SaaS
+# GökyüzüWebSpam v1.5 — WHM/cPanel Mail Security SaaS
 
-## v1.4 (Feb 2026) — Major Structural Release
-Bu turda 4 büyük görev tamamlandı; test kapsamı **backend %100 (28/28) + frontend %100**:
+## v1.5 (Feb 2026) — Invoice, Cluster & Full-Locale Release
+Backend 18/19 + Frontend %100 · `iteration_5.json` (retest_needed: False)
 
-### 1) Landing Page (`/`)
-- Cyberpunk/security dark tema — indigo/rose gradient hero + grid backdrop
-- Bölümler: Hero + Panel önizleme mock + Features (6 kart) + Stats + How it Works + Terminal demo + Pricing (canlı `/api/pricing`) + FAQ + CTA + Footer
-- Multi-language: TR/EN string map (diğer 4 dil common i18n'e devrediyor)
-- `data-testid`: landing-page, landing-hero, landing-buy-cta, landing-demo-cta, landing-reseller-cta, landing-features, landing-pricing, landing-how, landing-faq
+### 1) Reseller Invoice History + PDF
+- `/api/reseller/invoices` — bu bayinin lisans anahtarına bağlı tüm paid transactions'ları listeler
+- `/api/reseller/invoices/{id}/pdf` — ReportLab ile A4 profesyonel fatura üretir (Türkiye muhasebe uyumlu)
+- Deterministic invoice numbering: `INV-YYYYMM-{5hexchars}` (MD5-based)
+- Reseller portal'da yeni **Fatura Geçmişi** kartı — INV numarası, tarih, plan, tutar, tek-tık PDF indirme
+- Backfill: 3 seed transaction reseller license'ına bağlandı (test için)
 
-### 2) Backend Modülerizasyonu (`/app/backend/routes/`)
-- Shared `deps.py` — DB, ENV, PLUGIN_MODE, seller_only dependency
-- `routes/analytics.py` — MRR endpoint çıkarıldı
-- `routes/plugin.py` — download + install-info çıkarıldı
-- `routes/reseller.py` — Yeni reseller portal endpoint'leri
-- `routes/license_client.py` — Upstream license server proxy'si
-- server.py: 2461 → 2278 satır; `app.include_router` ile modüller bağlı
-- Not: Tam split (rules, ai, checkout, licensing çekirdek) P2 backlog'a alındı — regression riski kritik değildi
+### 2) License Server Cluster (v2.0)
+- **Redis 6379** cluster koordinasyonu, verify cache (60s TTL) ve dağıtık rate limiting (120/min per license)
+- **2 replica**: `license-primary-8002` + `license-secondary-8003` (supervisor'da ayrı process)
+- Her replica X-Replica-Id header'ı stampler, `/v2/cluster/health` peer'ları listeler
+- Backend proxy (`license_client.py`) round-robin ile replica arasında yük dağıtır + primary düşerse otomatik failover
+- Cluster widget'ı Licenses sayfasında: her replica UP/DOWN, Redis ✓/×, cluster view
+- Graceful degradation: Redis erişilemezse Mongo-only mod devam eder
 
-### 3) Reseller Alt-Yetki + JWT Auth (`/reseller`)
-- **Yeni koleksiyonlar**: `resellers`, `subaccounts`; `lists`'e `owner_reseller_id`
-- **Auth**: bcrypt password + PyJWT HS256, 24h TTL, `RESELLER_JWT_SECRET` env
-- **Endpoint'ler**: `/api/reseller/auth/{register,login}`, `/me`, `/subaccounts` CRUD, `/quarantine`, `/lists` CRUD — hepsi Bearer token gerektirir
-- **Plan bazlı kota**: starter=5, pro=50, enterprise=999 subaccount
-- **Scoped filtreleme**: reseller alt hesaplarının recipient/username'lerine göre karantina + lists filtrelenir
-- **Frontend**: `/reseller` → AuthScreen (login/register toggle) → Dashboard (StatCard × 4 + sub-account CRUD tablosu + scoped quarantine tablosu)
-
-### 4) Canlı License Server (port 8002, ayrı FastAPI process)
-- Yeri: `/app/license-server/server.py`, supervisor: `license-server.conf`
-- Env: `LICENSE_SERVER_ADMIN_KEY=gws-license-admin-key`
-- **Endpoint'ler**: `POST /v1/heartbeat`, `GET /v1/verify`, `POST /v1/revoke` (X-Admin-Key), `GET /v1/health`
-- IP mismatch ise `license_violations` koleksiyonuna yazar + `ok:false status:violation` döner
-- Expired lisans için `status:expired`, bilinmeyen key için `status:unknown`
-- Bootstrap: hiç IP kayıtlı değilse ilk heartbeat auto-register (P3: harden this)
-- **Ana backend proxy**: `/api/license-server/health|verify|revoke|config` — `PUBLIC_LICENSE_SERVER_URL` env üzerinden
-- **WHM plugin** heartbeat.pl güncellendi: `/v1/heartbeat` endpoint'ine POST atıyor, config'ten `license.server_url` okuyabiliyor
-
-## Routing Değişikliği (v1.3 → v1.4)
-- `/` → Landing (public marketing)
-- `/shop`, `/checkout/success` → Public (aynı)
-- `/reseller` → Reseller portal (kendi auth)
-- `/panel/*` → Ana panel (tüm eski route'lar buraya taşındı)
-- Legacy `/quarantine`, `/licenses`, ... → 301 redirect `/panel/*`
+### 3) Landing Full 6-Dil
+- Landing.js LANG_STRINGS: **TR/EN/DE/FR/ES/AR** tam çeviri
+- Arapça için `<div dir="rtl">` otomatik RTL yönü
+- Hero + Features (6 kart) + How it Works + Pricing + FAQ + Footer hepsi çevrildi
+- Landing header'daki `landing-lang` select ile canlı geçiş
 
 ## Servis Envanteri
-| Service | Port | Status |
-|---------|------|--------|
-| Ana backend (FastAPI + routes/) | 8001 | ✅ Running |
-| License server (FastAPI) | 8002 | ✅ Running |
-| Frontend (React + Landing/Panel/Reseller) | 3000 | ✅ Running |
-| MongoDB | 27017 | ✅ Running |
+| Service | Port | Version | Status |
+|---------|------|---------|--------|
+| Ana backend (FastAPI + routes/) | 8001 | v1.5 | ✅ |
+| License server (primary) | 8002 | v2.0.0 | ✅ |
+| License server (secondary) | 8003 | v2.0.0 | ✅ |
+| Redis | 6379 | 7.x | ✅ |
+| Frontend (Landing/Panel/Reseller) | 3000 | v1.5 | ✅ |
+| MongoDB | 27017 | 7.x | ✅ |
 
-## Test Doğrulaması (iteration 4)
-- Backend pytest: **28/28 %100** — 7 license-server + 2 proxy + 10 reseller + 4 regression + 5 landing/routing
-- Frontend: **%100** — Landing hero+features+pricing+CTA'lar; Panel `/panel/licenses` MRR + LicenseServerStatus (Erişilebilir ✓); Reseller login/register/sub-account add/logout flow
+## Yeni Endpoint'ler (v1.5)
+- GET `/api/reseller/invoices` — fatura listesi (Bearer JWT)
+- GET `/api/reseller/invoices/{id}` — tek fatura JSON
+- GET `/api/reseller/invoices/{id}/pdf` — PDF stream
+- License-server v2: `/v1/health` (Redis status), `/v2/cluster/health`, X-Replica-Id header, rate limit 429
 
-## Backlog (P2/P3 — Sonraki iterasyonlar için)
-- **P2**: Kalan endpoint'leri routes/'a taşı (rules, ai, checkout, licensing çekirdek) — server.py'yi <500 satıra indir
-- **P2**: MRR trend `relativedelta` ile calendar-month accurate
-- **P2**: License server bootstrap IP — first-run token gerektirsin
-- **P3**: `/api/plugin/download` tarball cache (per version)
-- **P3**: Checkout webhook 400 döndürsün invalid signature'da (Stripe retry için)
-- **P3**: Reseller portal — 2FA, invoice geçmişi, quota yükseltme akışı
-- **P3**: License server — cluster mode (Redis + multiple replicas)
-- **P3**: Landing → i18n'in diğer 4 dile (DE/FR/ES/AR) yayılması
+## Backlog / P2-P3
+- **P2**: Kalan endpoint'leri routes/'a taşı (rules, ai, checkout, licensing) — server.py 500 satıra
+- **P2**: Cluster widget'ta internal URL yerine dostane isim ("Primary EU-1") — leak minimize
+- **P2**: Invoice header currency formatı normalize
+- **P3**: Cluster'ı gerçek multi-host'a taşı (Docker Compose + Redis Cluster / Sentinel)
+- **P3**: Invoice: KDV/vergi hesabı toggle, çoklu dil PDF (invoice_pdf?lang=en)
+- **P3**: Reseller dashboard: quota yükseltme akışı (in-place upgrade)
+- **P3**: Rate limiting redis TTL sliding window (şu an fixed window)
 
-## Credentials (test için)
-- Auth-free ana panel (MAILSHIELD_MODE=seller)
-- Reseller test hesabı: `reseller@test.com` / `strong123` (lisans MS-435EA62E57A442BBB10985E9)
-- License server admin: `X-Admin-Key: gws-license-admin-key`
-- Seed data: 5 paid transaction (MRR $315, ARR $3780)
+## Test Credentials
+- Ana panel: auth-free (MAILSHIELD_MODE=seller)
+- Reseller portal: `reseller@test.com` / `strong123` · lisans `MS-435EA62E57A442BBB10985E9` · 3 fatura backfilled
+- License server admin: header `X-Admin-Key: gws-license-admin-key`
+- Stripe test: `sk_test_emergent` + kart `4242 4242 4242 4242`
+
+## URL Yapısı
+- `/` → Landing (public, 6 dil, RTL destekli)
+- `/shop`, `/checkout/success` → Public payment flow
+- `/reseller` → JWT auth reseller portal (subaccounts + invoices + scoped quarantine)
+- `/panel/*` → Ana panel (MRR + Cluster widget + hepsi)
+- Legacy `/quarantine`, `/licenses`... → 301 redirect `/panel/*`
