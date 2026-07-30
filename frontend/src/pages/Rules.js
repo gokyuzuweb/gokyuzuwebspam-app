@@ -35,7 +35,7 @@ function AIRuleGenerator({ onAccept }) {
               className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[11px] mono text-slate-300"
               title="AI kural adlarının yazılacağı dil"
             >
-              <option value="">Otomatik ({langLabel})</option>
+              <option value="">{`Otomatik (${langLabel})`}</option>
               <option value="tr">Türkçe</option>
               <option value="en">English</option>
               <option value="de">Deutsch</option>
