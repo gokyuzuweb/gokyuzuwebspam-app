@@ -2378,8 +2378,16 @@ async def plugin_download():
 
 @api.get("/plugin/install-info")
 async def plugin_install_info(request: Request, license_key: Optional[str] = None):
-    """Return wget command + step-by-step install text for the current server."""
-    origin = str(request.base_url).rstrip("/")
+    """Return wget command + step-by-step install text for the current server.
+    Uses X-Forwarded-Proto/Host when available (behind ingress) so the wget
+    one-liner points at the public host, not the internal cluster hostname.
+    """
+    fwd_proto = request.headers.get("x-forwarded-proto")
+    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if fwd_host:
+        origin = f"{fwd_proto or 'https'}://{fwd_host}"
+    else:
+        origin = str(request.base_url).rstrip("/")
     download_url = f"{origin}/api/plugin/download"
     lic_suffix = f" --license={license_key}" if license_key else ""
     wget_one_liner = (

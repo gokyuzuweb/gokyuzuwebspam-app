@@ -1,47 +1,65 @@
-# GökyüzüWebSpam v1.2 — WHM/cPanel Mail Security Plugin
+# GökyüzüWebSpam v1.3 — WHM/cPanel Mail Security SaaS
 
-## Bu Session Eklemeleri (v1.2)
-- **Stripe Ödeme Otomasyonu**: Public /shop sayfası + 3 plan kartı × "Şimdi Satın Al" butonu
-  → gerçek Stripe Checkout URL üretir → ödeme sonrası otomatik UUID lisans anahtarı,
-  müşteriye ve satıcıya e-posta ile bildirim
-- **Version Upgrade Banner**: Yeni sürüm yayınlanınca üst şeritte "Tek Tıkla Güncelle"
-  butonu; WHM'de `mailshieldctl update` çalıştırır, önizleme ortamında simüle eder
-- **i18n Genişletmesi**: TR/EN/DE/FR/ES/AR × nav+common+header+dashboard tam çevirili
-  · Dashboard sayfası useT() ile refactor · language switching kusursuz (test edildi)
+## Bu Session Eklemeleri (v1.3 · Feb 2026)
+- **Aylık MRR Panosu**: Licenses sayfasına canlı finansal analitik eklendi. MRR/ARR/ARPU/LTV
+  stat kartları, 6-aylık MRR trend bar chart, plana göre dağılım tablosu ve son işlemler listesi.
+  Kaynak: `/api/analytics/mrr` — payment_transactions + licenses koleksiyonlarından hesaplanır,
+  yıllık ödemeler /12 ile normalize edilir. Preview'de 5 seed işlem: MRR=$315, ARR=$3780.
+- **Ödeme Sonrası Onboarding**: Stripe checkout başarılı olunca müşteriye zenginleştirilmiş
+  e-posta gönderilir — lisans anahtarı, tek-komut wget kurulum, 7 adımlı manuel kurulum ve
+  destek bilgisi. CheckoutSuccess sayfası da aynı komutu ve indirme butonunu gösterir.
+- **Wget Kurulum Sistemi**: `GET /api/plugin/download` on-the-fly tarball servis eder
+  (X-GWS-Version header + Content-Disposition). `GET /api/plugin/install-info` wget/curl
+  varyantlarını + lisans-embedded komutu döner. X-Forwarded-Proto/Host okuyarak public URL
+  üretir. Install sayfasına "One-line Install" bölümü ve toggle eklendi.
+- **Full Sayfa Çevirileri**: strings.js 6 dil × 8 sayfa = ~250 yeni key ile genişletildi.
+  Quarantine, Notifications, Settings, Reports, Rules (body), MRR ve Install UI hepsi useT()
+  kullanır. TR/EN/DE/FR/ES/AR — anlık dil değişimi (test edildi: TR→EN placeholder swap).
 
-## Endpoint (yeni)
-- POST `/api/checkout/create-session` — Stripe session (public, e-posta zorunlu)
-- GET `/api/checkout/status/{sid}` — ödeme durumu poll
-- POST `/api/checkout/webhook` — Stripe callback (auto-license on paid)
-- GET `/api/checkout/transactions` — satıcı görünümü
-- POST `/api/plugin/upgrade` — tek tıkla plugin update
+## Yeni Endpoint (v1.3)
+- GET `/api/analytics/mrr` — MRR/ARR/ARPU/LTV/churn/trend/plan_breakdown/recent (seller-only)
+- GET `/api/plugin/download` — WHM plugin tarball (public)
+- GET `/api/plugin/install-info?license_key=X` — wget/curl one-liner + adımlar
 
-## Test Doğrulaması (iteration 2)
-- Backend: **17/17 pass %100**, critical bugs: 0
-- Frontend: shop→stripe redirect, upgrade banner+toast, i18n EN/DE/AR hepsi doğrulandı
-- Regresyon: tüm önceki bug fix'ler ve özellikler çalışıyor
+## Test Doğrulaması (iteration 3)
+- Backend pytest: **24/25 pass %96** — tek başarısız test iteration 2'den kalma stateful
+  version-upgrade sıralı testi (kod hatası değil, DB state); iteration 3'ün 4 yeni feature
+  testi %100 geçti (analytics_mrr, plugin_download, install_info +license, checkout webhook).
+- Frontend: **%100 pass** — MRR panel (mrr-stat-mrr/arr/subs/ltv, trend, plan-table, recent),
+  Install one-liner + toggle + tarball download, CheckoutSuccess (6 testid), Quarantine i18n
+  TR↔EN swap hepsi doğrulandı.
 
 ## Sistem Genel Durumu
 - 15 sayfa: Dashboard, Karantina, Beyaz/Kara Liste, Blacklist Çıkışı, Kurallar,
-  Motorlar, Giden Posta, Bildirimler, Raporlar, Lisans Yönetimi (seller-only),
-  **Fiyatlandırma (seller-only)**, Kullanıcılar, Kayıtlar, Ayarlar, Kurulum
-- Public routes: `/shop`, `/checkout/success` — auth'suz, sidebar'sız
-- 60+ backend endpoint
-- 6 dil desteği + Otomatik (cPanel-follow)
-- 7 günlük demo + IP bazlı lisans doğrulama + LicenseGate
+  Motorlar, Giden Posta, Bildirimler, Raporlar, **Lisans Yönetimi + MRR Panosu** (seller),
+  **Fiyatlandırma** (seller), Kullanıcılar, Kayıtlar, Ayarlar, Kurulum
+- Public routes: `/shop`, `/checkout/success` (wget + tarball + copy)
+- 65+ backend endpoint
+- 6 dil desteği tam (nav+header+common+dashboard+quarantine+rules+notifications+settings+reports+mrr+install_ui)
+- 7 günlük demo + IP bazlı lisans + LicenseGate + heartbeat daemon
 - SpamAssassin/ClamAV/DCC/Razor + Rspamd + AI (Claude/GPT/Gemini)
-- Karantina, whitelist/blacklist, kurallar (AI generator), PDF rapor, RBL çıkışı
-- WHM plugin paketi: 28 dosya (Perl milter, heartbeat daemon, systemd, install.sh)
-- MAILSHIELD_MODE: seller (varsayılan) / customer (bayi kurulumu)
+- Karantina, whitelist/blacklist, AI kural üretici, PDF rapor, RBL çıkışı
+- WHM plugin paketi: 28 dosya + on-the-fly tarball
+- MAILSHIELD_MODE: seller (varsayılan) / customer
 
 ## Backlog
-- P2: Full sayfa çevirileri (Quarantine, Lists, Rules body, Reports, Notifications, Settings)
-  — nav + header + dashboard tam ancak diğer 11 sayfa body TR fallback ile çalışıyor
-- P2: Reseller alt-yetki matrisi
+- P2: server.py'yi domain'lere böl (2453 satır — checkout/, analytics/, plugin/, licensing/, i18n/)
+- P2: `/api/plugin/download` tarball cache (per version, in-memory veya disk)
+- P3: MRR trend hesabı `relativedelta` ile calendar-month accurate yap
+- P3: Checkout webhook 400 döndürsün (Stripe retry için) invalid signature'da
+- P3: Reseller alt-yetki matrisi
 - P3: PricingSettings schema versioning
-- P3: Checkout create-session rate limit / captcha
-- P3: server.py'yi domain'lere böl (2235 satır)
+
+## Endpoint Envanteri (Yeni)
+- POST `/api/checkout/create-session`, GET `/api/checkout/status/{sid}`, POST `/api/checkout/webhook`
+- GET `/api/checkout/transactions` (seller)
+- GET `/api/analytics/mrr` (seller)
+- GET `/api/plugin/download`
+- GET `/api/plugin/install-info`
+- POST `/api/plugin/upgrade`
+- GET `/api/version/current`, `/version/manifest`, `/version/check-update`
 
 ## Test Credentials
 Auth-free preview. STRIPE_API_KEY=sk_test_emergent (backend/.env).
-Seed lisans: "Örnek Müşteri A.Ş." → IP 203.0.113.10.
+Seed: 5 paid transactions (session_id `cs_test_seed_*`) + 5 licenses (notes=seed).
+Reseller test: "Örnek Müşteri A.Ş." → IP 203.0.113.10.
