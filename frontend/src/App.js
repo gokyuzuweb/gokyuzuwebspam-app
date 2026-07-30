@@ -24,6 +24,7 @@ import Notifications from "@/pages/Notifications";
 import Reports from "@/pages/Reports";
 import Licenses from "@/pages/Licenses";
 import Pricing from "@/pages/Pricing";
+import Shop, { CheckoutSuccess } from "@/pages/Shop";
 import Blacklist from "@/pages/Blacklist";
 import Header from "@/components/Header";
 
@@ -131,8 +132,11 @@ export default function App() {
     <div className="App">
       <I18nProvider>
         <BrowserRouter>
-          <Shell />
-          <LicenseGate />
+          <Routes>
+            <Route path="/shop" element={<Shop />} />
+            <Route path="/checkout/success" element={<CheckoutSuccess />} />
+            <Route path="*" element={<><Shell /><LicenseGate /></>} />
+          </Routes>
           <Toaster
             theme="dark"
             position="bottom-right"

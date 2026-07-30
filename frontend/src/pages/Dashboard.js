@@ -6,20 +6,22 @@ import {
 import { ShieldAlert, Ban, Bug, MailWarning, MailCheck, Activity } from "lucide-react";
 import { Card, CardBody, CardHeader, StatCard, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
+import { useT } from "@/i18n";
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 
-function verdictBadge(v) {
+function verdictBadge(v, t) {
   const m = {
-    spam: { tone: "warning", label: "SPAM" },
-    high_spam: { tone: "danger", label: "YÜKSEK" },
-    virus: { tone: "danger", label: "VİRÜS" },
-    phish: { tone: "danger", label: "PHISHING" },
+    spam: { tone: "warning", label: t("dashboard.spam") },
+    high_spam: { tone: "danger", label: t("dashboard.high_spam") },
+    virus: { tone: "danger", label: t("dashboard.virus") },
+    phish: { tone: "danger", label: t("dashboard.phishing") },
   }[v] || { tone: "default", label: v };
-  return <Badge tone={m.tone}>{m.label}</Badge>;
+  return <Badge tone={m.tone}>{String(m.label).toUpperCase()}</Badge>;
 }
 
 export default function Dashboard() {
+  const t = useT();
   const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview, refetchInterval: 15000 });
   const traffic = useQuery({ queryKey: ["traffic"], queryFn: () => api.traffic(24), refetchInterval: 30000 });
   const top = useQuery({ queryKey: ["top-senders"], queryFn: api.topSenders });
@@ -31,22 +33,22 @@ export default function Dashboard() {
     <div className="p-6 space-y-6">
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 md:col-span-3">
-          <StatCard label="Bugün Taranan" tone="info" icon={Activity} testid="stat-scanned"
+          <StatCard label={t("dashboard.scanned_today")} tone="info" icon={Activity} testid="stat-scanned"
                     value={nfmt(stats.scanned_today)}
                     hint="son 24 saat" />
         </div>
         <div className="col-span-12 md:col-span-3">
-          <StatCard label="Yakalanan Spam" tone="warning" icon={MailWarning} testid="stat-caught"
+          <StatCard label={t("dashboard.caught_spam")} tone="warning" icon={MailWarning} testid="stat-caught"
                     value={nfmt(stats.caught_today)}
                     hint={`% ${stats.spam_ratio ?? 0} oranı`} />
         </div>
         <div className="col-span-12 md:col-span-3">
-          <StatCard label="Karantinada" tone="danger" icon={ShieldAlert} testid="stat-quarantine"
+          <StatCard label={t("dashboard.in_quarantine")} tone="danger" icon={ShieldAlert} testid="stat-quarantine"
                     value={nfmt(stats.quarantine_total)}
                     hint={`${stats.phishing_count ?? 0} phishing · ${stats.virus_count ?? 0} virüs`} />
         </div>
         <div className="col-span-12 md:col-span-3">
-          <StatCard label="Temiz Ulaşan" tone="success" icon={MailCheck} testid="stat-ham"
+          <StatCard label={t("dashboard.clean_delivered")} tone="success" icon={MailCheck} testid="stat-ham"
                     value={nfmt(stats.ham_today)}
                     hint={`${stats.engines_active}/${stats.engines_total} motor aktif`} />
         </div>
@@ -113,7 +115,7 @@ export default function Dashboard() {
                         <div className="text-[11px] mono text-slate-500 truncate">{q.sender}</div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
-                        {verdictBadge(q.verdict)}
+                        {verdictBadge(q.verdict, t)}
                         <span className="mono text-[11px] text-slate-500">{q.score.toFixed(1)}</span>
                       </div>
                     </div>

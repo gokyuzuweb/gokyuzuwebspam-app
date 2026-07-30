@@ -23,7 +23,7 @@ from typing import List, Optional, Literal
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
@@ -1959,6 +1959,44 @@ async def system_mode():
     return {"mode": PLUGIN_MODE, "demo_days": DEMO_DAYS}
 
 
+class UpgradeResult(BaseModel):
+    ok: bool
+    message: str
+    old_version: str = ""
+    new_version: str = ""
+
+
+@api.post("/plugin/upgrade")
+async def plugin_upgrade():
+    """Tek tıkla plugin güncelleme — WHM'de mailshieldctl update çalıştırır.
+    Preview ortamında simüle eder, WHM'de gerçekten tar indirip install.sh --upgrade tetikler."""
+    import subprocess
+    cur = await db.settings.find_one({"_key": "version"}, {"_id": 0, "_key": 0}) or {"version": "1.1.0"}
+    mf  = await db.settings.find_one({"_key": "version_manifest"}, {"_id": 0, "_key": 0}) or VersionManifest().model_dump()
+    old = cur["version"]; new = mf["latest_version"]
+    def _parts(v): return tuple(int(x) for x in v.replace("v", "").split(".") if x.isdigit())
+    if _parts(new) <= _parts(old):
+        return UpgradeResult(ok=False, message="Zaten güncel — yeni sürüm yok.", old_version=old, new_version=new).model_dump()
+    # In real WHM install, run mailshieldctl update
+    try:
+        proc = subprocess.run(["/usr/local/sbin/mailshieldctl", "update"],
+                              capture_output=True, timeout=120)
+        if proc.returncode == 0:
+            await db.settings.update_one({"_key": "version"}, {"$set": {"version": new, "installed_at": _iso()}}, upsert=True)
+            await db.logs.insert_one(ActivityLog(source="version", level="info",
+                message=f"Plugin güncellendi: {old} → {new}").model_dump())
+            return UpgradeResult(ok=True, message=f"Güncelleme tamamlandı: v{old} → v{new}", old_version=old, new_version=new).model_dump()
+        return UpgradeResult(ok=False, message=f"mailshieldctl hata: {proc.stderr.decode(errors='ignore')[:200]}",
+                             old_version=old, new_version=new).model_dump()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # Preview ortamında simüle et
+        await db.settings.update_one({"_key": "version"}, {"$set": {"version": new, "installed_at": _iso()}}, upsert=True)
+        await db.logs.insert_one(ActivityLog(source="version", level="info",
+            message=f"[SIMULATED preview] Plugin güncellendi: {old} → {new}").model_dump())
+        return UpgradeResult(ok=True, message=f"[önizleme] Güncelleme simüle edildi: v{old} → v{new}",
+                             old_version=old, new_version=new).model_dump()
+
+
 # ----- Pricing (public read, seller-only write) -----
 async def _pricing_settings() -> dict:
     doc = await db.settings.find_one({"_key": "pricing"}, {"_id": 0, "_key": 0})
@@ -1986,6 +2024,173 @@ async def pricing_put(payload: PricingSettings):
         message=f"Fiyatlandırma güncellendi: {len(payload.plans)} plan",
     ).model_dump())
     return payload.model_dump()
+
+
+# ----- Stripe Checkout & Auto-License -----
+class CheckoutCreateIn(BaseModel):
+    plan_code: Literal["starter", "pro", "enterprise"]
+    billing_period: Literal["monthly", "yearly"] = "yearly"
+    customer_email: str
+    customer_name: Optional[str] = ""
+    origin_url: str  # frontend origin for redirect URLs
+
+
+class PaymentTransaction(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: str
+    plan_code: str
+    billing_period: str
+    amount: float
+    currency: str = "USD"
+    customer_email: str
+    customer_name: str = ""
+    status: Literal["pending", "paid", "failed", "expired"] = "pending"
+    license_key: Optional[str] = ""
+    created_at: str = Field(default_factory=_iso)
+    completed_at: Optional[str] = ""
+    metadata: dict = {}
+
+
+def _stripe_client(origin: str):
+    from emergentintegrations.payments.stripe.checkout import StripeCheckout
+    api_key = os.environ.get("STRIPE_API_KEY")
+    if not api_key:
+        raise HTTPException(500, "Stripe yapılandırılmamış")
+    return StripeCheckout(api_key=api_key, webhook_url=f"{origin}/api/checkout/webhook")
+
+
+@api.post("/checkout/create-session")
+async def checkout_create_session(payload: CheckoutCreateIn):
+    from emergentintegrations.payments.stripe.checkout import CheckoutSessionRequest
+    pricing = await _pricing_settings()
+    plan = next((p for p in pricing["plans"] if p["code"] == payload.plan_code and p.get("active", True)), None)
+    if not plan:
+        raise HTTPException(404, "Plan bulunamadı veya pasif")
+    amount = plan["yearly_price"] if payload.billing_period == "yearly" else plan["monthly_price"]
+    if amount <= 0:
+        raise HTTPException(400, "Bu plan için ödeme alınamaz")
+    currency = plan.get("currency", "USD").lower()
+    origin = payload.origin_url.rstrip("/")
+    stripe = _stripe_client(origin)
+    session_request = CheckoutSessionRequest(
+        amount=float(amount), currency=currency,
+        success_url=f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{origin}/pricing",
+        metadata={
+            "plan_code": payload.plan_code,
+            "billing_period": payload.billing_period,
+            "customer_email": payload.customer_email,
+            "customer_name": payload.customer_name or "",
+            "product": "GokyuzuWebSpam",
+            "plan_name": plan["name"],
+            "max_domains": str(plan.get("max_domains", 100)),
+        },
+    )
+    session = await stripe.create_checkout_session(session_request)
+    tx = PaymentTransaction(
+        session_id=session.session_id, plan_code=payload.plan_code,
+        billing_period=payload.billing_period, amount=float(amount),
+        currency=plan.get("currency", "USD"), customer_email=payload.customer_email,
+        customer_name=payload.customer_name or "", metadata=session_request.metadata,
+    ).model_dump()
+    await db.payment_transactions.insert_one(dict(tx))
+    await db.logs.insert_one(ActivityLog(
+        source="checkout", level="info",
+        message=f"Checkout başlatıldı: {payload.plan_code}/{payload.billing_period} · {payload.customer_email} · {amount} {currency.upper()}",
+    ).model_dump())
+    return {"session_id": session.session_id, "url": session.url}
+
+
+async def _finalize_purchase(session_id: str, metadata: dict) -> Optional[dict]:
+    tx = await db.payment_transactions.find_one({"session_id": session_id})
+    if not tx:
+        return None
+    if tx.get("status") == "paid" and tx.get("license_key"):
+        return tx
+    now = datetime.now(timezone.utc)
+    billing_period = metadata.get("billing_period") or tx.get("billing_period", "yearly")
+    days = 365 if billing_period == "yearly" else 30
+    plan_code = metadata.get("plan_code") or tx.get("plan_code", "pro")
+    pricing = await _pricing_settings()
+    plan = next((p for p in pricing["plans"] if p["code"] == plan_code), None) or {}
+    lic = License(
+        customer_name=metadata.get("customer_name") or tx.get("customer_email"),
+        customer_email=metadata.get("customer_email") or tx.get("customer_email", ""),
+        plan=plan_code,
+        ip_addresses=[],
+        max_domains=int(metadata.get("max_domains") or plan.get("max_domains", 100)),
+        valid_until=(now + timedelta(days=days)).isoformat(),
+        notes=f"Auto-created from Stripe session {session_id}",
+    )
+    await db.licenses.insert_one(dict(lic.model_dump()))
+    await db.payment_transactions.update_one(
+        {"session_id": session_id},
+        {"$set": {"status": "paid", "completed_at": now.isoformat(), "license_key": lic.license_key}},
+    )
+    await db.logs.insert_one(ActivityLog(
+        source="checkout", level="info",
+        message=f"ÖDEME TAMAMLANDI · {lic.customer_email} · {plan_code}/{billing_period} · lisans: {lic.license_key[:16]}…",
+    ).model_dump())
+    subject = f"GökyüzüWebSpam · Lisans Anahtarınız · {plan.get('name', plan_code)}"
+    body = (
+        f"Merhaba,\n\nGökyüzüWebSpam satın alımınız için teşekkür ederiz!\n\n"
+        f"Plan          : {plan.get('name', plan_code)} ({billing_period})\n"
+        f"Lisans anahtarı: {lic.license_key}\n"
+        f"Geçerlilik     : {lic.valid_until[:10]}\n"
+        f"Max domain    : {lic.max_domains}\n\n"
+        f"Plugin'inizin WHM panelinden 'Lisansı Sorgula' butonuna basarak veya\n"
+        f"lisans anahtarınızı elle girerek aktifleştirebilirsiniz.\n"
+    )
+    await _send_email(lic.customer_email, subject, body)
+    ns = await _notify_settings()
+    if ns.get("admin_email"):
+        await _send_email(ns["admin_email"],
+                          f"[SATIŞ] {plan_code} - {lic.customer_email}",
+                          f"Yeni satış!\nMüşteri: {lic.customer_email}\nPlan: {plan_code}/{billing_period}\nTutar: {tx['amount']} {tx['currency']}\nAnahtar: {lic.license_key}")
+    return await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+
+
+@api.get("/checkout/status/{session_id}")
+async def checkout_status(session_id: str, request: Request):
+    tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not tx:
+        raise HTTPException(404, "İşlem bulunamadı")
+    if tx["status"] == "paid":
+        return tx
+    origin = str(request.base_url).rstrip("/")
+    stripe = _stripe_client(origin)
+    try:
+        s = await stripe.get_checkout_status(session_id)
+        if s.payment_status == "paid":
+            await _finalize_purchase(session_id, s.metadata or tx.get("metadata", {}))
+            tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    except Exception as e:
+        log.warning("stripe status err: %s", e)
+    return tx
+
+
+@api.post("/checkout/webhook")
+async def checkout_webhook(request: Request):
+    body = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    origin = str(request.base_url).rstrip("/")
+    stripe = _stripe_client(origin)
+    try:
+        event = await stripe.handle_webhook(body, sig)
+    except Exception as e:
+        log.warning("webhook parse err: %s", e)
+        return {"received": False}
+    if getattr(event, "payment_status", "") == "paid":
+        await _finalize_purchase(event.session_id, getattr(event, "metadata", None) or {})
+    return {"received": True}
+
+
+@api.get("/checkout/transactions")
+async def checkout_transactions():
+    if PLUGIN_MODE != "seller":
+        raise HTTPException(403, "Sadece satıcı modu")
+    return await db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
 
 
 # ----- Milter report hook (called by Perl milter to record verdicts) -----

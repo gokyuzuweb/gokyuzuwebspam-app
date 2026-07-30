@@ -172,3 +172,106 @@ def test_rules_generate_en(s):
     data = r.json()
     assert data["language"] == "en"
     assert data["count"] >= 1
+
+
+# ---------- Stripe Checkout (v1.2) ----------
+def test_checkout_create_session_pro_yearly(s):
+    payload = {
+        "plan_code": "pro",
+        "billing_period": "yearly",
+        "customer_email": "test@buyer.com",
+        "customer_name": "Test",
+        "origin_url": BASE_URL,
+    }
+    r = s.post(f"{API}/checkout/create-session", json=payload, timeout=30)
+    assert r.status_code == 200, f"checkout failed: {r.status_code} {r.text}"
+    data = r.json()
+    assert "session_id" in data
+    assert "url" in data
+    assert "checkout.stripe.com" in data["url"] or "stripe.com" in data["url"]
+
+
+def test_checkout_create_session_starter_monthly(s):
+    payload = {
+        "plan_code": "starter",
+        "billing_period": "monthly",
+        "customer_email": "starter@buyer.com",
+        "customer_name": "Starter",
+        "origin_url": BASE_URL,
+    }
+    r = s.post(f"{API}/checkout/create-session", json=payload, timeout=30)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data.get("session_id")
+    assert data.get("url", "").startswith("http")
+
+
+def test_checkout_create_session_invalid_plan(s):
+    payload = {
+        "plan_code": "invalid_plan",
+        "billing_period": "yearly",
+        "customer_email": "x@x.com",
+        "origin_url": BASE_URL,
+    }
+    r = s.post(f"{API}/checkout/create-session", json=payload, timeout=15)
+    # Pydantic Literal validation → 422
+    assert r.status_code in (400, 404, 422)
+
+
+def test_checkout_transactions_list(s):
+    r = s.get(f"{API}/checkout/transactions", timeout=15)
+    assert r.status_code == 200
+    body = r.json()
+    # ensure no ObjectId leaking
+    txs = body if isinstance(body, list) else body.get("transactions", [])
+    for tx in txs[:5]:
+        assert "_id" not in tx
+
+
+# ---------- Version Manifest & Upgrade (v1.2) ----------
+def test_version_current_endpoint(s):
+    r = s.get(f"{API}/version/current", timeout=15)
+    assert r.status_code == 200
+    assert "version" in r.json()
+
+
+def test_version_manifest_put_and_upgrade_flow(s):
+    # Set current version to 1.1.0 baseline via upgrade downgrade impossible; ensure manifest new.
+    # 1) set manifest to 1.2.0
+    manifest_payload = {
+        "latest_version": "1.2.0",
+        "download_url": "https://mailshield.example.com/dist/mailshield-1.2.0.tar.gz",
+        "sha256": "",
+        "changelog": "test release",
+        "min_supported": "1.0.0",
+    }
+    r = s.put(f"{API}/version/manifest", json=manifest_payload, timeout=15)
+    assert r.status_code == 200, r.text
+    assert r.json()["latest_version"] == "1.2.0"
+
+    # 2) check-update should indicate available (unless current already >= 1.2.0)
+    r2 = s.get(f"{API}/version/check-update", timeout=15)
+    assert r2.status_code == 200
+    chk = r2.json()
+    assert chk["latest"] == "1.2.0"
+
+    # 3) trigger upgrade (simulated in preview)
+    r3 = s.post(f"{API}/plugin/upgrade", timeout=30)
+    assert r3.status_code == 200, r3.text
+    up = r3.json()
+    # Either ok (upgraded) or already-up-to-date
+    assert "message" in up
+    if up["ok"]:
+        assert up["new_version"] == "1.2.0"
+
+    # 4) current should now be 1.2.0
+    r4 = s.get(f"{API}/version/current", timeout=15)
+    assert r4.status_code == 200
+    assert r4.json()["version"] == "1.2.0"
+
+    # 5) idempotent — upgrade again should say already up to date
+    r5 = s.post(f"{API}/plugin/upgrade", timeout=30)
+    assert r5.status_code == 200
+    up5 = r5.json()
+    assert up5["ok"] is False
+    assert "güncel" in up5["message"].lower() or "up" in up5["message"].lower()

@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 2 (v1.2) testing complete: Stripe Checkout, Version Upgrade Banner and i18n expansion (TR/EN/DE/FR/ES/AR) all verified end-to-end. 17/17 backend pytest cases pass. Frontend flows: /shop → Stripe checkout redirect works, upgrade banner + toast works, language switching works for EN/DE/AR. All previous features (pricing, licenses, blacklist delist, AI rules) still work.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 2235 lines — long-standing recommendation to split by domain (licensing, blacklist, pricing, checkout, version, rules, reports) is even more urgent now that Stripe checkout logic added.",
+    "checkout_create_session (server.py ~2063): no idempotency key / rate-limit — a malicious client could spam Stripe API. Consider a simple per-email cooldown or captcha before create-session.",
+    "plugin_upgrade (server.py ~1969): subprocess.run with hard-coded path /usr/local/sbin/mailshieldctl and 120s timeout is fine, but the FileNotFoundError fallback silently 'succeeds' in preview — logs contain [SIMULATED preview]. Consider surfacing a distinct flag (e.g. 'simulated': true) in the response so UI can badge it.",
+    "PricingSettings model persistence uses {**payload.model_dump(), '_key': 'pricing'} — no explicit schema versioning; if plan structure evolves, older docs may fail Pydantic validation on read. Add a version field.",
+    "Shop.js reads plan['yearly_price'] / ['monthly_price'] client-side — display currency is hardcoded 'USD'; when merchant changes currency in Pricing page there is no matching label update logic path validated (spot-check only)."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (shop→stripe, upgrade banner+toast, i18n EN/DE/AR, regression on all sidebar routes)"},
+  "test_credentials": "Auth-free preview mode; STRIPE_API_KEY=sk_test_emergent already in backend/.env.",
+  "seed_data_creation": "Test set version_manifest.latest_version to 1.3.0 for banner test; current version now 1.3.0 in DB (via plugin/upgrade). No other seed data.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend has 17 pytest tests in /app/backend/tests/backend_test.py including checkout create-session, version manifest PUT and full upgrade flow (assumes preview env with mailshieldctl absent → simulated path). Note test_version_manifest_put_and_upgrade_flow is stateful — after run, DB has current_version=latest manifest value. Stripe test key sk_test_emergent returns real checkout.stripe.com URLs. Shop testids: shop-plan-{starter|pro|enterprise}, buy-{starter|pro|enterprise}, buyer-name, buyer-email, period-monthly, period-yearly. Upgrade banner testids: update-banner, upgrade-btn. Language testids: lang-{auto|tr|en|de|fr|es|ar}.",
+  "verified_features": [
+    "STRIPE CHECKOUT: POST /api/checkout/create-session with plan_code=pro, billing_period=yearly returns 200 with session_id + checkout.stripe.com URL. UI /shop → fill buyer form → click buy-pro → navigates to checkout.stripe.com/c/pay/cs_test_... confirmed live.",
+    "Backend also validates invalid plan_code returns 422 (Pydantic Literal validation).",
+    "GET /api/checkout/transactions returns list without ObjectId leak.",
+    "VERSION UPGRADE: PUT /api/version/manifest {latest_version: 1.3.0} → banner 'Yeni sürüm mevcut: 1.2.0 → 1.3.0' appears on dashboard. Click 'Tek Tıkla Güncelle' → toast '[önizleme] Güncelleme simüle edildi: v1.2.0 → v1.3.0'. GET /api/version/current now returns 1.3.0. Idempotency: second upgrade returns ok=false with 'Zaten güncel'.",
+    "i18n: lang-en switches Dashboard→English ('Dashboard', 'Scanned Today' visible). lang-de switches sidebar to 'Übersicht'/'Quarantäne'. lang-ar renders full Arabic sidebar and Dashboard KPI labels (تم فحصه اليوم). All 7 lang buttons present in Settings.",
+    "REGRESSION: /, /quarantine, /rules, /blacklist, /pricing, /licenses all return HTTP 200 with no page errors. Sidebar shows all 15 nav-* testids including nav-pricing and nav-licenses (seller mode).",
+    "Previous bug fixes still work (blacklist delist 200 no ObjectId, AI rule generator TR+EN <60s)."
+  ]
+}

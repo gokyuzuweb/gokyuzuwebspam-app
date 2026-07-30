@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ShieldAlert, Clock, KeyRound, Mail, ExternalLink, RotateCw, Sparkles,
-  CheckCircle2, Server,
+  CheckCircle2, Server, ArrowUpCircle, Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -16,43 +16,78 @@ import { api } from "@/lib/api";
 
 export function PluginStatusStripe() {
   const q = useQuery({ queryKey: ["plugin-status"], queryFn: api.pluginStatus, refetchInterval: 30000 });
+  const upd = useQuery({ queryKey: ["version-check"], queryFn: api.versionCheckUpdate, refetchInterval: 3600000 });
+  const qc = useQueryClient();
+  const [upgrading, setUpgrading] = useState(false);
+
+  const upgrade = useMutation({
+    mutationFn: () => api.pluginUpgrade(),
+    onMutate: () => setUpgrading(true),
+    onSettled: () => setUpgrading(false),
+    onSuccess: (data) => {
+      if (data.ok) toast.success(data.message);
+      else toast.error(data.message);
+      qc.invalidateQueries({ queryKey: ["version-check"] });
+      qc.invalidateQueries({ queryKey: ["version-current"] });
+    },
+    onError: (e) => toast.error("Güncelleme başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
+
   if (!q.data) return null;
   const s = q.data;
-  if (s.mode === "seller") return null;
-  if (s.gated) return null; // Full screen gate takes over
-  if (s.licensed) {
-    const expires = s.license_expires ? new Date(s.license_expires).toLocaleDateString("tr-TR") : "—";
-    return (
-      <div data-testid="plugin-status-licensed" className="bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-300 text-xs px-6 py-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>Lisanslı · <span className="mono">{s.license_key.slice(0, 20)}…</span></span>
+
+  return (
+    <>
+      {/* Update available banner (both modes) */}
+      {upd.data?.update_available && (
+        <div data-testid="update-banner" className="bg-indigo-500/10 border-b border-indigo-500/20 text-indigo-200 text-xs px-6 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ArrowUpCircle className="w-3.5 h-3.5" />
+            <span>
+              <b>Yeni sürüm mevcut:</b> <span className="mono">{upd.data.current}</span> → <span className="mono text-indigo-100">{upd.data.latest}</span>
+              {upd.data.changelog && <span className="text-slate-400 ml-2">· {upd.data.changelog.slice(0, 80)}</span>}
+            </span>
+          </div>
+          <button
+            data-testid="upgrade-btn"
+            onClick={() => upgrade.mutate()}
+            disabled={upgrading}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold border border-indigo-500/40 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/30 disabled:opacity-50"
+          >
+            {upgrading ? <RotateCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+            {upgrading ? "Güncelleniyor…" : "Tek Tıkla Güncelle"}
+          </button>
         </div>
-        <div className="mono">Bitiş: {expires}</div>
-      </div>
-    );
-  }
-  if (s.is_demo && !s.demo_over) {
-    return (
-      <div data-testid="plugin-status-demo" className="bg-amber-500/10 border-b border-amber-500/20 text-amber-300 text-xs px-6 py-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Clock className="w-3.5 h-3.5" />
-          <span>
-            <b>DEMO MODU</b> · <span className="mono">{s.demo_days_remaining}</span> gün kaldı ·
-            Lisans için satıcınıza IP'nizi bildirin
-          </span>
-        </div>
-        <button
-          data-testid="plugin-status-verify-btn"
-          onClick={() => window.dispatchEvent(new CustomEvent("open-license-modal"))}
-          className="text-amber-200 hover:text-amber-100 underline mono"
-        >
-          Lisansı Sorgula
-        </button>
-      </div>
-    );
-  }
-  return null;
+      )}
+      {/* Demo / license status */}
+      {s.mode !== "seller" && !s.gated && (
+        <>
+          {s.licensed ? (
+            <div data-testid="plugin-status-licensed" className="bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-300 text-xs px-6 py-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Lisanslı · <span className="mono">{s.license_key.slice(0, 20)}…</span></span>
+              </div>
+              <div className="mono">Bitiş: {s.license_expires ? new Date(s.license_expires).toLocaleDateString("tr-TR") : "—"}</div>
+            </div>
+          ) : s.is_demo && !s.demo_over ? (
+            <div data-testid="plugin-status-demo" className="bg-amber-500/10 border-b border-amber-500/20 text-amber-300 text-xs px-6 py-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="w-3.5 h-3.5" />
+                <span>
+                  <b>DEMO MODU</b> · <span className="mono">{s.demo_days_remaining}</span> gün kaldı ·
+                  Lisans için satıcınıza IP'nizi bildirin
+                </span>
+              </div>
+              <a href="/shop" target="_blank" rel="noreferrer" className="text-amber-200 hover:text-amber-100 underline mono">
+                Fiyat Planları
+              </a>
+            </div>
+          ) : null}
+        </>
+      )}
+    </>
+  );
 }
 
 
@@ -175,7 +210,7 @@ export function LicenseGate() {
                 <Mail className="w-3.5 h-3.5" /> Satıcıya E-posta
               </a>
               <a
-                href="/pricing.html"
+                href="/shop"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"

@@ -87,5 +87,13 @@ export const api = {
   pricing: () => client.get("/pricing").then(r => r.data),
   pricingPut: (payload) => client.put("/pricing", payload).then(r => r.data),
 
+  // Stripe checkout
+  checkoutCreate: (payload) => client.post("/checkout/create-session", payload).then(r => r.data),
+  checkoutStatus: (session_id) => client.get(`/checkout/status/${session_id}`).then(r => r.data),
+  checkoutTransactions: () => client.get("/checkout/transactions").then(r => r.data),
+
+  // Plugin upgrade
+  pluginUpgrade: () => client.post("/plugin/upgrade").then(r => r.data),
+
   scanTest: (payload) => client.post("/scan/test", payload).then(r => r.data),
 };
