@@ -80,6 +80,7 @@ run "install -d $INSTALL_DIR/lib $INSTALL_DIR/bin $INSTALL_DIR/api"
 run "cp -rn '$SRC/lib/.' '$INSTALL_DIR/lib/'"
 run "cp -n  '$SRC/scripts/mailshield-milter.pl' '$INSTALL_DIR/bin/mailshield-milter.pl'"
 run "cp -n  '$SRC/scripts/quarantine-prune.pl'  '$INSTALL_DIR/bin/quarantine-prune.pl'"
+run "cp -n  '$SRC/scripts/heartbeat.pl'         '$INSTALL_DIR/bin/heartbeat.pl'"
 run "cp -n  '$SRC/mailshieldctl'                '$INSTALL_DIR/bin/mailshieldctl'"
 run "chmod +x '$INSTALL_DIR/bin/'*"
 run "ln -sfn '$INSTALL_DIR/bin/mailshieldctl' /usr/local/sbin/mailshieldctl"
@@ -102,12 +103,20 @@ if [[ $DRY_RUN -eq 0 ]]; then
   /usr/local/cpanel/bin/register_appconfig "$APPCONFIG"
 fi
 
-echo "==> [7/9] Varsayılan yapılandırma yerleştiriliyor"
+echo "==> Yapılandırma yerleştirme"
 if [[ ! -f "$ETC_DIR/mailshield.conf" ]]; then
   run "cp '$SRC/config/mailshield.conf' '$ETC_DIR/mailshield.conf'"
 fi
 if [[ ! -f "$ETC_DIR/policy.json" ]]; then
   run "cp '$SRC/config/policy.default.json' '$ETC_DIR/policy.json'"
+fi
+# Plugin mode — customer (bayi) varsayılan; 7 günlük demo başlar
+if [[ ! -f "$ETC_DIR/mode.env" ]]; then
+  cat > "$ETC_DIR/mode.env" <<'EOF'
+MAILSHIELD_MODE=customer
+MAILSHIELD_DEMO_DAYS=7
+EOF
+  echo "    → Customer moduna alındı, 7 günlük demo süreci başlatıldı."
 fi
 run "chown -R mailshield:mailshield '$ETC_DIR'"
 

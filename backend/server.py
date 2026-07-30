@@ -36,6 +36,12 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
+# Plugin mode: "customer" (bayi/müşteri kurulumu — lisans gate uygulanır)
+# ya da "seller" (satıcı yönetim paneli — tüm özellikler açık).
+# WHM'ye kurulunca install.sh varsayılan olarak "customer" set eder.
+PLUGIN_MODE = os.environ.get("MAILSHIELD_MODE", "customer").lower()
+DEMO_DAYS = int(os.environ.get("MAILSHIELD_DEMO_DAYS", "7"))
+
 app = FastAPI(title="GökyüzüWebSpam API", version="1.0.0")
 api = APIRouter(prefix="/api")
 
@@ -168,6 +174,31 @@ class VersionManifest(BaseModel):
     changelog: str = ""
     release_date: str = Field(default_factory=_iso)
     min_supported: str = "1.0.0"
+
+
+class PricingPlan(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    code: Literal["starter", "pro", "enterprise"]
+    name: str
+    currency: str = "USD"
+    monthly_price: float = 0.0
+    yearly_price: float = 0.0
+    setup_fee: float = 0.0
+    max_domains: int = 100
+    max_ips: int = 1
+    features: List[str] = []
+    highlighted: bool = False
+    active: bool = True
+    stripe_lookup_monthly: Optional[str] = None
+    stripe_lookup_yearly: Optional[str] = None
+
+
+class PricingSettings(BaseModel):
+    plans: List[PricingPlan] = []
+    contact_email: str = "satis@gokyuzuwebspam.com"
+    contact_phone: str = ""
+    hero_headline: str = "GökyüzüWebSpam · WHM Mail Güvenliği"
+    hero_sub: str = "Türkçe destekli, kapsamlı ve modern spam koruma paneli"
 
 
 class ActivityLog(BaseModel):
@@ -324,6 +355,30 @@ async def seed_if_empty() -> None:
         ).model_dump(),
     ]
     await db.licenses.insert_many(demo_licenses)
+    # Default pricing plans
+    default_plans = [
+        PricingPlan(code="starter", name="Starter", monthly_price=29.0, yearly_price=290.0,
+                    max_domains=50, max_ips=1,
+                    features=["50 domain'e kadar", "SpamAssassin + ClamAV", "Karantina yönetimi",
+                             "Beyaz/Kara liste", "E-posta bildirimi", "Standart destek"],
+                    stripe_lookup_monthly="starter_monthly", stripe_lookup_yearly="starter_yearly").model_dump(),
+        PricingPlan(code="pro", name="Pro", monthly_price=79.0, yearly_price=790.0,
+                    max_domains=250, max_ips=3, highlighted=True,
+                    features=["250 domain'e kadar", "3 sunucu IP'si", "DCC + Razor topluluk imzaları",
+                             "AI sınıflandırma (Claude/GPT/Gemini)", "Haftalık PDF rapor", "Slack + e-posta uyarısı",
+                             "Blacklist otomatik çıkış talebi", "Öncelikli destek"],
+                    stripe_lookup_monthly="pro_monthly", stripe_lookup_yearly="pro_yearly").model_dump(),
+        PricingPlan(code="enterprise", name="Enterprise", monthly_price=199.0, yearly_price=1990.0,
+                    max_domains=10000, max_ips=10,
+                    features=["Sınırsız domain (10.000+)", "10 sunucu IP'si", "Reseller yönetimi",
+                             "Özel kurallar & AI eğitim", "SLA garantili destek", "White-label branding",
+                             "Özel entegrasyon (API)", "7/24 telefon desteği"],
+                    stripe_lookup_monthly="enterprise_monthly", stripe_lookup_yearly="enterprise_yearly").model_dump(),
+    ]
+    await db.settings.insert_one({
+        "_key": "pricing",
+        **PricingSettings(plans=[PricingPlan(**p) for p in default_plans]).model_dump()
+    })
     # Sample violations
     await db.violations.insert_many([
         LicenseViolation(
@@ -1522,8 +1577,14 @@ async def blacklist_delist(payload: DelistRequestIn):
             status="submitted" if submitted_via == "email" else "pending",
             submitted_via=submitted_via,
         ).model_dump()
-        await db.delist_requests.insert_one(req)
-        created.append(req)
+        # Insert a COPY (insert_one mutates the dict with ObjectId _id)
+        await db.delist_requests.insert_one(dict(req))
+        created.append(req)  # original clean dict for response
+    await db.logs.insert_one(ActivityLog(
+        source="blacklist", level="info",
+        message=f"Delisting talep(ler)i oluşturuldu: {payload.target} → {len(created)} sağlayıcı, {email_attempts} e-posta",
+    ).model_dump())
+    return {"created": len(created), "email_attempts": email_attempts, "requests": created}
     await db.logs.insert_one(ActivityLog(
         source="blacklist", level="info",
         message=f"Delisting talep(ler)i oluşturuldu: {payload.target} → {len(created)} sağlayıcı, {email_attempts} e-posta",
@@ -1703,6 +1764,228 @@ async def i18n_effective(cpanel_lang: Optional[str] = None):
         if code in {"tr", "en", "de", "fr", "es", "ar"}:
             return {"language": code, "source": "cpanel"}
     return {"language": "tr", "source": "default"}
+
+
+# ----- Plugin state (demo / licensed / expired) -----
+async def _plugin_state() -> dict:
+    doc = await db.settings.find_one({"_key": "plugin_state"}, {"_id": 0, "_key": 0})
+    if not doc:
+        now = datetime.now(timezone.utc)
+        doc = {
+            "installed_at": now.isoformat(),
+            "demo_expires": (now + timedelta(days=DEMO_DAYS)).isoformat(),
+            "licensed": False,
+            "license_key": "",
+            "license_expires": "",
+        }
+        await db.settings.insert_one({"_key": "plugin_state", **doc})
+    return doc
+
+
+def _parse_iso(s: str) -> Optional[datetime]:
+    if not s: return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+async def _plugin_status_payload() -> dict:
+    st = await _plugin_state()
+    now = datetime.now(timezone.utc)
+    demo_exp = _parse_iso(st.get("demo_expires", ""))
+    lic_exp = _parse_iso(st.get("license_expires", ""))
+    licensed = bool(st.get("licensed")) and lic_exp and lic_exp > now
+    is_demo = not licensed
+    demo_days_remaining = 0
+    demo_over = False
+    if is_demo and demo_exp:
+        delta = demo_exp - now
+        demo_days_remaining = max(0, delta.days)
+        demo_over = delta.total_seconds() <= 0
+    # In seller mode we do not enforce demo/gating
+    gated = PLUGIN_MODE == "customer" and demo_over and not licensed
+    return {
+        "mode": PLUGIN_MODE,
+        "installed_at": st.get("installed_at"),
+        "is_demo": is_demo,
+        "demo_expires": st.get("demo_expires"),
+        "demo_days_remaining": demo_days_remaining,
+        "demo_over": demo_over,
+        "licensed": licensed,
+        "license_key": st.get("license_key", ""),
+        "license_expires": st.get("license_expires", ""),
+        "gated": gated,
+        "gate_reason": (
+            "license_required" if gated else
+            ("demo_active" if is_demo and not demo_over else "ok")
+        ),
+    }
+
+
+@api.get("/plugin/status")
+async def plugin_status():
+    return await _plugin_status_payload()
+
+
+class VerifyLicenseIn(BaseModel):
+    license_key: Optional[str] = None
+    ip: Optional[str] = None  # public IP of the plugin host
+
+
+@api.post("/plugin/verify-license")
+async def plugin_verify_license(payload: VerifyLicenseIn):
+    """
+    Bayinin 'Lisans Sorgula' butonundan çağrılır. Verilen IP (veya lisans anahtarı)
+    lisans DB'sinde varsa ve süresi geçerliyse plugin_state güncellenir.
+    - Öncelik: license_key varsa doğrudan onunla eşleştir
+    - Yoksa: IP'ye göre aktif ve süresi dolmamış lisans ara
+    """
+    now = datetime.now(timezone.utc)
+    query: dict = {"active": True}
+    if payload.license_key:
+        query["license_key"] = payload.license_key
+    lic = None
+    if payload.license_key:
+        lic = await db.licenses.find_one(query, {"_id": 0})
+    if not lic and payload.ip:
+        lic = await db.licenses.find_one({"active": True, "ip_addresses": payload.ip}, {"_id": 0})
+    if not lic:
+        # log a violation attempt
+        v = LicenseViolation(
+            ip=payload.ip or "unknown",
+            hostname="",
+            license_key=payload.license_key or "",
+            reason="key_not_found" if payload.license_key else "ip_not_allowed",
+            version="",
+            raw={"verify_attempt": True},
+        ).model_dump()
+        await db.violations.insert_one(v)
+        asyncio.create_task(_fire_license_alert(v))
+        raise HTTPException(404, "Lisans bulunamadı. Lütfen satıcı ile iletişime geçin.")
+    valid_until = _parse_iso(lic.get("valid_until", ""))
+    if not valid_until or valid_until < now:
+        raise HTTPException(410, "Lisans süresi dolmuş.")
+    # Update plugin_state
+    await db.settings.update_one(
+        {"_key": "plugin_state"},
+        {"$set": {
+            "licensed": True,
+            "license_key": lic["license_key"],
+            "license_expires": lic["valid_until"],
+            "licensed_at": now.isoformat(),
+        }},
+        upsert=True,
+    )
+    # Update license last heartbeat
+    await db.licenses.update_one(
+        {"license_key": lic["license_key"]},
+        {"$set": {
+            "last_heartbeat_at": now.isoformat(),
+            "last_heartbeat_ip": payload.ip or "",
+            "last_heartbeat_version": "1.1.0",
+        }},
+    )
+    await db.logs.insert_one(ActivityLog(
+        source="license", level="info",
+        message=f"Lisans doğrulandı ve etkinleştirildi: {lic['customer_name']} → {lic['license_key'][:12]}…",
+    ).model_dump())
+    return {
+        "ok": True,
+        "customer": lic.get("customer_name"),
+        "plan": lic.get("plan"),
+        "license_key": lic["license_key"],
+        "valid_until": lic["valid_until"],
+        "message": "Lisans başarıyla etkinleştirildi",
+    }
+
+
+@api.post("/plugin/reset-demo")
+async def plugin_reset_demo():
+    """Yalnızca seller modunda (test için) demo süresini sıfırlar."""
+    if PLUGIN_MODE != "seller":
+        raise HTTPException(403, "Sadece seller modunda kullanılabilir")
+    now = datetime.now(timezone.utc)
+    await db.settings.update_one(
+        {"_key": "plugin_state"},
+        {"$set": {
+            "installed_at": now.isoformat(),
+            "demo_expires": (now + timedelta(days=DEMO_DAYS)).isoformat(),
+            "licensed": False,
+            "license_key": "",
+            "license_expires": "",
+        }},
+        upsert=True,
+    )
+    return {"reset": True, "demo_days": DEMO_DAYS}
+
+
+class SimulateStateIn(BaseModel):
+    state: Literal["demo_active", "demo_over", "licensed"]
+
+
+@api.post("/plugin/simulate-state")
+async def plugin_simulate_state(payload: SimulateStateIn):
+    """Preview/test için plugin_state'i belirli bir duruma zorlar (yalnızca seller)."""
+    if PLUGIN_MODE != "seller":
+        raise HTTPException(403, "Sadece seller modunda")
+    now = datetime.now(timezone.utc)
+    if payload.state == "demo_active":
+        upd = {
+            "installed_at": (now - timedelta(days=2)).isoformat(),
+            "demo_expires": (now + timedelta(days=5)).isoformat(),
+            "licensed": False, "license_key": "", "license_expires": "",
+        }
+    elif payload.state == "demo_over":
+        upd = {
+            "installed_at": (now - timedelta(days=10)).isoformat(),
+            "demo_expires": (now - timedelta(days=3)).isoformat(),
+            "licensed": False, "license_key": "", "license_expires": "",
+        }
+    else:  # licensed
+        upd = {
+            "installed_at": (now - timedelta(days=30)).isoformat(),
+            "demo_expires": (now - timedelta(days=23)).isoformat(),
+            "licensed": True,
+            "license_key": "MS-DEMOSIMULATED",
+            "license_expires": (now + timedelta(days=365)).isoformat(),
+        }
+    await db.settings.update_one({"_key": "plugin_state"}, {"$set": upd}, upsert=True)
+    return {"simulated": payload.state}
+
+
+@api.get("/system/mode")
+async def system_mode():
+    return {"mode": PLUGIN_MODE, "demo_days": DEMO_DAYS}
+
+
+# ----- Pricing (public read, seller-only write) -----
+async def _pricing_settings() -> dict:
+    doc = await db.settings.find_one({"_key": "pricing"}, {"_id": 0, "_key": 0})
+    return doc or PricingSettings().model_dump()
+
+
+@api.get("/pricing")
+async def pricing_get():
+    """Herkese açık — satış sayfası ve License Gate 'Fiyat Planları' bu endpoint'i çeker."""
+    return await _pricing_settings()
+
+
+@api.put("/pricing")
+async def pricing_put(payload: PricingSettings):
+    """Yalnızca satıcı yönetim panelinde çağrılır."""
+    if PLUGIN_MODE != "seller":
+        raise HTTPException(403, "Fiyat yönetimi yalnızca satıcı modunda")
+    await db.settings.update_one(
+        {"_key": "pricing"},
+        {"$set": {**payload.model_dump(), "_key": "pricing"}},
+        upsert=True,
+    )
+    await db.logs.insert_one(ActivityLog(
+        source="pricing", level="info",
+        message=f"Fiyatlandırma güncellendi: {len(payload.plans)} plan",
+    ).model_dump())
+    return payload.model_dump()
 
 
 # ----- Milter report hook (called by Perl milter to record verdicts) -----

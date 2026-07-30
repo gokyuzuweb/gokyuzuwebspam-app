@@ -4,9 +4,12 @@ import { Toaster } from "sonner";
 import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
-  Bell, FileText, Key, Radar,
+  Bell, FileText, Key, Radar, DollarSign,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
+import { useQuery } from "@tanstack/react-query";
+import { PluginStatusStripe, LicenseGate } from "@/components/LicenseGate";
+import { api } from "@/lib/api";
 import Dashboard from "@/pages/Dashboard";
 import Quarantine from "@/pages/Quarantine";
 import Lists from "@/pages/Lists";
@@ -20,6 +23,7 @@ import Install from "@/pages/Install";
 import Notifications from "@/pages/Notifications";
 import Reports from "@/pages/Reports";
 import Licenses from "@/pages/Licenses";
+import Pricing from "@/pages/Pricing";
 import Blacklist from "@/pages/Blacklist";
 import Header from "@/components/Header";
 
@@ -33,7 +37,9 @@ const NAV = [
   { to: "/outbound", key: "outbound", icon: ArrowUpRight, testid: "nav-outbound" },
   { to: "/notifications", key: "notifications", icon: Bell, testid: "nav-notifications" },
   { to: "/reports", key: "reports", icon: FileText, testid: "nav-reports" },
-  { to: "/licenses", key: "licenses", icon: Key, testid: "nav-licenses" },
+  // sellerOnly: sadece satıcı yönetim panelinde görünür
+  { to: "/licenses", key: "licenses", icon: Key, testid: "nav-licenses", sellerOnly: true },
+  { to: "/pricing", key: "pricing", icon: DollarSign, testid: "nav-pricing", sellerOnly: true },
   { to: "/users", key: "users", icon: Users, testid: "nav-users" },
   { to: "/logs", key: "logs", icon: Terminal, testid: "nav-logs" },
   { to: "/settings", key: "settings", icon: Settings2, testid: "nav-settings" },
@@ -43,6 +49,9 @@ const NAV = [
 function Sidebar() {
   const t = useT();
   const { effective } = useI18n();
+  const mode = useQuery({ queryKey: ["system-mode"], queryFn: api.systemMode });
+  const isSeller = mode.data?.mode === "seller";
+  const items = NAV.filter((n) => isSeller || !n.sellerOnly);
   return (
     <aside data-testid="sidebar" className={`w-60 shrink-0 border-r border-slate-800 bg-slate-900/60 flex flex-col ${effective === "ar" ? "rtl" : ""}`}>
       <div className="h-14 flex items-center gap-2 px-3 border-b border-slate-800">
@@ -55,7 +64,7 @@ function Sidebar() {
         </div>
       </div>
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
-        {NAV.map((n) => (
+        {items.map((n) => (
           <NavLink
             key={n.to}
             to={n.to}
@@ -76,7 +85,7 @@ function Sidebar() {
       </nav>
       <div className="px-4 py-3 border-t border-slate-800 text-[11px] text-slate-500 mono flex items-center gap-2">
         <GaugeCircle className="w-3.5 h-3.5" />
-        cPanel 136.0.32
+        cPanel 136.0.32 · <span className={isSeller ? "text-indigo-400" : "text-emerald-400"}>{isSeller ? "SELLER" : "CUSTOMER"}</span>
       </div>
     </aside>
   );
@@ -90,6 +99,7 @@ function Shell() {
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
+        <PluginStatusStripe />
         <Header title={active ? t(`nav.${active.key}`) : "GökyüzüWebSpam"} />
         <main className="flex-1 min-w-0 overflow-x-hidden">
           <Routes>
@@ -102,6 +112,7 @@ function Shell() {
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/licenses" element={<Licenses />} />
+            <Route path="/pricing" element={<Pricing />} />
             <Route path="/blacklist" element={<Blacklist />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/logs" element={<LogsPage />} />
@@ -121,6 +132,7 @@ export default function App() {
       <I18nProvider>
         <BrowserRouter>
           <Shell />
+          <LicenseGate />
           <Toaster
             theme="dark"
             position="bottom-right"

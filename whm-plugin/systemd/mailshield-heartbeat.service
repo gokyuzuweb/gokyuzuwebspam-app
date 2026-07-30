@@ -1,0 +1,9 @@
+[Unit]
+Description=GökyüzüWebSpam Lisans Heartbeat
+
+[Service]
+Type=oneshot
+User=mailshield
+Group=mailshield
+EnvironmentFile=-/etc/mailshield/mode.env
+ExecStart=/usr/bin/perl /usr/local/mailshield/bin/heartbeat.pl

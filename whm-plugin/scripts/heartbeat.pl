@@ -1,0 +1,129 @@
+#!/usr/bin/env perl
+#
+# GökyüzüWebSpam — Lisans Heartbeat Daemon
+#
+# WHM sunucusunda systemd timer ile 15 dakikada bir çalışır. Merkez lisans
+# sunucusuna aşağıdaki bilgileri gönderir:
+#   { license_key, ip, hostname, version, cpanel_version, active_domains }
+#
+# Yanıtlar:
+#   200 → normal çalışma
+#   403 → lisans ihlali; plugin_state güncellenir ve gate aktifleşir
+#
+# Yerel plugin_state kayıtları /etc/mailshield/plugin_state.json'a düşer.
+#
+
+use strict;
+use warnings;
+use JSON::XS;
+use LWP::UserAgent;
+use Sys::Hostname;
+use File::Slurp qw();
+
+my $CONF   = '/etc/mailshield/mailshield.conf';
+my $STATE  = '/etc/mailshield/plugin_state.json';
+my $CENTER = $ENV{MAILSHIELD_CENTER_URL} // 'https://mailshield.example.com';
+my $LOCAL  = 'http://127.0.0.1:8001';
+
+# --- config oku
+my %conf;
+if (open my $fh, '<', $CONF) {
+    my $sec = 'main';
+    while (my $l = <$fh>) {
+        $l =~ s/[\r\n#].*$//; $l =~ s/^\s+|\s+$//g;
+        next unless length $l;
+        if ($l =~ /^\[(.+)\]$/) { $sec = $1; next; }
+        if ($l =~ /^([\w.-]+)\s*=\s*(.*)$/) { $conf{$sec}{$1} = $2; }
+    }
+    close $fh;
+}
+
+my $license_key = $conf{license}{key} // '';
+my $version     = '1.1.0';
+
+# --- IP tespiti (birden çok kaynak)
+sub detect_ip {
+    for my $svc ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com") {
+        my $ua = LWP::UserAgent->new(timeout => 5);
+        my $r = $ua->get($svc);
+        if ($r->is_success) {
+            my $ip = $r->decoded_content;
+            $ip =~ s/\s+//g;
+            return $ip if $ip =~ /^\d+\.\d+\.\d+\.\d+$/;
+        }
+    }
+    return '';
+}
+
+# --- Aktif domain sayısı
+sub active_domains {
+    my $count = 0;
+    if (open my $fh, '<', '/etc/userdomains') {
+        while (<$fh>) { $count++ if /^\S+:\s+\S+/; }
+        close $fh;
+    }
+    return $count;
+}
+
+# --- cPanel sürümü
+sub cpanel_version {
+    if (open my $fh, '<', '/usr/local/cpanel/version') {
+        my $v = <$fh>; chomp $v; close $fh;
+        return $v;
+    }
+    return '';
+}
+
+my $ip = detect_ip();
+my $payload = encode_json({
+    license_key    => $license_key,
+    ip             => $ip,
+    hostname       => hostname(),
+    version        => $version,
+    cpanel_version => cpanel_version(),
+    active_domains => active_domains(),
+});
+
+# --- Merkez heartbeat
+my $ua  = LWP::UserAgent->new(timeout => 15);
+my $req = HTTP::Request->new(POST => "$CENTER/api/license/heartbeat");
+$req->header('Content-Type' => 'application/json');
+$req->content($payload);
+my $res = $ua->request($req);
+
+my $state = { last_heartbeat_at => scalar(gmtime()) . " UTC",
+              last_ip => $ip, last_code => $res->code };
+
+if ($res->is_success) {
+    my $d = eval { decode_json($res->content) };
+    if ($d && $d->{ok}) {
+        $state->{ok}              = JSON::XS::true;
+        $state->{plan}            = $d->{plan};
+        $state->{valid_until}     = $d->{valid_until};
+        $state->{update_available} = $d->{update_available};
+        $state->{latest_version}  = $d->{latest_version};
+        # local API'ye de bildirelim (verify-license benzeri)
+        my $lreq = HTTP::Request->new(POST => "$LOCAL/api/plugin/verify-license");
+        $lreq->header('Content-Type' => 'application/json');
+        $lreq->content(encode_json({ license_key => $license_key, ip => $ip }));
+        $ua->request($lreq);
+    }
+} elsif ($res->code == 403) {
+    my $d = eval { decode_json($res->content) };
+    $state->{violation} = $d->{detail} // { reason => "unknown" };
+    warn "License violation detected: " . encode_json($state->{violation}) . "\n";
+    # Local API state'e violation olarak da kaydet
+    open my $f, '>', '/var/log/mailshield/violation.log' or last;
+    print $f scalar(gmtime()) . " · " . encode_json($state->{violation}) . "\n";
+    close $f;
+} else {
+    $state->{error} = $res->status_line;
+    warn "Heartbeat failed: " . $res->status_line . "\n";
+}
+
+# --- Local state dosyasına yaz
+open my $sf, '>', $STATE or die "cannot write $STATE: $!";
+print $sf encode_json($state);
+close $sf;
+
+exit 0;

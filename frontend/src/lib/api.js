@@ -4,6 +4,8 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
 const client = axios.create({ baseURL: API, timeout: 20000 });
+// LLM-backed endpoints can take 30-60s (Claude / GPT / Gemini reasoning)
+const llmClient = axios.create({ baseURL: API, timeout: 90000 });
 
 export const api = {
   overview: () => client.get("/stats/overview").then(r => r.data),
@@ -43,7 +45,7 @@ export const api = {
   reportDownload: () => `${API}/reports/weekly`,
   reportSend: (recipient) => client.post("/reports/weekly/send", { recipient }).then(r => r.data),
 
-  scanAI: (payload) => client.post("/scan/ai", payload).then(r => r.data),
+  scanAI: (payload) => llmClient.post("/scan/ai", payload).then(r => r.data),
 
   // Version
   versionCurrent: () => client.get("/version/current").then(r => r.data),
@@ -68,11 +70,22 @@ export const api = {
   blacklistUpdateRequest: (id, payload) => client.put(`/blacklist/requests/${id}`, payload).then(r => r.data),
 
   // AI Rule Generator
-  rulesGenerate: (prompt, model, language) => client.post("/rules/generate", { prompt, model, language }).then(r => r.data),
+  rulesGenerate: (prompt, model, language) => llmClient.post("/rules/generate", { prompt, model, language }).then(r => r.data),
 
   // i18n
   i18nLanguages: () => client.get("/i18n/languages").then(r => r.data),
   i18nEffective: (cpanel_lang) => client.get("/i18n/effective", { params: { cpanel_lang } }).then(r => r.data),
+
+  // Plugin state (demo / licensed)
+  pluginStatus: () => client.get("/plugin/status").then(r => r.data),
+  pluginVerifyLicense: (payload) => client.post("/plugin/verify-license", payload).then(r => r.data),
+  pluginResetDemo: () => client.post("/plugin/reset-demo").then(r => r.data),
+  pluginSimulateState: (state) => client.post("/plugin/simulate-state", { state }).then(r => r.data),
+  systemMode: () => client.get("/system/mode").then(r => r.data),
+
+  // Pricing
+  pricing: () => client.get("/pricing").then(r => r.data),
+  pricingPut: (payload) => client.put("/pricing", payload).then(r => r.data),
 
   scanTest: (payload) => client.post("/scan/test", payload).then(r => r.data),
 };
