@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 3 testing complete for 4 new features: MRR Dashboard, Plugin download (tar.gz), Install-info endpoint (wget/curl one-liner), Post-payment onboarding UI (CheckoutSuccess), and full 6-language i18n expansion (TR/EN placeholders verified on Quarantine). 24/25 backend pytest cases pass (1 pre-existing stateful failure from iteration 2 leftover — DB current_version already at 1.3.0). All frontend testids present and functional.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/plugin/install-info", "issue": "download_url derived from request.base_url resolves to internal ingress host (http://mailscanner-pro.cluster-12.preview.emergentcf.cloud/...) rather than the public REACT_APP_BACKEND_URL. Works, but exposes internal hostname and downgrades scheme to http. Consider reading a configured PUBLIC_BASE_URL from env or using X-Forwarded-Proto/Host headers."},
+      {"endpoint": "/api/plugin/upgrade (regression)", "issue": "test_version_manifest_put_and_upgrade_flow expects new_version=1.2.0 but DB current_version was already 1.3.0 from iteration 2. Not a bug in iteration 3 code, but the test is order-sensitive; consider seeding version state at fixture setup."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/checkout/success", "issues": ["Success card is small and vertically centered creating very large empty area above/below at 1920x4000 viewport. Consider constraining container height or adding hero header/logo above the card."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional/minor) Use REACT_APP_BACKEND_URL/PUBLIC_BASE_URL env for install-info download_url so the wget one-liner uses https:// preview host instead of internal cluster hostname.",
+    "(Optional) Make test_version_manifest_put_and_upgrade_flow idempotent by resetting current_version in a fixture."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~2453 lines — modular split (checkout/, analytics/, plugin/, licensing/, i18n/) is overdue.",
+    "/api/plugin/download rebuilds tar.gz from disk on every request. For seller with many downloads this is wasteful; cache the tar.gz per version in memory or on disk keyed by version+mtime.",
+    "/api/analytics/mrr trend uses `now.replace(day=1) - timedelta(days=i*30)` which is not calendar-month accurate — months with 31 days will drift. Use relativedelta for monthly buckets.",
+    "/api/checkout/webhook returns {received:false} 200 on invalid signature — good (no crash) but Stripe recommends returning 400 to signal invalid signatures so Stripe will retry. Consider 400 for auth failures, 200 only for handled events.",
+    "CheckoutSuccess page (/checkout/success) fetches license and one-liner inline; no error state visible for pending/expired session_id — user just sees blank card. Add loading/error UX."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {
+    "backend": "96% (24/25) — the 1 failure is a stateful leftover from iteration 2, not iteration 3 code",
+    "frontend": "100% — MRR panel, Install one-liner + toggle + download, CheckoutSuccess (all 6 testids), Quarantine i18n TR/EN placeholders, seller-mode sidebar all verified"
+  },
+  "test_credentials": "Auth-free preview (MAILSHIELD_MODE=seller).",
+  "seed_data_creation": "None added. Used existing seed transactions (session_id cs_test_seed_1_f6941305 verified for CheckoutSuccess).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py now has 25 tests. New iter-3 tests: test_analytics_mrr_seller, test_plugin_download_tarball, test_plugin_install_info_no_license/with_license, test_checkout_create_and_status, test_checkout_status_unknown, test_checkout_webhook_invalid_sig, test_regression_endpoints_up. CheckoutSuccess route is /checkout/success (NOT /checkout-success). Seed session_id pattern: cs_test_seed_{n}_{hash}. install-info download_url currently leaks internal cluster host — see minor issues. MRR endpoint values at test time: mrr=$315, arr=$3780, active_subs=5, plans_breakdown 3 rows (pro=3, starter=1, enterprise=1).",
+  "verified_features": [
+    "MRR: GET /api/analytics/mrr returns 200 with mrr/arr/active_subs/arpu/ltv/churn_pct/trend(6 months)/plans_breakdown/recent. Verified live: MRR=$315, ARR=$3780, 5 active subs, LTV=$1512.",
+    "Plugin download: GET /api/plugin/download returns gzip tarball, Content-Disposition filename, size > 5KB.",
+    "Install-info: GET /api/plugin/install-info returns download_url, wget_one_liner, curl_one_liner, steps[], requires_root_ssh=true. With ?license_key=X → wget/curl contain --license=X.",
+    "Checkout: create-session → status/{sid} returns tx with origin_url persisted. status/unknown → 404. webhook with bad sig → {received:false} 200 (no crash).",
+    "Frontend /licenses: mrr-panel + 4 stat cards + mrr-trend + mrr-plan-table + mrr-recent all render with live data.",
+    "Frontend /install: one-liner-cmd shows wget by default; clicking one-liner-curl toggle switches to curl. download-tarball button present.",
+    "Frontend /checkout/success?session_id=cs_test_seed_1_...: cs-license-key, cs-copy-key, cs-oneliner, cs-copy-oneliner, cs-download-tar, cs-goto-install all render with real license MS-32ED... and one-liner command.",
+    "i18n: /settings lang-tr → /quarantine placeholder = 'Gönderici, alıcı, konu veya IP ara…'. lang-en → 'Search sender, recipient, subject or IP…'. Full expansion working.",
+    "Sidebar seller mode: nav-licenses and nav-pricing both present."
+  ]
+}

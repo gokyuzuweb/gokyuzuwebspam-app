@@ -4,6 +4,7 @@ import { Save, Bell, Send, MessageSquare, Zap, Mail, Server } from "lucide-react
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
+import { useT } from "@/i18n";
 
 function Toggle({ checked, onChange, testid }) {
   return (
@@ -26,6 +27,7 @@ function Toggle({ checked, onChange, testid }) {
 
 export default function Notifications() {
   const qc = useQueryClient();
+  const t = useT();
   const q = useQuery({ queryKey: ["notifications"], queryFn: api.notifications });
   const [state, setState] = useState(null);
 
@@ -33,32 +35,32 @@ export default function Notifications() {
 
   const save = useMutation({
     mutationFn: (p) => api.notificationsPut(p),
-    onSuccess: () => { toast.success("Bildirim ayarları kaydedildi"); qc.invalidateQueries({ queryKey: ["notifications"] }); },
-    onError: () => toast.error("Kaydedilemedi"),
+    onSuccess: () => { toast.success(t("notifications.saved_ok")); qc.invalidateQueries({ queryKey: ["notifications"] }); },
+    onError: () => toast.error(t("common.error_save")),
   });
   const test = useMutation({
     mutationFn: (channel) => api.notificationsTest(channel),
     onSuccess: (data) => {
       const msgs = [];
-      if (data.email) msgs.push(`E-posta → ${data.email.to} · ${data.email.via}`);
+      if (data.email) msgs.push(`E-mail → ${data.email.to} · ${data.email.via}`);
       if (data.slack !== null) msgs.push(`Slack: ${data.slack ? "✓" : "×"}`);
-      if (msgs.length === 0) toast.error("Aktif kanal yok. Önce doldurup kaydedin.");
+      if (msgs.length === 0) toast.error(t("notifications.no_channel"));
       else toast.success(msgs.join(" · "));
     },
-    onError: () => toast.error("Test başarısız"),
+    onError: () => toast.error(t("notifications.test_fail")),
   });
   const simulate = useMutation({
     mutationFn: () => api.notificationsSimulate(),
     onSuccess: (data) => {
       if (data.fired) {
-        const via = data.email ? `e-posta: ${data.email.via}` : "e-posta: —";
-        toast.success(`Simülasyon: ${data.sample.verdict.toUpperCase()} skor ${data.sample.score.toFixed(1)} · ${via}`);
+        const via = data.email ? `e-mail: ${data.email.via}` : "e-mail: —";
+        toast.success(`${data.sample.verdict.toUpperCase()} · ${data.sample.score.toFixed(1)} · ${via}`);
       }
-      else toast.info("Eşiği aşan kayıt yok — 'alert_min_score' düşürün veya toggle'ları açın");
+      else toast.info(t("notifications.no_channel"));
     },
   });
 
-  if (!state) return <div className="p-6 text-slate-500">Yükleniyor…</div>;
+  if (!state) return <div className="p-6 text-slate-500">{t("common.loading")}</div>;
   const patch = (k, v) => setState((s) => ({ ...s, [k]: v }));
 
   return (
@@ -66,13 +68,13 @@ export default function Notifications() {
       <div className="col-span-12 lg:col-span-8 space-y-4">
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><Mail className="w-4 h-4 text-emerald-400" /> Yönetici E-postası</span>}
-            subtitle="Tüm alarmlar (yüksek skor tehdit + lisans ihlali + rapor) bu adrese gelir · WHM'nin Exim/sendmail yolu üzerinden"
+            title={<span className="flex items-center gap-2"><Mail className="w-4 h-4 text-emerald-400" /> {t("notifications.admin_email_title")}</span>}
+            subtitle={t("notifications.admin_email_sub")}
             right={<Toggle checked={state.email_enabled} onChange={(v) => patch("email_enabled", v)} testid="email-toggle" />}
           />
           <CardBody className="space-y-3">
             <div>
-              <label className="text-[11px] uppercase tracking-widest text-slate-500 mb-1 block">Yönetici e-posta adresi</label>
+              <label className="text-[11px] uppercase tracking-widest text-slate-500 mb-1 block">{t("notifications.admin_addr")}</label>
               <div className="relative">
                 <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
@@ -85,7 +87,7 @@ export default function Notifications() {
               </div>
             </div>
             <div>
-              <label className="text-[11px] uppercase tracking-widest text-slate-500 mb-1 block">Gönderen adresi</label>
+              <label className="text-[11px] uppercase tracking-widest text-slate-500 mb-1 block">{t("notifications.from_addr")}</label>
               <div className="relative">
                 <Server className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
@@ -97,7 +99,7 @@ export default function Notifications() {
                 />
               </div>
               <div className="mt-1 text-[11px] text-slate-500">
-                Bu alandaki adresin sunucunuzda SPF/DKIM ile yetkilendirilmiş olduğundan emin olun.
+                {t("notifications.spf_hint")}
               </div>
             </div>
             <button
@@ -105,20 +107,20 @@ export default function Notifications() {
               onClick={() => test.mutate("email")}
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
             >
-              <Send className="w-3.5 h-3.5" /> E-posta Testi Gönder
+              <Send className="w-3.5 h-3.5" /> {t("notifications.email_test")}
             </button>
           </CardBody>
         </Card>
 
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><MessageSquare className="w-4 h-4 text-indigo-400" /> Slack (opsiyonel)</span>}
-            subtitle="Ekibinizin Slack kanalına da eş zamanlı yollamak isterseniz"
+            title={<span className="flex items-center gap-2"><MessageSquare className="w-4 h-4 text-indigo-400" /> {t("notifications.slack_title")}</span>}
+            subtitle={t("notifications.slack_sub")}
             right={<Toggle checked={state.slack_enabled} onChange={(v) => patch("slack_enabled", v)} testid="slack-toggle" />}
           />
           <CardBody className="space-y-3">
             <div>
-              <label className="text-[11px] uppercase tracking-widest text-slate-500 mb-1 block">Webhook URL</label>
+              <label className="text-[11px] uppercase tracking-widest text-slate-500 mb-1 block">{t("notifications.slack_webhook")}</label>
               <input
                 data-testid="slack-webhook"
                 value={state.slack_webhook_url}
@@ -128,7 +130,7 @@ export default function Notifications() {
               />
               <div className="mt-2 text-xs text-slate-500">
                 <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline">
-                  Slack Incoming Webhook oluşturma kılavuzu
+                  {t("notifications.slack_guide")}
                 </a>
               </div>
             </div>
@@ -137,7 +139,7 @@ export default function Notifications() {
               onClick={() => test.mutate("slack")}
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
             >
-              <Send className="w-3.5 h-3.5" /> Slack Test Bildirimi
+              <Send className="w-3.5 h-3.5" /> {t("notifications.slack_test")}
             </button>
           </CardBody>
         </Card>
@@ -146,12 +148,12 @@ export default function Notifications() {
       <div className="col-span-12 lg:col-span-4 space-y-4">
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> Uyarı Tetikleyicileri</span>}
+            title={<span className="flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> {t("notifications.trigger_title")}</span>}
           />
           <CardBody className="space-y-4">
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-slate-300">Minimum tetikleme skoru</span>
+                <span className="text-sm text-slate-300">{t("notifications.min_score")}</span>
                 <span className="mono text-amber-300">{state.alert_min_score.toFixed(1)}</span>
               </div>
               <input type="range" min="3" max="15" step="0.5"
@@ -162,22 +164,22 @@ export default function Notifications() {
             </div>
             <div className="flex items-center justify-between py-2 border-t border-slate-800">
               <div>
-                <div className="text-sm text-slate-200">Virüs tespiti</div>
-                <div className="text-xs text-slate-500">Skoru düşük olsa da bildir</div>
+                <div className="text-sm text-slate-200">{t("notifications.virus_row")}</div>
+                <div className="text-xs text-slate-500">{t("notifications.virus_hint")}</div>
               </div>
               <Toggle checked={state.alert_on_virus} onChange={(v) => patch("alert_on_virus", v)} testid="alert-virus" />
             </div>
             <div className="flex items-center justify-between py-2 border-t border-slate-800">
               <div>
-                <div className="text-sm text-slate-200">Phishing tespiti</div>
-                <div className="text-xs text-slate-500">Skoru düşük olsa da bildir</div>
+                <div className="text-sm text-slate-200">{t("notifications.phish_row")}</div>
+                <div className="text-xs text-slate-500">{t("notifications.phish_hint")}</div>
               </div>
               <Toggle checked={state.alert_on_phish} onChange={(v) => patch("alert_on_phish", v)} testid="alert-phish" />
             </div>
             <div className="flex items-center justify-between py-2 border-t border-slate-800">
               <div>
-                <div className="text-sm text-slate-200">Lisans ihlali</div>
-                <div className="text-xs text-slate-500">İzinsiz IP'den heartbeat geldiğinde</div>
+                <div className="text-sm text-slate-200">{t("notifications.lic_row")}</div>
+                <div className="text-xs text-slate-500">{t("notifications.lic_hint")}</div>
               </div>
               <Toggle checked={state.alert_on_license_violation} onChange={(v) => patch("alert_on_license_violation", v)} testid="alert-license" />
             </div>
@@ -189,22 +191,21 @@ export default function Notifications() {
           onClick={() => save.mutate(state)}
           className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
         >
-          <Save className="w-4 h-4" /> Kaydet
+          <Save className="w-4 h-4" /> {t("common.save")}
         </button>
 
         <Card>
-          <CardHeader title="Uçtan Uca Simülasyon" />
+          <CardHeader title={t("notifications.sim_title")} />
           <CardBody className="space-y-2">
             <p className="text-xs text-slate-400">
-              Karantinadaki gerçek bir kayıt üzerinden yönetici e-postasına <b>gerçek</b> alarm gönderir.
-              Önce kaydet, sonra simüle et.
+              {t("notifications.sim_desc")}
             </p>
             <button
               data-testid="notif-simulate"
               onClick={() => simulate.mutate()}
               className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
             >
-              <Bell className="w-3.5 h-3.5" /> Tehdit Alarmı Simüle Et
+              <Bell className="w-3.5 h-3.5" /> {t("notifications.sim_btn")}
             </button>
           </CardBody>
         </Card>

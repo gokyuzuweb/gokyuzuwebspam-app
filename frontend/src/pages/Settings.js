@@ -4,7 +4,7 @@ import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Language
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
-import { useI18n } from "@/i18n";
+import { useI18n, useT } from "@/i18n";
 
 function Row({ title, hint, children, testid }) {
   return (
@@ -39,6 +39,7 @@ function Toggle({ checked, onChange, testid }) {
 
 export default function SettingsPage() {
   const qc = useQueryClient();
+  const t = useT();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const langs = useQuery({ queryKey: ["i18n-langs"], queryFn: api.i18nLanguages });
   const { lang: uiLang, setLang: setUiLang } = useI18n();
@@ -49,15 +50,14 @@ export default function SettingsPage() {
   const save = useMutation({
     mutationFn: (p) => api.settingsPut(p),
     onSuccess: () => {
-      toast.success("Politika kaydedildi");
+      toast.success(t("settings.saved"));
       qc.invalidateQueries({ queryKey: ["settings"] });
-      // Also sync UI language from saved policy
       if (state?.ui_language) setUiLang(state.ui_language);
     },
-    onError: () => toast.error("Kaydedilemedi"),
+    onError: () => toast.error(t("settings.save_fail")),
   });
 
-  if (!state) return <div className="p-6 text-slate-500">Yükleniyor…</div>;
+  if (!state) return <div className="p-6 text-slate-500">{t("common.loading")}</div>;
 
   const patch = (k, v) => setState((s) => ({ ...s, [k]: v }));
 
@@ -66,8 +66,8 @@ export default function SettingsPage() {
       <div className="col-span-12 lg:col-span-8 space-y-4">
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><Languages className="w-4 h-4 text-indigo-400" /> Arayüz Dili · Interface Language</span>}
-            subtitle="'Otomatik' seçildiğinde cPanel'in aktif dilini takip eder. Değişiklik anında uygulanır."
+            title={<span className="flex items-center gap-2"><Languages className="w-4 h-4 text-indigo-400" /> {t("settings.ui_language_title")} · Interface Language</span>}
+            subtitle={t("settings.ui_language_sub")}
           />
           <CardBody className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -78,7 +78,6 @@ export default function SettingsPage() {
                   onClick={() => {
                     setUiLang(L.code);
                     patch("ui_language", L.code);
-                    // auto-save language
                     save.mutate({ ...state, ui_language: L.code });
                   }}
                   className={`px-3 py-2 rounded-md text-sm border transition-colors ${
@@ -93,22 +92,20 @@ export default function SettingsPage() {
               ))}
             </div>
             <div className="text-[11px] text-slate-500">
-              WHM'ye kurulunca <span className="mono text-slate-300">X-Cpanel-Language</span> header'ı
-              üzerinden kullanıcının aktif cPanel dili algılanır ve <b>Otomatik</b> modda buna geçilir.
-              AI kural üretici de bu dili takip eder — Türkçe cPanel'de Türkçe kural adları üretir.
+              {t("settings.ui_lang_hint")}
             </div>
           </CardBody>
         </Card>
 
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><Sliders className="w-4 h-4 text-indigo-400" /> Spam Eşikleri</span>}
-            subtitle="Puanlama: 0 (temiz) → 15+ (kesin spam)"
+            title={<span className="flex items-center gap-2"><Sliders className="w-4 h-4 text-indigo-400" /> {t("settings.thresholds_title")}</span>}
+            subtitle={t("settings.thresholds_sub")}
           />
           <CardBody className="space-y-6">
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-slate-300">Düşük eşik (spam olarak işaretle)</span>
+                <span className="text-sm text-slate-300">{t("settings.threshold_low")}</span>
                 <span className="mono text-amber-300">{state.spam_threshold_low.toFixed(1)}</span>
               </div>
               <input type="range" min="1" max="15" step="0.1"
@@ -119,7 +116,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-slate-300">Yüksek eşik (karantina + red)</span>
+                <span className="text-sm text-slate-300">{t("settings.threshold_high")}</span>
                 <span className="mono text-rose-400">{state.spam_threshold_high.toFixed(1)}</span>
               </div>
               <input type="range" min="1" max="20" step="0.1"
@@ -133,11 +130,11 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><Cpu className="w-4 h-4 text-indigo-400" /> Motor Seçimi</span>}
-            subtitle="Etkin motor değiştiğinde daemon yeniden başlatılır"
+            title={<span className="flex items-center gap-2"><Cpu className="w-4 h-4 text-indigo-400" /> {t("settings.engines_title")}</span>}
+            subtitle={t("settings.engines_sub")}
           />
           <CardBody className="space-y-1">
-            <Row title="Aktif spam motoru" hint="SpamAssassin klasik ve stabil; Rspamd daha hızlı ve modern"
+            <Row title={t("settings.active_engine")} hint={t("settings.active_engine_hint")}
                  testid="row-active-engine">
               <select value={state.active_engine} onChange={(e) => patch("active_engine", e.target.value)}
                 data-testid="active-engine"
@@ -146,18 +143,18 @@ export default function SettingsPage() {
                 <option value="rspamd">Rspamd</option>
               </select>
             </Row>
-            <Row title="Bayes öğrenmesi" hint="Kullanıcı 'spam' işareti verdikçe sa-learn ile öğret"
+            <Row title={t("settings.bayes")} hint={t("settings.bayes_hint")}
                  testid="row-bayes">
               <Toggle checked={state.bayes_learning} onChange={(v) => patch("bayes_learning", v)} testid="toggle-bayes" />
             </Row>
-            <Row title={<span className="flex items-center gap-2">AI Sınıflandırma <Badge tone="brand">Yeni</Badge></span>}
-                 hint="LLM ile içerik / phishing kontrolü (Emergent LLM anahtarı gerekli)"
+            <Row title={<span className="flex items-center gap-2">{t("settings.ai_row")} <Badge tone="brand">{t("settings.new")}</Badge></span>}
+                 hint={t("settings.ai_hint")}
                  testid="row-ai">
               <Toggle checked={state.ai_classification} onChange={(v) => patch("ai_classification", v)} testid="toggle-ai" />
             </Row>
             {state.ai_classification && (
-              <Row title="AI modeli"
-                   hint="Türkçe içerikte Claude Sonnet 4.5 önerilir; Gemini Flash daha hızlı, GPT-5.2 en detaylı"
+              <Row title={t("settings.ai_model_row")}
+                   hint={t("settings.ai_model_hint")}
                    testid="row-ai-model">
                 <select
                   data-testid="ai-model"
@@ -165,13 +162,13 @@ export default function SettingsPage() {
                   onChange={(e) => patch("ai_model", e.target.value)}
                   className="bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm"
                 >
-                  <option value="claude-sonnet-4-5">Claude Sonnet 4.5 (önerilen)</option>
+                  <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
                   <option value="gpt-5.2">GPT-5.2</option>
                   <option value="gemini-3-flash">Gemini 3 Flash</option>
                 </select>
               </Row>
             )}
-            <Row title="TLS zorunluluğu" hint="Kimlik doğrulamalı SMTP için TLS'i zorunlu tut"
+            <Row title={t("settings.tls")} hint={t("settings.tls_hint")}
                  testid="row-tls">
               <Toggle checked={state.tls_enforce} onChange={(v) => patch("tls_enforce", v)} testid="toggle-tls" />
             </Row>
@@ -180,18 +177,18 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><ArrowUpRight className="w-4 h-4 text-indigo-400" /> Giden Posta Kontrolü</span>}
-            subtitle="Sunucudan çıkan spam'ı sınırla"
+            title={<span className="flex items-center gap-2"><ArrowUpRight className="w-4 h-4 text-indigo-400" /> {t("settings.outbound_title")}</span>}
+            subtitle={t("settings.outbound_sub")}
           />
           <CardBody className="space-y-1">
-            <Row title="Giden e-posta engelleme"
-                 hint="Kural ihlali durumunda gönderimi kes ve admin'e bildir"
+            <Row title={t("settings.outbound_block")}
+                 hint={t("settings.outbound_block_hint")}
                  testid="row-outbound-block">
               <Toggle checked={state.outbound_block_enabled} onChange={(v) => patch("outbound_block_enabled", v)}
                       testid="toggle-outbound" />
             </Row>
-            <Row title="Kullanıcı başına saatlik limit"
-                 hint="cPanel hesabı başına saatte gönderilebilecek e-posta sayısı"
+            <Row title={t("settings.outbound_limit")}
+                 hint={t("settings.outbound_limit_hint")}
                  testid="row-outbound-limit">
               <input type="number" min="10" max="10000"
                 data-testid="outbound-limit"
@@ -206,11 +203,11 @@ export default function SettingsPage() {
       <div className="col-span-12 lg:col-span-4 space-y-4">
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><Clock className="w-4 h-4 text-indigo-400" /> Karantina</span>}
+            title={<span className="flex items-center gap-2"><Clock className="w-4 h-4 text-indigo-400" /> {t("settings.quarantine_title")}</span>}
           />
           <CardBody className="space-y-1">
-            <Row title="Bekletme süresi"
-                 hint="Bu süreden eski karantina kayıtları silinir"
+            <Row title={t("settings.retention")}
+                 hint={t("settings.retention_hint")}
                  testid="row-retention">
               <div className="flex items-center gap-2">
                 <input type="number" min="1" max="90"
@@ -218,7 +215,7 @@ export default function SettingsPage() {
                   value={state.quarantine_days}
                   onChange={(e) => patch("quarantine_days", parseInt(e.target.value || "0", 10))}
                   className="w-20 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right" />
-                <span className="text-xs text-slate-500">gün</span>
+                <span className="text-xs text-slate-500">{t("settings.days")}</span>
               </div>
             </Row>
           </CardBody>
@@ -226,18 +223,18 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><Bell className="w-4 h-4 text-indigo-400" /> Bildirimler</span>}
+            title={<span className="flex items-center gap-2"><Bell className="w-4 h-4 text-indigo-400" /> {t("settings.notif_title")}</span>}
           />
           <CardBody className="space-y-1">
-            <Row title="Karantina raporu sıklığı"
-                 hint="Kullanıcılara özet e-posta gönderme sıklığı"
+            <Row title={t("settings.report_freq")}
+                 hint={t("settings.report_freq_hint")}
                  testid="row-report-freq">
               <select value={state.report_frequency} onChange={(e) => patch("report_frequency", e.target.value)}
                 data-testid="report-frequency"
                 className="bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm">
-                <option value="off">Kapalı</option>
-                <option value="daily">Günlük</option>
-                <option value="weekly">Haftalık</option>
+                <option value="off">{t("settings.off")}</option>
+                <option value="daily">{t("settings.daily")}</option>
+                <option value="weekly">{t("settings.weekly")}</option>
               </select>
             </Row>
           </CardBody>
@@ -248,13 +245,13 @@ export default function SettingsPage() {
           onClick={() => save.mutate(state)}
           className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
         >
-          <Save className="w-4 h-4" /> Değişiklikleri Kaydet
+          <Save className="w-4 h-4" /> {t("settings.save_btn")}
         </button>
 
         <Card>
           <CardBody className="text-xs text-slate-500 space-y-2">
             <div className="flex items-center gap-2 text-slate-400">
-              <Lock className="w-3.5 h-3.5" /> Değişiklikler yalnızca root yetkili WHM kullanıcıları tarafından yapılabilir.
+              <Lock className="w-3.5 h-3.5" /> {t("settings.lock_hint")}
             </div>
             <div className="mono text-[11px] text-slate-600">/etc/mailshield/policy.conf</div>
           </CardBody>

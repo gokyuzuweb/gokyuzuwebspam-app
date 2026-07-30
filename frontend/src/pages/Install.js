@@ -1,7 +1,10 @@
 import { useState } from "react";
-import { Copy, Check, PackageOpen, Server, ShieldCheck, Terminal, Wrench, GitBranch, Download } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Copy, Check, PackageOpen, Server, ShieldCheck, Terminal, Wrench, GitBranch, Download, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
+import { api } from "@/lib/api";
+import { useT } from "@/i18n";
 
 function CodeBlock({ code, testid }) {
   const [copied, setCopied] = useState(false);
@@ -42,9 +45,54 @@ function Step({ n, title, children }) {
 }
 
 export default function Install() {
+  const t = useT();
+  const info = useQuery({ queryKey: ["plugin-install-info"], queryFn: () => api.pluginInstallInfo() });
+  const [variant, setVariant] = useState("wget");
+  const oneLiner = variant === "wget" ? info.data?.wget_one_liner : info.data?.curl_one_liner;
+
   return (
     <div className="p-6 grid grid-cols-12 gap-6">
       <div className="col-span-12 lg:col-span-8 space-y-4">
+        <Card>
+          <CardHeader
+            title={<span className="flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> {t("install_ui.one_liner_title")}</span>}
+            subtitle={t("install_ui.one_liner_sub")}
+            right={
+              <div className="inline-flex rounded-md border border-slate-800 bg-slate-950/40 p-0.5">
+                <button data-testid="one-liner-wget" onClick={() => setVariant("wget")}
+                  className={`px-3 py-1 text-xs rounded ${variant === "wget" ? "bg-indigo-500/20 text-indigo-200" : "text-slate-400 hover:text-slate-200"}`}>
+                  {t("install_ui.wget_variant")}
+                </button>
+                <button data-testid="one-liner-curl" onClick={() => setVariant("curl")}
+                  className={`px-3 py-1 text-xs rounded ${variant === "curl" ? "bg-indigo-500/20 text-indigo-200" : "text-slate-400 hover:text-slate-200"}`}>
+                  {t("install_ui.curl_variant")}
+                </button>
+              </div>
+            }
+          />
+          <CardBody className="space-y-3">
+            {oneLiner ? <CodeBlock testid="one-liner-cmd" code={oneLiner} /> : <div className="text-slate-500">{t("common.loading")}</div>}
+            <div className="flex flex-wrap gap-2">
+              <a
+                data-testid="download-tarball"
+                href={api.pluginDownloadUrl()}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm"
+              >
+                <Download className="w-3.5 h-3.5" /> {t("install_ui.download_pkg")}
+              </a>
+              <a
+                data-testid="download-html-guide"
+                href="/kurulum-kilavuzu.html"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm"
+              >
+                <Download className="w-3.5 h-3.5" /> Detaylı HTML Kılavuzu
+              </a>
+            </div>
+          </CardBody>
+        </Card>
+
         <Card>
           <CardHeader
             title={<span className="flex items-center gap-2"><PackageOpen className="w-4 h-4 text-indigo-400" /> GökyüzüWebSpam — WHM Plugin Kurulumu</span>}
@@ -57,25 +105,6 @@ export default function Install() {
               SpamAssassin/ClamAV/DCC/Razor entegrasyonlarını ve cPanel kullanıcıları için MailControl arayüzünü otomatik yapılandırır.
             </p>
             <p className="text-xs text-slate-500 mono">Paket dizini: /app/whm-plugin</p>
-            <div className="pt-2 flex flex-wrap gap-2">
-              <a
-                data-testid="download-html-guide"
-                href="/kurulum-kilavuzu.html"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm"
-              >
-                <Download className="w-3.5 h-3.5" /> Detaylı HTML Kılavuzu (yazdırılabilir)
-              </a>
-              <a
-                data-testid="download-md-guide"
-                href="/kurulum-kilavuzu.html"
-                download="GökyüzüWebSpam-Kurulum-Kilavuzu.html"
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-sm"
-              >
-                <Download className="w-3.5 h-3.5" /> Kılavuzu İndir
-              </a>
-            </div>
           </CardBody>
         </Card>
 

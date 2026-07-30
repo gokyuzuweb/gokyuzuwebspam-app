@@ -92,6 +92,13 @@ export const api = {
   checkoutStatus: (session_id) => client.get(`/checkout/status/${session_id}`).then(r => r.data),
   checkoutTransactions: () => client.get("/checkout/transactions").then(r => r.data),
 
+  // Financial analytics
+  analyticsMrr: () => client.get("/analytics/mrr").then(r => r.data),
+
+  // Plugin download + install info
+  pluginInstallInfo: (license_key) => client.get("/plugin/install-info", { params: license_key ? { license_key } : {} }).then(r => r.data),
+  pluginDownloadUrl: () => `${API}/plugin/download`,
+
   // Plugin upgrade
   pluginUpgrade: () => client.post("/plugin/upgrade").then(r => r.data),
 

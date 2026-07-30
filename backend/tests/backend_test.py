@@ -275,3 +275,99 @@ def test_version_manifest_put_and_upgrade_flow(s):
     up5 = r5.json()
     assert up5["ok"] is False
     assert "güncel" in up5["message"].lower() or "up" in up5["message"].lower()
+
+
+# ============== Iteration 3 (v1.3): MRR + Plugin download + install-info ==============
+
+def test_analytics_mrr_seller(s):
+    r = s.get(f"{API}/analytics/mrr", timeout=30)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    for k in ("mrr", "arr", "active_subs", "arpu", "ltv", "churn_pct", "trend", "plans_breakdown", "recent"):
+        assert k in d, f"missing {k}"
+    assert isinstance(d["trend"], list)
+    assert len(d["trend"]) == 6
+    assert isinstance(d["plans_breakdown"], list)
+    assert isinstance(d["recent"], list)
+    assert d["active_subs"] >= 0
+    # verify no ObjectId in recent
+    for tx in d["recent"]:
+        assert "_id" not in tx
+    # given seed data we expect at least some paid tx
+    assert d["mrr"] >= 0
+    assert d["arr"] == round(d["mrr"] * 12, 2)
+
+
+def test_plugin_download_tarball(s):
+    r = s.get(f"{API}/plugin/download", timeout=30)
+    assert r.status_code == 200, r.text
+    assert "gzip" in r.headers.get("content-type", "").lower()
+    cd = r.headers.get("content-disposition", "")
+    assert "filename" in cd.lower()
+    assert len(r.content) > 5 * 1024, f"tarball too small ({len(r.content)} bytes)"
+
+
+def test_plugin_install_info_no_license(s):
+    r = s.get(f"{API}/plugin/install-info", timeout=15)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    for k in ("download_url", "wget_one_liner", "curl_one_liner", "steps", "requires_root_ssh"):
+        assert k in d
+    assert d["requires_root_ssh"] is True
+    assert isinstance(d["steps"], list) and len(d["steps"]) >= 3
+    assert "wget" in d["wget_one_liner"]
+    assert "curl" in d["curl_one_liner"]
+    assert "--license=" not in d["wget_one_liner"]
+
+
+def test_plugin_install_info_with_license(s):
+    r = s.get(f"{API}/plugin/install-info", params={"license_key": "MS-TEST-1234"}, timeout=15)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert "--license=MS-TEST-1234" in d["wget_one_liner"]
+    assert "--license=MS-TEST-1234" in d["curl_one_liner"]
+
+
+def test_checkout_create_and_status(s):
+    payload = {
+        "plan_code": "starter", "billing_period": "monthly",
+        "customer_email": "test_status@buyer.com", "customer_name": "Status Test",
+        "origin_url": BASE_URL,
+    }
+    r = s.post(f"{API}/checkout/create-session", json=payload, timeout=30)
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    # status endpoint should return tx (either 'initiated' or Stripe-checked)
+    r2 = s.get(f"{API}/checkout/status/{sid}", timeout=30)
+    assert r2.status_code == 200, r2.text
+    tx = r2.json()
+    assert tx["session_id"] == sid
+    assert "status" in tx
+    # origin_url should be persisted
+    assert tx.get("origin_url", "").rstrip("/") == BASE_URL.rstrip("/")
+
+
+def test_checkout_status_unknown(s):
+    r = s.get(f"{API}/checkout/status/cs_unknown_xyz_404", timeout=15)
+    assert r.status_code == 404
+
+
+def test_checkout_webhook_invalid_sig(s):
+    # POST raw body with a bogus signature — must NOT crash
+    r = requests.post(
+        f"{API}/checkout/webhook",
+        data=b'{"foo":"bar"}',
+        headers={"stripe-signature": "t=1,v1=bogus", "Content-Type": "application/json"},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("received") is False
+
+
+# ---------- Regression: existing endpoints still respond ----------
+def test_regression_endpoints_up(s):
+    for path in ["/stats/overview", "/quarantine", "/settings", "/licenses",
+                 "/pricing", "/rules", "/notifications", "/i18n/languages"]:
+        r = s.get(f"{API}{path}", timeout=20)
+        assert r.status_code == 200, f"{path} -> {r.status_code} {r.text[:200]}"
