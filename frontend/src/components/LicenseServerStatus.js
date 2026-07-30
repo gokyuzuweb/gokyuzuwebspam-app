@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Radio, CheckCircle2, XCircle, ExternalLink } from "lucide-react";
+import { Radio, CheckCircle2, XCircle, ExternalLink, Server, Zap } from "lucide-react";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 
@@ -7,46 +7,79 @@ export default function LicenseServerStatus() {
   const health = useQuery({
     queryKey: ["license-server-health"],
     queryFn: api.licenseServerHealth,
-    refetchInterval: 30000,
+    refetchInterval: 20000,
   });
   const d = health.data;
   const ok = d?.reachable;
+  const healthy = d?.healthy_count ?? 0;
+  const total = d?.total_replicas ?? 0;
+  const cluster = d?.cluster;
+
+  const tone = healthy === total && total > 0 ? "success" : healthy > 0 ? "warning" : "danger";
+  const label = healthy === total && total > 0 ? "Sağlıklı Cluster" : healthy > 0 ? "Kısmi" : "Erişilemiyor";
 
   return (
     <Card data-testid="license-server-status">
       <CardHeader
-        title={<span className="flex items-center gap-2"><Radio className="w-4 h-4 text-indigo-400" /> Uzak Lisans Sunucusu</span>}
-        subtitle="WHM plugin'lerinden gelen heartbeat isteklerini karşılayan bağımsız servis"
+        title={<span className="flex items-center gap-2"><Radio className="w-4 h-4 text-indigo-400" /> Uzak Lisans Sunucusu Cluster'ı</span>}
+        subtitle="Redis-backed multi-replica FastAPI cluster · Round-robin proxy · Otomatik failover"
         right={
-          ok ? (
-            <Badge tone="success"><CheckCircle2 className="w-3 h-3 inline mr-1" />Erişilebilir</Badge>
-          ) : (
-            <Badge tone="danger"><XCircle className="w-3 h-3 inline mr-1" />Erişilemiyor</Badge>
-          )
+          <Badge tone={tone}>
+            {tone === "success" ? <CheckCircle2 className="w-3 h-3 inline mr-1" /> : <XCircle className="w-3 h-3 inline mr-1" />}
+            {label} {total > 0 ? `(${healthy}/${total})` : ""}
+          </Badge>
         }
       />
       <CardBody>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-          <div>
-            <div className="text-slate-500 uppercase tracking-widest mb-1">URL</div>
-            <div className="mono text-slate-300 break-all">{d?.url || "—"}</div>
-          </div>
-          <div>
-            <div className="text-slate-500 uppercase tracking-widest mb-1">Servis</div>
-            <div className="mono text-slate-300">{d?.service || "—"}</div>
-            <div className="mono text-slate-500">{d?.version || ""}</div>
-          </div>
-          <div>
-            <div className="text-slate-500 uppercase tracking-widest mb-1">Son yanıt</div>
-            <div className="mono text-slate-300">{d?.time ? new Date(d.time).toLocaleTimeString() : "—"}</div>
-            {!ok && d?.error && <div className="mono text-rose-400 mt-1 truncate">{d.error}</div>}
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+          {(d?.replicas || []).map((rep) => (
+            <div key={rep.url} data-testid={`replica-${rep.replica_id || rep.url}`}
+                 className={`rounded-md border p-3 ${
+                   rep.reachable
+                     ? "border-emerald-500/30 bg-emerald-500/5"
+                     : "border-rose-500/30 bg-rose-500/5"
+                 }`}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2 text-slate-100 font-medium text-sm">
+                  <Server className={`w-4 h-4 ${rep.reachable ? "text-emerald-400" : "text-rose-400"}`} />
+                  {rep.replica_id || "unknown"}
+                </div>
+                <span className={`text-[10px] mono uppercase tracking-widest ${rep.reachable ? "text-emerald-400" : "text-rose-400"}`}>
+                  {rep.reachable ? "UP" : "DOWN"}
+                </span>
+              </div>
+              <div className="text-[11px] mono text-slate-500 truncate">{rep.url}</div>
+              <div className="mt-1.5 flex items-center gap-3 text-[11px] text-slate-400">
+                <span>v{rep.version || "?"}</span>
+                <span className="flex items-center gap-1">
+                  <Zap className={`w-2.5 h-2.5 ${rep.redis?.connected ? "text-emerald-400" : "text-slate-600"}`} />
+                  Redis {rep.redis?.connected ? "✓" : "×"}
+                </span>
+                {rep.time && <span className="text-slate-600">{new Date(rep.time).toLocaleTimeString()}</span>}
+              </div>
+              {rep.error && <div className="mt-1 mono text-[10px] text-rose-400 truncate">{rep.error}</div>}
+            </div>
+          ))}
         </div>
-        <div className="mt-3 pt-3 border-t border-slate-800 text-[11px] text-slate-500 flex items-center gap-2">
+
+        {cluster && (
+          <div className="rounded-md border border-slate-800 bg-slate-950/40 p-3 mb-3">
+            <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1.5">
+              Redis-Backed Cluster View (self: <span className="mono text-slate-300">{cluster.self}</span>)
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(cluster.replicas || []).map((r) => (
+                <span key={r.replica_id} className="mono text-[10px] px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                  {r.replica_id}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="text-[11px] text-slate-500 flex items-center gap-2">
           <ExternalLink className="w-3 h-3" />
-          Bu servis 8002 portunda ayrı bir FastAPI process'i olarak çalışır. WHM heartbeat'leri
-          bu URL'e /v1/heartbeat POST atar. Prod'da genelde https://license.gokyuzuwebspam.com
-          şeklinde satıcının kendi domain'inde host edilir.
+          WHM plugin heartbeat'leri ingress arkasında bu cluster'a POST atar. Redis üzerinden verify cache (60s TTL) ve dağıtık rate limiting (120/min per license). Bir replica düşerse ana backend otomatik olarak diğerine geçer.
         </div>
       </CardBody>
     </Card>

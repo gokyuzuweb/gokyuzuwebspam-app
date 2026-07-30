@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ShieldAlert, Users2, Key, LogOut, Plus, Trash2, Mail, Server,
   Inbox, ListChecks, LogIn, UserPlus, ArrowRight, CheckCircle2, XCircle,
+  Receipt, Download, FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
@@ -155,6 +156,24 @@ function ResellerDashboard({ token, onLogout }) {
   });
 
   const scopedQ = useQuery({ queryKey: ["reseller-quarantine"], queryFn: () => api.resellerQuarantine(token) });
+  const invoices = useQuery({ queryKey: ["reseller-invoices"], queryFn: () => api.resellerInvoices(token) });
+
+  const downloadPdf = async (tx_id, inv_no) => {
+    try {
+      const blob = await api.resellerInvoicePdfBlob(token, tx_id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${inv_no}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`${inv_no}.pdf indirildi`);
+    } catch (e) {
+      toast.error("PDF indirilemedi");
+    }
+  };
 
   useEffect(() => {
     if (me.error) onLogout();
@@ -319,6 +338,69 @@ function ResellerDashboard({ token, onLogout }) {
                   )}
                 </tbody>
               </table>
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* Invoice history */}
+        <Card data-testid="invoices-card">
+          <CardHeader
+            title={<span className="flex items-center gap-2"><Receipt className="w-4 h-4 text-emerald-400" /> Fatura Geçmişi</span>}
+            subtitle={
+              invoices.data
+                ? `${invoices.data.count} fatura · Toplam ödeme: ${new Intl.NumberFormat("tr-TR", { style: "currency", currency: invoices.data.currency, maximumFractionDigits: 0 }).format(invoices.data.total_paid)}`
+                : "Yükleniyor…"
+            }
+            right={<Badge tone="success">PDF hazır</Badge>}
+          />
+          <CardBody>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-widest text-slate-500">
+                    <th className="text-left px-3 py-2 font-semibold">Fatura No</th>
+                    <th className="text-left px-3 py-2 font-semibold">Tarih</th>
+                    <th className="text-left px-3 py-2 font-semibold">Plan</th>
+                    <th className="text-right px-3 py-2 font-semibold">Tutar</th>
+                    <th className="text-right px-3 py-2 font-semibold w-32">İşlem</th>
+                  </tr>
+                </thead>
+                <tbody data-testid="invoices-tbody">
+                  {(invoices.data?.invoices || []).map((inv) => (
+                    <tr key={inv.id} className="border-t border-slate-800">
+                      <td className="px-3 py-2.5 mono text-emerald-300">{inv.invoice_number}</td>
+                      <td className="px-3 py-2.5 mono text-xs text-slate-400">
+                        {inv.issued_at ? new Date(inv.issued_at).toLocaleDateString("tr-TR") : "—"}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <Badge tone="brand">{(inv.plan_code || "").toUpperCase()}</Badge>
+                        <span className="ml-2 text-xs text-slate-500 mono">{inv.billing_period}</span>
+                      </td>
+                      <td className="px-3 py-2.5 mono text-slate-100 text-right font-medium">
+                        {new Intl.NumberFormat("tr-TR", { style: "currency", currency: inv.currency }).format(inv.amount)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <button
+                          data-testid={`inv-pdf-${inv.id}`}
+                          onClick={() => downloadPdf(inv.id, inv.invoice_number)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-xs"
+                        >
+                          <Download className="w-3 h-3" /> PDF
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {(!invoices.data?.invoices || invoices.data.invoices.length === 0) && (
+                    <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-500">
+                      Henüz fatura yok. /shop üzerinden ilk aboneliğinizi başlatın.
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3 pt-3 border-t border-slate-800 text-[11px] text-slate-500 flex items-center gap-2">
+              <FileText className="w-3 h-3" />
+              Faturalar Türkiye muhasebe standardına uygun formattadır — ödenmiş işaretli, ödeme referansı içerir. Muhasebe için ayrı entegrasyon gerektirmez.
             </div>
           </CardBody>
         </Card>

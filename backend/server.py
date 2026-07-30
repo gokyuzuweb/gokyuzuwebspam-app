@@ -2269,10 +2269,12 @@ from routes.analytics import router as _analytics_router  # noqa: E402
 from routes.plugin import router as _plugin_router  # noqa: E402
 from routes.reseller import router as _reseller_router  # noqa: E402
 from routes.license_client import router as _license_client_router  # noqa: E402
+from routes.invoices import router as _invoices_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
 app.include_router(_license_client_router, prefix="/api")
+app.include_router(_invoices_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
