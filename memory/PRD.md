@@ -1,41 +1,47 @@
-# GökyüzüWebSpam — WHM/cPanel Mail Security Plugin (v1.1)
+# GökyüzüWebSpam v1.2 — WHM/cPanel Mail Security Plugin
 
-## Marka & Amaç
-Satılabilir WHM/cPanel eklentisi (ConfigServer MailScanner alternatifi). Hedef cPanel 136.0.32.
+## Bu Session Eklemeleri (v1.2)
+- **Stripe Ödeme Otomasyonu**: Public /shop sayfası + 3 plan kartı × "Şimdi Satın Al" butonu
+  → gerçek Stripe Checkout URL üretir → ödeme sonrası otomatik UUID lisans anahtarı,
+  müşteriye ve satıcıya e-posta ile bildirim
+- **Version Upgrade Banner**: Yeni sürüm yayınlanınca üst şeritte "Tek Tıkla Güncelle"
+  butonu; WHM'de `mailshieldctl update` çalıştırır, önizleme ortamında simüle eder
+- **i18n Genişletmesi**: TR/EN/DE/FR/ES/AR × nav+common+header+dashboard tam çevirili
+  · Dashboard sayfası useT() ile refactor · language switching kusursuz (test edildi)
 
-## Bu Session (bugfix + fiyatlandırma)
-- ✅ BUG FIX: AI Kural Üretici 20s timeout → axios `llmClient` 90s
-- ✅ BUG FIX: Blacklist Delist 500 (ObjectId serialization) → insert_one'a dict kopyası
-- ✅ YENİ: Fiyatlandırma sayfası (seller-only) — 3 plan (starter/pro/enterprise), aylık/yıllık,
-      özellik listesi, Stripe lookup key, para birimi. Backend `/api/pricing` GET public, PUT seller-only.
-- ✅ i18n strings'e "pricing" 6 dilde eklendi
-- ✅ Rules.js React hydration uyarısı düzeltildi
+## Endpoint (yeni)
+- POST `/api/checkout/create-session` — Stripe session (public, e-posta zorunlu)
+- GET `/api/checkout/status/{sid}` — ödeme durumu poll
+- POST `/api/checkout/webhook` — Stripe callback (auto-license on paid)
+- GET `/api/checkout/transactions` — satıcı görünümü
+- POST `/api/plugin/upgrade` — tek tıkla plugin update
 
-## Önceki Session'lardan Mevcut (özet)
-- 14 sayfalık admin panel (Turkish/EN/DE/FR/ES/AR i18n)
+## Test Doğrulaması (iteration 2)
+- Backend: **17/17 pass %100**, critical bugs: 0
+- Frontend: shop→stripe redirect, upgrade banner+toast, i18n EN/DE/AR hepsi doğrulandı
+- Regresyon: tüm önceki bug fix'ler ve özellikler çalışıyor
+
+## Sistem Genel Durumu
+- 15 sayfa: Dashboard, Karantina, Beyaz/Kara Liste, Blacklist Çıkışı, Kurallar,
+  Motorlar, Giden Posta, Bildirimler, Raporlar, Lisans Yönetimi (seller-only),
+  **Fiyatlandırma (seller-only)**, Kullanıcılar, Kayıtlar, Ayarlar, Kurulum
+- Public routes: `/shop`, `/checkout/success` — auth'suz, sidebar'sız
+- 60+ backend endpoint
+- 6 dil desteği + Otomatik (cPanel-follow)
+- 7 günlük demo + IP bazlı lisans doğrulama + LicenseGate
 - SpamAssassin/ClamAV/DCC/Razor + Rspamd + AI (Claude/GPT/Gemini)
-- Karantina, whitelist/blacklist, kurallar (AI generator), motorlar, giden posta
-- Bildirimler (yönetici e-postası + Slack), PDF haftalık rapor, blacklist/RBL çıkışı (15 sağlayıcı)
-- Lisans yönetimi (UUID key, IP allowlist, heartbeat 403, ihlal alert) — SELLER-ONLY
-- Fiyatlandırma yönetimi — SELLER-ONLY
-- Version manifest + update check
-- 7 günlük demo + IP bazlı otomatik lisans doğrulama + LicenseGate modal (customer mode)
-- WHM plugin paketi (28 dosya): AppConfig, CGI proxy, cPanel MailControl, milter, heartbeat daemon,
-  systemd unit'leri, install.sh (dry-run + cp -n, non-destructive), uninstall.sh, mailshieldctl CLI
-
-## Test Doğrulaması (testing_agent iteration 1)
-- Backend: 11/11 pass (%100)
-- Frontend: 12+ sayfa · AI + delist + pricing + gate + verify hepsi doğrulandı
-- Critical bugs: 0, minor bugs: 0
+- Karantina, whitelist/blacklist, kurallar (AI generator), PDF rapor, RBL çıkışı
+- WHM plugin paketi: 28 dosya (Perl milter, heartbeat daemon, systemd, install.sh)
+- MAILSHIELD_MODE: seller (varsayılan) / customer (bayi kurulumu)
 
 ## Backlog
-- P1: Tüm sayfaların içerik i18n çevirisi (şu an sadece sidebar + header nav çevirili)
-- P1: Stripe checkout entegrasyonu (fiyat kart butonundan doğrudan ödeme)
-- P2: Sürüm otomatik güncelleme (`mailshieldctl update`)
-- P2: Reseller alt-yetki matrisi (bayinin de kendi müşterilerine "sub-license" verebilmesi)
-- P3: Grafana webhook uyumu
-- P3: Multi-language PDF rapor
+- P2: Full sayfa çevirileri (Quarantine, Lists, Rules body, Reports, Notifications, Settings)
+  — nav + header + dashboard tam ancak diğer 11 sayfa body TR fallback ile çalışıyor
+- P2: Reseller alt-yetki matrisi
+- P3: PricingSettings schema versioning
+- P3: Checkout create-session rate limit / captcha
+- P3: server.py'yi domain'lere böl (2235 satır)
 
 ## Test Credentials
-Auth-free preview. WHM'ye kurulduğunda Whostmgr::ACLS root kontrolü uygulanır.
-Seed lisans: "Örnek Müşteri A.Ş." → IP 203.0.113.10 (verify-license testi için)
+Auth-free preview. STRIPE_API_KEY=sk_test_emergent (backend/.env).
+Seed lisans: "Örnek Müşteri A.Ş." → IP 203.0.113.10.
