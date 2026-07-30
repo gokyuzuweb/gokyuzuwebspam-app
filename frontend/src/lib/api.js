@@ -114,7 +114,7 @@ export const api = {
   resellerDelList: (token, id) => client.delete(`/reseller/lists/${id}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
   resellerInvoices: (token) => client.get("/reseller/invoices", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
   resellerInvoicePdfUrl: (token, tx_id) => `${API}/reseller/invoices/${tx_id}/pdf`,
-  resellerInvoicePdfBlob: (token, tx_id) => client.get(`/reseller/invoices/${tx_id}/pdf`, { headers: { Authorization: `Bearer ${token}` }, responseType: "blob" }).then(r => r.data),
+  resellerInvoicePdfBlob: (token, tx_id, lang = "tr") => client.get(`/reseller/invoices/${tx_id}/pdf`, { params: { lang }, headers: { Authorization: `Bearer ${token}` }, responseType: "blob" }).then(r => r.data),
 
   // Plugin download + install info
   pluginInstallInfo: (license_key) => client.get("/plugin/install-info", { params: license_key ? { license_key } : {} }).then(r => r.data),

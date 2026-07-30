@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 6 (v1.6) — Region naming + multi-lang invoice PDF + Docker Compose deploy artifacts fully verified. Backend pytest: 17/17 PASSED. Frontend UI live-verified on preview URL: cluster widget shows 'Primary EU-West' and 'Secondary EU-Central' cards with 'Sağlıklı (2/2)' badge + 'Cache aktif' Redis label, zero URL/port leakage. Reseller dashboard shows PDF DILI selector (5 langs: Türkçe/English/Deutsch/Français/Español) in 'Fatura Geçmişi' card right header — successfully downloaded EN, DE, FR PDFs with correct filename pattern INV-YYYYMM-XXXXX-<lang>.pdf and toast confirmations. /api/license-server/verify returns 'served_by' as region label with 'replica_id' stripped. Fallback ?lang=jp returns EN body with -jp.pdf filename. Deploy files (docker-compose.yml, haproxy.cfg, README.md) present and content-valid.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v16_regions_i18n_pdf.py",
+    "/app/test_reports/pytest/pytest_v16.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/license_client.py `upstream_verify`: `served_by` derivation uses `str(r.request.url).split('/v1/')[0]` which is brittle if path changes. Consider tracking the chosen URL explicitly in `_try_all` return value (return (url, response)).",
+    "routes/license_client.py opens fresh `httpx.AsyncClient(...)` per health-check iteration (double `async with` around cluster/health call) — reuse a module-level client via FastAPI lifespan for performance under load.",
+    "routes/invoices.py: PDF builder still inline (~180 lines in one function) — split into `pdf_builder.py` for maintainability. i18n dict also grows linearly with languages; extract to JSON/YAML asset.",
+    "backend/.env `LICENSE_SERVER_REGIONS` count must match `PUBLIC_LICENSE_SERVER_URL` count. If ops mistakenly adds a third URL without a third label, code pads with 'Region-N' — good defensive default, but log a warning.",
+    "deploy/docker-compose.yml — verify with `docker compose config` was not executed here (docker not installed in the sandbox). Recommend adding a CI step or a syntax lint (yamllint) in the deploy README.",
+    "Frontend Reseller.js does not disable the PDF button while a download is in flight — rapid double-click can trigger duplicate downloads. Minor UX.",
+    "pypdf added as dev/test dep — add to /app/backend/requirements-dev.txt (or test extras) so future pytest runs don't fail on fresh envs."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v16_regions_i18n_pdf.py (NEW — 17 tests: region masking, multi-lang PDF, fallback, regression, deploy artifacts)"
+  ],
+  "success_rate": {
+    "backend": "17/17 (100%)",
+    "frontend": "100% — cluster widget URL-safe with region labels, invoice-lang selector functional, EN/DE/FR PDFs downloaded with correct suffixes, toast notifications visible"
+  },
+  "test_credentials": "reseller@test.com / strong123 (license MS-435EA62E57A442BBB10985E9)",
+  "seed_data_creation": "None. Reused 3 pre-seeded paid transactions.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "v1.6 backlog fully done. Preview URL cluster widget uses testids region-primary-eu-west & region-secondary-eu-central. Reseller invoices use invoice-lang select (values: tr/en/de/fr/es) + inv-pdf-<id> buttons. Backend regions env: LICENSE_SERVER_REGIONS='Primary EU-West,Secondary EU-Central' aligns with PUBLIC_LICENSE_SERVER_URL (8002,8003). Invoice PDF filename pattern: INV-YYYYMM-XXXXX-<lang>.pdf. Fallback lang → English body. Deploy files at /app/deploy/. pypdf installed for PDF text extraction in tests. Modular split of invoices.py PDF builder still deferred to P2 backlog (30+ shared helpers).",
+  "rca of the issue": "N/A — no bugs found."
+}

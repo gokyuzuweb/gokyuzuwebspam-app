@@ -2,6 +2,8 @@
 License-server client proxy — main backend calls the standalone license server
 so the WHM plugin's 'Verify License' button reflects the authoritative status.
 v2.0: Round-robin across multiple replica URLs (comma-separated env).
+v2.1: Friendly region labels via LICENSE_SERVER_REGIONS env
+        (comma-separated, aligned with PUBLIC_LICENSE_SERVER_URL).
 """
 from __future__ import annotations
 import os
@@ -14,9 +16,16 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/license-server", tags=["license-server"])
 
-# Comma-separated list, first URL used for single-replica back-compat
 _urls_env = os.environ.get("PUBLIC_LICENSE_SERVER_URL", "http://localhost:8002")
 REPLICA_URLS = [u.strip() for u in _urls_env.split(",") if u.strip()]
+_regions_env = os.environ.get("LICENSE_SERVER_REGIONS",
+                              "Primary EU-West,Secondary EU-Central")
+REGION_LABELS = [r.strip() for r in _regions_env.split(",") if r.strip()]
+# Align lengths (pad with generic names if mismatch)
+while len(REGION_LABELS) < len(REPLICA_URLS):
+    REGION_LABELS.append(f"Region-{len(REGION_LABELS) + 1}")
+URL_TO_LABEL = dict(zip(REPLICA_URLS, REGION_LABELS))
+
 ADMIN_KEY = os.environ.get("LICENSE_SERVER_ADMIN_KEY", "gws-license-admin-key")
 
 _rr_lock = threading.Lock()
@@ -34,7 +43,6 @@ async def _try_all(method: str, path: str, **kw):
     if not REPLICA_URLS:
         raise HTTPException(500, "License server URL yapılandırılmamış")
     start = _next_url()
-    # Build attempt order starting from `start`, then the rest as fallback
     idx = REPLICA_URLS.index(start)
     order = REPLICA_URLS[idx:] + REPLICA_URLS[:idx]
     errors: list[str] = []
@@ -44,28 +52,46 @@ async def _try_all(method: str, path: str, **kw):
                 r = await c.request(method, f"{url}{path}", **kw)
                 if r.status_code < 500:
                     return r
-                errors.append(f"{url} → {r.status_code}")
+                errors.append(f"{URL_TO_LABEL.get(url, url)} → {r.status_code}")
             except Exception as e:
-                errors.append(f"{url} → {type(e).__name__}: {e}")
+                errors.append(f"{URL_TO_LABEL.get(url, url)} → {type(e).__name__}: {e}")
     raise HTTPException(502, f"Tüm license-server replica'ları başarısız: {' | '.join(errors)}")
+
+
+def _mask_replica(url: str, payload: dict) -> dict:
+    """Return a customer-safe representation — swap raw URL for region label,
+    hide replica_id/redis details behind clear labels."""
+    label = URL_TO_LABEL.get(url, "Region")
+    is_reachable = payload.get("reachable", False)
+    return {
+        "region": label,
+        "reachable": is_reachable,
+        "version": payload.get("version"),
+        "redis_connected": (payload.get("redis") or {}).get("connected") if isinstance(payload.get("redis"), dict) else None,
+        "last_seen": payload.get("time"),
+        "error": payload.get("error") if not is_reachable else None,
+    }
 
 
 @router.get("/health")
 async def upstream_health():
-    """Health of each replica + Redis-backed cluster view from primary."""
-    results = []
+    """Health of each replica, masked with friendly region labels."""
+    raw = []
     async with httpx.AsyncClient(timeout=3) as c:
         for url in REPLICA_URLS:
+            entry = {"url": url}
             try:
                 r = await c.get(f"{url}/v1/health")
                 r.raise_for_status()
-                results.append({"url": url, "reachable": True, **r.json()})
+                entry.update({"reachable": True, **r.json()})
             except Exception as e:
-                results.append({"url": url, "reachable": False, "error": str(e)[:200]})
-    healthy = sum(1 for r in results if r.get("reachable"))
-    # Also fetch cluster view from first reachable replica
+                entry.update({"reachable": False, "error": str(e)[:200]})
+            raw.append(entry)
+
+    healthy = sum(1 for r in raw if r.get("reachable"))
+    # Cluster peer view — but we mask replica_ids for display
     cluster_view = None
-    for r in results:
+    for r in raw:
         if r.get("reachable"):
             try:
                 async with httpx.AsyncClient(timeout=3) as c:
@@ -74,19 +100,19 @@ async def upstream_health():
                     break
             except Exception:
                 continue
-    # Primary-shaped legacy fields
-    primary = results[0] if results else {}
+
+    regions = [_mask_replica(r["url"], r) for r in raw]
+    primary = regions[0] if regions else {}
     return {
         "reachable": healthy > 0,
-        "url": primary.get("url"),
-        "service": primary.get("service"),
+        "region": primary.get("region"),
         "version": primary.get("version"),
-        "time": primary.get("time"),
+        "last_seen": primary.get("last_seen"),
         "error": primary.get("error"),
-        "replicas": results,
+        "regions": regions,
         "healthy_count": healthy,
-        "total_replicas": len(REPLICA_URLS),
-        "cluster": cluster_view,
+        "total_regions": len(REPLICA_URLS),
+        "cluster_size": (cluster_view or {}).get("cluster_size") if cluster_view else None,
     }
 
 
@@ -101,7 +127,13 @@ async def upstream_verify(payload: VerifyReq):
         "license_key": payload.license_key,
         "server_ip": payload.server_ip,
     })
-    return r.json()
+    data = r.json()
+    # Mask replica_id → region label
+    rid = data.pop("replica_id", None)
+    # Find URL that owns this replica_id (best effort via last request path)
+    served_by = str(r.request.url).split("/v1/")[0] if r.request else None
+    data["served_by"] = URL_TO_LABEL.get(served_by, "Region")
+    return data
 
 
 class RevokeReq(BaseModel):
@@ -116,9 +148,11 @@ async def upstream_revoke(payload: RevokeReq):
                        headers={"X-Admin-Key": ADMIN_KEY})
     if r.status_code != 200:
         raise HTTPException(r.status_code, r.text)
-    return r.json()
+    d = r.json()
+    d.pop("replica_id", None)
+    return d
 
 
 @router.get("/config")
 async def config():
-    return {"urls": REPLICA_URLS, "primary": REPLICA_URLS[0]}
+    return {"regions": REGION_LABELS, "total": len(REPLICA_URLS)}

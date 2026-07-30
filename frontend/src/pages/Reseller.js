@@ -157,19 +157,21 @@ function ResellerDashboard({ token, onLogout }) {
 
   const scopedQ = useQuery({ queryKey: ["reseller-quarantine"], queryFn: () => api.resellerQuarantine(token) });
   const invoices = useQuery({ queryKey: ["reseller-invoices"], queryFn: () => api.resellerInvoices(token) });
+  const [invLang, setInvLang] = useState(() => localStorage.getItem("gws_invoice_lang") || "tr");
+  useEffect(() => { localStorage.setItem("gws_invoice_lang", invLang); }, [invLang]);
 
   const downloadPdf = async (tx_id, inv_no) => {
     try {
-      const blob = await api.resellerInvoicePdfBlob(token, tx_id);
+      const blob = await api.resellerInvoicePdfBlob(token, tx_id, invLang);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${inv_no}.pdf`;
+      a.download = `${inv_no}-${invLang}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-      toast.success(`${inv_no}.pdf indirildi`);
+      toast.success(`${inv_no}-${invLang}.pdf indirildi`);
     } catch (e) {
       toast.error("PDF indirilemedi");
     }
@@ -348,10 +350,26 @@ function ResellerDashboard({ token, onLogout }) {
             title={<span className="flex items-center gap-2"><Receipt className="w-4 h-4 text-emerald-400" /> Fatura Geçmişi</span>}
             subtitle={
               invoices.data
-                ? `${invoices.data.count} fatura · Toplam ödeme: ${new Intl.NumberFormat("tr-TR", { style: "currency", currency: invoices.data.currency, maximumFractionDigits: 0 }).format(invoices.data.total_paid)}`
+                ? `${invoices.data.count} fatura · Toplam ödeme: ${new Intl.NumberFormat("tr-TR", { style: "currency", currency: invoices.data.currency, maximumFractionDigits: 2 }).format(invoices.data.total_paid)}`
                 : "Yükleniyor…"
             }
-            right={<Badge tone="success">PDF hazır</Badge>}
+            right={
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] uppercase tracking-widest text-slate-500">PDF Dili</label>
+                <select
+                  data-testid="invoice-lang"
+                  value={invLang}
+                  onChange={(e) => setInvLang(e.target.value)}
+                  className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs mono text-slate-300 focus:outline-none focus:border-indigo-500/40"
+                >
+                  <option value="tr">Türkçe</option>
+                  <option value="en">English</option>
+                  <option value="de">Deutsch</option>
+                  <option value="fr">Français</option>
+                  <option value="es">Español</option>
+                </select>
+              </div>
+            }
           />
           <CardBody>
             <div className="overflow-x-auto">
