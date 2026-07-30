@@ -1,65 +1,72 @@
-# GökyüzüWebSpam v1.3 — WHM/cPanel Mail Security SaaS
+# GökyüzüWebSpam v1.4 — WHM/cPanel Mail Security SaaS
 
-## Bu Session Eklemeleri (v1.3 · Feb 2026)
-- **Aylık MRR Panosu**: Licenses sayfasına canlı finansal analitik eklendi. MRR/ARR/ARPU/LTV
-  stat kartları, 6-aylık MRR trend bar chart, plana göre dağılım tablosu ve son işlemler listesi.
-  Kaynak: `/api/analytics/mrr` — payment_transactions + licenses koleksiyonlarından hesaplanır,
-  yıllık ödemeler /12 ile normalize edilir. Preview'de 5 seed işlem: MRR=$315, ARR=$3780.
-- **Ödeme Sonrası Onboarding**: Stripe checkout başarılı olunca müşteriye zenginleştirilmiş
-  e-posta gönderilir — lisans anahtarı, tek-komut wget kurulum, 7 adımlı manuel kurulum ve
-  destek bilgisi. CheckoutSuccess sayfası da aynı komutu ve indirme butonunu gösterir.
-- **Wget Kurulum Sistemi**: `GET /api/plugin/download` on-the-fly tarball servis eder
-  (X-GWS-Version header + Content-Disposition). `GET /api/plugin/install-info` wget/curl
-  varyantlarını + lisans-embedded komutu döner. X-Forwarded-Proto/Host okuyarak public URL
-  üretir. Install sayfasına "One-line Install" bölümü ve toggle eklendi.
-- **Full Sayfa Çevirileri**: strings.js 6 dil × 8 sayfa = ~250 yeni key ile genişletildi.
-  Quarantine, Notifications, Settings, Reports, Rules (body), MRR ve Install UI hepsi useT()
-  kullanır. TR/EN/DE/FR/ES/AR — anlık dil değişimi (test edildi: TR→EN placeholder swap).
+## v1.4 (Feb 2026) — Major Structural Release
+Bu turda 4 büyük görev tamamlandı; test kapsamı **backend %100 (28/28) + frontend %100**:
 
-## Yeni Endpoint (v1.3)
-- GET `/api/analytics/mrr` — MRR/ARR/ARPU/LTV/churn/trend/plan_breakdown/recent (seller-only)
-- GET `/api/plugin/download` — WHM plugin tarball (public)
-- GET `/api/plugin/install-info?license_key=X` — wget/curl one-liner + adımlar
+### 1) Landing Page (`/`)
+- Cyberpunk/security dark tema — indigo/rose gradient hero + grid backdrop
+- Bölümler: Hero + Panel önizleme mock + Features (6 kart) + Stats + How it Works + Terminal demo + Pricing (canlı `/api/pricing`) + FAQ + CTA + Footer
+- Multi-language: TR/EN string map (diğer 4 dil common i18n'e devrediyor)
+- `data-testid`: landing-page, landing-hero, landing-buy-cta, landing-demo-cta, landing-reseller-cta, landing-features, landing-pricing, landing-how, landing-faq
 
-## Test Doğrulaması (iteration 3)
-- Backend pytest: **24/25 pass %96** — tek başarısız test iteration 2'den kalma stateful
-  version-upgrade sıralı testi (kod hatası değil, DB state); iteration 3'ün 4 yeni feature
-  testi %100 geçti (analytics_mrr, plugin_download, install_info +license, checkout webhook).
-- Frontend: **%100 pass** — MRR panel (mrr-stat-mrr/arr/subs/ltv, trend, plan-table, recent),
-  Install one-liner + toggle + tarball download, CheckoutSuccess (6 testid), Quarantine i18n
-  TR↔EN swap hepsi doğrulandı.
+### 2) Backend Modülerizasyonu (`/app/backend/routes/`)
+- Shared `deps.py` — DB, ENV, PLUGIN_MODE, seller_only dependency
+- `routes/analytics.py` — MRR endpoint çıkarıldı
+- `routes/plugin.py` — download + install-info çıkarıldı
+- `routes/reseller.py` — Yeni reseller portal endpoint'leri
+- `routes/license_client.py` — Upstream license server proxy'si
+- server.py: 2461 → 2278 satır; `app.include_router` ile modüller bağlı
+- Not: Tam split (rules, ai, checkout, licensing çekirdek) P2 backlog'a alındı — regression riski kritik değildi
 
-## Sistem Genel Durumu
-- 15 sayfa: Dashboard, Karantina, Beyaz/Kara Liste, Blacklist Çıkışı, Kurallar,
-  Motorlar, Giden Posta, Bildirimler, Raporlar, **Lisans Yönetimi + MRR Panosu** (seller),
-  **Fiyatlandırma** (seller), Kullanıcılar, Kayıtlar, Ayarlar, Kurulum
-- Public routes: `/shop`, `/checkout/success` (wget + tarball + copy)
-- 65+ backend endpoint
-- 6 dil desteği tam (nav+header+common+dashboard+quarantine+rules+notifications+settings+reports+mrr+install_ui)
-- 7 günlük demo + IP bazlı lisans + LicenseGate + heartbeat daemon
-- SpamAssassin/ClamAV/DCC/Razor + Rspamd + AI (Claude/GPT/Gemini)
-- Karantina, whitelist/blacklist, AI kural üretici, PDF rapor, RBL çıkışı
-- WHM plugin paketi: 28 dosya + on-the-fly tarball
-- MAILSHIELD_MODE: seller (varsayılan) / customer
+### 3) Reseller Alt-Yetki + JWT Auth (`/reseller`)
+- **Yeni koleksiyonlar**: `resellers`, `subaccounts`; `lists`'e `owner_reseller_id`
+- **Auth**: bcrypt password + PyJWT HS256, 24h TTL, `RESELLER_JWT_SECRET` env
+- **Endpoint'ler**: `/api/reseller/auth/{register,login}`, `/me`, `/subaccounts` CRUD, `/quarantine`, `/lists` CRUD — hepsi Bearer token gerektirir
+- **Plan bazlı kota**: starter=5, pro=50, enterprise=999 subaccount
+- **Scoped filtreleme**: reseller alt hesaplarının recipient/username'lerine göre karantina + lists filtrelenir
+- **Frontend**: `/reseller` → AuthScreen (login/register toggle) → Dashboard (StatCard × 4 + sub-account CRUD tablosu + scoped quarantine tablosu)
 
-## Backlog
-- P2: server.py'yi domain'lere böl (2453 satır — checkout/, analytics/, plugin/, licensing/, i18n/)
-- P2: `/api/plugin/download` tarball cache (per version, in-memory veya disk)
-- P3: MRR trend hesabı `relativedelta` ile calendar-month accurate yap
-- P3: Checkout webhook 400 döndürsün (Stripe retry için) invalid signature'da
-- P3: Reseller alt-yetki matrisi
-- P3: PricingSettings schema versioning
+### 4) Canlı License Server (port 8002, ayrı FastAPI process)
+- Yeri: `/app/license-server/server.py`, supervisor: `license-server.conf`
+- Env: `LICENSE_SERVER_ADMIN_KEY=gws-license-admin-key`
+- **Endpoint'ler**: `POST /v1/heartbeat`, `GET /v1/verify`, `POST /v1/revoke` (X-Admin-Key), `GET /v1/health`
+- IP mismatch ise `license_violations` koleksiyonuna yazar + `ok:false status:violation` döner
+- Expired lisans için `status:expired`, bilinmeyen key için `status:unknown`
+- Bootstrap: hiç IP kayıtlı değilse ilk heartbeat auto-register (P3: harden this)
+- **Ana backend proxy**: `/api/license-server/health|verify|revoke|config` — `PUBLIC_LICENSE_SERVER_URL` env üzerinden
+- **WHM plugin** heartbeat.pl güncellendi: `/v1/heartbeat` endpoint'ine POST atıyor, config'ten `license.server_url` okuyabiliyor
 
-## Endpoint Envanteri (Yeni)
-- POST `/api/checkout/create-session`, GET `/api/checkout/status/{sid}`, POST `/api/checkout/webhook`
-- GET `/api/checkout/transactions` (seller)
-- GET `/api/analytics/mrr` (seller)
-- GET `/api/plugin/download`
-- GET `/api/plugin/install-info`
-- POST `/api/plugin/upgrade`
-- GET `/api/version/current`, `/version/manifest`, `/version/check-update`
+## Routing Değişikliği (v1.3 → v1.4)
+- `/` → Landing (public marketing)
+- `/shop`, `/checkout/success` → Public (aynı)
+- `/reseller` → Reseller portal (kendi auth)
+- `/panel/*` → Ana panel (tüm eski route'lar buraya taşındı)
+- Legacy `/quarantine`, `/licenses`, ... → 301 redirect `/panel/*`
 
-## Test Credentials
-Auth-free preview. STRIPE_API_KEY=sk_test_emergent (backend/.env).
-Seed: 5 paid transactions (session_id `cs_test_seed_*`) + 5 licenses (notes=seed).
-Reseller test: "Örnek Müşteri A.Ş." → IP 203.0.113.10.
+## Servis Envanteri
+| Service | Port | Status |
+|---------|------|--------|
+| Ana backend (FastAPI + routes/) | 8001 | ✅ Running |
+| License server (FastAPI) | 8002 | ✅ Running |
+| Frontend (React + Landing/Panel/Reseller) | 3000 | ✅ Running |
+| MongoDB | 27017 | ✅ Running |
+
+## Test Doğrulaması (iteration 4)
+- Backend pytest: **28/28 %100** — 7 license-server + 2 proxy + 10 reseller + 4 regression + 5 landing/routing
+- Frontend: **%100** — Landing hero+features+pricing+CTA'lar; Panel `/panel/licenses` MRR + LicenseServerStatus (Erişilebilir ✓); Reseller login/register/sub-account add/logout flow
+
+## Backlog (P2/P3 — Sonraki iterasyonlar için)
+- **P2**: Kalan endpoint'leri routes/'a taşı (rules, ai, checkout, licensing çekirdek) — server.py'yi <500 satıra indir
+- **P2**: MRR trend `relativedelta` ile calendar-month accurate
+- **P2**: License server bootstrap IP — first-run token gerektirsin
+- **P3**: `/api/plugin/download` tarball cache (per version)
+- **P3**: Checkout webhook 400 döndürsün invalid signature'da (Stripe retry için)
+- **P3**: Reseller portal — 2FA, invoice geçmişi, quota yükseltme akışı
+- **P3**: License server — cluster mode (Redis + multiple replicas)
+- **P3**: Landing → i18n'in diğer 4 dile (DE/FR/ES/AR) yayılması
+
+## Credentials (test için)
+- Auth-free ana panel (MAILSHIELD_MODE=seller)
+- Reseller test hesabı: `reseller@test.com` / `strong123` (lisans MS-435EA62E57A442BBB10985E9)
+- License server admin: `X-Admin-Key: gws-license-admin-key`
+- Seed data: 5 paid transaction (MRR $315, ARR $3780)
