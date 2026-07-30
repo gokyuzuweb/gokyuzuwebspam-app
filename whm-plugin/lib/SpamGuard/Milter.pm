@@ -1,7 +1,7 @@
 package SpamGuard::Milter;
 #
 # Minimal Perl milter that shells out to spamc/clamdscan/dccif/razor-check
-# and routes verdicts to the MailShield API.
+# and routes verdicts to the GökyüzüWebSpam API.
 #
 
 use strict;

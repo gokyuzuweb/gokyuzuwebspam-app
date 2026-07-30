@@ -1,9 +1,129 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, FlaskConical, Play, ToggleLeft, ToggleRight } from "lucide-react";
+import { Plus, Trash2, FlaskConical, Play, ToggleLeft, ToggleRight, Sparkles, Wand2, Check, X, Languages } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
+import { useI18n } from "@/i18n";
+
+function AIRuleGenerator({ onAccept }) {
+  const [prompt, setPrompt] = useState("");
+  const [proposals, setProposals] = useState([]);
+  const { effective } = useI18n();
+  const [langOverride, setLangOverride] = useState("");
+  const gen = useMutation({
+    mutationFn: (p) => api.rulesGenerate(p, undefined, langOverride || effective),
+    onSuccess: (data) => {
+      setProposals(data.proposals);
+      toast.success(`${data.count} kural önerisi (${data.model} · ${data.language.toUpperCase()})`);
+    },
+    onError: (e) => toast.error("Üretim başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
+  const langLabel = (langOverride || effective || "tr").toUpperCase();
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-indigo-400" /> AI Kural Üretici</span>}
+        subtitle="Yakalamak istediğiniz spam türünü anlatın, AI arayüz diline uygun kurallar üretir"
+        right={
+          <div className="flex items-center gap-1.5">
+            <Languages className="w-3.5 h-3.5 text-slate-500" />
+            <select
+              data-testid="ai-rule-lang"
+              value={langOverride}
+              onChange={(e) => setLangOverride(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[11px] mono text-slate-300"
+              title="AI kural adlarının yazılacağı dil"
+            >
+              <option value="">Otomatik ({langLabel})</option>
+              <option value="tr">Türkçe</option>
+              <option value="en">English</option>
+              <option value="de">Deutsch</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="ar">العربية</option>
+            </select>
+          </div>
+        }
+      />
+      <CardBody className="space-y-3">
+        <div className="flex gap-2">
+          <input
+            data-testid="ai-rule-prompt"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder='örn: "sahte kripto para yatırım daveti"  ya da  "Türkçe eczane spam"'
+            className="flex-1 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/60"
+          />
+          <button
+            data-testid="ai-rule-generate"
+            onClick={() => { if (prompt.trim()) gen.mutate(prompt); }}
+            disabled={gen.isPending || !prompt.trim()}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-40"
+          >
+            <Wand2 className={`w-4 h-4 ${gen.isPending ? "animate-pulse" : ""}`} />
+            {gen.isPending ? "Üretiliyor…" : "Üret"}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5 text-[11px]">
+          {[
+            "Türkçe eczane / viagra spam",
+            "Sahte iş teklifi phishing",
+            "Kripto para yatırım pump",
+            "Banka doğrulama phishing",
+            "Sahte piyango / ödül maili",
+          ].map((s) => (
+            <button key={s} onClick={() => setPrompt(s)}
+              className="mono text-[11px] px-2 py-0.5 rounded border border-slate-700 bg-slate-800/60 text-slate-300 hover:border-indigo-500/40 hover:text-indigo-300">
+              {s}
+            </button>
+          ))}
+        </div>
+
+        {proposals.length > 0 && (
+          <div className="space-y-2 pt-2">
+            <div className="text-[11px] uppercase tracking-widest text-slate-500">Önerilen kurallar</div>
+            {proposals.map((p, i) => (
+              <div key={i} data-testid={`ai-proposal-${i}`}
+                   className="p-3 rounded border border-indigo-500/20 bg-indigo-500/5 flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-medium text-slate-100">{p.name}</span>
+                    <Badge>{p.target}</Badge>
+                    <span className="mono text-amber-300 text-xs">skor {p.score.toFixed(1)}</span>
+                  </div>
+                  <div className="mono text-[11px] text-slate-300 bg-slate-950 border border-slate-800 rounded px-2 py-1 truncate">
+                    {p.pattern}
+                  </div>
+                  {p.description && (
+                    <div className="text-[11px] text-slate-500 mt-1">{p.description}</div>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1">
+                  <button
+                    data-testid={`ai-accept-${i}`}
+                    onClick={() => { onAccept(p); setProposals(proposals.filter((_, k) => k !== i)); }}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                    title="Kurallara ekle"
+                  >
+                    <Check className="w-3 h-3" /> Ekle
+                  </button>
+                  <button
+                    onClick={() => setProposals(proposals.filter((_, k) => k !== i))}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] border border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700"
+                    title="Reddet"
+                  >
+                    <X className="w-3 h-3" /> Yok
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
 
 export default function Rules() {
   const qc = useQueryClient();
@@ -125,6 +245,8 @@ export default function Rules() {
       </div>
 
       <div className="col-span-12 lg:col-span-5 space-y-4">
+        <AIRuleGenerator onAccept={(p) => add.mutate({ ...p, enabled: true })} />
+
         <Card>
           <CardHeader
             title={<span className="flex items-center gap-2"><FlaskConical className="w-4 h-4 text-indigo-400" /> Kural Test Cihazı</span>}

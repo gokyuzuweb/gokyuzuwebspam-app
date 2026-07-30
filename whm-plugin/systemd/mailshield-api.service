@@ -1,5 +1,5 @@
 [Unit]
-Description=MailShield Pro API
+Description=GökyüzüWebSpam API
 After=network-online.target mongod.service
 Wants=mongod.service
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=MailShield Pro Milter (Exim entegrasyonu manuel olarak yapılana kadar mesajlara dokunmaz)
+Description=GökyüzüWebSpam Milter (Exim entegrasyonu manuel olarak yapılana kadar mesajlara dokunmaz)
 After=network-online.target mailshield-api.service
 Wants=mailshield-api.service
 

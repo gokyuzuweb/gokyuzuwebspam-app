@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Check, PackageOpen, Server, ShieldCheck, Terminal, Wrench, GitBranch } from "lucide-react";
+import { Copy, Check, PackageOpen, Server, ShieldCheck, Terminal, Wrench, GitBranch, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 
@@ -47,7 +47,7 @@ export default function Install() {
       <div className="col-span-12 lg:col-span-8 space-y-4">
         <Card>
           <CardHeader
-            title={<span className="flex items-center gap-2"><PackageOpen className="w-4 h-4 text-indigo-400" /> MailShield Pro — WHM Plugin Kurulumu</span>}
+            title={<span className="flex items-center gap-2"><PackageOpen className="w-4 h-4 text-indigo-400" /> GökyüzüWebSpam — WHM Plugin Kurulumu</span>}
             subtitle="cPanel/WHM 136.0.32 için AppConfig üzerinden entegrasyon"
             right={<Badge tone="brand">Perl · PHP · MongoDB</Badge>}
           />
@@ -57,6 +57,25 @@ export default function Install() {
               SpamAssassin/ClamAV/DCC/Razor entegrasyonlarını ve cPanel kullanıcıları için MailControl arayüzünü otomatik yapılandırır.
             </p>
             <p className="text-xs text-slate-500 mono">Paket dizini: /app/whm-plugin</p>
+            <div className="pt-2 flex flex-wrap gap-2">
+              <a
+                data-testid="download-html-guide"
+                href="/kurulum-kilavuzu.html"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm"
+              >
+                <Download className="w-3.5 h-3.5" /> Detaylı HTML Kılavuzu (yazdırılabilir)
+              </a>
+              <a
+                data-testid="download-md-guide"
+                href="/kurulum-kilavuzu.html"
+                download="GökyüzüWebSpam-Kurulum-Kilavuzu.html"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-sm"
+              >
+                <Download className="w-3.5 h-3.5" /> Kılavuzu İndir
+              </a>
+            </div>
           </CardBody>
         </Card>
 
@@ -67,7 +86,7 @@ export default function Install() {
                 <li>cPanel/WHM 110+ (test edildi: <span className="mono text-slate-300">136.0.32</span>)</li>
                 <li>Root SSH erişimi</li>
                 <li>Exim + Apache SpamAssassin (WHM &gt; Service Manager)</li>
-                <li>ClamAV, DCC, Vipul's Razor (opsiyonel; MailShield aracısı devreye alır)</li>
+                <li>ClamAV, DCC, Vipul's Razor (opsiyonel; GökyüzüWebSpam aracısı devreye alır)</li>
                 <li>MongoDB 5+ (paket ile birlikte otomatik kurulur)</li>
               </ul>
             </Step>
@@ -80,7 +99,7 @@ scp -r /app/whm-plugin root@sunucunuz.com:/root/
 
 # ya da git ile:
 ssh root@sunucunuz.com
-git clone https://ornek.git/mailshield-pro.git /root/whm-plugin`}
+git clone https://ornek.git/gokyuzuwebspam.git /root/whm-plugin`}
               />
             </Step>
 
@@ -105,7 +124,7 @@ chmod +x install.sh
 /scripts/restartsrv_cpsrvd`}
               />
               <p className="text-xs text-slate-500">
-                Kayıt tamamlandığında WHM &gt; Plugins altında <span className="text-indigo-300">MailShield Pro</span> menüsü görünür.
+                Kayıt tamamlandığında WHM &gt; Plugins altında <span className="text-indigo-300">GökyüzüWebSpam</span> menüsü görünür.
               </p>
             </Step>
 
@@ -118,7 +137,7 @@ chmod +x install.sh
                 code={`milters=inet:127.0.0.1:33333`}
               />
               <p className="text-xs text-slate-500">
-                Alternatif: <span className="mono">/scripts/buildeximconf</span> çalıştırın. MailShield milter'ı 33333 portunda dinler.
+                Alternatif: <span className="mono">/scripts/buildeximconf</span> çalıştırın. GökyüzüWebSpam milter'ı 33333 portunda dinler.
               </p>
             </Step>
 
@@ -156,9 +175,9 @@ mailshieldctl status`}
 
             <Step n={8} title="Paneli açın">
               <p className="text-sm text-slate-400">
-                Root olarak WHM'ye giriş yapın, sol menüde <span className="text-indigo-300">Plugins &gt; MailShield Pro</span>'ya
+                Root olarak WHM'ye giriş yapın, sol menüde <span className="text-indigo-300">Plugins &gt; GökyüzüWebSpam</span>'ya
                 tıklayın. cPanel kullanıcılarınız da kendi cPanel arayüzlerinde <span className="text-indigo-300">Email &gt;
-                MailShield MailControl</span> ikonundan kendi karantinalarını yönetebilir.
+                GökyüzüWebSpam MailControl</span> ikonundan kendi karantinalarını yönetebilir.
               </p>
             </Step>
           </CardBody>
@@ -198,13 +217,13 @@ mailshieldctl restart
           <CardHeader title={<span className="flex items-center gap-2"><Server className="w-4 h-4 text-indigo-400" /> Sistem Mimarisi</span>} />
           <CardBody className="text-xs text-slate-400 space-y-3">
             <div className="mono text-slate-300">
-              Exim → milter (33333) → MailShield Daemon
+              Exim → milter (33333) → GökyüzüWebSpam Daemon
               <br/>&nbsp;&nbsp;├── SpamAssassin
               <br/>&nbsp;&nbsp;├── ClamAV
               <br/>&nbsp;&nbsp;├── DCC
               <br/>&nbsp;&nbsp;├── Razor
               <br/>&nbsp;&nbsp;└── AI (Emergent LLM, opsiyonel)
-              <br/>MailShield API (127.0.0.1:8001)
+              <br/>GökyüzüWebSpam API (127.0.0.1:8001)
               <br/>MongoDB (yerel, quarantine + logs)
               <br/>WHM CGI ⇄ cPanel MailControl UI
             </div>
@@ -227,7 +246,7 @@ mailshieldctl restart
         <Card>
           <CardHeader title={<span className="flex items-center gap-2"><GitBranch className="w-4 h-4 text-indigo-400" /> Sürüm & Uyumluluk</span>} />
           <CardBody className="text-xs text-slate-400 space-y-1">
-            <div className="flex items-center justify-between"><span>MailShield</span><span className="mono text-slate-200">1.0.0</span></div>
+            <div className="flex items-center justify-between"><span>GökyüzüWebSpam</span><span className="mono text-slate-200">1.0.0</span></div>
             <div className="flex items-center justify-between"><span>Hedef cPanel</span><span className="mono text-slate-200">136.0.32</span></div>
             <div className="flex items-center justify-between"><span>Min. cPanel</span><span className="mono text-slate-200">110.0</span></div>
             <div className="flex items-center justify-between"><span>Perl</span><span className="mono text-slate-200">5.32+</span></div>

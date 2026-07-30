@@ -1,8 +1,8 @@
 #!/usr/local/cpanel/3rdparty/bin/perl
 #
-# MailShield Pro — WHM CGI proxy
+# GökyüzüWebSpam — WHM CGI proxy
 #
-# Renders the WHM chrome + iframes the MailShield API dashboard.
+# Renders the WHM chrome + iframes the GökyüzüWebSpam API dashboard.
 # Also exposes a passthrough API at /cgi/mailshield/api/* that authenticates
 # via WHM session and forwards to the local FastAPI service.
 #
@@ -35,6 +35,13 @@ if ($pinfo =~ m{^/api/}) {
     $url .= '?' . $ENV{QUERY_STRING} if $ENV{QUERY_STRING};
     my $req     = HTTP::Request->new($method => $url);
     $req->header('Content-Type' => $ENV{CONTENT_TYPE} // 'application/json');
+    # Forward cPanel's active language so the panel + AI rule generator can localize
+    my $cp_lang = $ENV{HTTP_ACCEPT_LANGUAGE} // '';
+    if ($cp_lang) {
+        # Extract primary language code (e.g. "tr,en;q=0.9" -> "tr")
+        my ($primary) = $cp_lang =~ /^([a-zA-Z]{2})/;
+        $req->header('X-Cpanel-Language' => $primary) if $primary;
+    }
     $req->content($body) if length $body;
     my $res = $ua->request($req);
     print "Status: " . $res->code . "\n";
@@ -49,7 +56,7 @@ Cpanel::Template::process_template(
     {
         'template_file'    => '/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/mailshield.tmpl',
         'print'            => 1,
-        'app_title'        => 'MailShield Pro',
+        'app_title'        => 'GökyüzüWebSpam',
         'api_base'         => '/cgi/mailshield/api',
     },
 );

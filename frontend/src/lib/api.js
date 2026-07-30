@@ -35,5 +35,44 @@ export const api = {
   logs: (params = {}) => client.get("/logs", { params }).then(r => r.data),
   outbound: () => client.get("/outbound").then(r => r.data),
 
+  notifications: () => client.get("/notifications").then(r => r.data),
+  notificationsPut: (payload) => client.put("/notifications", payload).then(r => r.data),
+  notificationsTest: (channel) => client.post("/notifications/test", { channel }).then(r => r.data),
+  notificationsSimulate: () => client.post("/notifications/simulate-threat").then(r => r.data),
+
+  reportDownload: () => `${API}/reports/weekly`,
+  reportSend: (recipient) => client.post("/reports/weekly/send", { recipient }).then(r => r.data),
+
+  scanAI: (payload) => client.post("/scan/ai", payload).then(r => r.data),
+
+  // Version
+  versionCurrent: () => client.get("/version/current").then(r => r.data),
+  versionManifest: () => client.get("/version/manifest").then(r => r.data),
+  versionManifestPut: (payload) => client.put("/version/manifest", payload).then(r => r.data),
+  versionCheckUpdate: () => client.get("/version/check-update").then(r => r.data),
+
+  // Licenses
+  licenses: () => client.get("/licenses").then(r => r.data),
+  licenseAdd: (payload) => client.post("/licenses", payload).then(r => r.data),
+  licenseUpdate: (id, payload) => client.put(`/licenses/${id}`, payload).then(r => r.data),
+  licenseDelete: (id) => client.delete(`/licenses/${id}`).then(r => r.data),
+  violations: () => client.get("/license/violations").then(r => r.data),
+  violationsClear: () => client.delete("/license/violations").then(r => r.data),
+  violationSimulate: (payload) => client.post("/license/simulate-violation", payload).then(r => r.data),
+
+  // Blacklist
+  blacklistProviders: () => client.get("/blacklist/providers").then(r => r.data),
+  blacklistCheck: (payload) => client.post("/blacklist/check", payload).then(r => r.data),
+  blacklistDelist: (payload) => client.post("/blacklist/delist", payload).then(r => r.data),
+  blacklistRequests: () => client.get("/blacklist/requests").then(r => r.data),
+  blacklistUpdateRequest: (id, payload) => client.put(`/blacklist/requests/${id}`, payload).then(r => r.data),
+
+  // AI Rule Generator
+  rulesGenerate: (prompt, model, language) => client.post("/rules/generate", { prompt, model, language }).then(r => r.data),
+
+  // i18n
+  i18nLanguages: () => client.get("/i18n/languages").then(r => r.data),
+  i18nEffective: (cpanel_lang) => client.get("/i18n/effective", { params: { cpanel_lang } }).then(r => r.data),
+
   scanTest: (payload) => client.post("/scan/test", payload).then(r => r.data),
 };

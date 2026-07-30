@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# MailShield Pro — uninstaller
+# GökyüzüWebSpam — uninstaller
 #
 set -euo pipefail
 
@@ -27,6 +27,6 @@ rm -rf /usr/local/cpanel/whostmgr/docroot/cgi/mailshield
 rm -rf /usr/local/cpanel/base/frontend/jupiter/mailshield
 rm -f  /usr/local/sbin/mailshieldctl
 
-echo "MailShield Pro removed."
+echo "GökyüzüWebSpam removed."
 echo "Note: /etc/mailshield/ and /var/log/mailshield/ are preserved for review."
 echo "Delete manually if no longer needed."

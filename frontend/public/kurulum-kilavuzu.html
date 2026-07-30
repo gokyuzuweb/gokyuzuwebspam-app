@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title>GökyüzüWebSpam — WHM/cPanel Kurulum Kılavuzu</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f172a; --card: #1e293b; --ink: #f1f5f9; --muted: #94a3b8;
+    --brand: #6366f1; --success: #10b981; --danger: #ef4444; --warn: #f59e0b;
+    --code-bg: #0b1220; --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    line-height: 1.6;
+  }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, "Courier New", monospace; }
+  header {
+    background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%);
+    padding: 40px 24px; text-align: center; border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0 0 8px 0; font-size: 32px; font-weight: 800; letter-spacing: -0.02em; }
+  header p { margin: 0; color: var(--muted); font-size: 15px; }
+  .badge {
+    display: inline-block; padding: 4px 10px; border-radius: 999px;
+    background: rgba(99,102,241,0.15); color: #a5b4fc; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700;
+    border: 1px solid rgba(99,102,241,0.3); margin-top: 12px;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; }
+  .step {
+    display: flex; gap: 20px; padding: 24px 0; border-bottom: 1px solid var(--border);
+  }
+  .step:last-child { border-bottom: 0; }
+  .step-num {
+    flex-shrink: 0; width: 40px; height: 40px; border-radius: 999px;
+    background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.4);
+    color: #a5b4fc; display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-family: "SF Mono", monospace;
+  }
+  .step-body { flex: 1; min-width: 0; }
+  .step h2 { margin: 4px 0 12px; font-size: 20px; }
+  .step p { color: #cbd5e1; margin: 8px 0; }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; font-size: 13px; overflow-x: auto; color: #cbd5e1;
+    position: relative;
+  }
+  code.inline {
+    background: rgba(148,163,184,0.15); padding: 2px 6px; border-radius: 4px;
+    font-size: 12px; color: #e2e8f0;
+  }
+  .warn {
+    background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.3);
+    padding: 12px 16px; border-radius: 8px; margin: 12px 0; font-size: 14px;
+    color: #fbbf24;
+  }
+  .safe {
+    background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.3);
+    padding: 12px 16px; border-radius: 8px; margin: 12px 0; font-size: 14px;
+    color: #6ee7b7;
+  }
+  .danger {
+    background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3);
+    padding: 12px 16px; border-radius: 8px; margin: 12px 0; font-size: 14px;
+    color: #fca5a5;
+  }
+  ul { color: #cbd5e1; margin: 8px 0; padding-left: 20px; }
+  li { margin: 4px 0; }
+  h3 { margin: 24px 0 8px; font-size: 15px; color: #e2e8f0; text-transform: uppercase;
+       letter-spacing: 0.05em; font-weight: 700; }
+  .toc {
+    background: rgba(30,41,59,0.5); border: 1px solid var(--border); border-radius: 8px;
+    padding: 20px 24px; margin-bottom: 24px;
+  }
+  .toc h3 { margin-top: 0; }
+  .toc ol { color: #cbd5e1; padding-left: 20px; }
+  .toc a { color: #a5b4fc; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  footer {
+    padding: 24px; text-align: center; color: var(--muted); font-size: 12px;
+    border-top: 1px solid var(--border);
+  }
+  kbd {
+    background: #334155; padding: 2px 6px; border-radius: 4px;
+    font-family: monospace; font-size: 11px; border: 1px solid #475569;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>GökyüzüWebSpam — WHM/cPanel Kurulum Kılavuzu</h1>
+  <p>ConfigServer MailScanner alternatifi · Apache SpamAssassin + ClamAV + DCC + Razor + AI</p>
+  <div class="badge">Hedef sürüm: cPanel 136.0.32</div>
+</header>
+
+<main>
+
+  <div class="safe">
+    <strong>Güvenlik garantisi:</strong> Bu paket mevcut cPanel/WHM yapılandırmanıza
+    <b>dokunmaz</b>. Kurulum yalnızca yeni dosyaları ekler (<code class="inline">cp -n</code>),
+    Exim/SpamAssassin ayarları hiç değiştirilmez, milter DEFAULT KAPALI olarak kurulur
+    ve mail akışına ancak Adım 5'te siz opt-in ettiğinizde dokunur.
+  </div>
+
+  <div class="toc">
+    <h3>İçindekiler</h3>
+    <ol>
+      <li><a href="#req">Ön gereksinimler</a></li>
+      <li><a href="#mongo">MongoDB kurulumu (yoksa)</a></li>
+      <li><a href="#upload">Paketi sunucuya aktarma</a></li>
+      <li><a href="#install">Dry-run + gerçek kurulum</a></li>
+      <li><a href="#access">WHM'de panele erişim</a></li>
+      <li><a href="#milter">Milter bağlantısı (OPT-IN)</a></li>
+      <li><a href="#engines">Motor entegrasyonları</a></li>
+      <li><a href="#cpanel">cPanel kullanıcıları için MailControl</a></li>
+      <li><a href="#test">Bildirim &amp; AI &amp; PDF testleri</a></li>
+      <li><a href="#rollback">Cayma / kaldırma</a></li>
+      <li><a href="#tshoot">Sorun giderme</a></li>
+    </ol>
+  </div>
+
+  <div class="step" id="req">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h2>Ön gereksinimler</h2>
+      <p>Kuruluma başlamadan önce şunları doğrulayın:</p>
+      <ul>
+        <li>WHM sürümü <b>110+</b> (test: 136.0.32) — <code class="inline">cat /usr/local/cpanel/version</code></li>
+        <li>Root SSH erişimi</li>
+        <li>Exim + Apache SpamAssassin aktif (WHM &gt; Service Manager)</li>
+        <li>Sistem yedeği (opsiyonel ama önerilir)</li>
+      </ul>
+      <div class="warn">
+        <strong>Hazır olmadıysanız:</strong> WHM &gt; Home &gt; Backup &gt; Backup Configuration'dan
+        tam sunucu yedeği alın veya sanal makine snapshot'ı oluşturun. Ancak bu paket
+        cPanel yapılandırmasına dokunmadığı için pratikte yedeğe ihtiyaç duymayacaksınız.
+      </div>
+    </div>
+  </div>
+
+  <div class="step" id="mongo">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h2>MongoDB kurulumu (yoksa)</h2>
+      <p>GökyüzüWebSpam karantina, liste ve log verilerini yerel MongoDB'de tutar.
+         Sunucuda MongoDB yoksa şu komutları çalıştırın:</p>
+      <pre>cat &gt;/etc/yum.repos.d/mongodb-org-7.0.repo &lt;&lt;'EOF'
+[mongodb-org-7.0]
+name=MongoDB Repository
+baseurl=https://repo.mongodb.org/yum/redhat/$releasever/mongodb-org/7.0/x86_64/
+gpgcheck=1
+enabled=1
+gpgkey=https://www.mongodb.org/static/pgp/server-7.0.asc
+EOF
+yum install -y mongodb-org
+systemctl enable --now mongod</pre>
+      <div class="safe">
+        MongoDB sadece <code class="inline">127.0.0.1</code>'de dinler.
+        MySQL/MariaDB'nize etkisi yoktur.
+      </div>
+    </div>
+  </div>
+
+  <div class="step" id="upload">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h2>Paketi sunucuya aktarın</h2>
+      <p>Yerel makinenizden veya panelden aldığınız <code class="inline">whm-plugin</code>
+         dizinini WHM sunucusunun <code class="inline">/root</code> altına kopyalayın:</p>
+      <pre># Yerel makineden
+scp -r whm-plugin root@sunucunuz.com:/root/
+
+# Sunucuya bağlanın
+ssh root@sunucunuz.com
+cd /root/whm-plugin
+chmod +x install.sh uninstall.sh mailshieldctl</pre>
+    </div>
+  </div>
+
+  <div class="step" id="install">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h2>Dry-run + gerçek kurulum</h2>
+      <p>Önce hiçbir dosya yazmadan neyin nereye kopyalanacağını görün:</p>
+      <pre>./install.sh --dry-run</pre>
+      <p>Beğendiğinizde gerçek kurulumu başlatın:</p>
+      <pre>./install.sh</pre>
+      <div class="safe">
+        Kurulum sırasında <b>hiçbir mevcut cPanel dosyası</b> yeniden yazılmaz.
+        <code class="inline">cp -n</code> (no-clobber) modu ile yalnızca eksik dosyalar eklenir.
+      </div>
+      <h3>Kurulum ne yapar?</h3>
+      <ul>
+        <li><code class="inline">/usr/local/mailshield/</code> — uygulama kaynakları</li>
+        <li><code class="inline">/etc/mailshield/</code> — yapılandırma dosyaları</li>
+        <li><code class="inline">/var/log/mailshield/</code> — loglar</li>
+        <li><code class="inline">/var/cpanel/apps/mailshield.conf</code> — WHM AppConfig</li>
+        <li>systemd: <code class="inline">mailshield-api</code>,
+            <code class="inline">mailshield-milter</code> (BAŞLATILMAZ),
+            <code class="inline">mailshield-quarantine.timer</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="step" id="access">
+    <div class="step-num">5</div>
+    <div class="step-body">
+      <h2>WHM'de panele erişim</h2>
+      <p>WHM'ye root ile giriş yapın. Sol menüde:</p>
+      <p><b>Plugins → GökyüzüWebSpam</b> tıklayın. Panel açılacaktır.</p>
+      <div class="warn">
+        Panel görünmüyorsa manuel refresh yapın:
+        <pre>/usr/local/cpanel/bin/register_appconfig /var/cpanel/apps/mailshield.conf
+/scripts/restartsrv_cpsrvd</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="step" id="milter">
+    <div class="step-num">6</div>
+    <div class="step-body">
+      <h2>Milter bağlantısı (OPT-IN — gerçek koruma bu adımda başlar)</h2>
+      <p>Kurulumdan sonra GökyüzüWebSpam <b>gözlem modundadır</b> — dashboard çalışır,
+         karantina/liste yönetimi manuel yapılabilir; ancak Exim ile bağ kurmadıkça
+         gerçek mail akışına dokunmaz.</p>
+      <p>Gerçek mail süzmeyi başlatmak için:</p>
+      <p><strong>Adım A</strong> — milter servisini başlatın:</p>
+      <pre>systemctl enable --now mailshield-milter.service</pre>
+      <p><strong>Adım B</strong> — Exim'e milter'ı tanıtın:</p>
+      <ul>
+        <li>WHM &gt; <b>Exim Configuration Manager</b> &gt; <b>Advanced Editor</b></li>
+        <li>Şu satırı ekleyin:</li>
+      </ul>
+      <pre>milters=inet:127.0.0.1:33333</pre>
+      <ul>
+        <li><kbd>Save</kbd> butonuna basın</li>
+      </ul>
+      <p><strong>Adım C</strong> — Exim yapılandırmasını yeniden derleyin:</p>
+      <pre>/scripts/buildeximconf
+/scripts/restartsrv_exim</pre>
+      <p><strong>Doğrulama:</strong></p>
+      <pre>tail -f /var/log/mailshield/milter.log
+# başka bir terminalden test maili
+echo "test spam viagra" | mail -s "Test" root@localhost</pre>
+      <div class="danger">
+        <strong>Cayma (rollback):</strong> Bir sorun olursa
+        <code class="inline">milters=</code> satırını Advanced Editor'den silin,
+        <pre>/scripts/buildeximconf && /scripts/restartsrv_exim</pre>
+        çalıştırın. cPanel önceki durumuna geri döner.
+      </div>
+    </div>
+  </div>
+
+  <div class="step" id="engines">
+    <div class="step-num">7</div>
+    <div class="step-body">
+      <h2>Motor entegrasyonları</h2>
+
+      <h3>Apache SpamAssassin</h3>
+      <p>Zaten WHM &gt; Service Manager'da yönetilir. GökyüzüWebSpam yalnızca
+      <code class="inline">spamc</code> komutunu çağırır — SA yapılandırmanız değişmez.</p>
+
+      <h3>ClamAV (opsiyonel)</h3>
+      <pre>yum install -y clamav clamav-server clamav-update clamav-scanner-systemd
+freshclam
+systemctl enable --now clamd@scan
+mailshieldctl engine enable clamav</pre>
+
+      <h3>DCC (opsiyonel)</h3>
+      <pre>yum install -y dcc || cpan -T DCC::Client
+mailshieldctl engine enable dcc</pre>
+
+      <h3>Vipul's Razor (opsiyonel)</h3>
+      <pre>yum install -y razor-agents
+razor-admin -create
+razor-admin -register
+mailshieldctl engine enable razor</pre>
+
+      <h3>AI Sınıflandırma (opsiyonel)</h3>
+      <p><code class="inline">/etc/mailshield/mailshield.conf</code> dosyasına
+      Emergent LLM anahtarınızı yazın:</p>
+      <pre>[ai]
+provider           = emergent
+model              = claude-sonnet-4-5
+emergent_llm_key   = sk-emergent-...</pre>
+      <p>Panelde <b>Ayarlar → AI Sınıflandırma</b> toggle'ını açın; model seçicisinden
+      Claude Sonnet 4.5 / GPT-5.2 / Gemini 3 Flash arasında geçiş yapın.</p>
+    </div>
+  </div>
+
+  <div class="step" id="cpanel">
+    <div class="step-num">8</div>
+    <div class="step-body">
+      <h2>cPanel kullanıcıları için MailControl</h2>
+      <p>Kullanıcılar için MailControl arayüzü otomatik eklenir:</p>
+      <ul>
+        <li>cPanel &gt; <b>Email</b> &gt; <b>GökyüzüWebSpam MailControl</b></li>
+        <li>Kullanıcı yalnızca kendi karantinasını görür (virtusers eşleşmesi ile yalıtım)</li>
+      </ul>
+      <p>Belirli reseller/paket için gizlemek isterseniz:</p>
+      <ul>
+        <li>WHM &gt; <b>Feature Manager</b> &gt; "GökyüzüWebSpam MailControl" satırını istediğiniz
+        Feature List'ten çıkarın.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="step" id="test">
+    <div class="step-num">9</div>
+    <div class="step-body">
+      <h2>Bildirim &amp; AI &amp; PDF testleri</h2>
+
+      <h3>Slack + Telegram uyarıları</h3>
+      <p>Panel &gt; <b>Bildirimler</b> sekmesi:</p>
+      <ul>
+        <li>Slack Webhook URL girin, toggle'ı açın, <kbd>Slack Test Bildirimi</kbd> butonuna basın</li>
+        <li>Telegram için BotFather'dan aldığınız token + chat ID girin, test edin</li>
+        <li>"Tehdit Alarmı Simüle Et" — karantinadan gerçek bir kayıt ile alert gönderir</li>
+      </ul>
+
+      <h3>AI sınıflandırma</h3>
+      <ul>
+        <li>Ayarlar &gt; AI Sınıflandırma toggle'ı açık olmalı</li>
+        <li>Kurallar &gt; Kural Test Cihazı → örnek mesajı Claude/GPT/Gemini ile skorlayın</li>
+      </ul>
+
+      <h3>Haftalık PDF rapor</h3>
+      <ul>
+        <li>Raporlar sekmesi &gt; <kbd>Şimdi İndir</kbd> — PDF anında üretilir</li>
+        <li>E-posta adresi girip <kbd>E-posta ile Gönder</kbd> — sunucudaki
+            <code class="inline">/usr/sbin/sendmail</code> üzerinden yollanır</li>
+        <li>Otomatik zamanlama: Ayarlar &gt; Bildirimler &gt; Rapor Sıklığı</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="step" id="rollback">
+    <div class="step-num">10</div>
+    <div class="step-body">
+      <h2>Cayma / Kaldırma</h2>
+      <pre>cd /root/whm-plugin
+./uninstall.sh</pre>
+      <ul>
+        <li>GökyüzüWebSpam servisleri durdurulur</li>
+        <li>AppConfig kaydı silinir</li>
+        <li><code class="inline">/usr/local/mailshield</code> kaldırılır</li>
+        <li><b><code class="inline">/etc/mailshield/</code> ve
+            <code class="inline">/var/log/mailshield/</code> KORUNUR</b> (denetim için)</li>
+        <li>Exim / SpamAssassin / cPanel yapılandırmalarına <b>HİÇ dokunulmaz</b></li>
+      </ul>
+      <p>Milter'ı Exim'den de temizlemek isterseniz:</p>
+      <pre># WHM &gt; Exim Configuration Manager &gt; Advanced Editor
+# milters=... satırını silin, Save
+/scripts/buildeximconf && /scripts/restartsrv_exim</pre>
+    </div>
+  </div>
+
+  <div class="step" id="tshoot">
+    <div class="step-num">11</div>
+    <div class="step-body">
+      <h2>Sorun giderme</h2>
+      <table style="width:100%; border-collapse:collapse; margin-top:8px;">
+        <thead>
+          <tr style="background:#0b1220;">
+            <th style="text-align:left;padding:10px;border:1px solid #334155;">Belirti</th>
+            <th style="text-align:left;padding:10px;border:1px solid #334155;">Kontrol</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style="padding:8px;border:1px solid #334155;">Panel WHM'de görünmüyor</td>
+              <td style="padding:8px;border:1px solid #334155;"><code class="inline">/scripts/restartsrv_cpsrvd</code>, sonra F5</td></tr>
+          <tr><td style="padding:8px;border:1px solid #334155;">API çalışmıyor</td>
+              <td style="padding:8px;border:1px solid #334155;"><code class="inline">systemctl status mailshield-api</code>, <code class="inline">journalctl -u mailshield-api</code></td></tr>
+          <tr><td style="padding:8px;border:1px solid #334155;">MongoDB hatası</td>
+              <td style="padding:8px;border:1px solid #334155;"><code class="inline">systemctl status mongod</code></td></tr>
+          <tr><td style="padding:8px;border:1px solid #334155;">Karantina boş</td>
+              <td style="padding:8px;border:1px solid #334155;">Milter aktif mi? <code class="inline">systemctl status mailshield-milter</code></td></tr>
+          <tr><td style="padding:8px;border:1px solid #334155;">Mail teslim edilmiyor</td>
+              <td style="padding:8px;border:1px solid #334155;">Milter'ı Exim'den ayırın (Adım 6 cayma)</td></tr>
+          <tr><td style="padding:8px;border:1px solid #334155;">Slack/Telegram bildirim gelmiyor</td>
+              <td style="padding:8px;border:1px solid #334155;">Panel &gt; Bildirimler &gt; "Test Bildirimi" ile URL/token doğrulayın</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Log konumları</h3>
+      <pre>/var/log/mailshield/api.log
+/var/log/mailshield/milter.log
+/var/log/mailshield/quarantine.log</pre>
+
+      <h3>Sağlık kontrolü</h3>
+      <pre>mailshieldctl status
+mailshieldctl restart
+mailshieldctl engine enable clamav</pre>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  GökyüzüWebSpam v1.0 · WHM/cPanel 136.0.32 uyumlu · Bu kılavuz kurulumdan önce ekran görüntülerinize eşlik eder.
+</footer>
+
+</body>
+</html>

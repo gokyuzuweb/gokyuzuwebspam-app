@@ -1,0 +1,11 @@
+[Unit]
+Description=GökyüzüWebSpam Haftalık Rapor Zamanlayıcısı
+
+[Timer]
+# Her Pazartesi 09:00 UTC'de çalışır
+OnCalendar=Mon *-*-* 09:00:00
+Persistent=true
+Unit=mailshield-report.service
+
+[Install]
+WantedBy=timers.target

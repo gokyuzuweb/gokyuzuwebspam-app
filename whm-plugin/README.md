@@ -1,6 +1,6 @@
-# MailShield Pro — WHM/cPanel Mail Security Plugin
+# GökyüzüWebSpam — WHM/cPanel Mail Security Plugin
 
-**MailShield Pro** is a comprehensive, easy-to-use spam & malware management plugin
+**GökyüzüWebSpam** is a comprehensive, easy-to-use spam & malware management plugin
 for WHM/cPanel (target: **cPanel 136.0.32**). It is a modernised alternative to
 ConfigServer MailScanner with a Security-Operations-Center inspired UI.
 
@@ -33,7 +33,7 @@ mailshield-api      (127.0.0.1:8001, FastAPI)
 mailshield-quarantine (systemd timer, retention temizliği)
 MongoDB local       (karantina, listeler, kurallar, loglar)
 WHM CGI proxy       (/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/)
-cPanel plugin       (Email → MailShield MailControl)
+cPanel plugin       (Email → GökyüzüWebSpam MailControl)
 ```
 
 ## Kurulum (cPanel 136.0.32)
@@ -50,7 +50,7 @@ chmod +x install.sh
 ./install.sh --domain=mailshield.example.com
 ```
 
-Kurulumun sonunda WHM &gt; Plugins &gt; **MailShield Pro** menüsünden panele
+Kurulumun sonunda WHM &gt; Plugins &gt; **GökyüzüWebSpam** menüsünden panele
 erişebilirsiniz.
 
 ## Komut Satırı — `mailshieldctl`

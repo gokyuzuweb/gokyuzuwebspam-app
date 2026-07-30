@@ -1,5 +1,5 @@
 [Unit]
-Description=MailShield karantina temizliği (saatlik)
+Description=GökyüzüWebSpam karantina temizliği (saatlik)
 
 [Timer]
 OnBootSec=10min

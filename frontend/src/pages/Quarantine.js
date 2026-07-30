@@ -53,12 +53,18 @@ export default function Quarantine() {
       if (action === "delete") return api.quarantineDelete(ids);
       if (action === "report") return api.quarantineReport(ids);
     },
-    onSuccess: (_data, vars) => {
-      const map = { release: "bırakıldı", delete: "silindi", report: "Bayes'e öğretildi" };
-      toast.success(`${vars.ids.length} mesaj ${map[vars.action]}`);
+    onSuccess: (data, vars) => {
+      if (vars.action === "release") {
+        toast.success(`${vars.ids.length} mesaj gelen kutusuna taşındı · ${data.whitelisted ?? 0} whitelist kaydı eklendi · Bayes'e ham öğretildi`);
+      } else if (vars.action === "delete") {
+        toast.success(`${vars.ids.length} mesaj silindi`);
+      } else {
+        toast.success(`${vars.ids.length} mesaj Bayes'e spam olarak öğretildi`);
+      }
       setSelected(new Set());
       qc.invalidateQueries({ queryKey: ["quarantine"] });
       qc.invalidateQueries({ queryKey: ["overview"] });
+      qc.invalidateQueries({ queryKey: ["lists"] });
     },
     onError: () => toast.error("İşlem başarısız oldu"),
   });
@@ -112,7 +118,7 @@ export default function Quarantine() {
       <div className="flex items-center gap-2">
         <button data-testid="q-release" onClick={() => runBulk("release")}
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm">
-          <RotateCcw className="w-3.5 h-3.5" /> Bırak (Release)
+          <RotateCcw className="w-3.5 h-3.5" /> Spam Değil (Gelen Kutusuna + Whitelist)
         </button>
         <button data-testid="q-delete" onClick={() => runBulk("delete")}
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-sm">
@@ -226,7 +232,7 @@ export default function Quarantine() {
               </button>
               <button data-testid="q-preview-release" onClick={() => { bulk.mutate({ action: "release", ids: [preview.id] }); setPreview(null); }}
                 className="px-3 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm">
-                Alıcıya Teslim Et
+                Spam Değil (Teslim + Whitelist)
               </button>
             </div>
           </div>

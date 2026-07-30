@@ -1,5 +1,5 @@
 [Unit]
-Description=MailShield karantina temizliği (retention süresi geçen kayıtlar)
+Description=GökyüzüWebSpam karantina temizliği (retention süresi geçen kayıtlar)
 
 [Service]
 Type=oneshot

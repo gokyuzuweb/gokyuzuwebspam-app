@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# MailShield Pro — WHM/cPanel plugin installer
+# GökyüzüWebSpam — WHM/cPanel plugin installer
 # Target: cPanel/WHM 110+ (tested on 136.0.32)
 #
 # GÜVENLİK GARANTİLERİ:
@@ -9,7 +9,7 @@
 #   2) Exim'e milter otomatik BAĞLANMAZ. Bu adım opt-in ve manueldir.
 #      (WHM > Exim Configuration Manager üzerinden siz kararlaştırırsınız.)
 #   3) SpamAssassin, ClamAV, DCC, Razor sistem servisleri OLDUKLARI GİBİ bırakılır.
-#      MailShield sadece "spamc / clamdscan / dccif / razor-check" komutlarını ÇAĞIRIR.
+#      GökyüzüWebSpam sadece "spamc / clamdscan / dccif / razor-check" komutlarını ÇAĞIRIR.
 #   4) Milter servisi kurulur ama BAŞLATILMAZ (--start-milter geçmediğiniz sürece).
 #      Böylece Exim üzerine yönlendirme yapana kadar hiçbir e-posta akışına
 #      dokunulmaz.
@@ -147,7 +147,7 @@ fi
 cat <<EOF
 
 ============================================================
-  MailShield Pro kurulumu tamamlandı.
+  GökyüzüWebSpam kurulumu tamamlandı.
 
   cPanel sisteminize DOKUNULMADI:
     · Exim yapılandırması        → değişmedi (opt-in)
@@ -155,8 +155,8 @@ cat <<EOF
     · Mevcut Postfix / dovecot   → değişmedi
 
   Erişim:
-    · WHM > Plugins > MailShield Pro
-    · Kullanıcılar: cPanel > Email > MailShield MailControl
+    · WHM > Plugins > GökyüzüWebSpam
+    · Kullanıcılar: cPanel > Email > GökyüzüWebSpam MailControl
 
   Milter'ı etkinleştirmek İSTERSENİZ (opt-in):
     systemctl enable --now mailshield-milter.service

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu } from "lucide-react";
+import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
+import { useI18n } from "@/i18n";
 
 function Row({ title, hint, children, testid }) {
   return (
@@ -39,6 +40,8 @@ function Toggle({ checked, onChange, testid }) {
 export default function SettingsPage() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const langs = useQuery({ queryKey: ["i18n-langs"], queryFn: api.i18nLanguages });
+  const { lang: uiLang, setLang: setUiLang } = useI18n();
   const [state, setState] = useState(null);
 
   useEffect(() => { if (settings.data && !state) setState(settings.data); }, [settings.data]); // eslint-disable-line
@@ -48,6 +51,8 @@ export default function SettingsPage() {
     onSuccess: () => {
       toast.success("Politika kaydedildi");
       qc.invalidateQueries({ queryKey: ["settings"] });
+      // Also sync UI language from saved policy
+      if (state?.ui_language) setUiLang(state.ui_language);
     },
     onError: () => toast.error("Kaydedilemedi"),
   });
@@ -59,6 +64,42 @@ export default function SettingsPage() {
   return (
     <div className="p-6 grid grid-cols-12 gap-6">
       <div className="col-span-12 lg:col-span-8 space-y-4">
+        <Card>
+          <CardHeader
+            title={<span className="flex items-center gap-2"><Languages className="w-4 h-4 text-indigo-400" /> Arayüz Dili · Interface Language</span>}
+            subtitle="'Otomatik' seçildiğinde cPanel'in aktif dilini takip eder. Değişiklik anında uygulanır."
+          />
+          <CardBody className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {(langs.data || []).map((L) => (
+                <button
+                  key={L.code}
+                  data-testid={`lang-${L.code}`}
+                  onClick={() => {
+                    setUiLang(L.code);
+                    patch("ui_language", L.code);
+                    // auto-save language
+                    save.mutate({ ...state, ui_language: L.code });
+                  }}
+                  className={`px-3 py-2 rounded-md text-sm border transition-colors ${
+                    uiLang === L.code
+                      ? "border-indigo-500/60 bg-indigo-500/15 text-indigo-200"
+                      : "border-slate-800 bg-slate-950/40 text-slate-300 hover:border-slate-700"
+                  }`}
+                >
+                  <div className="text-sm">{L.name_native}</div>
+                  <div className="mono text-[10px] text-slate-500 uppercase tracking-widest">{L.code}</div>
+                </button>
+              ))}
+            </div>
+            <div className="text-[11px] text-slate-500">
+              WHM'ye kurulunca <span className="mono text-slate-300">X-Cpanel-Language</span> header'ı
+              üzerinden kullanıcının aktif cPanel dili algılanır ve <b>Otomatik</b> modda buna geçilir.
+              AI kural üretici de bu dili takip eder — Türkçe cPanel'de Türkçe kural adları üretir.
+            </div>
+          </CardBody>
+        </Card>
+
         <Card>
           <CardHeader
             title={<span className="flex items-center gap-2"><Sliders className="w-4 h-4 text-indigo-400" /> Spam Eşikleri</span>}
@@ -114,6 +155,22 @@ export default function SettingsPage() {
                  testid="row-ai">
               <Toggle checked={state.ai_classification} onChange={(v) => patch("ai_classification", v)} testid="toggle-ai" />
             </Row>
+            {state.ai_classification && (
+              <Row title="AI modeli"
+                   hint="Türkçe içerikte Claude Sonnet 4.5 önerilir; Gemini Flash daha hızlı, GPT-5.2 en detaylı"
+                   testid="row-ai-model">
+                <select
+                  data-testid="ai-model"
+                  value={state.ai_model}
+                  onChange={(e) => patch("ai_model", e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm"
+                >
+                  <option value="claude-sonnet-4-5">Claude Sonnet 4.5 (önerilen)</option>
+                  <option value="gpt-5.2">GPT-5.2</option>
+                  <option value="gemini-3-flash">Gemini 3 Flash</option>
+                </select>
+              </Row>
+            )}
             <Row title="TLS zorunluluğu" hint="Kimlik doğrulamalı SMTP için TLS'i zorunlu tut"
                  testid="row-tls">
               <Toggle checked={state.tls_enforce} onChange={(v) => patch("tls_enforce", v)} testid="toggle-tls" />

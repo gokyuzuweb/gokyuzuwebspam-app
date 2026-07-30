@@ -1,21 +1,21 @@
 <?php
 /**
- * MailShield MailControl — cPanel end-user plugin
+ * GökyüzüWebSpam MailControl — cPanel end-user plugin
  *
  * Displays the user's quarantine + per-user whitelist/blacklist.
- * Uses the local MailShield API scoped to the currently-authenticated cPanel user.
+ * Uses the local GökyüzüWebSpam API scoped to the currently-authenticated cPanel user.
  */
 
 require_once "/usr/local/cpanel/php/cpanel.php";
 $cpanel = new CPANEL();
-print $cpanel->header("MailShield MailControl");
+print $cpanel->header("GökyüzüWebSpam MailControl");
 
 $user  = getenv('REMOTE_USER') ?: 'unknown';
 $apiJs = "/usr/local/mailshield/api/index.html?scope=user&user=" . urlencode($user);
 ?>
 
 <div class="body-content">
-  <h1>MailShield MailControl</h1>
+  <h1>GökyüzüWebSpam MailControl</h1>
   <p>
     Bu arayüz, <code><?php echo htmlspecialchars($user); ?></code> hesabınıza gelen
     e-postaların karantina, beyaz ve kara listelerini yönetmenize olanak sağlar.

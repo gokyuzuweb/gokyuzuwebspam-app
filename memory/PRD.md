@@ -1,91 +1,81 @@
-# MailShield Pro — WHM/cPanel Mail Security Plugin
+# GökyüzüWebSpam — WHM/cPanel Mail Security Plugin (v1.1)
 
-## Problem Statement
-whm/cpanel mailler için spam uygulaması yapabilirmiyiz. Örnek ConfigServer MailScanner
-gibi daha kapsamlı ve kolay. Hedef cPanel sürümü: **136.0.32**. Aktif cPanel sistemine
-zarar vermeden çalışacak.
+## Marka
+"GökyüzüWebSpam" — WHM/cPanel için satılabilir, kapsamlı mail güvenliği eklentisi.
+Hedef cPanel sürümü: **136.0.32**.
 
-## User Choices
-- **Uygulama tipi:** WHM/cPanel Plugin (production için Perl/PHP kaynak paketi) + React
-  tabanlı önizleme dashboard'u (bu ortamda görüntülenir)
-- **Spam motoru:** Apache SpamAssassin + ClamAV + DCC + Vipul's Razor; Rspamd
-  alternatifi mevcut; hangisi etkinleştirilirse o kullanılır. AI (Emergent LLM)
-  katmanı da toggle edilebilir.
-- **Özellikler:** Karantina (release/delete/rapor), Whitelist/Blacklist (global +
-  kullanıcı), gerçek zamanlı dashboard, kurallar editörü + tester, kullanıcı
-  yönetimi, loglar, giden posta kontrolü, kurulum kılavuzu
-- **Güvenlik:** Kurulum non-destructive olmalı, aktif cPanel'e dokunmamalı,
-  milter opt-in
+## Session 3 Eklemeleri
+1. **Marka yeniden adlandırma**: MailShield → GökyüzüWebSpam (görünür UI, dokümanlar, plugin dosyaları)
+2. **Lisans + Sürüm Yönetimi** (`/api/licenses`, `/api/version/*`):
+   - Her müşteri için UUID lisans anahtarı (MS-XXXXX…)
+   - Birden fazla IP tanımlama, plan (starter/pro/enterprise), max_domains, valid_until
+   - Plugin heartbeat endpoint (`/api/license/heartbeat`) — 403 döner, ihlal loglanır, satıcıya e-posta
+   - `/api/version/manifest` (PUT) ile yeni sürüm yayınlama; plugin `check-update` ile algılar
+   - Lisans Yönetimi sayfası: liste, ekleme, silme, aktif/pasif toggle, ihlal geçmişi, simülasyon
+3. **Blacklist / RBL Çıkışı** (`/api/blacklist/*`):
+   - 15 sağlayıcı DNS RBL kontrolü (Spamhaus ZEN/DBL, Barracuda, SORBS, SpamCop, SURBL, URIBL, invaluement, PSBL, CBL, HostKarma, Spam Rats, Backscatterer, Mailspike)
+   - IP veya domain kontrolü (paralel async DNS query)
+   - Delisting talebi oluşturma — e-postalı sağlayıcılar için `sendmail` ile otomatik gönderim, portal olanlar için "Bekliyor" durumu
+   - Talep takip listesi (durum güncelleme: bekliyor / gönderildi / çözüldü / başarısız)
+4. **AI Kural Üretici** (`/api/rules/generate`):
+   - Doğal dil promptu → 1-3 SpamAssassin regex kuralı önerisi
+   - Model seçilebilir (Claude Sonnet 4.5 / GPT-5.2 / Gemini 3 Flash)
+   - **Dil desteği**: TR/EN/DE/FR/ES/AR — arayüz diline göre kural adları o dilde üretilir
+   - Örnek: TR prompt → "Kripto yatırım garantili kazanç vaadiyle spam", EN prompt → "CRYPTO_INVESTMENT_SCAM_GUARANTEED_RETURNS"
+5. **E-posta öncelikli Bildirim**: Slack + Telegram yerine artık **yönetici e-postası** ana kanal
+   - `admin_email` + `email_from` alanları, local `/usr/sbin/sendmail` ile gönderim
+   - Yüksek skor tehdit + lisans ihlali + rapor hepsi tek adrese
+   - Slack yedek kanal olarak kalıyor (opsiyonel)
+6. **i18n — Çok Dilli Panel** (`/api/i18n/*`):
+   - 7 dil: Otomatik / Türkçe / English / Deutsch / Français / Español / العربية
+   - `Otomatik` modda WHM CGI proxy'nin `X-Cpanel-Language` header'ından cPanel dili algılanır
+   - `<I18nProvider>` context + `useT()` hook + `strings.js` dictionary
+   - Sidebar navigasyon + header title tamamen i18n
+   - RTL desteği (Arapça)
+   - Ayarlar → dil seçici kartı (7 dil kart butonu)
 
-## Architecture
-### Preview Dashboard (bu ortamda çalışan)
-- **Backend:** FastAPI (Python) `/app/backend/server.py`, MongoDB, Motor async
-  driver. `/api/*` prefix ile tüm endpoint'ler: stats, quarantine, lists, rules,
-  engines, settings, users, logs, outbound, scan test.
-- **Frontend:** React 19 + React Router + TanStack Query + Recharts + Radix UI +
-  Sonner toast + Tailwind. Manrope (sans) + JetBrains Mono (mono) font kombinasyonu.
-  Dark SOC teması (slate-950 base).
-- **Data:** Auto-seeded on startup — 48 quarantine items, 8 list entries, 4 rules,
-  6 engines, 5 cPanel users, 30 log entries.
+## Doğrulanan Testler (curl)
+- ✅ Lisans heartbeat: doğru anahtar + izinli IP `203.0.113.10` → 200 OK, güncelleme bilgisi döner
+- ✅ Lisans heartbeat: doğru anahtar + izinsiz IP `99.99.99.99` → 403 + reason: `ip_not_allowed`
+- ✅ Simüle ihlal: `/api/license/simulate-violation` → alert e-postası tetiklendi
+- ✅ AI Rule TR: "sahte kripto para yatırım daveti" → 3 Türkçe kural
+- ✅ AI Rule EN: "fake crypto investment scam" → 3 English kural
+- ✅ Blacklist: 15 sağlayıcı listelendi
+- ✅ i18n: 7 dil endpoint'ten döner
+- ✅ Cloudflare 1.1.1.1 RBL check: 2/12 sağlayıcıda listeli (gerçek DNS sorgusu çalışıyor)
 
-### WHM Plugin Package (`/app/whm-plugin/`)
-- **AppConfig:** `appconfig/mailshield.conf` → `register_appconfig`
-- **WHM CGI:** `whm/mailshield.cgi` (Perl, Whostmgr::ACLS root kontrolü)
-- **cPanel plugin:** `cpanel/mailshield.live.php` + `.cpanelplugin`
-- **Milter (opt-in):** `lib/SpamGuard/Milter.pm` + `Engines.pm` + `Config.pm`
-  — Sendmail::PMilter tabanlı, 127.0.0.1:33333 dinler, spamc/clamdscan/dccif/
-  razor-check komutlarını shell out eder
-- **CLI:** `mailshieldctl` (status, restart, engine enable/disable, policy,
-  quarantine, bayes)
-- **systemd:** api / milter (opt-in başlatılır) / quarantine.timer
-- **Install:** `install.sh` cp -n (no-clobber), --dry-run destekli, milter DEFAULT
-  KAPALI. `uninstall.sh` /etc/mailshield ve /var/log/mailshield'i korur, cPanel
-  yapılandırmasına dokunmaz.
+## Sayfalar (14 adet)
+Kontrol Paneli · Karantina · Beyaz/Kara Liste · **Blacklist Çıkışı (yeni)** · Kurallar (AI generator + dil seçici) · Motorlar · Giden Posta · Bildirimler (e-posta öncelikli) · Raporlar · **Lisans Yönetimi (yeni)** · Kullanıcılar · Kayıtlar · Ayarlar (dil seçici + AI model) · Kurulum Kılavuzu
 
-## Non-destructive Guarantees
-- Sadece yeni dosyalar EKLENİR (`cp -n`); mevcut cPanel dosyaları KORUNUR
-- Exim `milters=` satırı otomatik EKLENMEZ; kullanıcı Advanced Editor'de manuel
-  ekler → cayma tek satır silmek
-- SpamAssassin/ClamAV/DCC/Razor sistem servisleri OLDUKLARI GİBİ bırakılır
-- MongoDB otomatik kurulmaz, yalnızca uyarı verilir
-- Kaldırmada /etc/mailshield ve /var/log/mailshield DOKUNULMADAN kalır
+## Endpoint Sayımı
+Toplam **51 endpoint** — dashboard, karantina, listeler, kurallar, motorlar, ayarlar, kullanıcılar, loglar, giden posta, bildirimler, AI, PDF rapor, milter, lisans, sürüm, blacklist, i18n
 
-## Implemented Screens (Turkish UI)
-1. **Kontrol Paneli** — 4 stat card, 24h saatlik trafik grafiği (ham/spam/tehdit),
-   son karantina feed, top-sender IP bar chart, tehdit dağılımı
-2. **Karantina** — arama/filter, bulk release/delete/report-Bayes, önizleme modal
-   (başlıklar, kurallar, gövde)
-3. **Beyaz / Kara Liste** — tab'lı; IP/domain/email; global veya kullanıcı bazlı
-4. **Kurallar** — custom SpamAssassin regex rules + tester (canlı skorlama)
-5. **Motorlar** — 6 motor kartı (SA/ClamAV/DCC/Razor/Rspamd/AI), toggle, metrikler
-6. **Giden Posta** — kullanıcı bazlı limit/blok durumu
-7. **Kullanıcılar** — cPanel hesap trafiği ve spam metrikleri
-8. **Kayıtlar** — canlı log akışı, level filtresi
-9. **Ayarlar** — eşik slider'ları, motor seçici, Bayes/AI/TLS toggle'ları,
-   karantina retention, rapor sıklığı, outbound
-10. **Kurulum Kılavuzu** — 8 adım, kopyalanabilir kod blokları, mimari diyagramı
+## WHM Plugin Paketi (`/app/whm-plugin/`)
+- **24 dosya**
+- WHM CGI proxy artık `X-Cpanel-Language` header'ını FastAPI'ye forward ediyor
+- systemd: api · milter · quarantine.timer · report.timer (heartbeat için gelecek iterasyonda ayrı timer)
 
-## Files
-- `/app/backend/server.py`
-- `/app/frontend/src/App.js`, `index.css`, `App.css`, `pages/*.js`, `components/*.js`, `lib/api.js`
-- `/app/whm-plugin/` — 21 dosya, tam kurulabilir WHM plugin paketi
-- `/app/whm-plugin/docs/INSTALL.md` — detaylı kurulum kılavuzu
+## Kritik Non-destructive Garantiler (değişmedi)
+- Sadece yeni dosyalar EKLENİR (`cp -n`)
+- Exim `milters=` satırı otomatik EKLENMEZ (opt-in)
+- SpamAssassin/ClamAV/DCC/Razor sistem servisleri değişmez
+- Kaldırmada /etc/mailshield ve /var/log/mailshield korunur
 
 ## Backlog
-- P1: Gerçek WHM sunucusunda `install.sh` end-to-end test
-- P1: `install_plugin` çıktısını yakalayıp panelde göster
-- P2: Emergent LLM entegrasyonu tam devreye alınırsa AI motoru için gerçek scoring
-- P2: Kullanıcı bazlı per-user threshold GUI
-- P2: PDF haftalık rapor
-- P2: Slack/Telegram alert entegrasyonu
+- P1: Sidebar dışındaki sayfaların (Karantina/Lists/Rules body/Reports/etc.) i18n çeviri tamamlanması
+- P2: Plugin tarafından heartbeat gönderen Perl daemon (`/usr/local/mailshield/bin/heartbeat.pl` + systemd timer)
+- P2: Otomatik güncelleme (`mailshieldctl update` — tar indir + install.sh --upgrade)
+- P2: Blacklist RBL check için cron schedule (kendi IP'ni haftalık kontrol)
 - P3: Reseller yetki matrisi
+- P3: Multi-language PDF rapor (şu an sadece Türkçe)
 
-## Verified (curl)
-- `/api/stats/overview` → 56952 scanned, 48 quarantine, 4/6 engines
-- `/api/engines` → 6 motor, SA/ClamAV/DCC/Razor aktif
-- `/api/scan/test` → skor 7.2, verdict `spam`, 3 kural eşleşti
-- `/api/engines/rspamd/toggle` → geçiş çalışıyor
+## Files
+- `/app/backend/server.py` (1660+ satır, 51 endpoint)
+- `/app/frontend/src/i18n/*` — i18n altyapısı + 7 dil
+- `/app/frontend/src/pages/*.js` — 14 sayfa
+- `/app/whm-plugin/` — 24 dosya
+- `/app/frontend/public/kurulum-kilavuzu.html`
 
 ## Test Credentials
-Uygulama şu an auth-free önizleme modunda çalışıyor. Gerçek WHM'ye kurulunca
-WHM oturum kimlik doğrulaması CGI proxy tarafından yapılır (root ACL kontrolü).
+Auth-free önizleme modu. WHM'ye kurulunca CGI proxy Whostmgr::ACLS root kontrolü yapar.
+Örnek lisans anahtarı (seed): "Örnek Müşteri A.Ş." → görünen paneldeki "Lisans Yönetimi" ekranından kopyalanır.

@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# MailShield milter entry-point (invoked by systemd).
+# GökyüzüWebSpam milter entry-point (invoked by systemd).
 #
 use strict;
 use warnings;

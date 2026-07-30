@@ -1,0 +1,9 @@
+[Unit]
+Description=GökyüzüWebSpam Haftalık PDF Raporu
+
+[Service]
+Type=oneshot
+User=mailshield
+Group=mailshield
+Environment=MAILSHIELD_ADMIN=admin@localhost
+ExecStart=/bin/bash -c 'curl -s -X POST http://127.0.0.1:8001/api/reports/weekly/send -H "Content-Type: application/json" -d "{\"recipient\": \"${MAILSHIELD_ADMIN}\"}"'
