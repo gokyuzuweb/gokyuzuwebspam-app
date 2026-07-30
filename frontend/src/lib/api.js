@@ -85,6 +85,7 @@ export const api = {
 
   // Pricing
   pricing: () => client.get("/pricing").then(r => r.data),
+  pricingPublic: () => client.get("/pricing").then(r => r.data),
   pricingPut: (payload) => client.put("/pricing", payload).then(r => r.data),
 
   // Stripe checkout
@@ -94,6 +95,23 @@ export const api = {
 
   // Financial analytics
   analyticsMrr: () => client.get("/analytics/mrr").then(r => r.data),
+
+  // License server (upstream)
+  licenseServerHealth: () => client.get("/license-server/health").then(r => r.data),
+  licenseServerConfig: () => client.get("/license-server/config").then(r => r.data),
+  licenseServerVerify: (license_key, server_ip) => client.post("/license-server/verify", { license_key, server_ip }).then(r => r.data),
+  licenseServerRevoke: (license_key, reason) => client.post("/license-server/revoke", { license_key, reason }).then(r => r.data),
+
+  // Reseller portal
+  resellerRegister: (payload) => client.post("/reseller/auth/register", payload).then(r => r.data),
+  resellerLogin: (payload) => client.post("/reseller/auth/login", payload).then(r => r.data),
+  resellerMe: (token) => client.get("/reseller/me", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  resellerAddSub: (token, payload) => client.post("/reseller/subaccounts", payload, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  resellerDelSub: (token, id) => client.delete(`/reseller/subaccounts/${id}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  resellerQuarantine: (token) => client.get("/reseller/quarantine", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  resellerLists: (token) => client.get("/reseller/lists", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  resellerAddList: (token, payload) => client.post("/reseller/lists", payload, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  resellerDelList: (token, id) => client.delete(`/reseller/lists/${id}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
 
   // Plugin download + install info
   pluginInstallInfo: (license_key) => client.get("/plugin/install-info", { params: license_key ? { license_key } : {} }).then(r => r.data),

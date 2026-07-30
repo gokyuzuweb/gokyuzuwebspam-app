@@ -4,12 +4,13 @@ import { Toaster } from "sonner";
 import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
-  Bell, FileText, Key, Radar, DollarSign,
+  Bell, FileText, Key, Radar, DollarSign, Home,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { PluginStatusStripe, LicenseGate } from "@/components/LicenseGate";
 import { api } from "@/lib/api";
+import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import Quarantine from "@/pages/Quarantine";
 import Lists from "@/pages/Lists";
@@ -26,25 +27,25 @@ import Licenses from "@/pages/Licenses";
 import Pricing from "@/pages/Pricing";
 import Shop, { CheckoutSuccess } from "@/pages/Shop";
 import Blacklist from "@/pages/Blacklist";
+import Reseller from "@/pages/Reseller";
 import Header from "@/components/Header";
 
 const NAV = [
-  { to: "/", key: "dashboard", icon: Activity, testid: "nav-dashboard", end: true },
-  { to: "/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine" },
-  { to: "/lists", key: "lists", icon: ListChecks, testid: "nav-lists" },
-  { to: "/blacklist", key: "blacklist", icon: Radar, testid: "nav-blacklist" },
-  { to: "/rules", key: "rules", icon: Wrench, testid: "nav-rules" },
-  { to: "/engines", key: "engines", icon: Cpu, testid: "nav-engines" },
-  { to: "/outbound", key: "outbound", icon: ArrowUpRight, testid: "nav-outbound" },
-  { to: "/notifications", key: "notifications", icon: Bell, testid: "nav-notifications" },
-  { to: "/reports", key: "reports", icon: FileText, testid: "nav-reports" },
-  // sellerOnly: sadece satıcı yönetim panelinde görünür
-  { to: "/licenses", key: "licenses", icon: Key, testid: "nav-licenses", sellerOnly: true },
-  { to: "/pricing", key: "pricing", icon: DollarSign, testid: "nav-pricing", sellerOnly: true },
-  { to: "/users", key: "users", icon: Users, testid: "nav-users" },
-  { to: "/logs", key: "logs", icon: Terminal, testid: "nav-logs" },
-  { to: "/settings", key: "settings", icon: Settings2, testid: "nav-settings" },
-  { to: "/install", key: "install", icon: PackageOpen, testid: "nav-install" },
+  { to: "/panel", key: "dashboard", icon: Activity, testid: "nav-dashboard", end: true },
+  { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine" },
+  { to: "/panel/lists", key: "lists", icon: ListChecks, testid: "nav-lists" },
+  { to: "/panel/blacklist", key: "blacklist", icon: Radar, testid: "nav-blacklist" },
+  { to: "/panel/rules", key: "rules", icon: Wrench, testid: "nav-rules" },
+  { to: "/panel/engines", key: "engines", icon: Cpu, testid: "nav-engines" },
+  { to: "/panel/outbound", key: "outbound", icon: ArrowUpRight, testid: "nav-outbound" },
+  { to: "/panel/notifications", key: "notifications", icon: Bell, testid: "nav-notifications" },
+  { to: "/panel/reports", key: "reports", icon: FileText, testid: "nav-reports" },
+  { to: "/panel/licenses", key: "licenses", icon: Key, testid: "nav-licenses", sellerOnly: true },
+  { to: "/panel/pricing", key: "pricing", icon: DollarSign, testid: "nav-pricing", sellerOnly: true },
+  { to: "/panel/users", key: "users", icon: Users, testid: "nav-users" },
+  { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs" },
+  { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings" },
+  { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
 ];
 
 function Sidebar() {
@@ -56,15 +57,24 @@ function Sidebar() {
   return (
     <aside data-testid="sidebar" className={`w-60 shrink-0 border-r border-slate-800 bg-slate-900/60 flex flex-col ${effective === "ar" ? "rtl" : ""}`}>
       <div className="h-14 flex items-center gap-2 px-3 border-b border-slate-800">
-        <div className="relative w-8 h-8 rounded-md bg-gradient-to-br from-indigo-500 to-rose-500 flex items-center justify-center shrink-0">
+        <NavLink to="/" data-testid="sidebar-home" className="relative w-8 h-8 rounded-md bg-gradient-to-br from-indigo-500 to-rose-500 flex items-center justify-center shrink-0" title="Home">
           <ShieldAlert className="w-4 h-4 text-white" />
-        </div>
+        </NavLink>
         <div className="leading-tight min-w-0">
           <div className="text-slate-100 font-bold tracking-tight text-[15px] truncate">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v1.1 · {effective.toUpperCase()}</div>
+          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v1.3 · {effective.toUpperCase()}</div>
         </div>
       </div>
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
+        <NavLink
+          to="/"
+          data-testid="nav-home"
+          className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-500 hover:text-indigo-300 hover:bg-slate-800/60 border border-transparent transition-colors"
+        >
+          <Home className="w-4 h-4" strokeWidth={1.75} />
+          <span>Home</span>
+        </NavLink>
+        <div className="h-px bg-slate-800/60 my-1.5" />
         {items.map((n) => (
           <NavLink
             key={n.to}
@@ -119,7 +129,7 @@ function Shell() {
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/install" element={<Install />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/panel" replace />} />
           </Routes>
         </main>
       </div>
@@ -133,9 +143,27 @@ export default function App() {
       <I18nProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/" element={<Landing />} />
             <Route path="/shop" element={<Shop />} />
             <Route path="/checkout/success" element={<CheckoutSuccess />} />
-            <Route path="*" element={<><Shell /><LicenseGate /></>} />
+            <Route path="/reseller" element={<Reseller />} />
+            <Route path="/panel/*" element={<><Shell /><LicenseGate /></>} />
+            {/* Legacy redirects — old panel URLs → /panel */}
+            <Route path="/quarantine" element={<Navigate to="/panel/quarantine" replace />} />
+            <Route path="/lists" element={<Navigate to="/panel/lists" replace />} />
+            <Route path="/blacklist" element={<Navigate to="/panel/blacklist" replace />} />
+            <Route path="/rules" element={<Navigate to="/panel/rules" replace />} />
+            <Route path="/engines" element={<Navigate to="/panel/engines" replace />} />
+            <Route path="/outbound" element={<Navigate to="/panel/outbound" replace />} />
+            <Route path="/notifications" element={<Navigate to="/panel/notifications" replace />} />
+            <Route path="/reports" element={<Navigate to="/panel/reports" replace />} />
+            <Route path="/licenses" element={<Navigate to="/panel/licenses" replace />} />
+            <Route path="/pricing" element={<Navigate to="/panel/pricing" replace />} />
+            <Route path="/users" element={<Navigate to="/panel/users" replace />} />
+            <Route path="/logs" element={<Navigate to="/panel/logs" replace />} />
+            <Route path="/settings" element={<Navigate to="/panel/settings" replace />} />
+            <Route path="/install" element={<Navigate to="/panel/install" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <Toaster
             theme="dark"

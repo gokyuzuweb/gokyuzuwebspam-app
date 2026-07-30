@@ -2230,193 +2230,6 @@ async def checkout_transactions():
     return await db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
 
 
-# ----- Financial Analytics (MRR / ARR / Churn / LTV) -----
-@api.get("/analytics/mrr")
-async def analytics_mrr():
-    """Compute MRR, ARR, subscribers, ARPU, LTV, churn from payment_transactions
-    and licenses collections. Seller-only.
-    """
-    if PLUGIN_MODE != "seller":
-        raise HTTPException(403, "Sadece satıcı modu")
-    now = datetime.now(timezone.utc)
-    # All paid transactions
-    paid = await db.payment_transactions.find(
-        {"status": "paid"}, {"_id": 0}
-    ).to_list(5000)
-
-    # Convert every paid tx to a monthly-normalized amount:
-    #   monthly billing → amount as-is
-    #   yearly  billing → amount / 12
-    def _monthlyize(tx: dict) -> float:
-        amt = float(tx.get("amount") or 0.0)
-        return amt / 12.0 if tx.get("billing_period") == "yearly" else amt
-
-    total_revenue = round(sum(float(t.get("amount") or 0.0) for t in paid), 2)
-
-    # Active licenses drive MRR (a paid tx whose license is still active + non-expired)
-    licenses = await db.licenses.find({}, {"_id": 0}).to_list(5000)
-    lic_by_key = {l["license_key"]: l for l in licenses}
-    def _active(lic: dict) -> bool:
-        if not lic or not lic.get("active"):
-            return False
-        try:
-            return datetime.fromisoformat(lic["valid_until"].replace("Z", "+00:00")) > now
-        except Exception:
-            return False
-
-    active_paid_tx = [t for t in paid if _active(lic_by_key.get(t.get("license_key") or ""))]
-    mrr = round(sum(_monthlyize(t) for t in active_paid_tx), 2)
-    arr = round(mrr * 12, 2)
-    active_subs = len(active_paid_tx)
-    arpu = round(mrr / active_subs, 2) if active_subs else 0.0
-
-    # Trailing 30-day new revenue
-    d30 = now - timedelta(days=30)
-    new30 = [t for t in paid if _parse(t.get("completed_at") or t.get("created_at")) >= d30]
-    new_mrr_30 = round(sum(_monthlyize(t) for t in new30), 2)
-
-    # Churn: licenses that expired within last 30d and were previously "paid"
-    churned = 0
-    for l in licenses:
-        try:
-            vu = datetime.fromisoformat(l["valid_until"].replace("Z", "+00:00"))
-            if d30 <= vu < now:
-                churned += 1
-        except Exception:
-            continue
-    churn_pct = round((churned / active_subs * 100), 2) if active_subs else 0.0
-
-    # Average customer lifetime = 1 / monthly churn rate (fallback 24 months)
-    monthly_churn = churned / max(active_subs, 1)
-    avg_lifetime_m = round(1 / monthly_churn, 1) if monthly_churn > 0 else 24.0
-    ltv = round(arpu * avg_lifetime_m, 2)
-
-    # 6-month MRR trend
-    def _month_key(dt: datetime) -> str:
-        return f"{dt.year}-{dt.month:02d}"
-    trend = {}
-    for i in range(6):
-        m = now.replace(day=1) - timedelta(days=i * 30)
-        trend[_month_key(m)] = 0.0
-    for t in paid:
-        d = _parse(t.get("completed_at") or t.get("created_at"))
-        k = _month_key(d)
-        if k in trend:
-            trend[k] += _monthlyize(t)
-    trend_series = [
-        {"month": k, "mrr": round(v, 2)}
-        for k, v in sorted(trend.items())
-    ]
-
-    # Plan breakdown
-    plans_agg = {}
-    for t in active_paid_tx:
-        code = t.get("plan_code", "pro")
-        plans_agg.setdefault(code, {"count": 0, "mrr": 0.0})
-        plans_agg[code]["count"] += 1
-        plans_agg[code]["mrr"] += _monthlyize(t)
-    plans_breakdown = [
-        {"plan": k, "count": v["count"], "mrr": round(v["mrr"], 2)}
-        for k, v in plans_agg.items()
-    ]
-
-    # Recent transactions (last 5)
-    recent = sorted(paid, key=lambda t: t.get("completed_at") or t.get("created_at"), reverse=True)[:5]
-
-    return {
-        "currency": (paid[0].get("currency") if paid else "USD") or "USD",
-        "mrr": mrr,
-        "arr": arr,
-        "active_subs": active_subs,
-        "arpu": arpu,
-        "ltv": ltv,
-        "churn_pct": churn_pct,
-        "churned_last_30d": churned,
-        "new_mrr_30d": new_mrr_30,
-        "total_revenue": total_revenue,
-        "trend": trend_series,
-        "plans_breakdown": plans_breakdown,
-        "recent": recent,
-    }
-
-
-def _parse(iso: Optional[str]) -> datetime:
-    try:
-        if not iso:
-            return datetime.now(timezone.utc) - timedelta(days=999)
-        return datetime.fromisoformat(iso.replace("Z", "+00:00"))
-    except Exception:
-        return datetime.now(timezone.utc) - timedelta(days=999)
-
-
-# ----- Plugin Download & Install-Info -----
-@api.get("/plugin/download")
-async def plugin_download():
-    """Stream WHM plugin as gzipped tarball. Public — customers use their license
-    key at install time. Payloads are built on-the-fly from /app/whm-plugin.
-    """
-    import tarfile
-    plugin_dir = Path("/app/whm-plugin")
-    if not plugin_dir.exists():
-        raise HTTPException(404, "Plugin dizini bulunamadı")
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        tar.add(str(plugin_dir), arcname="gokyuzuwebspam")
-    buf.seek(0)
-    manifest = await db.version_manifest.find_one({}, {"_id": 0}) or {}
-    version = (manifest.get("latest_version") or "1.1.0").strip()
-    filename = f"gokyuzuwebspam-{version}.tar.gz"
-    return StreamingResponse(
-        buf,
-        media_type="application/gzip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-GWS-Version": version,
-        },
-    )
-
-
-@api.get("/plugin/install-info")
-async def plugin_install_info(request: Request, license_key: Optional[str] = None):
-    """Return wget command + step-by-step install text for the current server.
-    Uses X-Forwarded-Proto/Host when available (behind ingress) so the wget
-    one-liner points at the public host, not the internal cluster hostname.
-    """
-    fwd_proto = request.headers.get("x-forwarded-proto")
-    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
-    if fwd_host:
-        origin = f"{fwd_proto or 'https'}://{fwd_host}"
-    else:
-        origin = str(request.base_url).rstrip("/")
-    download_url = f"{origin}/api/plugin/download"
-    lic_suffix = f" --license={license_key}" if license_key else ""
-    wget_one_liner = (
-        f'wget -O gws.tar.gz "{download_url}" && '
-        f'mkdir -p /opt/gokyuzuwebspam && '
-        f'tar -xzf gws.tar.gz -C /opt/gokyuzuwebspam --strip-components=1 && '
-        f'cd /opt/gokyuzuwebspam && chmod +x install.sh && ./install.sh{lic_suffix}'
-    )
-    curl_one_liner = (
-        f'curl -fsSL "{download_url}" -o gws.tar.gz && '
-        f'mkdir -p /opt/gokyuzuwebspam && '
-        f'tar -xzf gws.tar.gz -C /opt/gokyuzuwebspam --strip-components=1 && '
-        f'cd /opt/gokyuzuwebspam && chmod +x install.sh && ./install.sh{lic_suffix}'
-    )
-    steps = [
-        f'wget -O gws.tar.gz "{download_url}"',
-        "tar -xzf gws.tar.gz && cd gokyuzuwebspam",
-        "chmod +x install.sh",
-        f"./install.sh{lic_suffix}",
-        "/usr/local/cpanel/bin/register_appconfig /var/cpanel/apps/mailshield.conf",
-        "systemctl enable --now mailshield-api mailshield-milter mailshield-heartbeat.timer",
-    ]
-    return {
-        "download_url": download_url,
-        "wget_one_liner": wget_one_liner,
-        "curl_one_liner": curl_one_liner,
-        "steps": steps,
-        "requires_root_ssh": True,
-    }
 
 
 # ----- Milter report hook (called by Perl milter to record verdicts) -----
@@ -2450,6 +2263,16 @@ async def milter_report(payload: MilterReport):
 
 
 app.include_router(api)
+
+# ---- Modular route inclusion (v1.4 refactor) --------------------------------
+from routes.analytics import router as _analytics_router  # noqa: E402
+from routes.plugin import router as _plugin_router  # noqa: E402
+from routes.reseller import router as _reseller_router  # noqa: E402
+from routes.license_client import router as _license_client_router  # noqa: E402
+app.include_router(_analytics_router, prefix="/api")
+app.include_router(_plugin_router, prefix="/api")
+app.include_router(_reseller_router, prefix="/api")
+app.include_router(_license_client_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,

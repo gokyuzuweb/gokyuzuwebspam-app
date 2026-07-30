@@ -22,7 +22,11 @@ use File::Slurp qw();
 
 my $CONF   = '/etc/mailshield/mailshield.conf';
 my $STATE  = '/etc/mailshield/plugin_state.json';
-my $CENTER = $ENV{MAILSHIELD_CENTER_URL} // 'https://mailshield.example.com';
+# License server URL — bayi (satıcı) tarafından /etc/mailshield/mailshield.conf'ta
+# license.server_url ile override edilebilir. Prod'da:
+#   https://license.gokyuzuwebspam.com
+# Preview/self-hosted'da satıcının kendi backend'i port 8002'de:
+my $CENTER = $ENV{MAILSHIELD_LICENSE_SERVER} // 'https://license.gokyuzuwebspam.com';
 my $LOCAL  = 'http://127.0.0.1:8001';
 
 # --- config oku
@@ -74,48 +78,51 @@ sub cpanel_version {
     return '';
 }
 
+# --- Config override for license server URL
+$CENTER = $conf{license}{server_url} if $conf{license}{server_url};
+
 my $ip = detect_ip();
 my $payload = encode_json({
-    license_key    => $license_key,
-    ip             => $ip,
-    hostname       => hostname(),
-    version        => $version,
-    cpanel_version => cpanel_version(),
-    active_domains => active_domains(),
+    license_key      => $license_key,
+    server_ip        => $ip,
+    hostname         => hostname(),
+    plugin_version   => $version,
+    engines_active   => [],
+    scanned_last_hour => 0,
 });
 
-# --- Merkez heartbeat
+# --- Merkez heartbeat (v1: /v1/heartbeat)
 my $ua  = LWP::UserAgent->new(timeout => 15);
-my $req = HTTP::Request->new(POST => "$CENTER/api/license/heartbeat");
+my $req = HTTP::Request->new(POST => "$CENTER/v1/heartbeat");
 $req->header('Content-Type' => 'application/json');
 $req->content($payload);
 my $res = $ua->request($req);
 
 my $state = { last_heartbeat_at => scalar(gmtime()) . " UTC",
-              last_ip => $ip, last_code => $res->code };
+              last_ip => $ip, last_code => $res->code,
+              license_server => $CENTER };
 
 if ($res->is_success) {
     my $d = eval { decode_json($res->content) };
     if ($d && $d->{ok}) {
         $state->{ok}              = JSON::XS::true;
-        $state->{plan}            = $d->{plan};
+        $state->{status}          = $d->{status};
         $state->{valid_until}     = $d->{valid_until};
-        $state->{update_available} = $d->{update_available};
         $state->{latest_version}  = $d->{latest_version};
-        # local API'ye de bildirelim (verify-license benzeri)
+        # local API'ye de bildirelim
         my $lreq = HTTP::Request->new(POST => "$LOCAL/api/plugin/verify-license");
         $lreq->header('Content-Type' => 'application/json');
         $lreq->content(encode_json({ license_key => $license_key, ip => $ip }));
         $ua->request($lreq);
+    } elsif ($d && !$d->{ok}) {
+        $state->{ok}        = JSON::XS::false;
+        $state->{status}    = $d->{status};
+        $state->{violation} = { reason => $d->{status}, message => $d->{message} };
+        warn "License violation: " . ($d->{message} // 'unknown') . "\n";
+        open my $f, '>>', '/var/log/mailshield/violation.log' or last;
+        print $f scalar(gmtime()) . " · " . encode_json($state->{violation}) . "\n";
+        close $f;
     }
-} elsif ($res->code == 403) {
-    my $d = eval { decode_json($res->content) };
-    $state->{violation} = $d->{detail} // { reason => "unknown" };
-    warn "License violation detected: " . encode_json($state->{violation}) . "\n";
-    # Local API state'e violation olarak da kaydet
-    open my $f, '>', '/var/log/mailshield/violation.log' or last;
-    print $f scalar(gmtime()) . " · " . encode_json($state->{violation}) . "\n";
-    close $f;
 } else {
     $state->{error} = $res->status_line;
     warn "Heartbeat failed: " . $res->status_line . "\n";

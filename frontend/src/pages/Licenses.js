@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import MrrPanel from "@/components/MrrPanel";
+import LicenseServerStatus from "@/components/LicenseServerStatus";
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const isoDate = (iso) => iso ? new Date(iso).toLocaleDateString("tr-TR") : "—";
@@ -219,6 +220,7 @@ export default function Licenses() {
   return (
     <div className="p-6 space-y-6">
       <MrrPanel />
+      <LicenseServerStatus />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard label="Aktif Lisans" tone="success" icon={CheckCircle2} testid="lic-stat-active"

@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 4 (v1.4) full-stack testing: Landing page routing, modular backend routes (analytics/plugin/reseller/license_client), standalone License Server on :8002, Reseller portal with JWT auth + subaccounts + scoped data. Backend: 28/28 new pytest cases PASS. Frontend: All required data-testids present and functional on Landing (/), Panel (/panel/licenses with LicenseServerStatus widget showing 'Erişilebilir'), and Reseller portal (/reseller). Legacy /licenses correctly redirects to /panel/licenses. All CTAs route correctly (buy→/shop, demo→/panel, reseller→/reseller). Reseller login (reseller@test.com/strong123), sub-account creation, listing, and logout all working. No critical bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/v1/heartbeat (license-server)", "issue": "For license with no allowed_ips, first heartbeat auto-registers IP silently (bootstrap). This is intended per code comments but not idempotent-safe against hostile first-caller; consider requiring seller pre-registration or a first-run token."},
+      {"endpoint": "routes/reseller.py `add_list_entry`", "issue": "Returns the doc after insert_one without popping _id explicitly before insert; the `doc.pop('_id', None)` runs but response depends on Motor returning the mutated dict. Currently works but fragile — safer to build response dict from known fields."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/reseller dashboard", "issues": ["Karantina empty-state table has large empty vertical space when 0 records; consider more compact empty state."]},
+      {"screen": "/panel/licenses", "issues": ["License-server-status widget is on a very information-dense page; scroll depth is significant. Consider moving to a dedicated 'System Health' section or collapsing older 'Lisans İhlalleri' table by default."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v14_reseller_licenseserver.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_v14.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py still ~2278 lines — the include_router modularization is a good start but ~65% of the code is still monolithic. Continue extracting quarantine/lists/checkout/rules/notifications/i18n into routes/*.py.",
+    "routes/reseller.py: JWT secret defaults to 'gws-reseller-dev-secret-change-me' if RESELLER_JWT_SECRET env is not set (which it currently isn't in backend/.env). This is a security risk in production. Set RESELLER_JWT_SECRET in .env and fail-fast (raise on startup) if missing in seller mode.",
+    "routes/reseller.py: Plan quota map {starter:5, pro:50, enterprise:999} is duplicated in `me` and `add_sub`. Extract to a module constant.",
+    "routes/license_client.py: `httpx.AsyncClient` is created per-request; consider a module-level singleton client (or FastAPI lifespan-managed) for connection pooling.",
+    "license-server/server.py: No rate-limiting on /v1/heartbeat or /v1/verify — a malicious plugin could flood violations. Add simple in-memory rate limit per (license_key,ip).",
+    "license-server/server.py: `datetime.fromisoformat(lic['valid_until'].replace('Z','+00:00'))` — if valid_until is missing or non-string, entire branch is silently swallowed by try/except pass. Log a warning at least.",
+    "Reseller portal has no password-reset flow yet — plan for v1.5.",
+    "License server exposes CORS=* — since it accepts revoke on POST it should restrict origins (revoke is admin-key gated so acceptable, but health/verify from any browser is fine)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v14_reseller_licenseserver.py (NEW - 28 test cases)"
+  ],
+  "success_rate": {
+    "backend": "100% (28/28 new v1.4 tests) — includes 7 license-server, 2 proxy, 10 reseller auth/sub, 4 regression",
+    "frontend": "100% — all landing/panel/reseller data-testids present, all navigation flows working, sub-account add + logout verified live"
+  },
+  "test_credentials": "Reseller portal: reseller@test.com / strong123 (linked to license MS-435EA62E57A442BBB10985E9). Admin: LICENSE_SERVER_ADMIN_KEY=gws-license-admin-key.",
+  "seed_data_creation": "Test created ephemeral subaccounts (username 'testsubXXXXXX' and 'uisubXXXXX') during pytest and Playwright run. pytest test cleans up its own; Playwright's 'uisub42e59' still visible in dashboard screenshot (harmless).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "License server on :8002 is NOT externally exposed (correct — only backend proxy /api/license-server/* is). Test the license server via localhost:8002 for direct tests, or via /api/license-server/* proxy for external tests. Seed license MS-435EA62E57A442BBB10985E9 with authorized IP 198.51.100.42 is used across all license-server tests. Reseller portal has existing account reseller@test.com/strong123 — registration returns 409 for that email, which is expected. Frontend Landing (/) uses <select data-testid='landing-lang'> for i18n. Panel routes under /panel/*, legacy /licenses redirects to /panel/licenses. License-server-status widget renders on /panel/licenses (bottom of page). server.py still ~2278 lines despite modularization — refactor incomplete.",
+  "rca of the issue": "N/A — no bugs found."
+}
