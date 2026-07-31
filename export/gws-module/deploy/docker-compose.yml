@@ -1,0 +1,164 @@
+version: "3.9"
+
+# GökyüzüWebSpam — License Server Cluster
+# =========================================
+# Bu compose dosyası; WHM sunucularından bağımsız bir "license.gokyuzuwebspam.com"
+# host'unda çalıştırabileceğiniz tam-donanımlı, HA lisans doğrulama cluster'ıdır.
+#
+# Komponentler:
+#   • redis-master + redis-replica  (verify cache + dağıtık rate limit + replica keşfi)
+#   • redis-sentinel (× 3)          (Redis HA failover)
+#   • license-1..N                  (FastAPI license server replica'ları)
+#   • haproxy                       (round-robin + health-check LB)
+#   • mongo                         (lisans DB — ana backend ile paylaşılır)
+#
+# Kullanım:
+#   $ docker compose up -d
+#   $ docker compose ps
+#   $ curl http://localhost:8080/v1/health
+#
+# Ölçekleme:
+#   $ docker compose up -d --scale license=5
+#
+# Prod'da:
+#   - haproxy'nin önüne bir SSL TLS terminator koyun (nginx / cloudflare / AWS ALB)
+#   - Redis Sentinel şifresi ekleyin (LICENSE_SERVER_REDIS_URL redis://:pass@sentinel:26379/0?db=0)
+#   - Mongo replikaset kullanın (bu compose demo için standalone)
+
+networks:
+  gws:
+    driver: bridge
+
+volumes:
+  mongo-data:
+  redis-master-data:
+  redis-replica-data:
+
+services:
+  # -----------------------------------------------------------------------
+  # DATA LAYER — Mongo + Redis HA (master + replica + sentinels)
+  # -----------------------------------------------------------------------
+  mongo:
+    image: mongo:7
+    container_name: gws-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    networks: [gws]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1}).ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  redis-master:
+    image: redis:7-alpine
+    container_name: gws-redis-master
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --bind 0.0.0.0
+      --protected-mode no
+      --masterauth ""
+      --requirepass ""
+    volumes: [redis-master-data:/data]
+    networks: [gws]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  redis-replica:
+    image: redis:7-alpine
+    container_name: gws-redis-replica
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    command: >
+      redis-server
+      --appendonly yes
+      --replicaof redis-master 6379
+      --bind 0.0.0.0
+      --protected-mode no
+    volumes: [redis-replica-data:/data]
+    networks: [gws]
+
+  redis-sentinel-1: &sentinel
+    image: redis:7-alpine
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /tmp/sentinel.conf <<EOF
+        port 26379
+        sentinel monitor gws-master redis-master 6379 2
+        sentinel down-after-milliseconds gws-master 5000
+        sentinel failover-timeout gws-master 15000
+        sentinel parallel-syncs gws-master 1
+        sentinel resolve-hostnames yes
+        sentinel announce-hostnames yes
+        EOF
+        redis-sentinel /tmp/sentinel.conf
+    networks: [gws]
+  redis-sentinel-2:
+    <<: *sentinel
+  redis-sentinel-3:
+    <<: *sentinel
+
+  # -----------------------------------------------------------------------
+  # APP LAYER — License server replica'ları (ölçeklenebilir)
+  # -----------------------------------------------------------------------
+  license:
+    build:
+      context: ../license-server
+      # Basit inline Dockerfile: python + uvicorn + kod. Prod'da ayrı Dockerfile önerilir.
+      dockerfile_inline: |
+        FROM python:3.11-slim
+        WORKDIR /app
+        RUN pip install --no-cache-dir fastapi uvicorn[standard] motor pydantic redis python-dotenv
+        COPY server.py /app/server.py
+        EXPOSE 8000
+        CMD ["uvicorn","server:app","--host","0.0.0.0","--port","8000","--workers","1"]
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+    environment:
+      MONGO_URL: "mongodb://mongo:27017"
+      DB_NAME: "gws"
+      LICENSE_SERVER_REDIS_URL: "redis://redis-master:6379/0"
+      LICENSE_SERVER_ADMIN_KEY: "${LICENSE_SERVER_ADMIN_KEY:-change-me-in-prod}"
+      LICENSE_SERVER_RATE_LIMIT: "600"
+      LICENSE_SERVER_CACHE_TTL: "60"
+      # REPLICA_ID container hostname'inden türetilir — böylece scale değişse bile unique olur
+    networks: [gws]
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+
+  # -----------------------------------------------------------------------
+  # EDGE LAYER — HAProxy: round-robin + health check + observability
+  # -----------------------------------------------------------------------
+  haproxy:
+    image: haproxy:2.9-alpine
+    container_name: gws-haproxy
+    restart: unless-stopped
+    depends_on:
+      - license
+    ports:
+      - "8080:8080"    # public API
+      - "8404:8404"    # HAProxy stats
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks: [gws]
+
+# EOF — Bu dosyayı `/app/deploy/` altında tutar, aynı klasördeki `haproxy.cfg` ve
+# `.env` (LICENSE_SERVER_ADMIN_KEY vb.) ile birlikte deploy edin.
