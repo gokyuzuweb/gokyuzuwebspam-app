@@ -62,6 +62,7 @@ echo "==> cPanel version detected: $CP_VER"
 INSTALL_DIR=/usr/local/mailshield
 CGI_DIR=/usr/local/cpanel/whostmgr/docroot/cgi/mailshield
 CPANEL_PLUGIN_DIR=/usr/local/cpanel/base/frontend/jupiter/mailshield
+CPANEL_3RDPARTY_DIR=/usr/local/cpanel/base/3rdparty/mailshield
 APPCONFIG=/var/cpanel/apps/mailshield.conf
 LOG_DIR=/var/log/mailshield
 ETC_DIR=/etc/mailshield
@@ -115,6 +116,12 @@ run "install -m 0644 -o root -g root '$SRC/cpanel/mailshield.live.php'     '$CPA
 run "install -m 0644 -o root -g root '$SRC/cpanel/mailshield.cpanelplugin' '$CPANEL_PLUGIN_DIR/mailshield.cpanelplugin'"
 if [[ -f "$SRC/cpanel/icon.png" ]]; then
   run "install -m 0644 -o root -g root '$SRC/cpanel/icon.png' '$CPANEL_PLUGIN_DIR/icon.png'"
+fi
+# cPanel end-user AppConfig /3rdparty/ altında bekliyor. Aynı dosyaları oraya da yerleştir.
+run "install -d -m 0755 -o root -g root '$CPANEL_3RDPARTY_DIR'"
+run "install -m 0644 -o root -g root '$SRC/cpanel/mailshield.live.php' '$CPANEL_3RDPARTY_DIR/index.live.php'"
+if [[ -f "$SRC/cpanel/icon.png" ]]; then
+  run "install -m 0644 -o root -g root '$SRC/cpanel/icon.png' '$CPANEL_3RDPARTY_DIR/icon.png'"
 fi
 # NOTE: /usr/local/cpanel/scripts/install_plugin bir .tgz arsivi bekler; .cpanelplugin
 # ham dosyasını 'Unrecognized archive format' hatasi verir. Onun yerine AppConfig

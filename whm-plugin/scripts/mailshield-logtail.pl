@@ -91,53 +91,60 @@ sub _process_line {
     my ($line) = @_;
 
     # Match inbound line:
-    # 2026-07-31 10:04:06 1wphHq-0000000BBIo-3bba <= sender@from H=(...) [1.2.3.4] ... T="Subject" for rcpt@to
     if ($line =~ m{
-        ^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s     # date time
-        (\S+)\s                                          # exim message id
-        <=\s                                             # inbound marker
-        (\S+)                                            # from address
-        (.*?)                                            # middle (H=, IP, S=, T=, etc.)
-        (?:\sfor\s(.+))?$                                # optional 'for rcpt'
+        ^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s
+        (\S+)\s
+        <=\s
+        (\S+)
+        (.*?)
+        (?:\sfor\s(.+))?$
     }x) {
         my ($date, $time, $mid, $from, $mid_part, $for_rcpt) = ($1,$2,$3,$4,$5,$6);
         return if $seen_ids{$mid}++;
 
-        # Extract client IP (H=host [1.2.3.4])
         my ($client_ip) = $mid_part =~ /\[([\d.:a-f]+)\]/i;
-        # Subject (T="...") — may contain escaped chars
         my ($subject)   = $mid_part =~ /\sT="((?:\\.|[^"\\])*)"/;
         $subject //= '';
-        # Exim T="..." field'i escape sequence icerir: \nHH (Q-P benzeri).
-        # Ornek: "F\335YAT" -> "FİYAT" (0xdd = 221 -> 'İ' in cp1254),
-        #        "\304\260" -> "İ" (UTF-8 pairs).
-        $subject =~ s/\\(\d{3})/chr(oct($1))/ge;   # \NNN octal escapes -> byte
-        # Sonuc byte string; encoding olarak once UTF-8 dogrulayalim, degilse cp1254
+        # Exim octal escapes -> byte
+        $subject =~ s/\\(\d{3})/chr(oct($1))/ge;
         eval {
             require Encode;
             if (!Encode::is_utf8($subject) && $subject =~ /[\x80-\xff]/) {
-                # Try UTF-8 decode first; fall back to cp1254 (Turkish Windows)
-                my $decoded = eval { Encode::decode('UTF-8', $subject, Encode::FB_CROAK()) };
-                if ($@ || !defined $decoded) {
-                    $decoded = eval { Encode::decode('cp1254', $subject, Encode::FB_DEFAULT()) };
+                my $dec = eval { Encode::decode('UTF-8', $subject, Encode::FB_CROAK()) };
+                if ($@ || !defined $dec) {
+                    $dec = eval { Encode::decode('cp1254', $subject, Encode::FB_DEFAULT()) };
                 }
-                $subject = Encode::encode('UTF-8', $decoded) if defined $decoded;
+                $subject = Encode::encode('UTF-8', $dec) if defined $dec;
             }
         };
         $subject = substr($subject, 0, 200);
-        # Recipient (either 'for x@y' at end OR from later => line; we accept the first form now)
         my $to = $for_rcpt // '';
         $to =~ s/^\s+|\s+$//g;
 
-        # Optional: sniff X-Spam-Score from Exim spool header file
-        my ($spam_score, $spam_status) = _spam_from_spool($mid);
-
-        my $verdict = 'clean';
-        my $action  = 'accept';
-        if (defined $spam_status && $spam_status =~ /yes/i) {
-            if (defined $spam_score && $spam_score >= 8) { $verdict = 'high_spam'; $action = 'quarantine'; }
-            else                                          { $verdict = 'spam';      $action = 'quarantine'; }
+        # v1.7: SpamAssassin genelde ~1-3sn sonra header yazar; kısa bekle sonra parse et
+        # (blocking sleep worker daemon'da ok — trafik yoğunsa async kuyruğa alalım gelecekte)
+        my ($spam_score, $spam_status, $spam_report);
+        for my $attempt (1..3) {
+            ($spam_score, $spam_status, $spam_report) = _spam_from_spool($mid);
+            last if defined $spam_score || defined $spam_status;
+            select(undef, undef, undef, 0.8);   # 800ms uyu, retry
         }
+
+        # Verdict logic — SA header yoksa 'clean', varsa skora göre
+        my ($verdict, $action) = ('clean', 'accept');
+        if (defined $spam_status && $spam_status =~ /yes/i) {
+            if    (defined $spam_score && $spam_score >= 10) { ($verdict, $action) = ('high_spam', 'quarantine'); }
+            elsif (defined $spam_score && $spam_score >= 5)  { ($verdict, $action) = ('spam',      'quarantine'); }
+            else                                              { ($verdict, $action) = ('spam',      'quarantine'); }
+        } elsif (defined $spam_score && $spam_score >= 10) {
+            ($verdict, $action) = ('high_spam', 'quarantine');
+        } elsif (defined $spam_score && $spam_score >= 5) {
+            ($verdict, $action) = ('spam', 'quarantine');
+        }
+
+        my %scores;
+        $scores{spamassassin} = $spam_score + 0 if defined $spam_score;
+        $scores{sa_report}    = substr($spam_report, 0, 500) if defined $spam_report;
 
         _post_event({
             license_key     => $license,
@@ -149,7 +156,7 @@ sub _process_line {
             verdict         => $verdict,
             action          => $action,
             total_score     => ($spam_score // 0) + 0,
-            scores          => (defined $spam_score ? { spamassassin => $spam_score + 0 } : {}),
+            scores          => \%scores,
             ts              => "${date}T${time}+00:00",
         });
         return;
@@ -173,23 +180,29 @@ sub _process_line {
 
 sub _spam_from_spool {
     my ($mid) = @_;
-    # Exim stores headers in $spool/<split>/<id>-H  where <split> is a subdir
-    # based on message id (0-9 split for split_spool_directory).
-    my ($score, $status);
+    # Exim stores headers in $spool/<split>/<id>-H
+    my ($score, $status, $report);
     for my $sub ('', map { "$_/" } 0..9, 'A'..'F') {
         my $path = "$spool/${sub}${mid}-H";
         if (-r $path) {
             open my $h, '<', $path or next;
             while (my $l = <$h>) {
-                if ($l =~ /^\d+X-Spam-Score:\s*(-?\d+(?:\.\d+)?)/i) { $score = $1; }
-                if ($l =~ /^\d+X-Spam-Status:\s*(\w+)/i)            { $status = $1; }
-                last if defined $score && defined $status;
+                # Exim header lines start with a numeric length prefix
+                if ($l =~ /X-Spam-Score:\s*(-?\d+(?:\.\d+)?)/i)  { $score = $1; }
+                if ($l =~ /X-Spam-Status:\s*(\w+)/i)             { $status = $1; }
+                if ($l =~ /X-Spam-Report:\s*(.+)/i)              { $report = $1; }
+                # MailScanner-specific header (varies per install)
+                if ($l =~ /X-MailScanner-SpamCheck:\s*(.+?)['"]?\s*$/i) {
+                    if ($1 =~ /score=(-?\d+(?:\.\d+)?)/i) { $score //= $1; }
+                    if ($1 =~ /\b(spam|not\s+spam)\b/i)   { $status //= (lc($1) eq 'spam' ? 'Yes' : 'No'); }
+                    $report //= substr($1, 0, 400);
+                }
             }
             close $h;
             last;
         }
     }
-    return ($score, $status);
+    return ($score, $status, $report);
 }
 
 sub _post_event {

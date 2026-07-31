@@ -1,5 +1,28 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
+## v1.6.4 (Feb 2026) — Verdict Enrichment + Filters + Quarantine Sync + End-User Fix
+Kullanicinin 4 istegini tek tarball'a paketleyip WHM `↻ Guncelle` ile deploy edilebilir yaptik.
+
+### 1) Verdict Enrichment
+- Logtail 800ms×3 retry ile `/var/spool/exim/input/*-H` header'larindaki
+  `X-Spam-Score`, `X-Spam-Status`, `X-Spam-Report`, `X-MailScanner-SpamCheck` okur
+- Skora göre `clean` / `spam` (5+) / `high_spam` (10+) verdict atar
+- `scores.spamassassin` + `scores.sa_report` payload'a eklenir
+
+### 2) Traffic Filters
+- LiveMailEvents widget: search input (from/to/subject) + verdict dropdown
+- Client-side filter, live count `Gosterilen: X / Y`, `Temizle` butonu
+
+### 3) Quarantine Sync Backend
+- `POST /api/events/quarantine-action` — panel -> kuyruk (delete/release/report_spam)
+- `GET /api/events/pending-actions?license_key=` — sunucu daemon short-poll
+- `POST /api/events/complete-action` — daemon aksiyon sonucu geri raporlar
+- `pending_quarantine_actions` MongoDB collection
+
+### 4) cPanel End-User Fix
+- `mailshield_user.conf` URL: `/3rdparty/mailshield/index.live.php`
+- install.sh: `/usr/local/cpanel/base/3rdparty/mailshield/` dizini olusturulur + PHP kopyalanir
+
 ## v1.6.3 (Feb 2026) — One-Click Self-Update ✅
 WHM plugin başlığında "↻ Guncelle" butonu — kullanıcı her code değişikliğinde SSH'a gitmeden
 tek tıkla sunucudaki plugin script'lerini yeniler.

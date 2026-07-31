@@ -34,6 +34,8 @@ export default function LiveMailEvents() {
   );
   const [editOpen, setEditOpen] = useState(false);
   const [draft, setDraft] = useState(licenseKey);
+  const [search, setSearch] = useState("");
+  const [verdictFilter, setVerdictFilter] = useState("all");
   const qc = useQueryClient();
 
   useEffect(() => { localStorage.setItem("gws.event_license", licenseKey); }, [licenseKey]);
@@ -67,6 +69,17 @@ export default function LiveMailEvents() {
   const items = events.data?.items || [];
   const total = summary.data?.total || 0;
   const invalid = events.isError;
+
+  // Client-side filtering — subject/from/to arama + verdict dropdown
+  const filtered = items.filter((e) => {
+    if (verdictFilter !== "all" && e.verdict !== verdictFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const hay = `${e.from_addr || ""} ${e.to_addr || ""} ${e.subject || ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
 
   return (
     <Card data-testid="live-events-card">
@@ -134,6 +147,51 @@ export default function LiveMailEvents() {
         )}
 
         {!invalid && items.length > 0 && (
+          <>
+            {/* Filter bar */}
+            <div className="flex gap-2 mb-3 flex-wrap" data-testid="live-events-filters">
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Ara: from / to / subject"
+                className="flex-1 min-w-[220px] bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                data-testid="live-events-search-input"
+              />
+              <select
+                value={verdictFilter}
+                onChange={(e) => setVerdictFilter(e.target.value)}
+                className="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                data-testid="live-events-verdict-filter"
+              >
+                <option value="all">Tümü ({items.length})</option>
+                <option value="clean">Temiz</option>
+                <option value="spam">Spam</option>
+                <option value="high_spam">Yüksek Spam</option>
+                <option value="virus">Virüs</option>
+                <option value="blocked">Blocked</option>
+              </select>
+              {(search || verdictFilter !== "all") && (
+                <button
+                  onClick={() => { setSearch(""); setVerdictFilter("all"); }}
+                  className="text-xs px-3 py-1.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                  data-testid="live-events-filters-reset"
+                >Temizle</button>
+              )}
+              <span className="text-xs text-slate-500 self-center" data-testid="live-events-filter-count">
+                Gösterilen: <span className="mono text-slate-300">{filtered.length}</span> / {items.length}
+              </span>
+            </div>
+          </>
+        )}
+
+        {!invalid && items.length > 0 && filtered.length === 0 && (
+          <div className="text-center py-6 text-slate-500 text-sm" data-testid="live-events-filtered-empty">
+            Filtreye uyan event yok. <button onClick={() => { setSearch(""); setVerdictFilter("all"); }} className="text-indigo-400 underline">Filtreyi temizle</button>
+          </div>
+        )}
+
+        {!invalid && filtered.length > 0 && (
           <div className="overflow-x-auto max-h-[560px] overflow-y-auto rounded border border-slate-800">
             <table className="w-full text-xs" data-testid="live-events-table">
               <thead className="bg-slate-900 sticky top-0 z-10">
@@ -147,7 +205,7 @@ export default function LiveMailEvents() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((e, idx) => {
+                {filtered.map((e, idx) => {
                   const m = VERDICT_META[e.verdict] || { tone: "default", label: e.verdict?.toUpperCase(), Icon: ShieldCheck, row: "" };
                   const Icon = m.Icon;
                   return (

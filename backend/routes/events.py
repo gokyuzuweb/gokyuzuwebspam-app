@@ -125,7 +125,6 @@ async def events_summary(
     }
 
 
-# --- TEST/DEMO endpoint (kullanici kolay test edebilsin) ---
 @router.post("/test-ingest")
 async def test_ingest(license_key: str = Query(..., min_length=8)):
     """Curl ile tetiklenir. 5 ornek event yaratir, panele hemen dusmesi icin."""
@@ -164,3 +163,70 @@ async def test_ingest(license_key: str = Query(..., min_length=8)):
     )
     return {"ok": True, "inserted": len(docs),
             "message": "5 ornek event olusturuldu. Panelde canli event akisinda gorulmelidir."}
+
+
+# --- Quarantine Sync ---
+# Kullanici panelden bir mail'i karantinaya alma / silme / release isterse
+# ilgili sunucudaki logtail daemon'a job kuyrugu yazariz. Sunucudaki daemon
+# short-poll ile pending action listesini alir, sunucu spool'unda gercek
+# aksiyon uygular ve action_completed = True'yi geri raporlar.
+
+class QuarantineActionReq(BaseModel):
+    license_key: str
+    event_id: str
+    action: str = Field(..., pattern="^(delete|release|report_spam)$")
+
+
+@router.post("/quarantine-action")
+async def request_quarantine_action(req: QuarantineActionReq):
+    """Panel -> sunucu: karantina aksiyon talebi kuyruga alinir."""
+    await _validate_license(req.license_key)
+    evt = await db.mail_events.find_one(
+        {"license_key": req.license_key, "id": req.event_id}, {"_id": 0}
+    )
+    if not evt:
+        raise HTTPException(404, "Event bulunamadi")
+    action_id = str(uuid.uuid4())
+    await db.pending_quarantine_actions.insert_one({
+        "id": action_id,
+        "license_key": req.license_key,
+        "event_id": req.event_id,
+        "action": req.action,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+        "result": None,
+    })
+    return {"ok": True, "action_id": action_id, "queued": True}
+
+
+@router.get("/pending-actions")
+async def list_pending_actions(license_key: str = Query(..., min_length=8)):
+    """Sunucudaki logtail daemon her N saniyede bir bunu poll'lar."""
+    await _validate_license(license_key)
+    cursor = db.pending_quarantine_actions.find(
+        {"license_key": license_key, "completed_at": None},
+        {"_id": 0},
+    ).sort("created_at", 1).limit(20)
+    return {"items": await cursor.to_list(length=20)}
+
+
+class ActionResult(BaseModel):
+    license_key: str
+    action_id: str
+    result: str
+    message: Optional[str] = None
+
+
+@router.post("/complete-action")
+async def complete_action(res: ActionResult):
+    """Sunucudaki daemon aksiyonu tamamladiktan sonra sonucu buraya bildirir."""
+    await _validate_license(res.license_key)
+    r = await db.pending_quarantine_actions.update_one(
+        {"license_key": res.license_key, "id": res.action_id, "completed_at": None},
+        {"$set": {
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "result": res.result,
+            "message": res.message,
+        }},
+    )
+    return {"ok": True, "matched": r.matched_count}

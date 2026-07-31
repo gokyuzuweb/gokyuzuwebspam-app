@@ -37,6 +37,7 @@ systemctl daemon-reload
 rm -rf /usr/local/mailshield
 rm -rf /usr/local/cpanel/whostmgr/docroot/cgi/mailshield
 rm -rf /usr/local/cpanel/base/frontend/jupiter/mailshield
+rm -rf /usr/local/cpanel/base/3rdparty/mailshield
 rm -f  /usr/local/sbin/mailshieldctl
 
 echo "GokyuzuWebSpam removed."
