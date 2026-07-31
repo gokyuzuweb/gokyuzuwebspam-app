@@ -1,28 +1,29 @@
 <?php
 /**
- * GokyuzuWebSpam MailControl — cPanel end-user plugin
+ * GokyuzuWebSpam MailControl - cPanel end-user plugin
  *
  * Displays the user's quarantine + per-user whitelist/blacklist.
- * Uses the local GokyuzuWebSpam API scoped to the currently-authenticated cPanel user.
+ * Frontend iframe is fetched from public panel URL; auth carried by cPanel session.
  */
 
 require_once "/usr/local/cpanel/php/cpanel.php";
 $cpanel = new CPANEL();
 print $cpanel->header("GokyuzuWebSpam MailControl");
 
-$user  = getenv('REMOTE_USER') ?: 'unknown';
-$apiJs = "/usr/local/mailshield/api/index.html?scope=user&user=" . urlencode($user);
+$user      = getenv('REMOTE_USER') ?: 'unknown';
+$publicUrl = getenv('MAILSHIELD_PUBLIC') ?: 'https://mailscanner-pro.preview.emergentagent.com';
+$panelUrl  = $publicUrl . '/panel?scope=user&user=' . urlencode($user);
 ?>
 
-<div class="body-content">
-  <h1>GokyuzuWebSpam MailControl</h1>
-  <p>
-    Bu arayüz, <code><?php echo htmlspecialchars($user); ?></code> hesabınıza gelen
-    e-postaların karantina, beyaz ve kara listelerini yönetmenize olanak sağlar.
+<div class="body-content" style="padding: 12px 18px;">
+  <h1 style="color:#1e3a8a; margin:0 0 6px 0;">GokyuzuWebSpam MailControl</h1>
+  <p style="color:#666; margin:0 0 14px 0; font-size:13px;">
+    Bu arayuz, <code><?php echo htmlspecialchars($user); ?></code> hesabinizin karantina,
+    beyaz ve kara listelerini yonetmenize olanak saglar.
   </p>
   <iframe
-    src="<?php echo htmlspecialchars($apiJs); ?>"
-    style="width:100%; height:calc(100vh - 220px); border:0; border-radius:8px;">
+    src="<?php echo htmlspecialchars($panelUrl); ?>"
+    style="width:100%; height:calc(100vh - 260px); min-height:520px; border:0; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,.08);">
   </iframe>
 </div>
 

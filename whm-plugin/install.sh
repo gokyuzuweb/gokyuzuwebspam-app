@@ -114,27 +114,51 @@ run "install -m 0644 -o root -g root '$SRC/cpanel/mailshield.cpanelplugin' '$CPA
 if [[ -f "$SRC/cpanel/icon.png" ]]; then
   run "install -m 0644 -o root -g root '$SRC/cpanel/icon.png' '$CPANEL_PLUGIN_DIR/icon.png'"
 fi
-if [[ -x /usr/local/cpanel/scripts/install_plugin && $DRY_RUN -eq 0 ]]; then
-  /usr/local/cpanel/scripts/install_plugin "$CPANEL_PLUGIN_DIR/mailshield.cpanelplugin" || true
-fi
+# NOTE: /usr/local/cpanel/scripts/install_plugin bir .tgz arsivi bekler; .cpanelplugin
+# ham dosyasını 'Unrecognized archive format' hatasi verir. Onun yerine AppConfig
+# yolunu (asagida [6/9] adiminda /var/cpanel/apps/mailshield_user.conf) kullaniriz.
 
-echo "==> [6/9] AppConfig kaydediliyor (WHM menusune eklenir)"
-# Eski bozuk kaydı temizle
+echo "==> [6/9] AppConfig kaydediliyor (WHM + cPanel menulerine eklenir)"
+# --- WHM AppConfig ---
 if [[ $DRY_RUN -eq 0 ]]; then
   /usr/local/cpanel/bin/unregister_appconfig mailshield 2>/dev/null || true
   rm -f "$APPCONFIG"
 fi
 run "install -m 0644 '$SRC/appconfig/mailshield.conf' '$APPCONFIG'"
-# Defensive: encoding düzeltmesi (CRLF/BOM cPanel'i 500'e düşürebilir)
 run "sed -i '1s/^\\xEF\\xBB\\xBF//' '$APPCONFIG'"
 run "sed -i 's/\\r\$//' '$APPCONFIG'"
 if [[ $DRY_RUN -eq 0 ]]; then
   if ! /usr/local/cpanel/bin/register_appconfig "$APPCONFIG"; then
-    echo "!! register_appconfig BASARISIZ. Dosya icerigi:" >&2
+    echo "!! WHM register_appconfig BASARISIZ. Dosya icerigi:" >&2
     cat "$APPCONFIG" >&2
     exit 1
   fi
-  echo "    AppConfig basariyla kaydedildi."
+  echo "    WHM AppConfig kaydedildi."
+fi
+
+# --- cPanel end-user AppConfig ---
+USER_APPCONFIG=/var/cpanel/apps/mailshield_user.conf
+if [[ -f "$SRC/appconfig/mailshield_user.conf" ]]; then
+  if [[ $DRY_RUN -eq 0 ]]; then
+    /usr/local/cpanel/bin/unregister_appconfig mailshield_user 2>/dev/null || true
+    rm -f "$USER_APPCONFIG"
+  fi
+  run "install -m 0644 '$SRC/appconfig/mailshield_user.conf' '$USER_APPCONFIG'"
+  run "sed -i '1s/^\\xEF\\xBB\\xBF//' '$USER_APPCONFIG'"
+  run "sed -i 's/\\r\$//' '$USER_APPCONFIG'"
+  if [[ $DRY_RUN -eq 0 ]]; then
+    if /usr/local/cpanel/bin/register_appconfig "$USER_APPCONFIG"; then
+      echo "    cPanel (end-user) AppConfig kaydedildi."
+      # Feature'ı tum feature list'lerine ekle (herkes gorsun)
+      if [[ -d /var/cpanel/features ]]; then
+        for flist in /var/cpanel/features/*; do
+          [[ -f "$flist" ]] && grep -q "^mailshield_user=" "$flist" || echo "mailshield_user=1" >> "$flist"
+        done
+      fi
+    else
+      echo "    UYARI: cPanel end-user AppConfig kaydi basarisiz (opsiyonel, devam ediliyor)."
+    fi
+  fi
 fi
 
 echo "==> Yapılandırma yerleştirme"

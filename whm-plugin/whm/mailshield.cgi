@@ -2,15 +2,15 @@
 #
 # GokyuzuWebSpam - WHM CGI proxy
 #
-# Renders the WHM chrome + iframes the GokyuzuWebSpam dashboard.
+# Renders WHM chrome + live cluster status badge + iframe to dashboard.
 # Also exposes a passthrough API at /cgi/mailshield/index.cgi/api/*
-# forwarding to the local FastAPI service (auth already validated by WHM).
+# forwarding to the local FastAPI service (auth validated by WHM).
 #
 
 use strict;
 use warnings;
 use lib '/usr/local/cpanel';
-use Whostmgr::ACLS         ();
+use Whostmgr::ACLS          ();
 use Whostmgr::HTMLInterface ();
 use LWP::UserAgent          ();
 use HTTP::Request           ();
@@ -22,8 +22,9 @@ unless (Whostmgr::ACLS::hasroot()) {
     exit 0;
 }
 
-my $api   = $ENV{MAILSHIELD_API} // 'http://127.0.0.1:8001';
-my $pinfo = $ENV{PATH_INFO} // '';
+my $api    = $ENV{MAILSHIELD_API} // 'http://127.0.0.1:8001';
+my $public = $ENV{MAILSHIELD_PUBLIC} // 'https://mailscanner-pro.preview.emergentagent.com';
+my $pinfo  = $ENV{PATH_INFO} // '';
 
 # ---- Passthrough API routing (SPA -> local FastAPI, WHM auth validated) ----
 if ($pinfo =~ m{^/api/}) {
@@ -47,24 +48,54 @@ if ($pinfo =~ m{^/api/}) {
     exit 0;
 }
 
-# ---- HTML shell (WHM header + iframe + WHM footer) ----
-print "Content-type: text/html; charset=utf-8\r\n\r\n";
+# ---- Cluster health probe (used to render live badge above iframe) ----
+sub cluster_badge {
+    my $ua = LWP::UserAgent->new(timeout => 3);
+    my $res = $ua->get("$public/api/license-server/health");
+    if (!$res->is_success) {
+        return _badge("Cluster Unreachable", "#fee2e2", "#991b1b");
+    }
+    my $body = $res->decoded_content // '';
+    my ($healthy) = $body =~ /"healthy_count"\s*:\s*(\d+)/;
+    my ($total)   = $body =~ /"total_regions"\s*:\s*(\d+)/;
+    my ($region)  = $body =~ /"region"\s*:\s*"([^"]+)"/;
+    $healthy //= 0; $total //= 0; $region //= 'Region';
+    if ($total > 0 && $healthy == $total) {
+        return _badge("Cluster: $region ($healthy/$total)", "#d1fae5", "#065f46");
+    } elsif ($healthy > 0) {
+        return _badge("Cluster Degraded ($healthy/$total)", "#fef3c7", "#92400e");
+    } else {
+        return _badge("Cluster Offline", "#fee2e2", "#991b1b");
+    }
+}
+sub _badge {
+    my ($text, $bg, $fg) = @_;
+    return qq{<span id="ms-badge" style="display:inline-block;padding:5px 12px;border-radius:14px;background:$bg;color:$fg;font-size:12px;font-weight:600;letter-spacing:.2px;">$text</span>};
+}
+my $badge_html = cluster_badge();
 
-# WHM chrome header
+# ---- HTML shell (WHM chrome + header + badge + iframe) ----
+print "Content-type: text/html; charset=utf-8\r\n\r\n";
 Whostmgr::HTMLInterface::defheader('GokyuzuWebSpam', '', '/cgi/mailshield');
 
-my $panel_url = 'https://mailscanner-pro.preview.emergentagent.com/panel';
+my $panel_url = "$public/panel";
 
 print <<"HTML";
 <style>
-  #ms-shell { position: relative; width: 100%; height: calc(100vh - 180px); border: 0; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
-  .ms-header { padding: 16px 20px; }
-  .ms-header h1 { margin: 0 0 6px 0; font-size: 22px; color: #1e3a8a; }
-  .ms-header p { margin: 0 0 14px 0; color: #666; font-size: 13px; }
+  #ms-shell { position: relative; width: 100%; height: calc(100vh - 200px); border: 0; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+  .ms-hdr { padding: 14px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .ms-hdr h1 { margin: 0; font-size: 22px; color: #1e3a8a; }
+  .ms-hdr p { margin: 6px 0 0 0; color: #666; font-size: 13px; }
+  .ms-hdr .ms-title { flex: 1; min-width: 240px; }
 </style>
-<div class="ms-header">
-  <h1>GokyuzuWebSpam - Mail Guvenlik Paneli</h1>
-  <p>Modern spam &amp; virus koruma paneli. Panel canli backend'e baglidir; asagida gomulu olarak calisir.</p>
+<div class="ms-hdr">
+  <div class="ms-title">
+    <h1>GokyuzuWebSpam &mdash; Mail Guvenlik Paneli</h1>
+    <p>Modern spam &amp; virus koruma paneli. Canli lisans sunucusu kumesi ile senkronize.</p>
+  </div>
+  $badge_html
+</div>
+<div style="padding: 0 20px 20px 20px;">
   <iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam"></iframe>
 </div>
 HTML

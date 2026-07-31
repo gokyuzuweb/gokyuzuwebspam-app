@@ -10,9 +10,20 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 APPCONFIG=/var/cpanel/apps/mailshield.conf
+USER_APPCONFIG=/var/cpanel/apps/mailshield_user.conf
 if [[ -f "$APPCONFIG" ]]; then
   /usr/local/cpanel/bin/unregister_appconfig mailshield || true
   rm -f "$APPCONFIG"
+fi
+if [[ -f "$USER_APPCONFIG" ]]; then
+  /usr/local/cpanel/bin/unregister_appconfig mailshield_user || true
+  rm -f "$USER_APPCONFIG"
+fi
+# Feature listelerinden kaldir
+if [[ -d /var/cpanel/features ]]; then
+  for flist in /var/cpanel/features/*; do
+    [[ -f "$flist" ]] && sed -i '/^mailshield_user=/d' "$flist"
+  done
 fi
 
 systemctl disable --now mailshield-api.service      || true
