@@ -1,0 +1,18 @@
+{
+  "summary": "Verified install.sh --license flag fix and regression backend endpoints. Downloaded tarball from /api/plugin/download, extracted, ran bash -n (syntax OK), and executed install.sh --license=MS-TEST --dry-run. No 'Unknown flag' error — script now exits with expected 'WHM/cPanel not detected. Aborting.' (acceptable in preview env). Also verified case handlers (--license=*, --license-server=*) and the [license] config-writing block are present. install-info wget_one_liner includes '--license=MS-TEST'. Tarball contains scripts/heartbeat.pl and install.sh at top level. All 4 regression endpoints return 200.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Minor: reseller login endpoint is /api/reseller/auth/login (not /api/auth/login) — review request had the wrong path but auth works fine."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "N/A"},
+  "test_credentials": "reseller@test.com / strong123 via POST /api/reseller/auth/login (returns 'token' field)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug fix for install.sh --license=... flag is verified end-to-end. Tarball built on-the-fly from /app/whm-plugin/ correctly ships fixed install.sh. Regression endpoints /api/analytics/mrr, /api/pricing, /api/plugin/install-info, /api/reseller/invoices (with JWT from /api/reseller/auth/login) all 200.",
+  "rca of the issue": "Original install.sh case statement lacked --license=* pattern, causing 'Unknown flag' error and exit 1 when reseller ran the wget_one_liner from install-info. Fix added --license=* and --license-server=* handlers plus a config-writing block that persists [license] key + server_url into /etc/mailshield/mailshield.conf. Verified fix is present both in /app/whm-plugin/install.sh source and in the served tarball from /api/plugin/download."
+}

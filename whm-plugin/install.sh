@@ -28,11 +28,15 @@ set -euo pipefail
 
 START_MILTER=0
 DRY_RUN=0
+LICENSE_KEY=""
+LICENSE_SERVER=""
 for arg in "$@"; do
   case $arg in
-    --start-milter) START_MILTER=1 ;;
-    --dry-run)      DRY_RUN=1 ;;
-    --domain=*)     : ;;  # geriye uyumluluk, artık kullanılmıyor
+    --start-milter)     START_MILTER=1 ;;
+    --dry-run)          DRY_RUN=1 ;;
+    --license=*)        LICENSE_KEY="${arg#*=}" ;;
+    --license-server=*) LICENSE_SERVER="${arg#*=}" ;;
+    --domain=*)         : ;;  # geriye uyumluluk, artık kullanılmıyor
     *) echo "Unknown flag: $arg"; exit 1 ;;
   esac
 done
@@ -119,6 +123,38 @@ EOF
   echo "    → Customer moduna alındı, 7 günlük demo süreci başlatıldı."
 fi
 run "chown -R mailshield:mailshield '$ETC_DIR'"
+
+# ---- Lisans anahtarını yaz (kurulum komutunda --license=... verildiyse) ----
+if [[ -n "$LICENSE_KEY" && $DRY_RUN -eq 0 ]]; then
+  echo "==> Lisans anahtarı config'e yazılıyor"
+  CONF_FILE="$ETC_DIR/mailshield.conf"
+  # [license] bloğunu ekle veya güncelle
+  if grep -q "^\[license\]" "$CONF_FILE"; then
+    # Var olan bloğu güncelle (key satırını değiştir/ekle)
+    if grep -q "^key\s*=" "$CONF_FILE"; then
+      sed -i "s|^key\s*=.*|key = $LICENSE_KEY|" "$CONF_FILE"
+    else
+      sed -i "/^\[license\]/a key = $LICENSE_KEY" "$CONF_FILE"
+    fi
+  else
+    printf "\n[license]\nkey = %s\n" "$LICENSE_KEY" >> "$CONF_FILE"
+  fi
+  # License server URL — verilmediyse varsayılan preview URL
+  DEFAULT_LS="${LICENSE_SERVER:-https://mailscanner-pro.preview.emergentagent.com}"
+  if grep -q "^server_url\s*=" "$CONF_FILE"; then
+    sed -i "s|^server_url\s*=.*|server_url = $DEFAULT_LS|" "$CONF_FILE"
+  else
+    sed -i "/^\[license\]/a server_url = $DEFAULT_LS" "$CONF_FILE"
+  fi
+  chown mailshield:mailshield "$CONF_FILE"
+  chmod 640 "$CONF_FILE"
+  echo "    → Lisans: ${LICENSE_KEY:0:14}…  Sunucu: $DEFAULT_LS"
+  # Customer moda al (bayi kurulumu) ve demo süresini kapat
+  cat > "$ETC_DIR/mode.env" <<EOF
+MAILSHIELD_MODE=customer
+MAILSHIELD_DEMO_DAYS=0
+EOF
+fi
 
 echo "==> [8/9] systemd unit'leri kopyalanıyor"
 for u in "$SRC/systemd/"*; do
