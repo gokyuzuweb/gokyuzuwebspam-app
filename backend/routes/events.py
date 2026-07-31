@@ -68,7 +68,59 @@ async def ingest_event(evt: MailEvent, request: Request):
         asyncio.create_task(evaluate_and_fire(evt.license_key, doc))
     except Exception:
         pass
+    # AI Batch Pre-generate: high_spam / virus verdictleri icin arkaplan LLM aciklama
+    if doc.get("verdict") in ("high_spam", "virus"):
+        try:
+            import asyncio
+            asyncio.create_task(_ai_prewarm(doc))
+        except Exception:
+            pass
     return {"ok": True, "id": doc["id"]}
+
+
+async def _ai_prewarm(doc: dict) -> None:
+    """Yuksek riskli mailler icin LLM aciklamayi onceden uret + cache. UI ilk tikta hazir olsun."""
+    try:
+        import os, uuid as _uuid
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+        if not api_key:
+            return
+        sender = doc.get("from_addr") or ""
+        subject = doc.get("subject") or ""
+        cache_key = f"{sender}|{subject}|{doc.get('verdict')}|{doc.get('total_score')}"[:200]
+        existing = await db.ai_explanations.find_one({"key": cache_key}, {"_id": 0, "text": 1})
+        if existing and existing.get("text"):
+            return
+        prompt = (
+            f"Bir spam filtresi bir e-postayi karantinaya aldi. Kullanicilara 2-3 cumleyle "
+            f"anlasilir Turkce olarak neden spam/tehlikeli oldugunu acikla.\n"
+            f"Gonderen: {sender}\nKonu: {subject}\n"
+            f"Verdict: {doc.get('verdict')}\nSkor: {doc.get('total_score')}\n"
+            f"Ilk cumle: mailin ne oldugunu ozet.\nIkinci cumle: kullanici acmali mi.\n"
+            f"Emoji, madde isareti, teknik jargon kullanma."
+        )
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"ai-prewarm-{_uuid.uuid4()}",
+            system_message="Sen bir e-posta guvenlik uzmanisin. Sade, arkadas canlisi Turkce ile spam maillerini aciklarsin.",
+        ).with_model("anthropic", "claude-sonnet-4-6")
+        r = await chat.send_message(UserMessage(text=prompt))
+        text = (r or "").strip()
+        if not text:
+            return
+        await db.ai_explanations.update_one(
+            {"key": cache_key},
+            {"$set": {
+                "key": cache_key, "text": text, "sender": sender, "subject": subject,
+                "verdict": doc.get("verdict"), "score": doc.get("total_score"),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "source": "prewarm",
+            }},
+            upsert=True,
+        )
+    except Exception:
+        return
 
 
 @router.post("/ingest-batch")
