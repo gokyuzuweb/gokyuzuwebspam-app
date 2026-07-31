@@ -1,5 +1,13 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
+## v1.6.6 (Feb 2026) — License Edit Modal (IP CRUD + Active Toggle)
+- Yeni `EditLicenseModal.js` component (backdrop + ESC close, full CRUD form)
+- Lisans satırında ✏ Pencil ikonu (Radio ve Trash'ın solunda)
+- IP adresleri **chip listesi** — her IP'de ✕ ile tek tıkla silme, input + Enter ile ekleme, IPv4/IPv6 validation
+- Aktif/Pasif toggle switch (yeşil emerald)
+- Plan (Starter/Pro/Enterprise) select, max_domains number, valid_until date, notes textarea
+- Backend `PUT /api/licenses/{lid}` zaten mevcuttu — sadece UI eksikti
+
 ## v1.6.5 (Feb 2026) — Executor + Glow + Donut + Scope
 - **Quarantine Executor**: Logtail her 10sn `/events/pending-actions` polling → `exim -Mrm` (delete),
   `exim -M` (release), sa-learn stub (report_spam) → `/events/complete-action` back-report.

@@ -2,13 +2,14 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Key, Plus, Trash2, ShieldAlert, Copy, Server, Calendar, Users2, AlertTriangle,
-  CheckCircle2, XCircle, Package, PackagePlus, RefreshCw, Radio,
+  CheckCircle2, XCircle, Package, PackagePlus, RefreshCw, Radio, Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import MrrPanel from "@/components/MrrPanel";
 import LicenseServerStatus from "@/components/LicenseServerStatus";
+import EditLicenseModal from "@/components/EditLicenseModal";
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const isoDate = (iso) => iso ? new Date(iso).toLocaleDateString("tr-TR") : "—";
@@ -184,6 +185,7 @@ export default function Licenses() {
   const qc = useQueryClient();
   const licenses = useQuery({ queryKey: ["licenses"], queryFn: api.licenses, refetchInterval: 20000 });
   const violations = useQuery({ queryKey: ["violations"], queryFn: api.violations, refetchInterval: 15000 });
+  const [editing, setEditing] = useState(null);
 
   const del = useMutation({
     mutationFn: (id) => api.licenseDelete(id),
@@ -295,6 +297,11 @@ export default function Licenses() {
                           ) : <span className="text-slate-600 text-xs">hiç bağlanmadı</span>}
                         </td>
                         <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                          <button onClick={() => setEditing(r)} title="Düzenle"
+                            data-testid={`lic-edit-${r.id}`}
+                            className="mr-2 text-slate-400 hover:text-indigo-400">
+                            <Pencil className="w-4 h-4" />
+                          </button>
                           <button onClick={() => toggleActive.mutate({ lic: r, active: !r.active })} title={r.active ? "Devre dışı bırak" : "Aktifleştir"}
                             className={`mr-2 ${r.active ? "text-slate-400 hover:text-amber-400" : "text-slate-400 hover:text-emerald-400"}`}>
                             <Radio className="w-4 h-4" />
@@ -393,6 +400,9 @@ export default function Licenses() {
           </Card>
         </div>
       </div>
+      {editing && (
+        <EditLicenseModal license={editing} onClose={() => setEditing(null)} />
+      )}
     </div>
   );
 }

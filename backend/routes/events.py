@@ -51,11 +51,19 @@ async def ingest_event(evt: MailEvent, request: Request):
     doc["ingested_at"] = datetime.now(timezone.utc).isoformat()
     doc["client_ip"] = request.client.host if request.client else None
     await db.mail_events.insert_one(doc)
+    # Ek olarak license'in son_seen timestamp'ini guncelle
     await db.licenses.update_one(
         {"license_key": evt.license_key},
         {"$set": {"last_event_at": doc["ingested_at"]},
          "$inc": {"total_events": 1}}
     )
+    # Alert rules degerlendir (fire & forget)
+    try:
+        from routes.alerts import evaluate_and_fire
+        import asyncio
+        asyncio.create_task(evaluate_and_fire(evt.license_key, doc))
+    except Exception:
+        pass
     return {"ok": True, "id": doc["id"]}
 
 
@@ -142,6 +150,32 @@ async def events_summary(
         "by_verdict": breakdown,
         "last_event_at": (lic or {}).get("last_event_at"),
     }
+
+
+@router.get("/by-server")
+async def events_by_server(license_key: str = Query(..., min_length=8)):
+    """Multi-server rozetleri icin: distinct server_hostname + count + last_seen."""
+    await _validate_license(license_key)
+    pipeline = [
+        {"$match": {"license_key": license_key, "server_hostname": {"$ne": None}}},
+        {"$group": {
+            "_id": "$server_hostname",
+            "count": {"$sum": 1},
+            "last_seen": {"$max": "$ts"},
+            "spam_count": {"$sum": {"$cond": [{"$in": ["$verdict", ["spam", "high_spam", "virus"]]}, 1, 0]}},
+        }},
+        {"$sort": {"count": -1}},
+    ]
+    items = []
+    async for row in db.mail_events.aggregate(pipeline):
+        items.append({
+            "hostname": row["_id"],
+            "count": row["count"],
+            "last_seen": row["last_seen"],
+            "spam_count": row.get("spam_count", 0),
+        })
+    return {"items": items, "total_servers": len(items)}
+
 
 
 @router.post("/test-ingest")

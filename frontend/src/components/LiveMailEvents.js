@@ -4,6 +4,7 @@ import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { Send, ShieldCheck, ShieldAlert, Bug, Ban, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import MailEventDetail from "@/components/MailEventDetail";
 
 const VERDICT_META = {
   clean:       { tone: "success", label: "CLEAN",     Icon: ShieldCheck,   row: "" },
@@ -105,8 +106,19 @@ export default function LiveMailEvents() {
   const [search, setSearch] = useState("");
   const [verdictFilter, setVerdictFilter] = useState("all");
   const [newIds, setNewIds] = useState(new Set());
+  const [detailEvent, setDetailEvent] = useState(null);
   const seenIdsRef = useRef(new Set());
   const qc = useQueryClient();
+
+  async function handleAction(action, evt) {
+    try {
+      await api.quarantineAction(licenseKey, evt.id, action);
+      toast.success(`${action} kuyruğa alındı — ~10sn içinde sunucuda uygulanır`);
+      setDetailEvent(null);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Aksiyon başarısız");
+    }
+  }
 
   useEffect(() => { localStorage.setItem("gws.event_license", licenseKey); }, [licenseKey]);
 
@@ -323,7 +335,8 @@ export default function LiveMailEvents() {
                   return (
                     <tr
                       key={e.id}
-                      className={`border-b border-slate-800/50 hover:bg-slate-800/40 ${m.row} ${isNew ? "gws-row-glow" : ""}`}
+                      className={`border-b border-slate-800/50 hover:bg-slate-800/40 cursor-pointer ${m.row} ${isNew ? "gws-row-glow" : ""}`}
+                      onClick={() => setDetailEvent(e)}
                       data-testid={`live-event-row-${e.id}`}
                     >
                       <td className="px-3 py-2 text-slate-600">{idx + 1}</td>
@@ -361,6 +374,13 @@ export default function LiveMailEvents() {
           </div>
         )}
       </CardBody>
+      {detailEvent && (
+        <MailEventDetail
+          event={detailEvent}
+          onClose={() => setDetailEvent(null)}
+          onAction={handleAction}
+        />
+      )}
     </Card>
   );
 }

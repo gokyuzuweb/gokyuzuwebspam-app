@@ -25,6 +25,20 @@ export const api = {
     }}).then(r => r.data),
   testIngestEvents: (licenseKey) =>
     client.post(`/events/test-ingest?license_key=${encodeURIComponent(licenseKey)}`).then(r => r.data),
+  quarantineAction: (licenseKey, eventId, action) =>
+    client.post("/events/quarantine-action", {
+      license_key: licenseKey, event_id: eventId, action,
+    }).then(r => r.data),
+  eventsByServer: (licenseKey) =>
+    client.get("/events/by-server", { params: { license_key: licenseKey } }).then(r => r.data),
+  alertsRules: (licenseKey) =>
+    client.get("/alerts/rules", { params: { license_key: licenseKey } }).then(r => r.data),
+  alertsRuleUpsert: (licenseKey, rule) =>
+    client.post("/alerts/rules", { license_key: licenseKey, ...rule }).then(r => r.data),
+  alertsRuleDelete: (licenseKey, ruleId) =>
+    client.delete(`/alerts/rules/${ruleId}`, { params: { license_key: licenseKey } }).then(r => r.data),
+  alertsRecent: (licenseKey, limit = 20) =>
+    client.get("/alerts", { params: { license_key: licenseKey, limit } }).then(r => r.data),
 
   quarantine: (params = {}) => client.get("/quarantine", { params }).then(r => r.data),
   quarantineGet: (id) => client.get(`/quarantine/${id}`).then(r => r.data),
