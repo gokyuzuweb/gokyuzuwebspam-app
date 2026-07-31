@@ -4,11 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ShieldAlert, Users2, Key, LogOut, Plus, Trash2, Mail, Server,
   Inbox, ListChecks, LogIn, UserPlus, ArrowRight, CheckCircle2, XCircle,
-  Receipt, Download, FileText,
+  Receipt, Download, FileText, Palette,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
+import BrandingSettings from "@/components/BrandingSettings";
 
 const TOKEN_KEY = "gws_reseller_token";
 
@@ -135,6 +136,31 @@ function AuthScreen({ onLogin }) {
   );
 }
 
+/* --------------------------- Branding hook -------------------------------- */
+function useBranding() {
+  const [b, setB] = useState(() => {
+    try {
+      const raw = localStorage.getItem("gws.branding");
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) { return null; }
+  });
+  useEffect(() => {
+    const onChange = () => {
+      try {
+        const raw = localStorage.getItem("gws.branding");
+        setB(raw ? JSON.parse(raw) : null);
+      } catch (_) {}
+    };
+    window.addEventListener("gws.branding.changed", onChange);
+    window.addEventListener("storage", onChange);
+    return () => {
+      window.removeEventListener("gws.branding.changed", onChange);
+      window.removeEventListener("storage", onChange);
+    };
+  }, []);
+  return b;
+}
+
 /* --------------------------- Reseller dashboard --------------------------- */
 function ResellerDashboard({ token, onLogout }) {
   const qc = useQueryClient();
@@ -185,6 +211,11 @@ function ResellerDashboard({ token, onLogout }) {
   if (!me.data) return null;
   const { reseller, subaccounts, quota } = me.data;
   const quotaFull = quota.current >= quota.max_subaccounts;
+  const branding = useBranding();
+  const brandName = branding?.brand_name || "GökyüzüWebSpam";
+  const primary  = branding?.primary_color || "#6366f1";
+  const accent   = branding?.accent_color  || "#ef4444";
+  const logoUrl  = branding?.logo_url || "";
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -345,6 +376,8 @@ function ResellerDashboard({ token, onLogout }) {
         </Card>
 
         {/* Invoice history */}
+        <BrandingSettings licenseKey={reseller.license_key} />
+
         <Card data-testid="invoices-card">
           <CardHeader
             title={<span className="flex items-center gap-2"><Receipt className="w-4 h-4 text-emerald-400" /> Fatura Geçmişi</span>}

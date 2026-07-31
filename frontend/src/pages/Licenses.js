@@ -356,25 +356,31 @@ export default function Licenses() {
                           ) : <span className="text-slate-600 text-xs">hiç bağlanmadı</span>}
                         </td>
                         <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                          <button onClick={() => setEditing(r)} title="Düzenle"
+                          <button onClick={() => setEditing(r)} title="Düzenle · IP ekle / plan değiştir"
                             data-testid={`lic-edit-${r.id}`}
-                            className="mr-2 text-slate-400 hover:text-indigo-400">
-                            <Pencil className="w-4 h-4" />
+                            className="mr-1.5 inline-flex items-center gap-1 px-2 py-1 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/25 hover:border-indigo-400 transition text-xs font-medium">
+                            <Pencil className="w-3.5 h-3.5" />
+                            <span className="hidden xl:inline">Düzenle</span>
                           </button>
                           <button onClick={() => toggleActive.mutate({ lic: r, active: !r.active })} title={r.active ? "Devre dışı bırak" : "Aktifleştir"}
-                            className={`mr-2 ${r.active ? "text-slate-400 hover:text-amber-400" : "text-slate-400 hover:text-emerald-400"}`}>
-                            <Radio className="w-4 h-4" />
+                            data-testid={`lic-toggle-${r.id}`}
+                            className={`mr-1.5 inline-flex items-center px-1.5 py-1 rounded border transition ${
+                              r.active
+                                ? "border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/25"
+                                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/25"
+                            }`}>
+                            <Radio className="w-3.5 h-3.5" />
                           </button>
                           <button data-testid={`lic-del-${r.id}`} onClick={() => { if (confirm(`${r.customer_name} lisansı silinsin mi?`)) del.mutate(r.id); }}
-                            className="text-slate-500 hover:text-rose-400" title="Sil">
-                            <Trash2 className="w-4 h-4" />
+                            className="inline-flex items-center px-1.5 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/25 transition" title="Sil">
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </td>
                       </tr>
                     );
                   })}
                   {rows.length === 0 && (
-                    <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">Henüz lisans yok</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Henüz lisans yok</td></tr>
                   )}
                 </tbody>
               </table>

@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
-import { Bell, Plus, Trash2, Slack, MessageSquare, Zap, ExternalLink } from "lucide-react";
+import { Bell, Plus, Trash2, Slack, MessageSquare, Zap, ExternalLink, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 
 const KIND_LABEL = {
   rate_from_sender: "Aynı gönderenden yoğun trafik",
@@ -151,6 +152,32 @@ export default function AlertsRules() {
       qc.invalidateQueries({ queryKey: ["alerts-rules", licenseKey] }); },
   });
 
+  const timeline = useQuery({
+    queryKey: ["alerts-timeline", licenseKey],
+    queryFn: () => api.alertsTimeline(licenseKey),
+    refetchInterval: 60000, retry: false,
+  });
+
+  // Transform timeline into chart-ready rows. Backfill 7 days with zero rows so bars
+  // are always visible even when no alerts.
+  const chartRows = (() => {
+    const items = timeline.data?.items || [];
+    const byDay = Object.fromEntries(items.map(i => [i.day, i]));
+    const ruleSet = new Set();
+    items.forEach(i => Object.keys(i.rules || {}).forEach(r => ruleSet.add(r)));
+    const rules = Array.from(ruleSet);
+    const out = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000);
+      const key = d.toISOString().slice(0, 10);
+      const row = { day: key.slice(5), total: byDay[key]?.total || 0 };
+      rules.forEach(r => { row[r] = byDay[key]?.rules?.[r] || 0; });
+      out.push(row);
+    }
+    return { rows: out, rules };
+  })();
+  const barColors = ["#6366f1", "#f59e0b", "#ef4444", "#10b981", "#8b5cf6", "#ec4899", "#14b8a6"];
+
   return (
     <div className="p-6 space-y-6">
       <Card>
@@ -201,6 +228,50 @@ export default function AlertsRules() {
               </div>
             );
           })}
+        </CardBody>
+      </Card>
+
+      <Card data-testid="alerts-timeline-card">
+        <CardHeader
+          title={<span className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-indigo-400" /> Alarm Grafiği · Son 7 Gün</span>}
+          subtitle={
+            chartRows.rules.length
+              ? `${chartRows.rules.length} farklı kural — kural bazında yığılmış`
+              : "Kural bazında yığılmış — henüz veri yok"
+          }
+        />
+        <CardBody>
+          <div className="h-56 w-full">
+            <ResponsiveContainer>
+              <BarChart data={chartRows.rows} margin={{ top: 8, right: 16, left: -14, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis dataKey="day" stroke="#64748b" fontSize={11} tick={{ fill: "#94a3b8" }} />
+                <YAxis stroke="#64748b" fontSize={11} allowDecimals={false} tick={{ fill: "#94a3b8" }} />
+                <Tooltip
+                  contentStyle={{ background: "#0f172a", border: "1px solid #334155",
+                                  borderRadius: 6, fontSize: 12 }}
+                  labelStyle={{ color: "#e2e8f0" }}
+                />
+                {chartRows.rules.length ? (
+                  <>
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    {chartRows.rules.map((r, i) => (
+                      <Bar key={r} dataKey={r} stackId="alerts"
+                           fill={barColors[i % barColors.length]}
+                           radius={i === chartRows.rules.length - 1 ? [4, 4, 0, 0] : 0} />
+                    ))}
+                  </>
+                ) : (
+                  <Bar dataKey="total" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                )}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          {chartRows.rows.every(r => r.total === 0) && (
+            <div className="text-center text-xs text-slate-500 mt-2" data-testid="alerts-timeline-empty">
+              Son 7 gün içinde tetiklenen alarm yok — kurallarınız sessiz çalışıyor ✓
+            </div>
+          )}
         </CardBody>
       </Card>
 
