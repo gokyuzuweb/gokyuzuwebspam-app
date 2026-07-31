@@ -1,38 +1,34 @@
 # GökyüzüWebSpam · PRD
 
 ## Product Summary
-Turkish WHM/cPanel mail spam SaaS. React 19 + FastAPI + MongoDB. IP-based licensing,
-Stripe (Emergent test), reseller white-labeling, Emergent LLM Key (Claude Sonnet 4.6),
-VAPID push. Modern global threat intelligence + AI-powered auto-actions.
+Turkish WHM/cPanel mail spam SaaS. React 19 + FastAPI + MongoDB. Modern global threat
+intelligence + AI-powered auto-actions + compliance auto-detection.
 
-## Architecture
-```
-/app/
-├── backend/routes/
-│   ├── queue.py · security_adv.py
-│   ├── mailscanner.py (25+ endpoints)
-│   ├── threat_intel.py           # NEW · IOC feed + DMARC + Global Feeds + Compliance
-│   └── events.py (AI predict + prewarm)
-├── frontend/src/pages/
-│   ├── Dashboard · Security · MailScanner · Docs · Landing
-│   └── ThreatIntel.js            # NEW · 4 tabs (IOC/DMARC/Feeds/Compliance)
-```
+## Architecture (v23)
+- Backend routes: queue, security_adv, mailscanner (30+ endpoints), threat_intel, events
+- Frontend pages: Dashboard (7-tab), Security, MailScanner, ThreatIntel, Docs, Landing
+- AI hooks: predict-score on ingest, prewarm on high_spam, hourly self-training, weekly report
 
-## Completed
-- v18/19/20/21 (Feb): Queue Modal · Attack Map · Country Blocking (113) · MailScanner Independent · Security Center · Docs · Landing Redesign · Offline TopoJSON · AI Self-Training · AI Predict Score · AI Docs Narration · Testimonials · Weekly Mail · Docs Media Upload · AI Auto-Quarantine · AI Rule Auto-Apply
-- v22 (Feb): **Global Threat Intelligence Module**
-  - IOC feed: IP/domain/URL/hash/email with tags (spam/phishing/malware/c2/ransomware), confidence 0-100, TTL auto-expire
-  - DMARC aggregate reports: domain-based summary with SPF/DKIM/DMARC pass rates
-  - Global Blocklist Sync: 6 feeds (Spamhaus/Barracuda/SORBS/UCEPROTECT/URLhaus/PhishTank) with mock sync
-  - Compliance Center: 4 frameworks (KVKK/GDPR/HIPAA/SOC2) with weighted scoring + item toggles + auto-persistent state
-  - Frontend `/panel/threat-intel` with 4 tabs + progress bars + colored score cards
-  - Nav sidebar: "Tehdit Zekası" (Türkçe) with Globe icon
+## v23 Global Feeds + Compliance Auto-Detection (Feb 2026)
+- **Real URLhaus fetch** — `urlhaus.abuse.ch/downloads/json_recent/` (auth-free) → 20 URLs per sync into `threat_iocs` with 14-day TTL
+- **Real Spamhaus ZEN DNS** — top-30 recent spam IPs reverse-queried against `zen.spamhaus.org`; matched IPs auto-added as IOC with 95% confidence
+- **Compliance Auto-Detection** — 11 items auto-verified from system state:
+  - `kvkk.audit_logs` / `soc2.access_logs` / `hipaa.audit_trail` → checks alerts_fired + queue_audit collections
+  - `kvkk.data_encryption` / `hipaa.phi_encryption` → MongoDB TLS = True
+  - `kvkk.data_retention` → checks mailscanner_config.quarantine_ttl_days
+  - `kvkk.data_export` / `gdpr.data_export` / `gdpr.right_to_erasure` → endpoints exist
+  - `gdpr.cookie_consent` → FE banner
+  - `soc2.backup_daily` → checks db.settings backup enabled
+  - `soc2.mfa_required` → checks users.mfa_enabled admins
+- Frontend: `AUTO` green badges next to auto-detected items + "N item sistem tarafından otomatik doğrulandı" header pill
 
-## Backlog (P1/P2)
-- P1 · SMTP Weekly Recipient field in Settings UI
-- P1 · Real Exim daemon verification on live WHM
-- P2 · Sandbox VM detonation runner
-- P2 · MaxMind GeoIP DB
-- P2 · IOC → mail_events auto-block enforcement (currently list-only)
-- P2 · DMARC XML parser endpoint (currently expects pre-parsed JSON)
-- P2 · Docs Media drag-drop ordering + hero banner
+## Completed (all versions)
+- v18-v22: Queue Modal · Attack Map · Country Blocking (113) · MailScanner Independent · Security · Docs · Landing · TopoJSON · AI Self-Training · Predict Score · Docs Narration · Testimonials · Weekly Mail · Docs Media Upload · Auto-Quarantine · Rule Auto-Apply · Threat Intel (IOC + DMARC + Feeds + Compliance)
+
+## Backlog (P2)
+- Reseller AI usage quota
+- IOC → mail_events auto-block enforcement (ingest-time IP/URL check)
+- DMARC XML parser (mail-based rua= receiver)
+- Sandbox VM detonation runner
+- MaxMind GeoIP DB replacement
+- Docs Media drag-drop ordering + hero banner

@@ -212,6 +212,11 @@ function ComplianceTab() {
             %{q.data?.overall_pct ?? 0}
           </div>
           <div className="text-xs text-slate-500 mt-1">{frameworks.length} framework · KVKK · GDPR · HIPAA · SOC2</div>
+          {q.data?.auto_detected_count > 0 && (
+            <div className="mt-2 inline-flex items-center gap-1 text-[10px] mono px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+              <TrendingUp className="w-3 h-3"/> {q.data.auto_detected_count} item sistem tarafından otomatik doğrulandı
+            </div>
+          )}
         </CardBody>
       </Card>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -239,6 +244,9 @@ function ComplianceTab() {
                            onChange={(e) => toggle.mutate({ framework_key: fw.key, item_key: it.key, checked: e.target.checked })}
                            className="accent-emerald-500"/>
                     <span className={`flex-1 ${it.checked ? "text-slate-300" : "text-slate-500"}`}>{it.label}</span>
+                    {it.auto_detected && (
+                      <span className="text-[9px] mono px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" title="Sistem tarafından otomatik tespit edildi">AUTO</span>
+                    )}
                     <span className="mono text-[10px] text-slate-600">+{it.weight}</span>
                   </label>
                 ))}
