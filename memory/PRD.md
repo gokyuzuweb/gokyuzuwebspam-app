@@ -1,5 +1,24 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
+## v1.6.2 (Feb 2026) — Canlı Mail Trafiği (SaaS SMTP mirror)
+Kullanıcının canlı cPanel sunucusundaki (89.19.15.58) gerçek mail trafiği artık panelde
+görünüyor. Milter Exim'e bind edilmesine gerek yok — sunucudaki Exim mainlog tail edilir.
+
+### Nasıl çalışır
+1. `mailshield-logtail.service` (Perl daemon, systemd) `/var/log/exim_mainlog`'u tail eder
+2. Her `<= sender ... T="subject" for rcpt` satırı için event yaratır
+3. Opsiyonel olarak `/var/spool/exim/input/*-H` içindeki `X-Spam-Score` header'ı okur
+4. HTTPS POST → `{preview_url}/api/events/ingest` (license_key + hostname eklenir)
+5. Backend `mail_events` collection'ına yazar
+6. Frontend Dashboard'ın üstündeki "Canlı Mail Trafiği" widget'ı her 8 sn'de bir listeler
+
+### Yeni bileşenler
+- `/app/backend/routes/events.py` — ingest, ingest-batch, list, summary, test-ingest
+- `/app/frontend/src/components/LiveMailEvents.js` — tablo formatlı, license editable
+- `/app/whm-plugin/scripts/mailshield-logtail.pl` — Exim mainlog parser (Perl daemon)
+- `/app/whm-plugin/systemd/mailshield-logtail.service` — installer tarafından auto-start
+- `mail_events` MongoDB collection (license_key indexed)
+
 ## v1.6.1 (Feb 2026) — WHM Plugin CANLI SUNUCUDA ÇALIŞTI ✅
 Kullanıcının canlı cPanel (89.19.15.58) kurulumunda başarıyla çalışıyor.
 

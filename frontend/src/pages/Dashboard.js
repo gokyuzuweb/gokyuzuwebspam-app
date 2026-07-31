@@ -55,6 +55,13 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* --- SaaS Canli Mail Trafigi — sunucudaki Exim mainlog'undan gelen gercek mailler --- */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12">
+          <LiveMailEvents />
+        </div>
+      </div>
+
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-8">
           <Card>
@@ -192,13 +199,6 @@ export default function Dashboard() {
               </div>
             </CardBody>
           </Card>
-        </div>
-      </div>
-
-      {/* --- SaaS Canli Mail Trafigi (milter -> POST /api/events/ingest) --- */}
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12">
-          <LiveMailEvents />
         </div>
       </div>
     </div>

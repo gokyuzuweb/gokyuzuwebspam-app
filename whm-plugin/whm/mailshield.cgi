@@ -1,10 +1,6 @@
 #!/usr/local/cpanel/3rdparty/bin/perl
 #
-# GokyuzuWebSpam - WHM CGI proxy
-#
-# Renders WHM chrome + live cluster status badge + iframe to dashboard.
-# Also exposes a passthrough API at /cgi/mailshield/index.cgi/api/*
-# forwarding to the local FastAPI service (auth validated by WHM).
+# GokyuzuWebSpam - WHM CGI proxy + self-update + cluster badge
 #
 
 use strict;
@@ -14,6 +10,7 @@ use Whostmgr::ACLS          ();
 use Whostmgr::HTMLInterface ();
 use LWP::UserAgent          ();
 use HTTP::Request           ();
+use JSON::PP                ();
 
 Whostmgr::ACLS::init_acls();
 unless (Whostmgr::ACLS::hasroot()) {
@@ -25,6 +22,69 @@ unless (Whostmgr::ACLS::hasroot()) {
 my $api    = $ENV{MAILSHIELD_API} // 'http://127.0.0.1:8001';
 my $public = $ENV{MAILSHIELD_PUBLIC} // 'https://mailscanner-pro.preview.emergentagent.com';
 my $pinfo  = $ENV{PATH_INFO} // '';
+
+# ---- Self-update endpoint ----
+# Fetches latest tarball and refreshes plugin script files + restarts services.
+# Idempotent, safe to run anytime. Only root/WHM can trigger.
+if ($pinfo eq '/self-update') {
+    my @actions;
+    my @errors;
+    my $tmp_tgz = "/tmp/gws-selfupdate-$$.tar.gz";
+    my $tmp_dir = "/tmp/gws-selfupdate-$$";
+
+    # 1) Download
+    system("curl -sS --max-time 25 -o $tmp_tgz '$public/api/plugin/download'");
+    unless (-s $tmp_tgz) {
+        push @errors, "Tarball indirilemedi ($public/api/plugin/download)";
+    }
+
+    # 2) Extract
+    unless (@errors) {
+        mkdir $tmp_dir;
+        system("tar -xzf $tmp_tgz -C $tmp_dir --strip-components=1 2>/dev/null");
+        unless (-d "$tmp_dir/scripts") {
+            push @errors, "Tarball extract basarisiz veya beklenen icerik yok";
+        }
+    }
+
+    # 3) Refresh key files (only if extraction succeeded)
+    unless (@errors) {
+        my @files = (
+            # [src_rel, dst_abs, mode]
+            ['scripts/mailshield-logtail.pl', '/usr/local/mailshield/bin/mailshield-logtail.pl', '0755'],
+            ['scripts/heartbeat.pl',          '/usr/local/mailshield/bin/heartbeat.pl',          '0755'],
+            ['whm/mailshield.cgi',            '/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/index.cgi', '0755'],
+            ['whm/mailshield.tmpl',           '/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/mailshield.tmpl', '0644'],
+        );
+        for my $f (@files) {
+            my ($rel, $dst, $mode) = @$f;
+            my $src = "$tmp_dir/$rel";
+            next unless -f $src;
+            my $r = system("install -m $mode -o root -g root '$src' '$dst'");
+            if ($r == 0) { push @actions, "updated: $dst"; }
+            else         { push @errors, "install failed: $dst"; }
+        }
+        # Restart logtail so new Perl code takes effect
+        if (system("systemctl is-active --quiet mailshield-logtail.service") == 0) {
+            system("systemctl restart mailshield-logtail.service");
+            push @actions, "restarted: mailshield-logtail.service";
+        } else {
+            system("systemctl enable --now mailshield-logtail.service 2>/dev/null");
+            push @actions, "started: mailshield-logtail.service";
+        }
+    }
+
+    # 4) Cleanup
+    system("rm -rf $tmp_tgz $tmp_dir");
+
+    print "Content-type: application/json; charset=utf-8\r\n\r\n";
+    print JSON::PP::encode_json({
+        ok      => (scalar(@errors) ? \0 : \1),
+        actions => \@actions,
+        errors  => \@errors,
+    });
+    exit 0;
+}
 
 # ---- Passthrough API routing (SPA -> local FastAPI, WHM auth validated) ----
 if ($pinfo =~ m{^/api/}) {
@@ -49,12 +109,10 @@ if ($pinfo =~ m{^/api/}) {
 }
 
 # ---- Cluster health probe (used to render live badge above iframe) ----
-# LWP::Protocol::https bazi cPanel Perl'lerinde eksik; sistemin curl'unu kullaniyoruz.
 sub cluster_badge {
     my $url = "$public/api/license-server/health";
     my $json = qx(curl -sS --max-time 4 -H 'Accept: application/json' \Q$url\E 2>/dev/null);
     if (!$json) {
-        # Curl basarisiz -> LWP dene (fallback)
         eval {
             my $ua = LWP::UserAgent->new(timeout => 4, ssl_opts => { verify_hostname => 0 });
             my $r = $ua->get($url);
@@ -80,7 +138,7 @@ sub _badge {
 }
 my $badge_html = cluster_badge();
 
-# ---- HTML shell (WHM chrome + header + badge + iframe) ----
+# ---- HTML shell (WHM chrome + header + badge + Update button + iframe) ----
 print "Content-type: text/html; charset=utf-8\r\n\r\n";
 Whostmgr::HTMLInterface::defheader('GokyuzuWebSpam', '', '/cgi/mailshield');
 
@@ -88,11 +146,17 @@ my $panel_url = "$public/panel";
 
 print <<"HTML";
 <style>
-  #ms-shell { position: relative; width: 100%; height: calc(100vh - 200px); border: 0; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
-  .ms-hdr { padding: 14px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  #ms-shell { position: relative; width: 100%; height: calc(100vh - 210px); border: 0; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+  .ms-hdr { padding: 14px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .ms-hdr h1 { margin: 0; font-size: 22px; color: #1e3a8a; }
   .ms-hdr p { margin: 6px 0 0 0; color: #666; font-size: 13px; }
   .ms-hdr .ms-title { flex: 1; min-width: 240px; }
+  .ms-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 20px; background: #2563eb; color: #fff; border: 0; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s; }
+  .ms-btn:hover:not(:disabled) { background: #1d4ed8; transform: translateY(-1px); }
+  .ms-btn:disabled { opacity: .6; cursor: wait; }
+  .ms-btn.ms-btn-ok { background: #059669; }
+  .ms-btn.ms-btn-err { background: #dc2626; }
+  #ms-update-status { font-size: 11px; color: #666; margin-left: 8px; }
 </style>
 <div class="ms-hdr">
   <div class="ms-title">
@@ -100,10 +164,57 @@ print <<"HTML";
     <p>Modern spam &amp; virus koruma paneli. Canli lisans sunucusu kumesi ile senkronize.</p>
   </div>
   $badge_html
+  <button id="ms-update-btn" class="ms-btn" onclick="msUpdate()" title="Plugin script'lerini son surumden guncelle">
+    &#x21bb; Guncelle
+  </button>
+  <span id="ms-update-status"></span>
 </div>
 <div style="padding: 0 20px 20px 20px;">
   <iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam"></iframe>
 </div>
+
+<script>
+async function msUpdate() {
+  const btn = document.getElementById('ms-update-btn');
+  const st  = document.getElementById('ms-update-status');
+  if (!confirm('Plugin script\\'lerini son surumden yenilemek istiyor musunuz? Log-tail servisi yeniden baslatilir.')) return;
+  btn.disabled = true;
+  btn.classList.remove('ms-btn-ok','ms-btn-err');
+  btn.innerHTML = '&#x21bb; Guncelleniyor...';
+  st.textContent = '';
+  try {
+    // CGI PATH_INFO=/self-update
+    const r = await fetch(window.location.pathname.replace(/\\/self-update.*/, '') + '/self-update', {
+      method: 'GET', credentials: 'same-origin',
+    });
+    const d = await r.json();
+    if (d.ok) {
+      btn.classList.add('ms-btn-ok');
+      btn.innerHTML = '&check; Guncellendi';
+      st.textContent = (d.actions || []).length + ' dosya guncellendi';
+      setTimeout(() => {
+        btn.classList.remove('ms-btn-ok');
+        btn.innerHTML = '&#x21bb; Guncelle';
+        btn.disabled = false;
+        // Reload iframe to refresh SPA
+        document.getElementById('ms-shell').src = document.getElementById('ms-shell').src;
+      }, 2500);
+      alert('Guncelleme basarili:\\n\\n' + (d.actions || []).join('\\n'));
+    } else {
+      btn.classList.add('ms-btn-err');
+      btn.innerHTML = '&#x2717; Hata';
+      st.textContent = (d.errors || ['bilinmiyor']).join(', ');
+      alert('Guncelleme hatasi:\\n\\n' + (d.errors || []).join('\\n'));
+      setTimeout(() => { btn.disabled = false; btn.classList.remove('ms-btn-err'); btn.innerHTML = '&#x21bb; Guncelle'; }, 3000);
+    }
+  } catch(e) {
+    btn.classList.add('ms-btn-err');
+    btn.innerHTML = '&#x2717; Baglanti';
+    alert('Baglanti hatasi: ' + e.message);
+    setTimeout(() => { btn.disabled = false; btn.classList.remove('ms-btn-err'); btn.innerHTML = '&#x21bb; Guncelle'; }, 3000);
+  }
+}
+</script>
 HTML
 
 Whostmgr::HTMLInterface::deffooter();
