@@ -49,16 +49,22 @@ if ($pinfo =~ m{^/api/}) {
 }
 
 # ---- Cluster health probe (used to render live badge above iframe) ----
+# LWP::Protocol::https bazi cPanel Perl'lerinde eksik; sistemin curl'unu kullaniyoruz.
 sub cluster_badge {
-    my $ua = LWP::UserAgent->new(timeout => 3);
-    my $res = $ua->get("$public/api/license-server/health");
-    if (!$res->is_success) {
-        return _badge("Cluster Unreachable", "#fee2e2", "#991b1b");
+    my $url = "$public/api/license-server/health";
+    my $json = qx(curl -sS --max-time 4 -H 'Accept: application/json' \Q$url\E 2>/dev/null);
+    if (!$json) {
+        # Curl basarisiz -> LWP dene (fallback)
+        eval {
+            my $ua = LWP::UserAgent->new(timeout => 4, ssl_opts => { verify_hostname => 0 });
+            my $r = $ua->get($url);
+            $json = $r->decoded_content if $r->is_success;
+        };
     }
-    my $body = $res->decoded_content // '';
-    my ($healthy) = $body =~ /"healthy_count"\s*:\s*(\d+)/;
-    my ($total)   = $body =~ /"total_regions"\s*:\s*(\d+)/;
-    my ($region)  = $body =~ /"region"\s*:\s*"([^"]+)"/;
+    return _badge("Cluster Unreachable", "#fee2e2", "#991b1b") unless $json;
+    my ($healthy) = $json =~ /"healthy_count"\s*:\s*(\d+)/;
+    my ($total)   = $json =~ /"total_regions"\s*:\s*(\d+)/;
+    my ($region)  = $json =~ /"region"\s*:\s*"([^"]+)"/;
     $healthy //= 0; $total //= 0; $region //= 'Region';
     if ($total > 0 && $healthy == $total) {
         return _badge("Cluster: $region ($healthy/$total)", "#d1fae5", "#065f46");
