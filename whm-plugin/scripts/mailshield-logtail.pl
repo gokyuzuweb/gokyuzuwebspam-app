@@ -1,153 +1,190 @@
 #!/usr/bin/env perl
 #
-# GokyuzuWebSpam MailScanner Log Adapter
-# ----------------------------------------
-# Reads MailScanner's own log (default: /var/log/maillog) in a tail -F style,
-# parses spam decisions, and reports each mail event to the SaaS backend at
-#   POST {server_url}/api/events/ingest
+# GokyuzuWebSpam Exim Log Adapter
+# --------------------------------
+# Tails /var/log/exim_mainlog and reports every INBOUND mail event to the
+# SaaS backend at POST {server_url}/api/events/ingest.
 #
-# Config (from /etc/mailshield/mailshield.conf):
+# Why Exim mainlog?
+#   - Every mail (delivered or rejected) is logged here regardless of MSFE.
+#   - Format is stable and documented. Same source MSFE uses.
+#   - Works with or without MailScanner installed.
+#
+# Optional: If the corresponding Exim spool header file exists at
+# /var/spool/exim/input/<id-suffix>-H, we also read the X-Spam-Score header
+# (written by MailScanner) to enrich the event with a numeric score.
+#
+# Config (/etc/mailshield/mailshield.conf):
 #   [license]
 #   key         = MS-XXXXXXXX
 #   server_url  = https://mailscanner-pro.preview.emergentagent.com
 #   [logtail]
-#   maillog     = /var/log/maillog       (default)
-#   position    = /var/lib/mailshield/logtail.pos  (byte offset persist)
-#
-# Why this over a raw milter?
-#   - MailScanner is already the authoritative filter on this server.
-#   - We don't want to duplicate its work; we just mirror its verdicts.
-#   - Zero Exim config change required.
+#   exim_log    = /var/log/exim_mainlog          (default)
+#   spool_dir   = /var/spool/exim/input          (default)
+#   position    = /var/lib/mailshield/exim-tail.pos
 #
 use strict;
 use warnings;
 use IO::Handle;
 use JSON::PP ();
 use Sys::Hostname ();
-use Time::Local ();
 
 my $CFG_PATH = '/etc/mailshield/mailshield.conf';
 my %cfg = _load_ini($CFG_PATH);
 
-my $license = $cfg{license}{key}        // die "license.key config yok\n";
+my $license = $cfg{license}{key}
+    or die "[GWS-logtail] license.key yok in $CFG_PATH\n";
 my $server  = $cfg{license}{server_url} // 'https://mailscanner-pro.preview.emergentagent.com';
-my $maillog = $cfg{logtail}{maillog}    // '/var/log/maillog';
-my $posfile = $cfg{logtail}{position}   // '/var/lib/mailshield/logtail.pos';
+my $eximlog = $cfg{logtail}{exim_log}   // '/var/log/exim_mainlog';
+my $spool   = $cfg{logtail}{spool_dir}  // '/var/spool/exim/input';
+my $posfile = $cfg{logtail}{position}   // '/var/lib/mailshield/exim-tail.pos';
 my $host    = Sys::Hostname::hostname();
 
-# Ensure state dir
 _mkdirp('/var/lib/mailshield');
 
-# Resume from saved offset (or seek to end on first run)
-my $pos = -e $posfile ? do { local(@ARGV,$/) = ($posfile); <> } : 0;
-$pos = 0 unless $pos =~ /^\d+$/;
-chomp $pos;
+my $pos = -e $posfile ? do { local(@ARGV,$/) = ($posfile); my $x = <>; chomp($x); $x } : undef;
+$pos = 0 unless defined $pos && $pos =~ /^\d+$/;
 
-open my $fh, '<', $maillog or die "cannot open $maillog: $!";
-my $size = -s $maillog;
-if ($pos > $size) { $pos = 0; }  # log rotated
+open my $fh, '<', $eximlog or die "cannot open $eximlog: $!";
+my $size = -s $eximlog;
+# First run: seek to end so we don't flood backend with historical logs
+if (!$pos) {
+    $pos = $size;
+}
+if ($pos > $size) { $pos = 0; }   # log rotated
 seek $fh, $pos, 0;
 
-warn "[GWS-logtail] baslangic offset=$pos boyut=$size license=" . substr($license,0,12) . "...\n";
-
-# Group log lines by MailScanner message id, since MS emits multiple lines per mail:
-#   MailScanner[pid]: Spam Checks: Found ... spam messages
-#   MailScanner[pid]: Message xxxx from x.x.x.x (from@) to to@ is Definitely spam (SA score=15.2, ...)
-my %partial;   # msgid -> hash of fields
+warn "[GWS-logtail] baslangic offset=$pos boyut=$size license=" . substr($license,0,12) . "…\n";
 
 $SIG{TERM} = $SIG{INT} = sub { _save_pos(tell $fh); exit 0 };
+
+# Rate: keep in-memory recent id cache to avoid duplicate events across
+# retries — this daemon POSTs at-most-once per Exim message id.
+my %seen_ids;   # id => 1
+my $seen_max = 5000;
 
 while (1) {
     while (defined(my $line = <$fh>)) {
         chomp $line;
-        _process_line($line, \%partial);
+        _process_line($line);
     }
-    # save position periodically
     _save_pos(tell $fh);
     sleep 2;
-    # Detect rotation
-    my $newsize = -s $maillog;
+
+    # rotation
+    my $newsize = -s $eximlog;
     if (defined $newsize && $newsize < tell($fh)) {
         close $fh;
-        open $fh, '<', $maillog or die "reopen fail: $!";
-        warn "[GWS-logtail] log rotated, reopen\n";
+        open $fh, '<', $eximlog or die "reopen fail: $!";
+        warn "[GWS-logtail] exim_mainlog rotated, reopen\n";
     } else {
         $fh->clearerr;
+    }
+
+    # trim seen_ids cache
+    if (scalar(keys %seen_ids) > $seen_max) {
+        %seen_ids = ();
     }
 }
 
 sub _process_line {
-    my ($line, $partial) = @_;
-    # Only MailScanner lines are interesting
-    return unless $line =~ /MailScanner\[\d+\]:\s+(.+)$/;
-    my $msg = $1;
+    my ($line) = @_;
 
-    # Verdict form:
-    #   Message xxxx.yyyy from 1.2.3.4 (sender@dom) to rcpt@dom is spam, SpamAssassin (score=8.4, ...) ClamAV(clean)
-    if ($msg =~ /Message\s+(\S+)\s+from\s+\S+\s*\(([^)]+)\)\s+to\s+(\S+)\s+is\s+(clean|spam|highspam|definitely\s+spam|non-spam)\b(?:,\s*(.+))?/i) {
-        my ($id, $from, $to, $verdict_raw, $rest) = ($1, $2, $3, lc $4, $5 // '');
+    # Match inbound line:
+    # 2026-07-31 10:04:06 1wphHq-0000000BBIo-3bba <= sender@from H=(...) [1.2.3.4] ... T="Subject" for rcpt@to
+    if ($line =~ m{
+        ^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s     # date time
+        (\S+)\s                                          # exim message id
+        <=\s                                             # inbound marker
+        (\S+)                                            # from address
+        (.*?)                                            # middle (H=, IP, S=, T=, etc.)
+        (?:\sfor\s(.+))?$                                # optional 'for rcpt'
+    }x) {
+        my ($date, $time, $mid, $from, $mid_part, $for_rcpt) = ($1,$2,$3,$4,$5,$6);
+        return if $seen_ids{$mid}++;
+
+        # Extract client IP (H=host [1.2.3.4])
+        my ($client_ip) = $mid_part =~ /\[([\d.:a-f]+)\]/i;
+        # Subject (T="...") — may contain escaped chars
+        my ($subject)   = $mid_part =~ /\sT="((?:\\.|[^"\\])*)"/;
+        $subject //= '';
+        $subject =~ s/\\(.)/$1/g;
+        $subject = substr($subject, 0, 200);
+        # Recipient (either 'for x@y' at end OR from later => line; we accept the first form now)
+        my $to = $for_rcpt // '';
+        $to =~ s/^\s+|\s+$//g;
+
+        # Optional: sniff X-Spam-Score from Exim spool header file
+        my ($spam_score, $spam_status) = _spam_from_spool($mid);
+
         my $verdict = 'clean';
-        if ($verdict_raw =~ /highspam|definitely\s+spam/) { $verdict = 'high_spam'; }
-        elsif ($verdict_raw eq 'spam')                    { $verdict = 'spam'; }
+        my $action  = 'accept';
+        if (defined $spam_status && $spam_status =~ /yes/i) {
+            if (defined $spam_score && $spam_score >= 8) { $verdict = 'high_spam'; $action = 'quarantine'; }
+            else                                          { $verdict = 'spam';      $action = 'quarantine'; }
+        }
 
-        my ($score) = $rest =~ /score\s*=\s*(-?\d+(?:\.\d+)?)/i;
-        my $entry = $partial->{$id} ||= {};
-        $entry->{from_addr}    //= $from;
-        $entry->{to_addr}      //= $to;
-        $entry->{verdict}      = $verdict;
-        $entry->{total_score}  = $score + 0 if defined $score;
-        $entry->{ts}         ||= _now_iso();
-        _flush($id, $entry);
+        _post_event({
+            license_key     => $license,
+            server_hostname => $host,
+            server_ip       => $client_ip,
+            from_addr       => $from,
+            to_addr         => $to || undef,
+            subject         => $subject || undef,
+            verdict         => $verdict,
+            action          => $action,
+            total_score     => ($spam_score // 0) + 0,
+            scores          => (defined $spam_score ? { spamassassin => $spam_score + 0 } : {}),
+            ts              => "${date}T${time}+00:00",
+        });
         return;
     }
 
-    # Subject capture (MailScanner logs it separately on some builds):
-    #   Message xxxx.yyyy header 'Subject: ...' ...
-    if ($msg =~ /Message\s+(\S+).*?Subject:\s+(.+?)['"]?\s*$/) {
-        my ($id, $subject) = ($1, $2);
-        $subject =~ s/^\s+|\s+$//g;
-        my $entry = $partial->{$id} ||= {};
-        $entry->{subject} //= substr($subject, 0, 200);
-        return;
-    }
-
-    # Virus verdict:
-    if ($msg =~ /Message\s+(\S+)\s+.*?(?:Virus|Infection|Malware).*?['"]?(\S[^'"]{0,80})['"]?/i) {
-        my ($id, $threat) = ($1, $2);
-        my $entry = $partial->{$id} ||= {};
-        $entry->{verdict} = 'virus';
-        $entry->{scores}{virus_name} = $threat;
-        $entry->{total_score} //= 20.0;
-        _flush($id, $entry);
+    # Rejected messages: 'H=... rejected RCPT ...'  or  'rejected after DATA'
+    if ($line =~ m{^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s.*?\brejected\b.*?F=<([^>]*)>}i) {
+        my ($date, $time, $from) = ($1, $2, $3);
+        _post_event({
+            license_key     => $license,
+            server_hostname => $host,
+            from_addr       => $from || undef,
+            verdict         => 'blocked',
+            action          => 'reject',
+            total_score     => 0,
+            scores          => {},
+            ts              => "${date}T${time}+00:00",
+        });
     }
 }
 
-sub _flush {
-    my ($id, $entry) = @_;
-    return unless $entry->{verdict};
-    my $payload = {
-        license_key     => $license,
-        server_hostname => $host,
-        from_addr       => $entry->{from_addr},
-        to_addr         => $entry->{to_addr},
-        subject         => $entry->{subject},
-        verdict         => $entry->{verdict},
-        action          => ($entry->{verdict} =~ /virus|high_spam/) ? 'quarantine' : ($entry->{verdict} eq 'spam' ? 'quarantine' : 'accept'),
-        total_score     => $entry->{total_score} // 0,
-        scores          => $entry->{scores}      // {},
-        ts              => $entry->{ts},
-    };
-    _post_event($payload);
-    delete $entry->{sent};
+sub _spam_from_spool {
+    my ($mid) = @_;
+    # Exim stores headers in $spool/<split>/<id>-H  where <split> is a subdir
+    # based on message id (0-9 split for split_spool_directory).
+    my ($score, $status);
+    for my $sub ('', map { "$_/" } 0..9, 'A'..'F') {
+        my $path = "$spool/${sub}${mid}-H";
+        if (-r $path) {
+            open my $h, '<', $path or next;
+            while (my $l = <$h>) {
+                if ($l =~ /^\d+X-Spam-Score:\s*(-?\d+(?:\.\d+)?)/i) { $score = $1; }
+                if ($l =~ /^\d+X-Spam-Status:\s*(\w+)/i)            { $status = $1; }
+                last if defined $score && defined $status;
+            }
+            close $h;
+            last;
+        }
+    }
+    return ($score, $status);
 }
 
 sub _post_event {
     my ($payload) = @_;
+    # Drop empty subject/to/from to keep payload tidy
+    for my $k (keys %$payload) { delete $payload->{$k} if !defined $payload->{$k}; }
     my $json = JSON::PP::encode_json($payload);
-    # Use system curl to avoid Perl SSL surprises on cPanel Perl
+
     my @cmd = ('curl','-sS','--max-time','6','-X','POST',
                '-H','Content-Type: application/json',
-               '-H','Accept: application/json',
                '--data-binary', $json,
                "$server/api/events/ingest");
     my $pid = open(my $ch, '-|', @cmd);
@@ -155,30 +192,18 @@ sub _post_event {
         my $resp = do { local $/; <$ch> };
         close $ch;
         if ($? != 0) {
-            warn "[GWS-logtail] curl exit=" . ($?>>8) . " resp=$resp\n";
+            warn "[GWS-logtail] POST fail exit=" . ($?>>8) . " resp=" . ($resp // '') . "\n";
         }
     }
 }
 
-sub _save_pos {
-    my ($p) = @_;
-    open my $out, '>', $posfile or return;
-    print $out $p;
-    close $out;
-}
-
-sub _mkdirp { my ($d) = @_; my @p; for my $s (split /\//, $d) { push @p, $s; my $x = join('/', @p) || '/'; mkdir $x unless -d $x; } }
-
-sub _now_iso {
-    my @t = gmtime;
-    return sprintf("%04d-%02d-%02dT%02d:%02d:%02d+00:00",
-                   $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1], $t[0]);
-}
+sub _save_pos { open my $o, '>', $posfile or return; print $o $_[0]; close $o; }
+sub _mkdirp   { my @p; for (split /\//, $_[0]) { push @p, $_; my $x = join('/', @p) || '/'; mkdir $x unless -d $x; } }
 
 sub _load_ini {
     my ($p) = @_;
     my %h; my $sec = 'main';
-    open my $fh, '<', $p or die "cannot read $p: $!";
+    open my $fh, '<', $p or die "cannot read $p: $!\n";
     while (my $l = <$fh>) {
         $l =~ s/[\r\n#].*$//;
         $l =~ s/^\s+|\s+$//g;

@@ -26,9 +26,10 @@ if [[ -d /var/cpanel/features ]]; then
   done
 fi
 
-systemctl disable --now mailshield-api.service      || true
-systemctl disable --now mailshield-milter.service   || true
-systemctl disable --now mailshield-quarantine.timer || true
+systemctl disable --now mailshield-api.service       || true
+systemctl disable --now mailshield-milter.service    || true
+systemctl disable --now mailshield-logtail.service   || true
+systemctl disable --now mailshield-quarantine.timer  || true
 rm -f /etc/systemd/system/mailshield-*.service
 rm -f /etc/systemd/system/mailshield-*.timer
 systemctl daemon-reload

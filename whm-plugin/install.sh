@@ -87,10 +87,12 @@ SRC=$(dirname "$(readlink -f "$0")")
 echo "==> [3/9] Uygulama dosyaları kopyalanıyor (mevcut dosyalar KORUNUR)"
 run "install -d $INSTALL_DIR/lib $INSTALL_DIR/bin $INSTALL_DIR/api"
 run "cp -rn '$SRC/lib/.' '$INSTALL_DIR/lib/'"
-run "cp -n  '$SRC/scripts/mailshield-milter.pl' '$INSTALL_DIR/bin/mailshield-milter.pl'"
-run "cp -n  '$SRC/scripts/quarantine-prune.pl'  '$INSTALL_DIR/bin/quarantine-prune.pl'"
-run "cp -n  '$SRC/scripts/heartbeat.pl'         '$INSTALL_DIR/bin/heartbeat.pl'"
-run "cp -n  '$SRC/mailshieldctl'                '$INSTALL_DIR/bin/mailshieldctl'"
+run "cp -n  '$SRC/scripts/mailshield-milter.pl'  '$INSTALL_DIR/bin/mailshield-milter.pl'"
+run "cp -n  '$SRC/scripts/quarantine-prune.pl'   '$INSTALL_DIR/bin/quarantine-prune.pl'"
+run "cp -n  '$SRC/scripts/heartbeat.pl'          '$INSTALL_DIR/bin/heartbeat.pl'"
+# NOTE: logtail is our own file — always force-refresh
+run "install -m 0755 -o root -g root '$SRC/scripts/mailshield-logtail.pl' '$INSTALL_DIR/bin/mailshield-logtail.pl'"
+run "cp -n  '$SRC/mailshieldctl'                 '$INSTALL_DIR/bin/mailshieldctl'"
 run "chmod +x '$INSTALL_DIR/bin/'*"
 run "ln -sfn '$INSTALL_DIR/bin/mailshieldctl' /usr/local/sbin/mailshieldctl"
 
@@ -219,15 +221,21 @@ run "systemctl daemon-reload"
 # API servisi güvenli — kimseye zarar vermez, 127.0.0.1'de dinler
 run "systemctl enable --now mailshield-api.service || true"
 
+# Log-tail adapter (Exim mainlog -> SaaS backend). Sadece license anahtari
+# varsa baslatilir. Milter Exim'e bind edilene kadar bu, canli mail
+# trafiginin panelde gorunmesini saglayan tek yoldur.
+if [[ -n "$LICENSE_KEY" && $DRY_RUN -eq 0 ]]; then
+  run "systemctl enable --now mailshield-logtail.service || true"
+  echo "    Exim log-tail servisi baslatildi: mailshield-logtail.service"
+  echo "    Loglar: /var/log/mailshield/logtail.log"
+fi
+
 # Milter DEFAULT KAPALI — sadece --start-milter verildiyse başlatılır
 if [[ $START_MILTER -eq 1 ]]; then
   echo "    --start-milter verildi: milter etkinleştiriliyor"
   run "systemctl enable --now mailshield-milter.service || true"
 else
-  echo "    Milter kuruldu ama BAŞLATILMADI. Aktifleştirmek için:"
-  echo "      systemctl enable --now mailshield-milter.service"
-  echo "    Ardından WHM > Exim Configuration Manager > Advanced Editor içine"
-  echo "    'milters=inet:127.0.0.1:33333' satırını EL ile ekleyin."
+  echo "    Milter kuruldu ama BAŞLATILMADI (opsiyonel — Exim log-tail zaten canli)."
 fi
 
 # Karantina temizleyici — her saat çalışır, sadece kendi DB'sinden siler
