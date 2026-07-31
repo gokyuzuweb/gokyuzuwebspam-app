@@ -333,6 +333,17 @@ export const api = {
   docsMediaDelete: (id) =>
     client.delete(`/mailscanner/docs/media/${id}`).then(r => r.data),
 
+  // Threat Intelligence
+  tiIocList: (opts = {}) => client.get("/threat-intel/ioc", { params: opts }).then(r => r.data),
+  tiIocAdd: (payload) => client.post("/threat-intel/ioc", payload).then(r => r.data),
+  tiIocDelete: (id) => client.delete(`/threat-intel/ioc/${id}`).then(r => r.data),
+  tiDmarcSummary: (days = 30) => client.get("/threat-intel/dmarc/summary", { params: { days } }).then(r => r.data),
+  tiDmarcIngest: (payload) => client.post("/threat-intel/dmarc/ingest", payload).then(r => r.data),
+  tiFeeds: () => client.get("/threat-intel/feeds").then(r => r.data),
+  tiFeedSync: (key) => client.post(`/threat-intel/feeds/${key}/sync`).then(r => r.data),
+  tiCompliance: () => client.get("/threat-intel/compliance").then(r => r.data),
+  tiComplianceToggle: (payload) => client.post("/threat-intel/compliance/toggle", payload).then(r => r.data),
+
   // AI Predict Score (ingest-time) + AI Docs Narration
   msPredictScore: (payload, useLlm = false) =>
     llmClient.post("/mailscanner/ai/predict-score", payload, { params: { use_llm: useLlm } }).then(r => r.data),

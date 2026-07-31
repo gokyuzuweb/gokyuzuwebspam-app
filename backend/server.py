@@ -3680,6 +3680,7 @@ from routes.insights import router as _insights_router  # noqa: E402
 from routes.queue import router as _queue_router  # noqa: E402
 from routes.security_adv import router as _security_adv_router  # noqa: E402
 from routes.mailscanner import router as _mailscanner_router  # noqa: E402
+from routes.threat_intel import router as _threat_intel_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -3691,6 +3692,7 @@ app.include_router(_insights_router, prefix="/api")
 app.include_router(_queue_router, prefix="/api")
 app.include_router(_security_adv_router, prefix="/api")
 app.include_router(_mailscanner_router, prefix="/api")
+app.include_router(_threat_intel_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,

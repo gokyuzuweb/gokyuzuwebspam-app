@@ -5,7 +5,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home,
-  Bug, Filter, BookOpen,
+  Bug, Filter, BookOpen, Globe,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -34,11 +34,13 @@ import Reseller from "@/pages/Reseller";
 import Security from "@/pages/Security";
 import MailScanner from "@/pages/MailScanner";
 import Docs from "@/pages/Docs";
+import ThreatIntel from "@/pages/ThreatIntel";
 import Header from "@/components/Header";
 
 const NAV = [
   { to: "/panel", key: "dashboard", icon: Activity, testid: "nav-dashboard", end: true },
   { to: "/panel/mailscanner", key: "mailscanner", icon: Filter, testid: "nav-mailscanner", label: "MailScanner" },
+  { to: "/panel/threat-intel", key: "threat_intel", icon: Globe, testid: "nav-threat-intel", label: "Tehdit Zekası" },
   { to: "/panel/security", key: "security", icon: Bug, testid: "nav-security", label: "Güvenlik" },
   { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine" },
   { to: "/panel/lists", key: "lists", icon: ListChecks, testid: "nav-lists" },
@@ -145,6 +147,7 @@ function Shell() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/security" element={<Security />} />
             <Route path="/mailscanner" element={<MailScanner />} />
+            <Route path="/threat-intel" element={<ThreatIntel />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/quarantine" element={<Quarantine />} />
             <Route path="/lists" element={<Lists />} />
