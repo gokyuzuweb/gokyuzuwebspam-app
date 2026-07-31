@@ -131,6 +131,14 @@ export const api = {
                 { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
   adminResellerActivity: (licenseKey, rid, days = 30) =>
     client.get(`/admin/resellers/${rid}/activity`, { params: { days, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
+  adminSendReminder: (licenseKey, rid) =>
+    client.post(`/admin/resellers/${rid}/send-reminder`, null,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminOnboardingStatus: (licenseKey) =>
+    client.get("/admin/onboarding-status", { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminOnboardingComplete: (licenseKey) =>
+    client.post("/admin/onboarding-complete", null,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
   quarantineLocalDomains: () =>
     client.get("/quarantine/local-domains").then(r => r.data),
   quarantinePurgeDemo: () =>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Users, LogIn, Building2, CheckCircle2, XCircle, Clock, Search,
-  Shield, RefreshCw, KeyRound, Power, Trash2, UserPlus, X, Copy, TrendingUp,
+  Shield, RefreshCw, KeyRound, Power, Trash2, UserPlus, X, Copy, TrendingUp, Bell,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
@@ -240,6 +240,11 @@ function ResellersTable({ items, loading, licenseKey, onResetPassword, onShowAct
       qc.invalidateQueries({ queryKey: ["admin-subaccounts"] }); },
     onError: (e) => toast.error(e?.response?.data?.detail || "Hata"),
   });
+  const remind = useMutation({
+    mutationFn: (rid) => api.adminSendReminder(licenseKey, rid),
+    onSuccess: (d) => toast.success(`✓ Hatırlatma gönderildi → ${d.email}`, { duration: 6000 }),
+    onError: (e) => toast.error(e?.response?.data?.detail || "Hatırlatma gönderilemedi"),
+  });
   if (loading) return <div className="text-center py-8 text-slate-500 text-xs">Yükleniyor…</div>;
   if (items.length === 0) return <div className="text-center py-8 text-slate-500 text-xs">Bayi kaydı yok</div>;
   return (
@@ -273,11 +278,27 @@ function ResellersTable({ items, loading, licenseKey, onResetPassword, onShowAct
               <td className="px-2 py-1.5 mono text-right text-slate-300">{r.subaccount_count}</td>
               <td className="px-2 py-1.5 mono text-slate-400 whitespace-nowrap">{ago(r.last_login_at)}</td>
               <td className="px-2 py-1.5">
-                {r.active === false
-                  ? <span className="text-rose-400 text-[10px]">askıda</span>
-                  : <span className="text-emerald-400 text-[10px]">aktif</span>}
+                {r.active === false ? (
+                  <span className="text-rose-400 text-[10px]">askıda</span>
+                ) : r.idle ? (
+                  <span className="inline-flex items-center gap-1 text-amber-400 text-[10px]" title={`${r.inactivity_days} gün girişsiz`}>
+                    😴 uyku ({r.inactivity_days}g)
+                  </span>
+                ) : (
+                  <span className="text-emerald-400 text-[10px]">aktif</span>
+                )}
               </td>
               <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                {r.idle && r.active !== false && (
+                  <button
+                    onClick={() => remind.mutate(r.id)}
+                    title="Hatırlatma maili gönder"
+                    data-testid={`admin-reseller-remind-${r.id}`}
+                    className="mr-1 inline-flex items-center p-1 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                  >
+                    <Bell className="w-3 h-3" />
+                  </button>
+                )}
                 <button
                   onClick={() => onShowActivity(r)}
                   title="30 günlük aktivite grafiği"

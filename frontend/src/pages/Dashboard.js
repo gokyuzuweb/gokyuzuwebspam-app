@@ -11,6 +11,7 @@ import LiveMailEvents from "@/components/LiveMailEvents";
 import MultiServerRibbon from "@/components/MultiServerRibbon";
 import HealthScore from "@/components/HealthScore";
 import ComplianceSnapshot from "@/components/ComplianceSnapshot";
+import OnboardingWizard from "@/components/OnboardingWizard";
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 
@@ -35,6 +36,7 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 space-y-6">
+      <OnboardingWizard />
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 md:col-span-3">
           <StatCard label={t("dashboard.scanned_today")} tone="info" icon={Activity} testid="stat-scanned"

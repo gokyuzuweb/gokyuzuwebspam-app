@@ -136,6 +136,9 @@ close $sf;
 # --- cPanel accounts sync (her heartbeat'te) - GERÇEK kullanıcıları push et
 _sync_cpanel_accounts();
 
+# --- cPanel quarantine sync (her heartbeat'te) - MailScanner/Exim quarantine
+_sync_cpanel_quarantine();
+
 exit 0;
 
 # ---------------------------------------------------------------------------
@@ -196,4 +199,132 @@ sub _sync_cpanel_accounts {
         warn "user-sync failed: " . $r->status_line . "\n";
     }
     return scalar @out;
+}
+
+# ---------------------------------------------------------------------------
+# _sync_cpanel_quarantine — MailScanner/Exim quarantine dizinini tarar ve
+# gerçek karantinada bulunan mailleri panele push eder. Sadece son 24 saatte
+# değişen dosyaları push eder (yeni kayıtlar), ki sürekli aynı şeyleri iletmesin.
+#
+# Kaynak dizinler (mevcut olanlar taranır):
+#   /var/spool/MailScanner/quarantine/YYYYMMDD/<user>/message
+#   /var/cpanel/quarantine
+sub _sync_cpanel_quarantine {
+    my $panel_url = $conf{panel}{url}
+                 || $ENV{MAILSHIELD_PANEL_URL}
+                 || 'https://mailscanner-pro.preview.emergentagent.com';
+
+    my @dirs = (
+        '/var/spool/MailScanner/quarantine',
+        '/var/cpanel/quarantine',
+    );
+    my @items;
+    my $now = time();
+    my $cutoff = $now - 86400;  # son 24 saat
+
+    for my $base (@dirs) {
+        next unless -d $base;
+        # Non-recursive scan of top-level day/user dirs to avoid runaway walks
+        opendir(my $dh, $base) or next;
+        my @top = grep { !/^\./ } readdir($dh);
+        closedir($dh);
+        for my $t (@top) {
+            my $tp = "$base/$t";
+            next unless -d $tp;
+            opendir(my $dh2, $tp) or next;
+            my @sub = grep { !/^\./ } readdir($dh2);
+            closedir($dh2);
+            for my $s (@sub) {
+                my $sp = "$tp/$s";
+                if (-f $sp) {
+                    # direct file in day dir
+                    _add_quarantine_item(\@items, $sp, $cutoff);
+                } elsif (-d $sp) {
+                    # per-user subdir
+                    opendir(my $dh3, $sp) or next;
+                    my @files = grep { !/^\./ } readdir($dh3);
+                    closedir($dh3);
+                    for my $f (@files) {
+                        _add_quarantine_item(\@items, "$sp/$f", $cutoff);
+                        last if scalar(@items) >= 50;
+                    }
+                }
+                last if scalar(@items) >= 50;
+            }
+            last if scalar(@items) >= 50;
+        }
+    }
+    return unless @items;
+
+    my $qreq = HTTP::Request->new(POST => "$panel_url/api/events/ingest-batch");
+    $qreq->header('Content-Type' => 'application/json');
+    # ingest-batch expects a raw list; ensure each item has the license_key
+    for my $it (@items) { $it->{license_key} = $license_key; }
+    $qreq->content(encode_json(\@items));
+    my $r = $ua->request($qreq);
+    open my $lf, '>>', '/var/log/mailshield/quarantine-sync.log';
+    if ($lf) {
+        print $lf scalar(gmtime())." · pushed " . scalar(@items) .
+                  " quarantine items · code=" . $r->code . "\n";
+        close $lf;
+    }
+    return scalar @items;
+}
+
+sub _add_quarantine_item {
+    my ($items, $path, $cutoff) = @_;
+    my @stat = stat($path);
+    return unless @stat;
+    return if $stat[9] < $cutoff;   # older than 24h
+    return if $stat[7] < 200;       # too small
+    return if $stat[7] > 10 * 1024 * 1024;  # >10MB, skip
+
+    # Parse first 8KB to extract headers + optional first-body part
+    open my $fh, '<', $path or return;
+    my $blob = '';
+    read($fh, $blob, 8192);
+    close $fh;
+    return unless $blob;
+
+    my ($from) = $blob =~ /^From:\s*([^\r\n]+)/mi;
+    my ($to)   = $blob =~ /^To:\s*([^\r\n]+)/mi;
+    my ($subj) = $blob =~ /^Subject:\s*([^\r\n]+)/mi;
+    my ($mid)  = $blob =~ /^Message-Id:\s*<([^>\r\n]+)>/mi;
+    my ($xspam)= $blob =~ /^X-Spam-Score:\s*(-?\d+(?:\.\d+)?)/mi;
+    my ($xrep) = $blob =~ /^X-Spam-Report:\s*([^\r\n]+)/mi;
+    my $verdict = ($xspam && $xspam >= 10) ? 'high_spam'
+                : ($xspam && $xspam >= 5)  ? 'spam'
+                : 'blocked';
+
+    # naive body extraction: after first blank line
+    my $body_preview;
+    if ($blob =~ /\r?\n\r?\n(.{1,2048})/s) {
+        $body_preview = $1;
+        $body_preview =~ s/\r//g;
+    }
+
+    push @$items, {
+        exim_mid        => $mid,
+        from_addr       => $from,
+        to_addr         => $to,
+        subject         => $subj,
+        verdict         => $verdict,
+        total_score     => ($xspam // 0) + 0,
+        scores          => { spamassassin => ($xspam // 0) + 0,
+                             sa_report    => (substr($xrep // '', 0, 400)) },
+        body_preview    => $body_preview,
+        headers_full    => substr($blob, 0, 4096),
+        ts              => _iso_time($stat[9]),
+        server_hostname => hostname(),
+        server_ip       => $ip,
+        source          => 'quarantine-spool',
+    };
+    return 1;
+}
+
+sub _iso_time {
+    my ($epoch) = @_;
+    my @t = gmtime($epoch);
+    return sprintf("%04d-%02d-%02dT%02d:%02d:%02d+00:00",
+                   $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1], $t[0]);
 }

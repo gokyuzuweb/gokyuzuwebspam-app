@@ -1546,10 +1546,11 @@ async def admin_master_logout(request: Request):
 
 @api.get("/admin/resellers")
 async def admin_list_resellers(request: Request, license_key: Optional[str] = None):
-    """Master-only. Returns all reseller accounts with sub-account counts +
-    last login timestamp so master can see who's using the portal."""
+    """Master-only. Returns all reseller accounts with sub-account counts,
+    last login timestamp and an inactivity_days score (uyku modu detection)."""
     await _require_master(request, license_key)
     resellers = await db.resellers.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
+    now = datetime.now(timezone.utc)
     out = []
     for r in resellers:
         sub_count = await db.subaccounts.count_documents({"reseller_id": r["id"]})
@@ -1557,11 +1558,58 @@ async def admin_list_resellers(request: Request, license_key: Optional[str] = No
             {"reseller_id": r["id"], "success": True},
             {"_id": 0}, sort=[("at", -1)],
         )
+        inactivity_days = None
+        if last_login and last_login.get("at"):
+            try:
+                delta = now - datetime.fromisoformat(last_login["at"].replace("Z", "+00:00"))
+                inactivity_days = delta.days
+            except Exception:
+                inactivity_days = None
+        elif r.get("created_at"):
+            try:
+                delta = now - datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+                inactivity_days = delta.days
+            except Exception:
+                inactivity_days = None
         r["subaccount_count"] = sub_count
         r["last_login_at"] = last_login.get("at") if last_login else None
         r["last_login_ip"] = last_login.get("ip") if last_login else None
+        r["inactivity_days"] = inactivity_days
+        r["idle"] = bool(inactivity_days is not None and inactivity_days >= 7)
         out.append(r)
-    return {"items": out, "count": len(out)}
+    return {"items": out, "count": len(out),
+            "idle_count": sum(1 for r in out if r.get("idle"))}
+
+
+@api.post("/admin/resellers/{rid}/send-reminder")
+async def admin_send_reminder(rid: str, request: Request, license_key: Optional[str] = None):
+    """Master-only. Uykuda olan bayilere hatırlatma e-postası gönderir."""
+    await _require_master(request, license_key)
+    r = await db.resellers.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Bayi bulunamadi")
+    if not r.get("email"):
+        raise HTTPException(400, "Bayinin e-postasi yok")
+    subj = "GökyüzüWebSpam · Bir süredir görüşmedik"
+    body = (
+        f"Merhaba {r.get('company', 'Bayi')},\n\n"
+        f"Bir süredir GökyüzüWebSpam bayi portalına giriş yapmadığınızı fark ettik.\n"
+        f"Alt hesaplarınızın spam korumasının aktif kalması ve son alarmları kaçırmamanız için\n"
+        f"panele göz atmanızı öneririz.\n\n"
+        f"  Giriş adresi: https://{MASTER_HOST}/reseller\n"
+        f"  E-postanız: {r['email']}\n\n"
+        f"Sorularınız için sistem yöneticiniz ile iletişime geçebilirsiniz.\n\n"
+        f"— GökyüzüWebSpam Sistem\n"
+        f"Zaman: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    )
+    ok, via = await _send_email(r["email"], subj, body)
+    await db.logs.insert_one(ActivityLog(
+        source="admin", level="info",
+        message=f"Uyku bayi hatirlatmasi gonderildi: {r['email']} · via={via} · ok={ok}",
+    ).model_dump())
+    if not ok:
+        raise HTTPException(400, f"Gönderilemedi: {via}")
+    return {"ok": True, "email": r["email"], "via": via}
 
 
 @api.get("/admin/reseller-logins")
@@ -1667,6 +1715,43 @@ async def admin_reseller_activity(rid: str, request: Request, license_key: Optio
         out.append({"day": day, **d, "total": d["success"] + d["fail"]})
     return {"reseller": {"email": r.get("email"), "company": r.get("company", "")},
             "days": days, "items": out}
+
+
+@api.get("/admin/onboarding-status")
+async def admin_onboarding_status(request: Request, license_key: Optional[str] = None):
+    """Master-only. 4-step onboarding checklist for first-time setup."""
+    await _require_master(request, license_key)
+    lic = await db.licenses.find_one({"license_key": MASTER_LICENSE_KEY or license_key}, {"_id": 0}) if (MASTER_LICENSE_KEY or license_key) else None
+    smtp = await db.settings.find_one({"_key": "smtp"}, {"_id": 0}) or {}
+    branding = await db.reseller_branding.find_one({"license_key": (MASTER_LICENSE_KEY or license_key)}, {"_id": 0}) if (MASTER_LICENSE_KEY or license_key) else None
+    stripe_key = bool(os.environ.get("STRIPE_API_KEY", "").strip())
+    completed = await db.settings.find_one({"_key": "onboarding_completed"}, {"_id": 0}) or {}
+
+    steps = [
+        {"key": "license",  "label": "Ana Lisans Anahtarı",   "done": bool(lic and lic.get("active"))},
+        {"key": "smtp",     "label": "SMTP Ayarları",         "done": bool(smtp.get("enabled") and smtp.get("host"))},
+        {"key": "branding", "label": "Marka & Logo",          "done": bool(branding and branding.get("brand_name"))},
+        {"key": "stripe",   "label": "Stripe / Ödeme Anahtarı","done": stripe_key},
+    ]
+    done_count = sum(1 for s in steps if s["done"])
+    return {
+        "steps": steps,
+        "done_count": done_count,
+        "total": len(steps),
+        "completed": bool(completed.get("completed_at")),
+        "completed_at": completed.get("completed_at"),
+    }
+
+
+@api.post("/admin/onboarding-complete")
+async def admin_onboarding_complete(request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    await db.settings.update_one(
+        {"_key": "onboarding_completed"},
+        {"$set": {"_key": "onboarding_completed", "completed_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True}
 
 
 @api.post("/admin/resellers/{rid}/toggle-active")

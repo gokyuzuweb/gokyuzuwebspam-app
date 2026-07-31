@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  ShieldAlert, Bell, Inbox, LogOut, ChevronRight, Clock,
+  ShieldAlert, Bell, BellOff, Inbox, LogOut, ChevronRight, Clock,
   AlertTriangle, Bug, ShieldCheck, RefreshCw, Menu,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { pushEnabled, requestPermission, notifyIfNew, registerServiceWorker } from "@/lib/push";
 
 const TOKEN_KEY = "gws_reseller_token";
 
@@ -28,6 +29,29 @@ export default function ResellerMobile({ token: propToken, brand }) {
     enabled: !!me.data?.reseller?.license_key,
     refetchInterval: 15000,
   });
+
+  const [pushOn, setPushOn] = useState(false);
+  // Setup push notifications once on mount
+  useEffect(() => {
+    setPushOn(pushEnabled());
+    if (pushEnabled()) registerServiceWorker();
+  }, []);
+  // Fire local notification when new critical alerts arrive
+  useEffect(() => {
+    if (alertsRecent.data?.items) notifyIfNew(alertsRecent.data.items);
+  }, [alertsRecent.data]);
+  const togglePush = async () => {
+    if (pushOn) {
+      localStorage.setItem("gws.push_enabled", "0");
+      setPushOn(false);
+      toast.info("Bildirimler kapatıldı");
+      return;
+    }
+    const p = await requestPermission();
+    if (p === "granted") { setPushOn(true); toast.success("Push bildirimleri açıldı 🔔"); }
+    else if (p === "denied") toast.error("Tarayıcı ayarlarından izni açın");
+    else toast.error(`Bildirim izni: ${p}`);
+  };
 
   const logout = () => {
     localStorage.removeItem(TOKEN_KEY);
@@ -71,11 +95,19 @@ export default function ResellerMobile({ token: propToken, brand }) {
               </div>
             </div>
           </div>
+        <div className="flex items-center gap-1">
+          <button onClick={togglePush}
+                  data-testid="mobile-push-toggle"
+                  className={`p-1.5 rounded ${pushOn ? "text-emerald-400" : "text-slate-400"} hover:bg-slate-800`}
+                  title={pushOn ? "Push bildirimleri açık — dokunarak kapat" : "Push bildirimlerini aç"}>
+            {pushOn ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+          </button>
           <button onClick={logout}
                   data-testid="mobile-logout"
                   className="p-1.5 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800">
             <LogOut className="w-4 h-4" />
           </button>
+        </div>
         </div>
       </header>
 
