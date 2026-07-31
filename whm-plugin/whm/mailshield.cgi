@@ -22,11 +22,11 @@ unless (Whostmgr::ACLS::hasroot()) {
 my $api    = $ENV{MAILSHIELD_API} // 'http://127.0.0.1:8001';
 my $public = $ENV{MAILSHIELD_PUBLIC} // 'https://mailscanner-pro.preview.emergentagent.com';
 my $pinfo  = $ENV{PATH_INFO} // '';
+my $qs     = $ENV{QUERY_STRING} // '';
 
-# ---- Self-update endpoint ----
-# Fetches latest tarball and refreshes plugin script files + restarts services.
-# Idempotent, safe to run anytime. Only root/WHM can trigger.
-if ($pinfo eq '/self-update') {
+# ---- Self-update endpoint (query string based - PATH_INFO daha az guvenilir) ----
+# URL: /cgi/mailshield/index.cgi?action=self-update
+if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
     my @actions;
     my @errors;
     my $tmp_tgz = "/tmp/gws-selfupdate-$$.tar.gz";
@@ -183,11 +183,18 @@ async function msUpdate() {
   btn.innerHTML = '&#x21bb; Guncelleniyor...';
   st.textContent = '';
   try {
-    // CGI PATH_INFO=/self-update
-    const r = await fetch(window.location.pathname.replace(/\\/self-update.*/, '') + '/self-update', {
+    // Query string based — PATH_INFO WHM cpsrvd icinde her zaman calismiyor
+    const r = await fetch(window.location.pathname + '?action=self-update', {
       method: 'GET', credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' },
     });
-    const d = await r.json();
+    const txt = await r.text();
+    let d;
+    try { d = JSON.parse(txt); }
+    catch(_) {
+      // HTML doner ise ilk 300 char kullaniciya goster
+      throw new Error('Sunucu JSON donmedi (' + r.status + '): ' + txt.slice(0, 300));
+    }
     if (d.ok) {
       btn.classList.add('ms-btn-ok');
       btn.innerHTML = '&check; Guncellendi';
