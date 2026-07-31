@@ -1,5 +1,22 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
+## v1.6.9 (Feb 2026) — Insights Consolidated (Branding + Metrics + Timeline + Compliance)
+Yeni `routes/insights.py` — 4 kucuk feature tek modulde:
+
+- **Reseller Branding** (`GET/PUT /api/reseller/branding`): brand_name, logo_url, primary_color,
+  accent_color. `reseller_branding` collection, upsert pattern.
+- **Health Metrics Advanced** (`GET /api/events/health-metrics`): latency_ms (ts vs ingested_at avg
+  over 100 samples, abs), write_per_min (last 1h count / 60), queue_backlog (`exiqgrep -c` shell
+  best-effort, non-fatal on failure). Test data: write_per_min 7.93.
+- **Alerts Timeline** (`GET /api/alerts/timeline`): Son 7 gun alert firing MongoDB aggregation,
+  gunluk + kural bazli breakdown.
+- **Compliance Snapshot** (`GET /api/events/compliance-snapshot?days=`): 7/30/90/365 gun spam +
+  virus + clean count. Test: 1211 mail / 21 spam / 2 virus / %1.9 blok.
+- **Frontend**: HealthScore widget 6 SubScore (spam+engine+activity+latency+queue+write).
+  ComplianceSnapshot widget (Dashboard'a inject) — days dropdown + CSV download button.
+
+Sonraki: Alerts Timeline chart UI + Reseller Branding form UI + logtail TZ fix.
+
 ## v1.6.8 (Feb 2026) — Test Webhook + CSV Export + Health Score + BUG fix
 ### Bug fix
 - **License Management aktif/pasif gözükmüyordu** — Bitiş kolonu içinde küçük yerleştirilmişti,

@@ -12,18 +12,31 @@ import { Heart, TrendingUp, TrendingDown } from "lucide-react";
  */
 export default function HealthScore() {
   const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview, refetchInterval: 20000 });
+  const metrics  = useQuery({
+    queryKey: ["health-metrics"],
+    queryFn: () => api.healthMetrics(localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676"),
+    refetchInterval: 20000, retry: false,
+  });
   const stats = overview.data || {};
+  const m = metrics.data || {};
 
   const spamRatio = Number(stats.spam_ratio ?? 0);
   const enginesPct = stats.engines_total
     ? Math.round((stats.engines_active / stats.engines_total) * 100) : 100;
   const hasRecent = (stats.scanned_today ?? 0) > 0;
+  const latencyOk = m.latency_ms == null || m.latency_ms < 5000;      // < 5s = ok
+  const backlogOk = (m.queue_backlog ?? 0) < 100;                     // <100 backlog = ok
+  const writeOk   = (m.write_per_min ?? 0) < 200;                     // <200/min = ok
 
-  // Score calculation
-  const spamPart   = Math.max(0, 100 - Math.min(spamRatio * 3, 100)) * 0.4;
-  const enginePart = enginesPct * 0.3;
-  const activityPart = (hasRecent ? 100 : 40) * 0.3;
-  const score = Math.round(spamPart + enginePart + activityPart);
+  // 6-boyutlu skor (her biri %16.6)
+  const w = 100 / 6;
+  const spamPart    = Math.max(0, 100 - Math.min(spamRatio * 3, 100)) * (w / 100);
+  const enginePart  = enginesPct * (w / 100);
+  const activePart  = (hasRecent ? 100 : 40) * (w / 100);
+  const latencyPart = (latencyOk ? 100 : 40) * (w / 100);
+  const backlogPart = (backlogOk ? 100 : 30) * (w / 100);
+  const writePart   = (writeOk ? 100 : 60) * (w / 100);
+  const score = Math.round(spamPart + enginePart + activePart + latencyPart + backlogPart + writePart);
 
   const color =
     score >= 85 ? { fg: "#10b981", ring: "text-emerald-400", label: "Mükemmel", Icon: TrendingUp } :
@@ -70,6 +83,12 @@ export default function HealthScore() {
                       tone={enginesPct >= 80 ? "success" : enginesPct >= 50 ? "warning" : "danger"} />
             <SubScore label="Aktivite (24s)"   value={hasRecent ? "Aktif" : "Boş"}
                       tone={hasRecent ? "success" : "warning"} />
+            <SubScore label="Latency"          value={m.latency_ms != null ? `${m.latency_ms}ms` : "—"}
+                      tone={latencyOk ? "success" : "warning"} />
+            <SubScore label="Exim Queue"       value={m.queue_backlog ?? 0}
+                      tone={backlogOk ? "success" : "danger"} />
+            <SubScore label="Yazma/dk"         value={m.write_per_min ?? 0}
+                      tone={writeOk ? "success" : "warning"} />
           </div>
         </div>
       </CardBody>

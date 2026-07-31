@@ -43,6 +43,16 @@ export const api = {
     client.post("/alerts/test-webhook", {
       license_key: licenseKey, webhook_url: webhookUrl, webhook_kind: webhookKind,
     }).then(r => r.data),
+  brandingGet: (licenseKey) =>
+    client.get("/reseller/branding", { params: { license_key: licenseKey } }).then(r => r.data),
+  brandingPut: (licenseKey, branding) =>
+    client.put("/reseller/branding", { license_key: licenseKey, ...branding }).then(r => r.data),
+  healthMetrics: (licenseKey) =>
+    client.get("/events/health-metrics", { params: { license_key: licenseKey } }).then(r => r.data),
+  alertsTimeline: (licenseKey) =>
+    client.get("/alerts/timeline", { params: { license_key: licenseKey } }).then(r => r.data),
+  complianceSnapshot: (licenseKey, days = 30) =>
+    client.get("/events/compliance-snapshot", { params: { license_key: licenseKey, days } }).then(r => r.data),
 
   quarantine: (params = {}) => client.get("/quarantine", { params }).then(r => r.data),
   quarantineGet: (id) => client.get(`/quarantine/${id}`).then(r => r.data),
