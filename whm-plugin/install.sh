@@ -73,8 +73,13 @@ if ! id mailshield &>/dev/null; then
 fi
 
 echo "==> [2/9] Dizinler oluşturuluyor"
-for d in "$INSTALL_DIR" "$CGI_DIR" "$CPANEL_PLUGIN_DIR" "$LOG_DIR" "$ETC_DIR" "$SPOOL_DIR"; do
+# INSTALL_DIR, LOG_DIR, ETC_DIR, SPOOL_DIR -> mailshield:mailshield (servis daemon çalıştırır)
+for d in "$INSTALL_DIR" "$LOG_DIR" "$ETC_DIR" "$SPOOL_DIR"; do
   run "install -d -m 0755 -o mailshield -g mailshield '$d'"
+done
+# WHM/cPanel CGI dizinleri MUTLAKA root:root olmalı (aksi halde cPanel 403 döner)
+for d in "$CGI_DIR" "$CPANEL_PLUGIN_DIR"; do
+  run "install -d -m 0755 -o root -g root '$d'"
 done
 
 SRC=$(dirname "$(readlink -f "$0")")
@@ -89,20 +94,26 @@ run "cp -n  '$SRC/mailshieldctl'                '$INSTALL_DIR/bin/mailshieldctl'
 run "chmod +x '$INSTALL_DIR/bin/'*"
 run "ln -sfn '$INSTALL_DIR/bin/mailshieldctl' /usr/local/sbin/mailshieldctl"
 
-echo "==> [4/9] WHM CGI proxy kuruluyor (force-overwrite)"
+echo "==> [4/9] WHM CGI proxy kuruluyor (force-overwrite, root:root)"
+# Önceki hatalı sahipliği tamir et
+run "chown -R root:root '$CGI_DIR'"
 # Force overwrite: our own CGI files, önceki başarısız kurulumdan kalıntıları temizle
-run "install -m 0755 '$SRC/whm/mailshield.cgi'   '$CGI_DIR/index.cgi'"
-run "install -m 0644 '$SRC/whm/mailshield.tmpl'  '$CGI_DIR/mailshield.tmpl'"
+run "install -m 0755 -o root -g root '$SRC/whm/mailshield.cgi'  '$CGI_DIR/index.cgi'"
+run "install -m 0644 -o root -g root '$SRC/whm/mailshield.tmpl' '$CGI_DIR/mailshield.tmpl'"
 if [[ -f "$SRC/whm/icon.png" ]]; then
-  run "install -m 0644 '$SRC/whm/icon.png' '$CGI_DIR/icon.png'"
+  run "install -m 0644 -o root -g root '$SRC/whm/icon.png' '$CGI_DIR/icon.png'"
 fi
 # CRLF/BOM defensively strip in case tar/copy tainted files
 run "sed -i '1s/^\\xEF\\xBB\\xBF//' '$CGI_DIR/index.cgi' '$CGI_DIR/mailshield.tmpl'"
 run "sed -i 's/\\r\$//' '$CGI_DIR/index.cgi' '$CGI_DIR/mailshield.tmpl'"
 
 echo "==> [5/9] cPanel MailControl plugin kuruluyor"
-run "install -m 0644 '$SRC/cpanel/mailshield.live.php'     '$CPANEL_PLUGIN_DIR/index.live.php'"
-run "install -m 0644 '$SRC/cpanel/mailshield.cpanelplugin' '$CPANEL_PLUGIN_DIR/mailshield.cpanelplugin'"
+run "chown -R root:root '$CPANEL_PLUGIN_DIR'"
+run "install -m 0644 -o root -g root '$SRC/cpanel/mailshield.live.php'     '$CPANEL_PLUGIN_DIR/index.live.php'"
+run "install -m 0644 -o root -g root '$SRC/cpanel/mailshield.cpanelplugin' '$CPANEL_PLUGIN_DIR/mailshield.cpanelplugin'"
+if [[ -f "$SRC/cpanel/icon.png" ]]; then
+  run "install -m 0644 -o root -g root '$SRC/cpanel/icon.png' '$CPANEL_PLUGIN_DIR/icon.png'"
+fi
 if [[ -x /usr/local/cpanel/scripts/install_plugin && $DRY_RUN -eq 0 ]]; then
   /usr/local/cpanel/scripts/install_plugin "$CPANEL_PLUGIN_DIR/mailshield.cpanelplugin" || true
 fi
