@@ -1,5 +1,21 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
+## v1.6.3 (Feb 2026) — One-Click Self-Update ✅
+WHM plugin başlığında "↻ Guncelle" butonu — kullanıcı her code değişikliğinde SSH'a gitmeden
+tek tıkla sunucudaki plugin script'lerini yeniler.
+
+### Nasıl çalışır
+- Buton `fetch('?action=self-update')` yapar
+- CGI: son tarball'ı wget'ler, 4 kritik dosyayı overwrite eder (logtail.pl, heartbeat.pl, index.cgi, mailshield.tmpl)
+- `systemctl restart mailshield-logtail.service` ile yeni Perl kodunu aktif eder
+- JSON `{ok, actions[], errors[]}` döner
+- JS iframe'i reload eder, kullanıcı yeni sürümü anında görür
+
+### Güvenlik
+- `Whostmgr::ACLS::hasroot()` guard — sadece root WHM erişebilir
+- Query string tabanlı (PATH_INFO WHM cpsrvd'da bazen boş)
+- Sadece 4 belirli dosya güncellenir (config/systemd unit dosyalarına dokunmaz)
+
 ## v1.6.2 (Feb 2026) — Canlı Mail Trafiği (SaaS SMTP mirror)
 Kullanıcının canlı cPanel sunucusundaki (89.19.15.58) gerçek mail trafiği artık panelde
 görünüyor. Milter Exim'e bind edilmesine gerek yok — sunucudaki Exim mainlog tail edilir.
