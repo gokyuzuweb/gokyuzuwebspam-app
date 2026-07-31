@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 import jwt
 import bcrypt
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from pydantic import BaseModel, Field, EmailStr
 from deps import db
 
@@ -139,13 +139,38 @@ async def register(payload: ResellerRegister):
 
 
 @router.post("/auth/login")
-async def login(payload: ResellerLogin):
+async def login(payload: ResellerLogin, request: Request):
     r = await db.resellers.find_one({"email": payload.email.lower()}, {"_id": 0})
     if not r or not bcrypt.checkpw(payload.password.encode(), r["password_hash"].encode()):
+        # Record failed attempt (for master audit)
+        await db.reseller_logins.insert_one({
+            "id": str(uuid.uuid4()),
+            "email": payload.email.lower(),
+            "reseller_id": r["id"] if r else None,
+            "license_key": r.get("license_key") if r else None,
+            "company": r.get("company") if r else None,
+            "success": False,
+            "ip": request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else ""),
+            "user_agent": request.headers.get("user-agent", "")[:200],
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
         raise HTTPException(401, "Geçersiz e-posta veya şifre")
     if not r.get("active", True):
         raise HTTPException(403, "Hesabınız devre dışı")
     token = _make_token(r["id"], r["license_key"])
+    # Record successful login (master admin gorur)
+    await db.reseller_logins.insert_one({
+        "id": str(uuid.uuid4()),
+        "email": r["email"],
+        "reseller_id": r["id"],
+        "license_key": r["license_key"],
+        "company": r.get("company", ""),
+        "plan": r.get("plan", "pro"),
+        "success": True,
+        "ip": request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else ""),
+        "user_agent": request.headers.get("user-agent", "")[:200],
+        "at": datetime.now(timezone.utc).isoformat(),
+    })
     return {"token": token, "reseller_id": r["id"], "plan": r.get("plan", "pro"), "company": r.get("company", "")}
 
 

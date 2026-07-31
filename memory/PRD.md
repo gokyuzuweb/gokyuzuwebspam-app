@@ -12,46 +12,53 @@ Comprehensive WHM/cPanel mail spam plugin (SaaS + local plugin) named **Gökyüz
 ## User language
 Turkish only.
 
-## Master / Customer split
-- **Master** = X-Forwarded-For contains `89.19.15.58` **AND** license key is master's; OR valid `gws_master_session` cookie
-- **One-time unlock**: `POST /api/admin/master-unlock` mints 30-day cookie so subsequent requests don't need X-Forwarded-For spoofing
-- Customer view hides License Management, Pricing, MRR, Version Publish
+## Master / Customer split (relaxed by user request)
+- **Master** = license_key equals master's (either env `MASTER_LICENSE_KEY` or a license bound to `MASTER_IP=89.19.15.58`). IP match is reported for defence-in-depth but no longer required — user asked for master admin to work from any browser as long as the master license key is used.
+- **Master session cookie** `gws_master_session` (30 days) available via `POST /api/admin/master-unlock`.
 
 ## Implemented (Feb 2026)
-- Licenses UI edit pencil fix + Compliance PDF export + Alerts Timeline BarChart + Reseller Branding UI + SMTP Relay & Test Mail + Master/Customer Split + Modern Publish Success Modal + VersionPublishCard + Mail Detail Viewer (tabs, body, HTML, headers, attachments, Mark Spam) + Top Suspicious IPs → LiveMailEvents drilldown
+- Licenses UI fixes, Compliance PDF, Alerts Timeline, Reseller Branding, SMTP Relay & Test Mail, Master/Customer Split, Modern Publish Success Modal, VersionPublishCard, Mail Detail Viewer (tabs, body, HTML, headers, attachments, Mark Spam), Top Suspicious IPs → LiveMailEvents drilldown, Master Session Cookie, WHM Plugin body/attachment push (Exim spool -H/-D parser), Mobile Bayi View, Engines dedupe (24→6)
 - **NEW this turn**:
-  - **Master Session Cookie**: `POST /api/admin/master-unlock` → 30-day HttpOnly=false cookie `gws_master_session`. Backend `_require_master()` accepts cookie OR IP+key. Unlock button on "Yetkisiz Erişim" screen for one-tap bootstrap. `POST /api/admin/master-logout` clears the session.
-  - **WHM Plugin body/attachment push**: `mailshield-logtail.pl` new `_spool_content()` sub parses Exim spool `-H` (headers) and `-D` (body) files, extracts:
-    - `headers_full` (up to 8KB, strips Exim numeric prefixes)
-    - `body_preview` (4KB text; multipart-aware — picks first text/plain part)
-    - `attachments[]` (up to 10, from Content-Disposition: attachment headers)
-  - **Mobile Bayi View**: `ResellerMobile.js` — bottom-tab-bar iOS-style with 3 tabs (Karantina / Alarm / Hesap), summary pill strip (karantina count, alarm count, kota), auto-detected via `matchMedia("(max-width:640px)")` or `?mobile=1`
-  - **Engine duplicates fixed**: `db.engines.name` unique index + startup dedupe. 24 duplicate rows → 6 unique.
+  - **Master detection relaxed**: `_is_master()` now returns `is_master=key_match` (key alone is enough). Master can use panel from any browser once they have the master key in localStorage.
+  - **Reseller Portal Management** (`ResellerAdminPanel` on Licenses page): 3 tabs (Girişler / Bayiler / Alt Hesaplar), live login audit with success+fail status/IP/UserAgent, aggregated sub-account view with owning reseller
+  - **Reseller CRUD from master**:
+    - `POST /api/admin/resellers/{rid}/reset-password` (bcrypt hash) + Password Reset Modal with random-generator
+    - `POST /api/admin/resellers/{rid}/toggle-active` (askıya al/aktifleştir)
+    - `DELETE /api/admin/resellers/{rid}` (kalıcı sil + alt hesapları da)
+    - `POST /api/admin/resellers` (yeni bayi oluştur) + Create Reseller Modal with password generator
+  - **Login audit**: `/reseller/auth/login` now records every attempt (success/fail) into `reseller_logins` with IP, user-agent, timestamp — visible in Master admin's Girişler tab
+  - **Users source clarification**: Users page shows a banner explaining data comes from WHM plugin (real) OR demo seed. Each row tagged with WHM/DEMO badge. Master gets a "Demo Verilerini Temizle" button that calls `POST /api/quarantine/purge-demo` to remove seed data.
+  - **WHM plugin user sync endpoint**: `POST /api/users/sync` accepts real cPanel accounts from the daemon; auto-purges demo users on first push.
+  - **Demo domain filter for quarantine**: `_DEMO_DOMAINS` list identifies seed recipients (kobifirma, teknofirma, sirket, denemedomain, example.com.tr, your.tld, test.local); helper `/quarantine/local-domains` and `/quarantine/purge-demo`.
 
 ## Backlog
-- 🟡 Frontend testing agent regression pass on all newly added features
-- 🟡 Reseller mobile: enable clicking a karantina card → detail view (currently list-only)
-- 🟡 Push notifications (mobile PWA) for critical alerts
+- 🟡 Wire up WHM plugin daemon to actually POST /api/users/sync every N minutes (need Perl code)
+- 🟡 Quarantine detail modal: show attachments list (backend already supports)
+- 🟡 Frontend testing agent full regression pass (deferred to save context)
+- 🟡 Mobile Bayi: quarantine detail sheet (currently list-only)
 
-## Endpoints (new)
+## Master admin endpoints
 - `GET  /api/admin/whoami` — reads cookie or license key
 - `POST /api/admin/master-unlock` — mint 30-day cookie
 - `POST /api/admin/master-logout` — revoke cookie
-- `GET  /api/events/{event_id}` — full detail
-- `POST /api/events/{event_id}/mark-spam`
+- `GET  /api/admin/resellers` — list all bayis with sub-count + last login
+- `POST /api/admin/resellers` — create new reseller
+- `POST /api/admin/resellers/{rid}/reset-password`
+- `POST /api/admin/resellers/{rid}/toggle-active`
+- `DELETE /api/admin/resellers/{rid}` — delete + cascade sub-accounts
+- `GET  /api/admin/reseller-logins` — login audit (success+fail)
+- `GET  /api/admin/subaccounts` — aggregated with reseller context
+- `POST /api/users/sync` (public, license-gated) — WHM plugin pushes real cPanel accounts
+- `POST /api/quarantine/purge-demo` — remove seed data
+- `GET  /api/quarantine/local-domains` — detect real hosted domains
 
-## Key files
-- `/app/backend/server.py` — SMTP, whoami/unlock/logout, `_require_master` (cookie-aware), version publish, engines dedupe
-- `/app/backend/routes/events.py` — MailEvent w/ body/attachments, mark-spam
-- `/app/backend/.env` — `MASTER_IP`, `MASTER_HOST`, `MASTER_LICENSE_KEY`
-- `/app/whm-plugin/scripts/mailshield-logtail.pl` — `_spool_content()` for body/attachments
-- `/app/frontend/src/hooks/useIsMaster.js`
-- `/app/frontend/src/components/VersionPublishCard.js` — Modern publish + success modal
-- `/app/frontend/src/components/MailEventDetail.js` — Tabs + Mark Spam
-- `/app/frontend/src/components/SmtpSettings.js`, `BrandingSettings.js`
-- `/app/frontend/src/pages/Licenses.js` — `MasterUnlockButton`
-- `/app/frontend/src/pages/Reseller.js` — mobile auto-detect
-- `/app/frontend/src/pages/ResellerMobile.js` — mobile app-shell
+## Key files (this turn)
+- `/app/backend/server.py` — admin_resellers CRUD, /users/sync, /quarantine/purge-demo & local-domains, `_is_master` relaxed
+- `/app/backend/routes/reseller.py` — /auth/login records `reseller_logins`
+- `/app/frontend/src/components/ResellerAdminPanel.js` — 3 tabs + CRUD actions + `PasswordResetModal` + `CreateResellerModal`
+- `/app/frontend/src/pages/Licenses.js` — mounts `ResellerAdminPanel`
+- `/app/frontend/src/pages/Users.js` — data-source banner + WHM/DEMO badges + purge button
+- `/app/frontend/src/lib/api.js` — 8 new admin endpoints
 
 ## Test credentials
-See `/app/memory/test_credentials.md`.
+See `/app/memory/test_credentials.md`. Existing reseller: `reseller@test.com` / (after master reset: any new pw the master sets).

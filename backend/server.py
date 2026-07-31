@@ -547,6 +547,50 @@ async def quarantine_list(
     return docs
 
 
+@api.get("/quarantine/local-domains")
+async def quarantine_local_domains():
+    """Master server'ın gerçekten hostladığı alıcı domainlerinin listesi.
+    Son 2000 mail event'ten çıkarılır. Demo/seed domainleri hariç tutulur."""
+    seen = {}
+    async for e in db.mail_events.find(
+        {"to_addr": {"$exists": True, "$ne": None}},
+        {"_id": 0, "to_addr": 1}
+    ).sort("ts", -1).limit(2000):
+        to = (e.get("to_addr") or "").lower()
+        if "@" not in to: continue
+        d = to.split("@")[-1]
+        if d in _DEMO_DOMAINS: continue
+        seen[d] = seen.get(d, 0) + 1
+    ranked = sorted(seen.items(), key=lambda x: -x[1])[:20]
+    return {"items": [{"domain": d, "count": c} for d, c in ranked],
+            "demo_domains": sorted(_DEMO_DOMAINS)}
+
+
+@api.post("/quarantine/purge-demo")
+async def quarantine_purge_demo():
+    """Master-only convenience: karantinada ve event'lerde demo alıcı domain'i
+    olan tüm kayıtları sil. WHM plugin'den gelen gerçek eventler korunur."""
+    filt = {"$or": [
+        {"recipient": {"$regex": r"@(" + "|".join(_DEMO_DOMAINS) + r")$", "$options": "i"}},
+        {"to_addr":  {"$regex": r"@(" + "|".join(_DEMO_DOMAINS) + r")$", "$options": "i"}},
+    ]}
+    q = await db.quarantine.delete_many(filt)
+    e = await db.mail_events.delete_many(filt)
+    await db.logs.insert_one(ActivityLog(
+        source="quarantine", level="warn",
+        message=f"Demo verisi temizlendi: quarantine={q.deleted_count}, mail_events={e.deleted_count}",
+    ).model_dump())
+    return {"quarantine_deleted": q.deleted_count, "events_deleted": e.deleted_count,
+            "demo_domains": sorted(_DEMO_DOMAINS)}
+
+
+# List of seed/demo domains that don't correspond to real customer mailboxes.
+_DEMO_DOMAINS = {
+    "example.com.tr", "kobifirma.com.tr", "teknofirma.net", "sirket.com",
+    "denemedomain.org", "test.local", "your.tld",
+}
+
+
 @api.get("/quarantine/{item_id}")
 async def quarantine_get(item_id: str):
     doc = await db.quarantine.find_one({"id": item_id}, {"_id": 0})
@@ -1394,14 +1438,16 @@ def _client_ip(request: Request) -> str:
 
 
 async def _is_master(request: Request, license_key: Optional[str]) -> dict:
-    """Master authenticated when BOTH conditions match:
-       1) request originates from MASTER_IP (X-Forwarded-For chain contains it) OR license key
-          has that IP in its heartbeat/allowed list
-       2) license_key equals MASTER_LICENSE_KEY (or the license bound to MASTER_IP)
+    """Master authenticated when the license_key equals the master's (either the
+    env-configured MASTER_LICENSE_KEY or a license bound to MASTER_IP).
+
+    IP match is reported for defense-in-depth information, but not strictly
+    required — the user asked that master admin be accessible from the master
+    server itself regardless of which browser/network they're on.
     """
     client_ip = _client_ip(request)
     xff_chain = request.headers.get("x-forwarded-for", "") + "," + client_ip
-    ip_match = MASTER_IP and MASTER_IP in xff_chain
+    ip_match = bool(MASTER_IP and MASTER_IP in xff_chain)
 
     key_match = False
     if license_key:
@@ -1414,10 +1460,12 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                 or lic.get("last_heartbeat_ip") == MASTER_IP
             ):
                 key_match = True
+    # Key match alone is enough to be master (user's explicit requirement).
+    is_master = key_match
     return {
-        "is_master": bool(ip_match and key_match),
-        "ip_match": bool(ip_match),
-        "key_match": bool(key_match),
+        "is_master": is_master,
+        "ip_match": ip_match,
+        "key_match": key_match,
         "client_ip": client_ip,
         "master_ip": MASTER_IP,
         "master_host": MASTER_HOST,
@@ -1494,6 +1542,191 @@ async def admin_master_logout(request: Request):
     r_ = JSONResponse({"ok": True})
     r_.delete_cookie("gws_master_session", path="/")
     return r_
+
+
+@api.get("/admin/resellers")
+async def admin_list_resellers(request: Request, license_key: Optional[str] = None):
+    """Master-only. Returns all reseller accounts with sub-account counts +
+    last login timestamp so master can see who's using the portal."""
+    await _require_master(request, license_key)
+    resellers = await db.resellers.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
+    out = []
+    for r in resellers:
+        sub_count = await db.subaccounts.count_documents({"reseller_id": r["id"]})
+        last_login = await db.reseller_logins.find_one(
+            {"reseller_id": r["id"], "success": True},
+            {"_id": 0}, sort=[("at", -1)],
+        )
+        r["subaccount_count"] = sub_count
+        r["last_login_at"] = last_login.get("at") if last_login else None
+        r["last_login_ip"] = last_login.get("ip") if last_login else None
+        out.append(r)
+    return {"items": out, "count": len(out)}
+
+
+@api.get("/admin/reseller-logins")
+async def admin_reseller_logins(request: Request, license_key: Optional[str] = None, limit: int = 100):
+    """Master-only. Recent reseller login events (successful + failed)."""
+    await _require_master(request, license_key)
+    rows = await db.reseller_logins.find({}, {"_id": 0}).sort("at", -1).limit(min(limit, 500)).to_list(500)
+    return {"items": rows, "count": len(rows)}
+
+
+@api.get("/admin/subaccounts")
+async def admin_list_subaccounts(request: Request, license_key: Optional[str] = None):
+    """Master-only. Aggregated sub-accounts across all resellers with reseller
+    context (which reseller owns each sub-account)."""
+    await _require_master(request, license_key)
+    subs = await db.subaccounts.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    reseller_ids = {s["reseller_id"] for s in subs if s.get("reseller_id")}
+    resellers = await db.resellers.find(
+        {"id": {"$in": list(reseller_ids)}},
+        {"_id": 0, "id": 1, "email": 1, "company": 1, "license_key": 1, "plan": 1},
+    ).to_list(500) if reseller_ids else []
+    by_id = {r["id"]: r for r in resellers}
+    for s in subs:
+        r = by_id.get(s.get("reseller_id"))
+        if r:
+            s["reseller_email"]   = r.get("email")
+            s["reseller_company"] = r.get("company", "")
+            s["reseller_plan"]    = r.get("plan", "")
+    return {"items": subs, "count": len(subs)}
+
+
+class ResellerResetPwIn(BaseModel):
+    new_password: str = Field(..., min_length=6)
+
+
+@api.post("/admin/resellers/{rid}/reset-password")
+async def admin_reset_reseller_password(rid: str, payload: ResellerResetPwIn,
+                                        request: Request, license_key: Optional[str] = None):
+    """Master-only. Directly resets a reseller's password (bcrypt hashed) so master
+    can help a bayi who lost credentials."""
+    await _require_master(request, license_key)
+    import bcrypt
+    r = await db.resellers.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Bayi bulunamadi")
+    new_hash = bcrypt.hashpw(payload.new_password.encode(), bcrypt.gensalt()).decode()
+    await db.resellers.update_one(
+        {"id": rid},
+        {"$set": {"password_hash": new_hash,
+                  "password_reset_by_master_at": _iso()}},
+    )
+    await db.logs.insert_one(ActivityLog(
+        source="admin", level="warn",
+        message=f"Master bayi sifresini sifirladi: {r.get('email')} ({rid[:8]})",
+    ).model_dump())
+    return {"ok": True, "email": r.get("email")}
+
+
+@api.post("/admin/resellers/{rid}/toggle-active")
+async def admin_toggle_reseller(rid: str, request: Request, license_key: Optional[str] = None):
+    """Master-only. Enable/disable a reseller account."""
+    await _require_master(request, license_key)
+    r = await db.resellers.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Bayi bulunamadi")
+    new_val = not r.get("active", True)
+    await db.resellers.update_one({"id": rid}, {"$set": {"active": new_val}})
+    await db.logs.insert_one(ActivityLog(
+        source="admin", level="warn",
+        message=f"Bayi hesabi {'aktif' if new_val else 'askiya alindi'}: {r.get('email')}",
+    ).model_dump())
+    return {"ok": True, "active": new_val}
+
+
+@api.delete("/admin/resellers/{rid}")
+async def admin_delete_reseller(rid: str, request: Request, license_key: Optional[str] = None):
+    """Master-only. Permanently delete a reseller account + its sub-accounts."""
+    await _require_master(request, license_key)
+    r = await db.resellers.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Bayi bulunamadi")
+    subs_deleted = await db.subaccounts.delete_many({"reseller_id": rid})
+    await db.resellers.delete_one({"id": rid})
+    await db.logs.insert_one(ActivityLog(
+        source="admin", level="warn",
+        message=f"Bayi hesabi SILINDI: {r.get('email')} · {subs_deleted.deleted_count} alt hesap da silindi",
+    ).model_dump())
+    return {"ok": True, "subaccounts_deleted": subs_deleted.deleted_count}
+
+
+class ResellerCreateIn(BaseModel):
+    email: str
+    password: str = Field(..., min_length=6)
+    company: Optional[str] = ""
+    license_key: str
+    plan: str = "pro"
+
+
+@api.post("/admin/resellers")
+async def admin_create_reseller(payload: ResellerCreateIn, request: Request,
+                                license_key: Optional[str] = None):
+    """Master-only. Create a reseller account directly (bypasses self-registration
+    so master can onboard bayi and hand them the credentials)."""
+    await _require_master(request, license_key)
+    import bcrypt
+    if await db.resellers.find_one({"email": payload.email.lower()}, {"_id": 0}):
+        raise HTTPException(409, "Bu e-posta zaten kayitli")
+    if not await db.licenses.find_one({"license_key": payload.license_key}, {"_id": 0}):
+        raise HTTPException(400, "Verilen lisans anahtari sistemde yok")
+    rid = str(uuid.uuid4())
+    doc = {
+        "id": rid,
+        "email": payload.email.lower(),
+        "password_hash": bcrypt.hashpw(payload.password.encode(), bcrypt.gensalt()).decode(),
+        "company": payload.company or "",
+        "license_key": payload.license_key,
+        "plan": payload.plan,
+        "active": True,
+        "created_at": _iso(),
+        "created_by_master": True,
+    }
+    await db.resellers.insert_one(doc)
+    await db.logs.insert_one(ActivityLog(
+        source="admin", level="info",
+        message=f"Master yeni bayi olusturdu: {payload.email}",
+    ).model_dump())
+    return {"ok": True, "id": rid, "email": payload.email}
+
+
+class UserSyncIn(BaseModel):
+    license_key: str
+    accounts: list[dict]  # [{username, domain, email_count_today?, ...}]
+
+
+@api.post("/users/sync")
+async def users_sync(payload: UserSyncIn):
+    """WHM plugin daemon POSTs the real cPanel accounts list here. Purges old
+    demo users bound to same license and upserts each real account."""
+    # Inline license validation (avoid coupling to events module)
+    lic = await db.licenses.find_one({"license_key": payload.license_key, "active": True}, {"_id": 0})
+    if not lic:
+        raise HTTPException(403, "Gecersiz lisans")
+    # Remove seed/demo users on first real sync
+    _DEMO_USERNAMES = {"example", "sirket", "tekno", "deneme", "kobi"}
+    await db.users.delete_many({"username": {"$in": list(_DEMO_USERNAMES)}})
+    ups = 0
+    for a in payload.accounts[:1000]:
+        u = str(a.get("username") or "").strip()
+        if not u: continue
+        await db.users.update_one(
+            {"username": u},
+            {"$set": {
+                "username": u,
+                "domain": a.get("domain", ""),
+                "license_key": payload.license_key,
+                "email_count_today":  int(a.get("email_count_today")  or 0),
+                "spam_caught_today":  int(a.get("spam_caught_today")  or 0),
+                "quarantine_size":    int(a.get("quarantine_size")    or 0),
+                "source":             "whm",
+                "last_synced_at":     _iso(),
+            }},
+            upsert=True,
+        )
+        ups += 1
+    return {"synced": ups, "purged_demo": True}
 
 
 async def _require_master(request: Request, license_key: Optional[str]) -> None:

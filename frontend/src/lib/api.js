@@ -111,6 +111,28 @@ export const api = {
     client.post("/admin/master-unlock", { license_key: licenseKey }, { withCredentials: true }).then(r => r.data),
   masterLogout: () =>
     client.post("/admin/master-logout", null, { withCredentials: true }).then(r => r.data),
+  adminResellers: (licenseKey) =>
+    client.get("/admin/resellers", { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminResellerLogins: (licenseKey, limit = 100) =>
+    client.get("/admin/reseller-logins", { params: { limit, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
+  adminSubaccounts: (licenseKey) =>
+    client.get("/admin/subaccounts", { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminResellerReset: (licenseKey, rid, newPassword) =>
+    client.post(`/admin/resellers/${rid}/reset-password`, { new_password: newPassword },
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminResellerToggle: (licenseKey, rid) =>
+    client.post(`/admin/resellers/${rid}/toggle-active`, null,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminResellerDelete: (licenseKey, rid) =>
+    client.delete(`/admin/resellers/${rid}`,
+                  { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminResellerCreate: (licenseKey, payload) =>
+    client.post("/admin/resellers", payload,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  quarantineLocalDomains: () =>
+    client.get("/quarantine/local-domains").then(r => r.data),
+  quarantinePurgeDemo: () =>
+    client.post("/quarantine/purge-demo").then(r => r.data),
 
   // Licenses
   licenses: () => client.get("/licenses").then(r => r.data),
