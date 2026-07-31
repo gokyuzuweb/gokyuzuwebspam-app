@@ -39,6 +39,10 @@ export const api = {
     client.delete(`/alerts/rules/${ruleId}`, { params: { license_key: licenseKey } }).then(r => r.data),
   alertsRecent: (licenseKey, limit = 20) =>
     client.get("/alerts", { params: { license_key: licenseKey, limit } }).then(r => r.data),
+  alertsTestWebhook: (licenseKey, webhookUrl, webhookKind) =>
+    client.post("/alerts/test-webhook", {
+      license_key: licenseKey, webhook_url: webhookUrl, webhook_kind: webhookKind,
+    }).then(r => r.data),
 
   quarantine: (params = {}) => client.get("/quarantine", { params }).then(r => r.data),
   quarantineGet: (id) => client.get(`/quarantine/${id}`).then(r => r.data),

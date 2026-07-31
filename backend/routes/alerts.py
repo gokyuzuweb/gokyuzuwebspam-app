@@ -84,6 +84,43 @@ async def list_recent_alerts(
     return {"items": items, "count": len(items)}
 
 
+class TestWebhookReq(BaseModel):
+    license_key: str
+    webhook_url: str
+    webhook_kind: Literal["slack", "discord", "generic"] = "generic"
+
+
+@router.post("/test-webhook")
+async def test_webhook(req: TestWebhookReq):
+    """Kural kaydetmeden webhook URL'nin canli oldugunu dogrula. Sync — tarayicida
+    kullanici basari/hata mesajini anlik gorsun."""
+    await _validate_license(req.license_key)
+    fake_alert = {
+        "id": "test-" + str(uuid.uuid4())[:8],
+        "license_key": req.license_key,
+        "rule_name": "Test webhook (kural degil)",
+        "reason": "Bu bir test bildirimi — panelinizden gonderildi",
+        "sample_event": {"from_addr": "test@example.com", "to_addr": "you@your.tld",
+                         "subject": "Test webhook", "verdict": "spam"},
+        "fired_at": datetime.now(timezone.utc).isoformat(),
+    }
+    fake_rule = {"name": "Test", "webhook_url": req.webhook_url, "webhook_kind": req.webhook_kind}
+    try:
+        # _send_webhook alerts.update_one yapar - test icin alerts kaydini insert edelim
+        await db.alerts.insert_one(dict(fake_alert))
+        await _send_webhook(fake_rule, fake_alert)
+        # Read status
+        rec = await db.alerts.find_one({"id": fake_alert["id"]}, {"_id": 0, "webhook_status": 1})
+        status = (rec or {}).get("webhook_status", "unknown")
+        if status.startswith("error") or status.startswith("http_"):
+            raise HTTPException(400, f"Webhook basarisiz: {status}")
+        return {"ok": True, "message": "Webhook gonderildi — Slack/Discord kanalinizi kontrol edin", "status": status}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Webhook basarisiz: {type(e).__name__}: {e}")
+
+
 # --- Evaluation engine (called from events.ingest_event) ---
 async def evaluate_and_fire(license_key: str, event: dict) -> None:
     """Called after each ingest. Loads rules, checks thresholds, fires webhooks."""

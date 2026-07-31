@@ -1,5 +1,20 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
+## v1.6.8 (Feb 2026) — Test Webhook + CSV Export + Health Score + BUG fix
+### Bug fix
+- **License Management aktif/pasif gözükmüyordu** — Bitiş kolonu içinde küçük yerleştirilmişti,
+  ayrı "Durum" kolonu eklendi. `data-testid='lic-status-pill-{active|inactive|expired}-{id}'`.
+  Testing agent (iteration_8.json) doğruladı: 13 lisans için AKTİF pill yeşil pulse dot ile görünüyor.
+
+### Yeni özellikler
+- **Test Webhook** (`POST /api/alerts/test-webhook`): Kural kaydetmeden Slack/Discord/generic
+  webhook URL doğrulama. AlertsRules formunda "Test Gönder" butonu.
+- **CSV Export**: LiveMailEvents widget başlığında ⬇ CSV butonu. Filtreli sonuçları
+  BOM'lu UTF-8 CSV (Excel uyumlu), 8 kolon (ts, verdict, score, from, to, subject, hostname, mid).
+- **Health Score** (`HealthScore.js`): 0-100 kompozit skor. Spam ratio %40 + engine coverage %30 +
+  activity freshness %30. SVG donut, renk kodlu (emerald ≥85 → rose <45), Mükemmel/İyi/Dikkat/Riskli.
+  Dashboard'da Multi-Server ile aynı satırda, 4/8 grid.
+
 ## v1.6.7 (Feb 2026) — Multi-Server + Alert Rules UI + License Search + Bulk IP
 - **Multi-Server Ribbon**: Dashboard'da 4 stat kart altına inject edildi; renkli chip'lerde
   hostname + total + spam + last_seen. `GET /events/by-server` MongoDB aggregation.

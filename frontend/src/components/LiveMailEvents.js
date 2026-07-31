@@ -178,6 +178,28 @@ export default function LiveMailEvents() {
     }
   }
 
+  function handleExportCSV() {
+    const rows = filtered.length ? filtered : items;
+    if (!rows.length) return toast.error("Dışa aktarılacak event yok");
+    const cols = ["ts", "verdict", "total_score", "from_addr", "to_addr", "subject", "server_hostname", "exim_mid"];
+    const header = cols.join(",");
+    const esc = (v) => {
+      if (v == null) return "";
+      const s = String(v).replace(/"/g, '""');
+      return /[,"\n]/.test(s) ? `"${s}"` : s;
+    };
+    const body = rows.map(r => cols.map(c => esc(r[c])).join(",")).join("\n");
+    const csv = header + "\n" + body;
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mail-events-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast.success(`${rows.length} event CSV olarak indirildi`);
+  }
+
   const items = events.data?.items || [];
   const total = summary.data?.total || 0;
   const invalid = events.isError;
@@ -219,13 +241,21 @@ export default function LiveMailEvents() {
           </>
         }
         right={
-          <button
-            onClick={handleTestIngest}
-            className="text-xs px-3 py-1.5 rounded bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition flex items-center gap-1.5"
-            data-testid="live-events-test-btn"
-          >
-            <Send className="w-3 h-3" /> Test Event
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleExportCSV}
+              className="text-xs px-3 py-1.5 rounded bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 transition"
+              data-testid="live-events-export-csv-btn"
+              title="Filtreli sonuçları CSV indir"
+            >⬇ CSV</button>
+            <button
+              onClick={handleTestIngest}
+              className="text-xs px-3 py-1.5 rounded bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition flex items-center gap-1.5"
+              data-testid="live-events-test-btn"
+            >
+              <Send className="w-3 h-3" /> Test Event
+            </button>
+          </div>
         }
       />
       <CardBody>

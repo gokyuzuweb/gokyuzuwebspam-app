@@ -104,6 +104,23 @@ function RuleForm({ licenseKey, initial, onDone }) {
                 data-testid="alert-rule-save">
           <Plus className="w-3.5 h-3.5" /> {initial ? "Güncelle" : "Ekle"}
         </button>
+        <button
+          onClick={async () => {
+            if (!form.webhook_url) return toast.error("Webhook URL girin");
+            try {
+              const r = await api.alertsTestWebhook(licenseKey, form.webhook_url, form.webhook_kind);
+              toast.success(r.message || "Test webhook gönderildi");
+            } catch (e) {
+              toast.error(e?.response?.data?.detail || "Webhook başarısız");
+            }
+          }}
+          disabled={!form.webhook_url}
+          className="px-3 py-1.5 rounded bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 disabled:opacity-40 text-sm inline-flex items-center gap-1.5"
+          data-testid="alert-rule-test-webhook"
+          title="Kural kaydetmeden webhook'un çalıştığını doğrula"
+        >
+          <ExternalLink className="w-3.5 h-3.5" /> Test Gönder
+        </button>
         <button onClick={onDone} className="px-3 py-1.5 rounded text-slate-400 hover:text-slate-200 text-sm">İptal</button>
       </div>
     </div>
