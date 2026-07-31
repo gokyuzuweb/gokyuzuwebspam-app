@@ -108,7 +108,22 @@ sub _process_line {
         # Subject (T="...") — may contain escaped chars
         my ($subject)   = $mid_part =~ /\sT="((?:\\.|[^"\\])*)"/;
         $subject //= '';
-        $subject =~ s/\\(.)/$1/g;
+        # Exim T="..." field'i escape sequence icerir: \nHH (Q-P benzeri).
+        # Ornek: "F\335YAT" -> "FİYAT" (0xdd = 221 -> 'İ' in cp1254),
+        #        "\304\260" -> "İ" (UTF-8 pairs).
+        $subject =~ s/\\(\d{3})/chr(oct($1))/ge;   # \NNN octal escapes -> byte
+        # Sonuc byte string; encoding olarak once UTF-8 dogrulayalim, degilse cp1254
+        eval {
+            require Encode;
+            if (!Encode::is_utf8($subject) && $subject =~ /[\x80-\xff]/) {
+                # Try UTF-8 decode first; fall back to cp1254 (Turkish Windows)
+                my $decoded = eval { Encode::decode('UTF-8', $subject, Encode::FB_CROAK()) };
+                if ($@ || !defined $decoded) {
+                    $decoded = eval { Encode::decode('cp1254', $subject, Encode::FB_DEFAULT()) };
+                }
+                $subject = Encode::encode('UTF-8', $decoded) if defined $decoded;
+            }
+        };
         $subject = substr($subject, 0, 200);
         # Recipient (either 'for x@y' at end OR from later => line; we accept the first form now)
         my $to = $for_rcpt // '';
