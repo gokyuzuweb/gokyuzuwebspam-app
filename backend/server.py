@@ -2083,6 +2083,98 @@ class SpamExplainIn(BaseModel):
     force:       Optional[bool] = False  # bypass cache
 
 
+
+class CountryRule(BaseModel):
+    country_code: str = Field(..., min_length=2, max_length=2)  # ISO 3166-1 alpha-2 (TR, US, RU..)
+    action: str = Field("block", pattern="^(block|allow)$")
+    note: Optional[str] = ""
+
+
+@api.get("/security/country-rules")
+async def get_country_rules():
+    rows = await db.country_rules.find({}, {"_id": 0}).sort("country_code", 1).to_list(300)
+    return {"items": rows}
+
+
+@api.post("/security/country-rules")
+async def add_country_rule(payload: CountryRule, request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    doc = payload.model_dump()
+    doc["country_code"] = doc["country_code"].upper()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = _iso()
+    await db.country_rules.update_one(
+        {"country_code": doc["country_code"]},
+        {"$set": doc}, upsert=True,
+    )
+    return {"ok": True, **doc}
+
+
+@api.delete("/security/country-rules/{code}")
+async def del_country_rule(code: str, request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    r = await db.country_rules.delete_one({"country_code": code.upper()})
+    return {"ok": True, "deleted": r.deleted_count}
+
+
+@api.post("/security/whitelist-from-event")
+async def whitelist_from_event(event_id: str, license_key: str, request: Request):
+    """User marks an event as NOT spam — sender goes to whitelist,
+    event verdict flips to 'whitelisted', related quarantine entries are released."""
+    evt = await db.mail_events.find_one({"id": event_id, "license_key": license_key}, {"_id": 0})
+    if not evt:
+        raise HTTPException(404, "Event bulunamadi")
+    sender = evt.get("from_addr")
+    if not sender:
+        raise HTTPException(400, "Gonderen adresi yok")
+    await db.mail_events.update_one(
+        {"id": event_id},
+        {"$set": {"verdict": "whitelisted", "marked_not_spam_at": _iso(), "marked_by": "user"}},
+    )
+    await db.lists.update_one(
+        {"kind": "whitelist", "value": sender, "license_key": license_key},
+        {"$set": {"kind": "whitelist", "value": sender, "type": "email",
+                  "reason": f"User marked NOT spam (event {event_id[:8]})",
+                  "license_key": license_key, "created_at": _iso()}},
+        upsert=True,
+    )
+    # Also release any queued quarantine actions for this exim_mid
+    if evt.get("exim_mid"):
+        await db.quarantine_actions.insert_one({
+            "id": str(uuid.uuid4()),
+            "license_key": license_key,
+            "event_id": event_id,
+            "exim_mid": evt["exim_mid"],
+            "action": "release",
+            "status": "pending",
+            "created_at": _iso(),
+        })
+    # Delete any blacklist entry the previous "mark spam" may have added
+    await db.lists.delete_many({"kind": "blacklist", "value": sender, "license_key": license_key})
+    return {"ok": True, "whitelisted": sender, "sent_release": bool(evt.get("exim_mid"))}
+
+
+@api.post("/push/send-test")
+async def push_send_test(request: Request, license_key: Optional[str] = None):
+    """Master-only convenience: send a test push to ALL subscribers."""
+    await _require_master(request, license_key)
+    total_subs = await db.push_subscriptions.count_documents({})
+    if total_subs == 0:
+        return {"ok": True, "sent": 0, "reason": "no_subscribers",
+                "hint": "Bayiler önce mobil panelde 🔔 butonuna basıp izin vermeli"}
+    # Reuse push_send flow
+    from fastapi.testclient import TestClient  # not ideal; call directly instead
+    return await push_send(
+        PushSendIn(
+            title="GökyüzüWebSpam · Test Bildirimi",
+            body=f"Master tarafından gönderildi · {datetime.now(timezone.utc).strftime('%H:%M')}",
+            url="/reseller?mobile=1",
+        ),
+        request,
+    )
+
+
+
 @api.post("/ai/explain-spam")
 async def ai_explain_spam(payload: SpamExplainIn):
     """LLM-powered Turkish natural-language explanation of why a mail is spam.

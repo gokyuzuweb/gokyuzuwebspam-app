@@ -44,6 +44,19 @@ export default function MailEventDetail({ event, onClose, onAction }) {
     onError: (err) => toast.error(err?.response?.data?.detail || "İşaretleme başarısız"),
   });
 
+  const markNotSpam = useMutation({
+    mutationFn: () => api.whitelistFromEvent(licenseKey, event?.id),
+    onSuccess: (data) => {
+      toast.success(`✓ Whitelist'e eklendi · ${data.whitelisted}${data.sent_release ? " · release kuyruğa yazıldı" : ""}`,
+                    { duration: 6000 });
+      qc.invalidateQueries({ queryKey: ["live-events"] });
+      qc.invalidateQueries({ queryKey: ["live-events-summary"] });
+      qc.invalidateQueries({ queryKey: ["event-full", event?.id] });
+      onClose?.();
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "İşlem başarısız"),
+  });
+
   if (!event) return null;
   const e = full.data || event;
 
@@ -146,9 +159,9 @@ export default function MailEventDetail({ event, onClose, onAction }) {
           </div>
         </div>
 
-        {/* MARK AS SPAM primary CTA */}
-        {!isSpam && (
-          <div className="px-5 py-3 border-b border-slate-800 bg-gradient-to-r from-rose-500/10 to-transparent">
+        {/* MARK AS SPAM / NOT SPAM primary CTA */}
+        <div className="px-5 py-3 border-b border-slate-800 bg-gradient-to-r from-rose-500/10 to-emerald-500/10 space-y-2">
+          {!isSpam ? (
             <button
               onClick={() => markSpam.mutate()}
               disabled={markSpam.isPending}
@@ -158,11 +171,23 @@ export default function MailEventDetail({ event, onClose, onAction }) {
               <ShieldOff className="w-4 h-4" />
               {markSpam.isPending ? "İşaretleniyor…" : "Bu SPAM · Kara Listeye Ekle + Filtreye Öğret"}
             </button>
-            <div className="text-[10px] text-slate-500 mt-1 text-center">
-              Gönderen ({e.from_addr}) blacklist'e eklenir · sa-learn kuyruğa yazılır · verdict "high_spam" olur
-            </div>
+          ) : (
+            <button
+              onClick={() => markNotSpam.mutate()}
+              disabled={markNotSpam.isPending}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-white text-sm font-bold shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 disabled:opacity-50 transition"
+              data-testid="detail-mark-not-spam"
+            >
+              <Shield className="w-4 h-4" />
+              {markNotSpam.isPending ? "İşleniyor…" : "Bu SPAM Değil · Otomatik Whitelist + Serbest Bırak"}
+            </button>
+          )}
+          <div className="text-[10px] text-slate-500 text-center">
+            {!isSpam
+              ? "Gönderen blacklist'e eklenir · sa-learn kuyruğa yazılır · verdict → high_spam"
+              : "Gönderen whitelist'e eklenir · kuyruktan serbest bırakılır · verdict → whitelisted"}
           </div>
-        )}
+        </div>
 
         {/* Tabs */}
         <div className="px-5 pt-3 border-b border-slate-800 flex gap-1 overflow-x-auto">

@@ -155,6 +155,20 @@ export const api = {
   aiExplainSpam: (payload) => client.post("/ai/explain-spam", payload).then(r => r.data),
   adminResellerBreakdown: (licenseKey, rid, days = 30) =>
     client.get(`/admin/resellers/${rid}/activity-breakdown`, { params: { days, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
+  // Security / whitelist / country rules
+  countryRules: () => client.get("/security/country-rules").then(r => r.data),
+  countryRuleAdd: (licenseKey, payload) =>
+    client.post("/security/country-rules", payload,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  countryRuleDel: (licenseKey, code) =>
+    client.delete(`/security/country-rules/${code}`,
+                  { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  whitelistFromEvent: (licenseKey, eventId) =>
+    client.post("/security/whitelist-from-event", null,
+                { params: { event_id: eventId, license_key: licenseKey } }).then(r => r.data),
+  pushSendTest: (licenseKey) =>
+    client.post("/push/send-test", null,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
   quarantineLocalDomains: () =>
     client.get("/quarantine/local-domains").then(r => r.data),
   quarantinePurgeDemo: () =>
