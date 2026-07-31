@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   X, Shield, Clock, Server, Hash, User, Mail, FileText, Paperclip, AlertOctagon,
-  Code2, Ban, Send, Bug, Copy, Download, ShieldOff, Sparkles,
+  Code2, Ban, Send, Bug, Copy, Download, ShieldOff, Sparkles, Globe, Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -158,6 +158,9 @@ export default function MailEventDetail({ event, onClose, onAction }) {
             <div className="text-indigo-300 truncate" title={e.exim_mid}>{e.exim_mid || "-"}</div>
           </div>
         </div>
+
+        {/* SENDER IP · COUNTRY · BLOCK */}
+        <SenderIPPanel event={e} licenseKey={licenseKey} />
 
         {/* MARK AS SPAM / NOT SPAM primary CTA */}
         <div className="px-5 py-3 border-b border-slate-800 bg-gradient-to-r from-rose-500/10 to-emerald-500/10 space-y-2">
@@ -440,6 +443,102 @@ function SumRow({ label, value, mono, copy }) {
                 title="Kopyala">
           <Copy className="w-3 h-3" />
         </button>
+      )}
+    </div>
+  );
+}
+
+/* --------------------------- Sender IP panel ------------------------------ */
+const CC_FLAG = (cc) => cc && cc.length === 2 && cc !== "LOCAL"
+  ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 127397 + c.charCodeAt(0))) : "🌐";
+const CC_NAME = {
+  US: "ABD", CN: "Çin", RU: "Rusya", DE: "Almanya", TR: "Türkiye", GB: "Birleşik Krallık",
+  IN: "Hindistan", BR: "Brezilya", JP: "Japonya", KR: "G. Kore", NL: "Hollanda",
+  FR: "Fransa", IT: "İtalya", ES: "İspanya", CA: "Kanada", AU: "Avustralya",
+  UA: "Ukrayna", PL: "Polonya", VN: "Vietnam", TH: "Tayland", ID: "Endonezya",
+  IR: "İran", PK: "Pakistan", EG: "Mısır", SA: "S. Arabistan", ZA: "G. Afrika",
+  LOCAL: "Yerel Ağ",
+};
+
+function SenderIPPanel({ event, licenseKey }) {
+  const qc = useQueryClient();
+  const ip = event.sender_ip || event.client_ip;
+  const status = useQuery({
+    queryKey: ["ip-status", ip],
+    queryFn: () => api.ipStatus(ip),
+    enabled: !!ip,
+    staleTime: 30000,
+  });
+  const block = useMutation({
+    mutationFn: () => api.ipBlock({ ip, license_key: licenseKey,
+      reason: `Mail: ${event.subject || event.id?.slice(0,8)}` }),
+    onSuccess: () => {
+      toast.success(`✓ ${ip} kalıcı olarak bloklandı`);
+      qc.invalidateQueries({ queryKey: ["ip-status", ip] });
+      qc.invalidateQueries({ queryKey: ["live-events"] });
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Blok başarısız"),
+  });
+  const unblock = useMutation({
+    mutationFn: () => api.ipUnblock({ ip }),
+    onSuccess: () => {
+      toast.success(`✓ ${ip} bloğu kaldırıldı`);
+      qc.invalidateQueries({ queryKey: ["ip-status", ip] });
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "İşlem başarısız"),
+  });
+
+  if (!ip) return null;
+  const s = status.data || {};
+  const cc = s.country;
+  const isBlocked = s.blocked;
+  const flag = CC_FLAG(cc);
+  const country = CC_NAME[cc] || cc || "Bilinmiyor";
+
+  return (
+    <div className="px-5 py-3 border-b border-slate-800 bg-slate-900/30">
+      <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-1.5">
+        <Globe className="w-3 h-3"/> Gönderen Kaynağı
+      </div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-2xl leading-none" title={country}>{flag}</span>
+          <div className="min-w-0">
+            <div className="mono text-sm text-slate-100 truncate" data-testid="detail-sender-ip">{ip}</div>
+            <div className="text-[11px] text-slate-500">
+              {country}{" · "}
+              {s.total_events !== undefined && <span>{s.total_events} mail</span>}
+              {s.spam_events > 0 && <span className="text-rose-400"> · {s.spam_events} spam</span>}
+            </div>
+          </div>
+        </div>
+        <div className="ml-auto flex gap-2">
+          {!isBlocked ? (
+            <button
+              onClick={() => block.mutate()}
+              disabled={block.isPending}
+              className="text-xs px-3 py-1.5 rounded bg-rose-500/20 text-rose-200 border border-rose-500/40 hover:bg-rose-500/30 disabled:opacity-40 inline-flex items-center gap-1.5"
+              data-testid="detail-block-ip"
+            ><Ban className="w-3 h-3"/> IP'yi Blokla</button>
+          ) : (
+            <button
+              onClick={() => unblock.mutate()}
+              disabled={unblock.isPending}
+              className="text-xs px-3 py-1.5 rounded bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-40 inline-flex items-center gap-1.5"
+              data-testid="detail-unblock-ip"
+            ><Lock className="w-3 h-3"/> Bloğu Kaldır</button>
+          )}
+          <a
+            href={`/panel?ip=${encodeURIComponent(ip)}`}
+            className="text-xs px-3 py-1.5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 inline-flex items-center gap-1.5"
+            title="Bu IP'den gelen tüm maillerı filtrele"
+          ><FileText className="w-3 h-3"/> Trafiği Gör</a>
+        </div>
+      </div>
+      {isBlocked && (
+        <div className="mt-2 text-[10px] text-rose-300 flex items-center gap-1">
+          <ShieldOff className="w-3 h-3"/> BU IP AKTİF BLOK LİSTESİNDE — yeni mailler otomatik reddedilir
+        </div>
       )}
     </div>
   );

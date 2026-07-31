@@ -216,56 +216,59 @@ export default function Security() {
         </>
       )}
 
-      {tab === "bec" && <BecTester onCheck={(p) => bec.mutate(p)} result={bec.data} pending={bec.isPending}/>}
+      {tab === "bec" && (
+        <>
+          <BecTester onCheck={(p) => bec.mutate(p)} result={bec.data} pending={bec.isPending}/>
+          <ModuleFooter title="BEC / Impersonation Koruma"
+            howItWorks="Domain benzerliği (Levenshtein) + display name yüksek yetki eşleşmesi + urgency (acil/havale) kelimeleri → BEC skoru."
+            technical={["Lookalike edit distance ≤2 → +6.0 skor", "CEO/CFO/finance display → +2.5", "Urgency kelime → +1.5", "Verdict: bec_high (≥6) / bec_medium (≥3) / clean"]}
+            recommendations={["Korunan domain listesine tüm iç domainleri ekle", "Yönetici hesaplarına özel MailScanner policy (threshold 7+)", "Şüpheli BEC → LLM ile ikinci doğrulama"]}/>
+        </>
+      )}
 
       {tab === "sandbox" && (
-        <Card>
-          <CardHeader title="Sandbox / Detonation Kuyruğu" subtitle="Şüpheli ekler için VM detonation queue"/>
-          <CardBody>
-            <div className="space-y-2">
-              {(sandbox.data?.items || []).map((j) => (
-                <div key={j.id} className="border border-slate-800 rounded p-3 flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-slate-100 mono">{j.filename}</div>
-                    <div className="text-[11px] text-slate-500">{j.content_type} · {j.size} B · {(j.created_at || "").slice(0, 16)}</div>
+        <>
+          <Card>
+            <CardHeader title="Sandbox / Detonation Kuyruğu" subtitle="Şüpheli ekler için VM detonation queue"/>
+            <CardBody>
+              <div className="space-y-2">
+                {(sandbox.data?.items || []).map((j) => (
+                  <div key={j.id} className="border border-slate-800 rounded p-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm text-slate-100 mono">{j.filename}</div>
+                      <div className="text-[11px] text-slate-500">{j.content_type} · {j.size} B · {(j.created_at || "").slice(0, 16)}</div>
+                    </div>
+                    <Badge tone={j.status === "queued" ? "warning" : j.verdict === "clean" ? "success" : "danger"}>
+                      {j.status}
+                    </Badge>
                   </div>
-                  <Badge tone={j.status === "queued" ? "warning" : j.verdict === "clean" ? "success" : "danger"}>
-                    {j.status}
-                  </Badge>
-                </div>
-              ))}
-              {(sandbox.data?.items || []).length === 0 && (
-                <div className="text-center py-8 text-sm text-slate-500">Kuyrukta işlem yok. WHM VM sandbox hazır.</div>
-              )}
-            </div>
-          </CardBody>
-        </Card>
+                ))}
+                {(sandbox.data?.items || []).length === 0 && (
+                  <div className="text-center py-8 text-sm text-slate-500">Kuyrukta işlem yok. WHM VM sandbox hazır.</div>
+                )}
+              </div>
+            </CardBody>
+          </Card>
+          <ModuleFooter title="Sandbox — VM Detonation"
+            howItWorks="Şüpheli EXE/DOC/JS ekler izole VM'e gönderilir, davranış izlenir, sonuç panele döner."
+            technical={["Queue-based · async detonation", "Timeout: 300sn", "Verdict: clean / suspicious / malware", "WHM'de KVM/Firecracker VM entegrasyonu"]}
+            recommendations={["10 MB üstü ekler için otomatik kuyruklama", "Karantina + kullanıcı bildirimi (30 dk teslimat gecikmesi)", "Sandbox verdictini alerts webhook ile SIEM'e ilet"]}/>
+        </>
       )}
 
       {tab === "reputation" && (
-        <Card>
-          <CardHeader title="IP Reputation" subtitle="Spamhaus · UCEPROTECT durum kontrolü"/>
-          <CardBody>
-            <div className="grid grid-cols-4 gap-3 mb-4">
-              <Stat label="IP" value={reputation.data?.ip || "-"} tone="text-slate-300"/>
-              <Stat label="Skor" value={reputation.data?.score ?? "-"} tone={reputation.data?.score > 70 ? "text-emerald-300" : "text-amber-300"}/>
-              <Stat label="Listed" value={(reputation.data?.listed || []).length} tone={(reputation.data?.listed || []).length ? "text-rose-300" : "text-emerald-300"}/>
-              <Stat label="Spam 24s" value={reputation.data?.outbound_spam_24h ?? 0} tone="text-slate-300"/>
-            </div>
-            {(reputation.data?.listed || []).length > 0 && (
-              <div className="space-y-1">
-                {reputation.data.listed.map((l, i) => (
-                  <div key={i} className="text-xs mono border border-rose-500/40 bg-rose-500/5 text-rose-300 rounded p-2">
-                    {l.list} · {l.reason}
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardBody>
-        </Card>
+        <ReputationTab defaultIp={reputation.data?.ip}/>
       )}
 
-      {tab === "geo" && <CountryBlockCard/>}
+      {tab === "geo" && (
+        <>
+          <CountryBlockCard/>
+          <ModuleFooter title="Coğrafi Güvenlik — Ülke Bazlı Bloklama"
+            howItWorks="113 ülke katalogu · block/allow list · zaman-tabanlı kısıtlar (saat+gün) · brute-force otomatik ekleme."
+            technical={["Block/allow ISO 3166-1 alpha-2", "TTL (dk) ile otomatik silme", "Active hours (0-23) + days (Pzt-Paz)", "Brute-force: pencere+eşik+TTL"]}
+            recommendations={["Yüksek riskli ülkeleri (RU/CN/KP) block'ta tut", "Gece saatleri için ek kısıtlar (0-6)", "Brute-force: 60dk / 50 spam / 180dk TTL öntanımlı", "Whitelist ile stratejik ülkelere garanti (IL, DE, US)"]}/>
+        </>
+      )}
 
       {/* Module detail drawer */}
       {activeModule && (
@@ -384,5 +387,91 @@ function Field({ label, value, onChange }) {
       <input value={value} onChange={(e) => onChange(e.target.value)}
              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm text-slate-100 mono"/>
     </label>
+  );
+}
+
+function ReputationTab({ defaultIp }) {
+  const [ip, setIp] = useState(defaultIp || "");
+  const [contact, setContact] = useState("");
+  const [reason, setReason] = useState("");
+  const check = useMutation({ mutationFn: (i) => api.rblCheck(i) });
+  const delistAll = useMutation({
+    mutationFn: () => api.rblDelistAll({ ip, provider_key: "any", contact_email: contact, reason }),
+    onSuccess: (d) => toast.success(`${d.submitted} provider'a toplu talep gönderildi`),
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const delistOne = useMutation({
+    mutationFn: (key) => api.rblDelist({ ip, provider_key: key, contact_email: contact, reason }),
+    onSuccess: (d) => toast.success(`${d.provider_name} · talep kaydedildi`),
+  });
+  const results = check.data?.results || [];
+  const listed = results.filter(r => r.listed);
+  return (
+    <>
+      <Card>
+        <CardHeader title="IP Reputation Tarayıcı"
+          subtitle="14 major RBL provider · DNS-tabanlı gerçek zamanlı kontrol"
+          right={<span className="text-xs mono text-slate-500">{check.data ? `${check.data.listed_count}/${check.data.total} listed` : ""}</span>}/>
+        <CardBody className="space-y-3">
+          <div className="flex gap-2">
+            <input value={ip} onChange={e => setIp(e.target.value)} placeholder="1.2.3.4"
+                   data-testid="rbl-ip-input"
+                   className="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm mono"/>
+            <button data-testid="rbl-check-btn" onClick={() => check.mutate(ip)} disabled={!ip || check.isPending}
+                    className="text-xs px-4 py-1.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-40">
+              {check.isPending ? "Kontrol ediliyor..." : "14 RBL'i Kontrol Et"}
+            </button>
+          </div>
+          {listed.length > 0 && (
+            <div className="p-3 bg-rose-500/5 border border-rose-500/30 rounded space-y-2">
+              <div className="text-sm text-rose-300 font-semibold">🚨 {listed.length} kara listede bulundu — toplu delist:</div>
+              <div className="grid grid-cols-2 gap-2">
+                <input value={contact} onChange={e => setContact(e.target.value)} placeholder="İletişim email"
+                       className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-xs"/>
+                <input value={reason} onChange={e => setReason(e.target.value)} placeholder="Neden (kısa)"
+                       className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-xs"/>
+              </div>
+              <button data-testid="rbl-delist-all" onClick={() => delistAll.mutate()} disabled={!contact || delistAll.isPending}
+                      className="w-full text-xs px-3 py-1.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 disabled:opacity-40">
+                Tüm {listed.length} Provider'a Toplu Delisting Talebi Gönder
+              </button>
+            </div>
+          )}
+          <div className="space-y-1">
+            {results.map(r => (
+              <div key={r.key} data-testid={`rbl-${r.key}`}
+                   className={`border rounded p-2 flex items-center gap-3 text-xs
+                    ${r.listed ? "border-rose-500/40 bg-rose-500/5" : "border-slate-800 bg-slate-900/40"}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-slate-100">{r.name}</div>
+                  <div className="mono text-[10px] text-slate-500 truncate">{r.dnsbl}</div>
+                </div>
+                {r.listed ? (
+                  <>
+                    <span className="mono text-[10px] text-rose-400">{r.codes.join(",")}</span>
+                    <button onClick={() => delistOne.mutate(r.key)} disabled={!contact}
+                            data-testid={`rbl-delist-${r.key}`}
+                            className="text-[10px] px-2 py-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 disabled:opacity-40">
+                      Delist
+                    </button>
+                    <a href={r.delist_url} target="_blank" rel="noopener noreferrer"
+                       className="text-[10px] text-indigo-400 hover:underline">Form ↗</a>
+                  </>
+                ) : <span className="text-[10px] text-emerald-400">✓ temiz</span>}
+              </div>
+            ))}
+            {results.length === 0 && <div className="text-center py-6 text-slate-500 text-sm">IP gir → 14 RBL kontrol edilecek</div>}
+          </div>
+        </CardBody>
+      </Card>
+      <ModuleFooter title="IP Reputation — 14 RBL Provider"
+        howItWorks="IP reverse edilip her provider'ın DNSBL zone'una gethostbyname sorgusu yapılır. Dönen 127.0.0.x kodları listelenme sinyalidir."
+        technical={["14 provider: Spamhaus SBL/CSS/XBL, Barracuda, SORBS SPAM/DUL/WEB, UCEPROTECT L1/L2/L3, PSBL, S5H, DroneBL, PhishTank",
+                    "Delisting: her provider için manuel form URL'i + kayıt", "Toplu delist: tek tıkla listed olanların hepsine talep",
+                    "DNS timeout: 2sn per query", "Cache: 15dk (mock aktif değil)"]}
+        recommendations={["Outbound mail hacmini rate limit ile kontrol et", "Listelenmiş IP için hemen delisting talebi + kök sebep düzelt",
+                    "PTR reverse DNS'i MX ile eşleştir (yoksa +1 listelenme riski)",
+                    "SPF hard fail + DKIM + DMARC reject → yeniden listelenme minimize"]}/>
+    </>
   );
 }

@@ -5,7 +5,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home,
-  Bug, Filter, BookOpen, Globe,
+  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -35,11 +35,14 @@ import Security from "@/pages/Security";
 import MailScanner from "@/pages/MailScanner";
 import Docs from "@/pages/Docs";
 import ThreatIntel from "@/pages/ThreatIntel";
+import MailHealth from "@/pages/MailHealth";
+import Maintenance from "@/pages/Maintenance";
 import Header from "@/components/Header";
 
 const NAV = [
   { to: "/panel", key: "dashboard", icon: Activity, testid: "nav-dashboard", end: true },
   { to: "/panel/mailscanner", key: "mailscanner", icon: Filter, testid: "nav-mailscanner", label: "MailScanner" },
+  { to: "/panel/mail-health", key: "mail_health", icon: HeartPulse, testid: "nav-mail-health", label: "Mail Sağlık" },
   { to: "/panel/threat-intel", key: "threat_intel", icon: Globe, testid: "nav-threat-intel", label: "Tehdit Zekası" },
   { to: "/panel/security", key: "security", icon: Bug, testid: "nav-security", label: "Güvenlik" },
   { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine" },
@@ -56,6 +59,7 @@ const NAV = [
   { to: "/panel/users", key: "users", icon: Users, testid: "nav-users" },
   { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs" },
   { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings" },
+  { to: "/panel/maintenance", key: "maintenance", icon: HardDrive, testid: "nav-maintenance", label: "DB Bakım" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
 ];
@@ -148,6 +152,8 @@ function Shell() {
             <Route path="/security" element={<Security />} />
             <Route path="/mailscanner" element={<MailScanner />} />
             <Route path="/threat-intel" element={<ThreatIntel />} />
+            <Route path="/mail-health" element={<MailHealth />} />
+            <Route path="/maintenance" element={<Maintenance />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/quarantine" element={<Quarantine />} />
             <Route path="/lists" element={<Lists />} />

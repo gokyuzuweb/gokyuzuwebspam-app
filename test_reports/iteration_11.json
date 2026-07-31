@@ -1,0 +1,44 @@
+{
+  "summary": "v19 verification of GökyüzüWebSpam: payments (PayTR mock + Havale/EFT create+approve + config), maintenance (db-usage / cleanup with confirm='DELETE_DATA' filtering / cleanup rejection / IP block+status+unblock), Turkish characters in test-ingest and dashboard Canlı tab, RBL providers list (>=12) + RBL check, mail health-check with google.com (returns 80% score with MX/SPF/DKIM/DMARC/PTR breakdown), update/check (outdated=true). Backend: 12/12 pytest passing. Frontend: Landing / shows ModulesShowcase (8 modules: MailScanner, Global Tehdit Zekası, Mail Sağlık Kontrolü, Exploit/Webshell Tarayıcı, 14 RBL Reputation, AI Predict Score, Offline Attack Map, DB Bakım Merkezi) + PaymentOptions section with PayTR-Kartla Öde tab (test-mode notice) + Havale/EFT tab; Havale flow end-to-end works (form → IBAN card TR33... + TRF reference + instructions). /panel/mail-health loads, google.com returns %80 score card + MX/SPF/DKIM/DMARC/PTR rows. /panel/maintenance (DB Bakım sidebar) loads with 4 storage kpis + 37-collection table + Cache/Cleanup card; 'Temizlemeyi Başlat' opens 'Dikkat! Veri Silinecek' modal listing 19 data collections that will be deleted vs 7 settings collections preserved, requires typing 'SIL' before EVET SIL button enables. /panel Dashboard 'Canlı' tab shows Turkish diacritics correctly in the 5 newly ingested test rows: 'Hesabınızı doğrulayın · kimlik güncelleme (ACİL)', '*** ACİL*** Nijeryalı prensin yardıma ihtiyacı var', 'Bugün kahve içelim mi?', 'Haftalık indirim bülteni · %30'a varan fırsatlar'. Clicking a mail row opens the drawer with 'GÖNDEREN KAYNAĞI' panel showing flag emoji (🇧🇷 Brezilya), sender IP (190.211.45.22), and both 'IP'yi Blokla' + 'Trafiği Gör' buttons.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard Canlı tab", "issues": ["Legacy mail_events rows (dated 01.08.2026 from earlier ingests) still show double-encoded Turkish mojibake in subject/from — e.g. 'BaÄŸlantÄ± isteÄŸimi gÃ¶rÃ¼ntÃ¼le' — this is legacy corrupted data from pre-fix ingest, not from new /events/test-ingest. Running maintenance cleanup with older_than_days=1 will scrub these. Not a regression; just a visible artifact until DB cleanup runs. New v19 test-ingest samples render Turkish perfectly."]},
+      {"screen": "Landing ModulesShowcase + PaymentOptions", "issues": ["Neither section has explicit data-testid attributes (modules-showcase / payment-options / module-card-*). Testing agent had to fall back to text-based selectors. Add data-testids for robust future testing."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v19_payments_maintenance_rbl.py",
+    "/app/test_reports/pytest/v19_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: add data-testid attributes on Landing ModulesShowcase (modules-showcase, module-card-{n}) and PaymentOptions (payment-options, payment-tab-paytr, payment-tab-havale, havale-submit, havale-iban-card).",
+    "OPTIONAL: run the /api/maintenance/cleanup once with older_than_days=1 to purge legacy mojibake events, so Canlı tab shows only clean Turkish subjects. Non-blocking; user can trigger it themselves from the new DB Bakım UI."
+  ],
+  "critical_code_review_comments": [
+    "routes/payments.py — clean mock/live split, PayTR hash+token flow follows spec, callback verifies MERCHANT hash properly. Havale flow persists order to db.payments with status awaiting_transfer→paid via /havale/approve. Good.",
+    "routes/maintenance.py — cleanup correctly restricts targets to DATA_COLS whitelist so even if caller passes 'licenses' or 'settings' in collections list, they are filtered out. Confirm='DELETE_DATA' is enforced. maintenance_log entry created for audit trail. Perfect defensive design.",
+    "routes/maintenance.py db_usage classifies each collection as data/settings/other and returns will_delete + will_preserve arrays so UI can render the confirmation modal deterministically. Good UX contract.",
+    "routes/maintenance.py ip/status resolves country via routes.security_adv._ip_to_country (/8 map) — best-effort but works for the common Vultr/DO ranges. Blocking upserts into both `lists` (kind=blacklist) and `threat_iocs` — good, so ingest-time enforcement picks it up.",
+    "MailEventDetail SenderIPPanel uses api.ipStatus on drawer open and api.ipBlock/ipUnblock on button click — verified in DOM: shows 🇧🇷 flag + 'Brezilya · 3 mail · 3 spam' + IP + two buttons. Good.",
+    "Maintenance.js modal is properly gated: 'EVET, SIL' button stays disabled until typed value === 'SIL'. Verified in screenshot; matches server-side confirm='DELETE_DATA' requirement (naming inconsistency between UI text and API param is intentional — UI is Turkish, API is English constant).",
+    "Landing PaymentOptions component renders both PayTR (Kartla Öde) tab and Havale/EFT tab; PayTR tab shows amber notice 'PayTR test modunda. Canlı kullanım için MERCHANT bilgileri gereklidir.' which is honest and correct given .env keys not configured.",
+    "routes/events.py test-ingest produces 5 samples with subjects containing full Turkish diacritics (ACİL, Nijeryalı, kahve içelim, doğrulayın, indirim) — verified via GET /events. Sender_ip populated per event. Encoding preserved through MongoDB round-trip."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (12/12 pytest — payments config/paytr-mock/havale, maintenance db-usage/cleanup-reject/cleanup-preserves-settings/ip-block-status-unblock, test-ingest-turkish, rbl providers+check, mail-health-check, update-check)",
+    "frontend": "100% of v19 flows (Landing modules 8/8 + PaymentOptions/Havale end-to-end, Mail Sağlık google.com→80%, DB Bakım collections+cleanup modal+SIL gate, Dashboard Canlı Turkish diacritics 5/5 subjects, drawer SenderIPPanel with flag+IP+block button)"
+  },
+  "test_credentials": "Master license MS-C02AB012652A4FE692D69676 from /app/memory/test_credentials.md",
+  "seed_data_creation": "Called /api/events/test-ingest twice (once via pytest, once from browser) → inserted 10 sample events with Turkish characters. Created one TEST_ payment via PayTR/mock and one TRF Havale order (then approved to paid). Blocked+unblocked 45.32.11.7 in ip/status. All TEST_ prefixed / short-lived — nothing polluting production settings.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All 9 v19 features (payments PayTR mock+Havale, maintenance db-usage+cleanup+ip block/unblock/status, Turkish test-ingest with sender_ip, RBL 14 providers + check, mail health-check, update-check, Landing ModulesShowcase+PaymentOptions, /panel/mail-health, /panel/maintenance with SIL gate, MailEventDetail SenderIPPanel with flag+block button) are fully wired end-to-end. Legacy Canlı events from prior iterations still show mojibake subject encoding — cosmetic only, can be scrubbed via the new cleanup endpoint. No open blockers. Prior iteration_10 open item /api/events/health-metrics 404 is unrelated to v19 and still open.",
+  "rca_of_the_issue": "N/A — no bugs discovered in this iteration."
+}

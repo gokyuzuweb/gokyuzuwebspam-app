@@ -403,3 +403,199 @@ async def toggle_compliance(payload: ComplianceToggle):
         upsert=True,
     )
     return {"ok": True, "full_key": full_key, "checked": payload.checked}
+
+
+# ============================================================================
+#  RBL PROVIDERS + DELISTING + MAIL HEALTH + UPDATE SERVER
+# ============================================================================
+RBL_PROVIDERS = [
+    ("spamhaus_sbl", "Spamhaus SBL", "sbl.spamhaus.org", "https://www.spamhaus.org/lookup/"),
+    ("spamhaus_css", "Spamhaus CSS", "css.spamhaus.org", "https://www.spamhaus.org/lookup/"),
+    ("spamhaus_xbl", "Spamhaus XBL", "xbl.spamhaus.org", "https://www.spamhaus.org/lookup/"),
+    ("barracuda", "Barracuda Reputation", "b.barracudacentral.org", "https://barracudacentral.org/rbl/removal-request"),
+    ("sorbs_spam", "SORBS SPAM", "spam.dnsbl.sorbs.net", "https://sorbs.net/delisting/dnsbl.shtml"),
+    ("sorbs_dul", "SORBS DUL", "dul.dnsbl.sorbs.net", "https://sorbs.net/delisting/dnsbl.shtml"),
+    ("sorbs_web", "SORBS WEB", "web.dnsbl.sorbs.net", "https://sorbs.net/delisting/dnsbl.shtml"),
+    ("uce_l1", "UCEPROTECT L1", "dnsbl-1.uceprotect.net", "https://www.uceprotect.net/en/rblcheck.php"),
+    ("uce_l2", "UCEPROTECT L2", "dnsbl-2.uceprotect.net", "https://www.uceprotect.net/en/rblcheck.php"),
+    ("uce_l3", "UCEPROTECT L3", "dnsbl-3.uceprotect.net", "https://www.uceprotect.net/en/rblcheck.php"),
+    ("psbl", "PSBL", "psbl.surriel.com", "https://psbl.org/remove"),
+    ("s5h", "S5H", "all.s5h.net", "https://blocklist.site/"),
+    ("dronebl", "DroneBL", "dnsbl.dronebl.org", "https://dronebl.org/lookup"),
+    ("phishtank", "PhishTank", "phishtank.com", "https://phishtank.org/removal/"),
+]
+
+
+@router.get("/rbl/providers")
+async def rbl_providers():
+    return {"items": [{"key": k, "name": n, "dnsbl": d, "delist_url": u} for (k, n, d, u) in RBL_PROVIDERS]}
+
+
+class RBLCheckIn(BaseModel):
+    ip: str = Field(..., min_length=7, max_length=45)
+
+
+@router.post("/rbl/check")
+async def rbl_check(payload: RBLCheckIn):
+    """IP'yi tüm RBL'lere karşı DNS ile kontrol et."""
+    import socket
+    try:
+        parts = payload.ip.split(".")
+        if len(parts) != 4:
+            raise HTTPException(400, "Sadece IPv4 destekleniyor")
+        rev = ".".join(reversed(parts))
+    except Exception:
+        raise HTTPException(400, "Geçersiz IP")
+    results = []
+    for (k, n, d, u) in RBL_PROVIDERS:
+        listed = False
+        codes = []
+        try:
+            r = socket.gethostbyname_ex(f"{rev}.{d}")
+            codes = r[2]
+            listed = bool(codes)
+        except socket.gaierror:
+            listed = False
+        except Exception:
+            listed = False
+        results.append({"key": k, "name": n, "listed": listed, "codes": codes,
+                        "delist_url": u, "dnsbl": d})
+    listed_count = sum(1 for r in results if r["listed"])
+    return {"ip": payload.ip, "listed_count": listed_count,
+            "total": len(results), "results": results}
+
+
+class DelistIn(BaseModel):
+    ip: str
+    provider_key: str
+    contact_email: str
+    reason: Optional[str] = ""
+
+
+@router.post("/rbl/delist")
+async def rbl_delist_request(payload: DelistIn):
+    """Delisting talebi kaydet (mock: gerçek talep provider URL'inden yapılır)."""
+    prov = next((p for p in RBL_PROVIDERS if p[0] == payload.provider_key), None)
+    if not prov:
+        raise HTTPException(404, "Provider bulunamadı")
+    doc = {
+        "id": str(uuid.uuid4()), "ip": payload.ip,
+        "provider_key": payload.provider_key, "provider_name": prov[1],
+        "delist_url": prov[3], "contact_email": payload.contact_email,
+        "reason": (payload.reason or "")[:400],
+        "status": "submitted", "created_at": _iso(),
+    }
+    await db.delist_requests.insert_one(dict(doc))
+    return {"ok": True, **doc, "note": "Otomatik form gönderimi yerine provider URL'sini takip edin"}
+
+
+@router.post("/rbl/delist-all")
+async def rbl_delist_all(payload: DelistIn):
+    """Tüm listelenen provider'lar için toplu delisting talebi."""
+    check = await rbl_check(RBLCheckIn(ip=payload.ip))
+    submitted = []
+    for r in check["results"]:
+        if r["listed"]:
+            payload.provider_key = r["key"]
+            res = await rbl_delist_request(payload)
+            submitted.append(res)
+    return {"ok": True, "submitted": len(submitted), "items": submitted}
+
+
+# ---- Mail Health Check ----
+class HealthCheckIn(BaseModel):
+    domain: str = Field(..., min_length=3, max_length=253)
+
+
+@router.post("/mail/health-check")
+async def mail_health_check(payload: HealthCheckIn):
+    """MX/SPF/DKIM/DMARC/PTR DNS kontrolü."""
+    import socket
+    import dns.resolver
+    d = payload.domain.strip().lower()
+    result = {"domain": d, "checks": {}, "score": 0, "max_score": 100}
+    # MX
+    try:
+        mx = dns.resolver.resolve(d, "MX")
+        result["checks"]["mx"] = {"ok": True, "records": [str(r.exchange) for r in mx][:5]}
+        result["score"] += 20
+    except Exception as ex:
+        result["checks"]["mx"] = {"ok": False, "error": type(ex).__name__}
+    # SPF
+    try:
+        txt = dns.resolver.resolve(d, "TXT")
+        spf = [str(r).strip('"') for r in txt if "v=spf1" in str(r)]
+        result["checks"]["spf"] = {"ok": bool(spf), "record": spf[0] if spf else None,
+                                    "hard_fail": "-all" in (spf[0] if spf else "")}
+        if spf: result["score"] += 20
+    except Exception as ex:
+        result["checks"]["spf"] = {"ok": False, "error": type(ex).__name__}
+    # DKIM (default selector)
+    try:
+        dkim = dns.resolver.resolve(f"default._domainkey.{d}", "TXT")
+        recs = [str(r).strip('"') for r in dkim]
+        result["checks"]["dkim"] = {"ok": bool(recs), "selector": "default"}
+        if recs: result["score"] += 20
+    except Exception:
+        result["checks"]["dkim"] = {"ok": False, "note": "'default' selector — özel selector varsa manuel bak"}
+    # DMARC
+    try:
+        dmarc = dns.resolver.resolve(f"_dmarc.{d}", "TXT")
+        recs = [str(r).strip('"') for r in dmarc if "v=DMARC1" in str(r)]
+        pol = ""
+        if recs:
+            import re
+            m = re.search(r"p=(none|quarantine|reject)", recs[0])
+            pol = m.group(1) if m else ""
+        result["checks"]["dmarc"] = {"ok": bool(recs), "record": recs[0] if recs else None, "policy": pol}
+        if recs:
+            result["score"] += 20
+            if pol == "reject": result["score"] += 10
+    except Exception as ex:
+        result["checks"]["dmarc"] = {"ok": False, "error": type(ex).__name__}
+    # PTR (MX ilkinin IP'sinin reverse)
+    try:
+        mx0 = result["checks"].get("mx", {}).get("records", [None])[0]
+        if mx0:
+            ip = socket.gethostbyname(mx0.rstrip("."))
+            rev = socket.gethostbyaddr(ip)[0]
+            result["checks"]["ptr"] = {"ok": True, "ip": ip, "ptr": rev,
+                                        "matches_mx": d in rev}
+            result["score"] += 10
+    except Exception:
+        result["checks"]["ptr"] = {"ok": False}
+    return result
+
+
+# ---- Update Server (gokyuzuhosting.com) ----
+CURRENT_VERSION = "1.5.0"
+UPDATE_HOST = "https://gokyuzuhosting.com"
+
+
+@router.get("/update/check")
+async def update_check(version: str = Query("1.0.0")):
+    """Bayilerin versiyon kontrol endpoint'i."""
+    latest = CURRENT_VERSION
+    is_outdated = version < latest
+    return {
+        "current": version,
+        "latest": latest,
+        "outdated": is_outdated,
+        "download_url": f"{UPDATE_HOST}/downloads/gws-{latest}.tar.gz" if is_outdated else None,
+        "changelog_url": f"{UPDATE_HOST}/changelog#{latest}",
+        "critical": False,
+        "checked_at": _iso(),
+    }
+
+
+@router.get("/update/versions")
+async def update_versions():
+    """Yayınlanan tüm versiyonlar."""
+    return {"versions": [
+        {"version": "1.5.0", "released_at": "2026-02-15", "notes": "Threat Intel + AI Auto-Actions + Docs Media"},
+        {"version": "1.4.0", "released_at": "2026-02-08", "notes": "Landing redesign + Offline TopoJSON"},
+        {"version": "1.3.0", "released_at": "2026-02-01", "notes": "MailScanner independent module"},
+        {"version": "1.2.0", "released_at": "2026-01-25", "notes": "Country blocking + Attack map"},
+        {"version": "1.1.0", "released_at": "2026-01-18", "notes": "Reseller white-label"},
+        {"version": "1.0.0", "released_at": "2026-01-01", "notes": "İlk yayın"},
+    ], "update_host": UPDATE_HOST}

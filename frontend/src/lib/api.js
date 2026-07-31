@@ -349,6 +349,15 @@ export const api = {
   tiCompliance: () => client.get("/threat-intel/compliance").then(r => r.data),
   tiComplianceToggle: (payload) => client.post("/threat-intel/compliance/toggle", payload).then(r => r.data),
 
+  // RBL + Mail Health + Update
+  rblProviders: () => client.get("/threat-intel/rbl/providers").then(r => r.data),
+  rblCheck: (ip) => client.post("/threat-intel/rbl/check", { ip }).then(r => r.data),
+  rblDelist: (payload) => client.post("/threat-intel/rbl/delist", payload).then(r => r.data),
+  rblDelistAll: (payload) => client.post("/threat-intel/rbl/delist-all", payload).then(r => r.data),
+  mailHealth: (domain) => client.post("/threat-intel/mail/health-check", { domain }).then(r => r.data),
+  updateCheck: (version) => client.get("/threat-intel/update/check", { params: { version } }).then(r => r.data),
+  updateVersions: () => client.get("/threat-intel/update/versions").then(r => r.data),
+
   // AI Predict Score (ingest-time) + AI Docs Narration
   msPredictScore: (payload, useLlm = false) =>
     llmClient.post("/mailscanner/ai/predict-score", payload, { params: { use_llm: useLlm } }).then(r => r.data),
@@ -380,4 +389,20 @@ export const api = {
                 { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
   aiWeeklyLatest: () => client.get("/ai/weekly-report/latest").then(r => r.data),
   aiWeeklyList: () => client.get("/ai/weekly-report/list").then(r => r.data),
+
+  // Maintenance: DB usage + cleanup + IP block
+  dbUsage: () => client.get("/maintenance/db-usage").then(r => r.data),
+  dbCleanup: (payload) => client.post("/maintenance/cleanup", payload).then(r => r.data),
+  cleanupLog: () => client.get("/maintenance/cleanup-log").then(r => r.data),
+  ipBlock: (payload) => client.post("/maintenance/ip/block", payload).then(r => r.data),
+  ipUnblock: (payload) => client.post("/maintenance/ip/unblock", payload).then(r => r.data),
+  ipStatus: (ip) => client.get("/maintenance/ip/status", { params: { ip } }).then(r => r.data),
+
+  // Payments: PayTR + Havale
+  paymentConfig: () => client.get("/payments/config").then(r => r.data),
+  paytrCreate: (payload) => client.post("/payments/paytr/create", payload).then(r => r.data),
+  havaleCreate: (payload) => client.post("/payments/havale/create", payload).then(r => r.data),
+  havaleApprove: (payload) => client.post("/payments/havale/approve", payload).then(r => r.data),
+  paymentOrders: (params = {}) => client.get("/payments/orders", { params }).then(r => r.data),
+  paymentOrder: (mid) => client.get(`/payments/order/${mid}`).then(r => r.data),
 };

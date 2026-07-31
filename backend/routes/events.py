@@ -53,7 +53,23 @@ async def ingest_event(evt: MailEvent, request: Request):
     doc["id"] = str(uuid.uuid4())
     doc["ts"] = doc.get("ts") or datetime.now(timezone.utc).isoformat()
     doc["ingested_at"] = datetime.now(timezone.utc).isoformat()
-    doc["client_ip"] = request.client.host if request.client else None
+    # Sender IP tespit: header'da X-Originating-IP > client_ip payload > request.client
+    sender_ip = None
+    headers = (doc.get("headers_full") or doc.get("headers_preview") or "")
+    import re as _re
+    m = _re.search(r"X-Originating-IP:\s*\[?([\d.]+)\]?", headers, _re.IGNORECASE)
+    if m:
+        sender_ip = m.group(1)
+    if not sender_ip:
+        m = _re.search(r"Received:.*?\[([\d.]+)\]", headers)
+        if m:
+            sender_ip = m.group(1)
+    if not sender_ip:
+        sender_ip = doc.get("client_ip")
+    if not sender_ip and request.client:
+        sender_ip = request.client.host
+    doc["client_ip"] = sender_ip or doc.get("client_ip")
+    doc["sender_ip"] = sender_ip
     await db.mail_events.insert_one(doc)
     # Ek olarak license'in son_seen timestamp'ini guncelle
     await db.licenses.update_one(
@@ -325,53 +341,60 @@ async def test_ingest(license_key: str = Query(..., min_length=8)):
     import random
     samples = [
         {"from_addr": "spammer@junkmail.example", "to_addr": "user@your.tld",
-         "subject": "*** URGENT *** Nigerian Prince needs your help", "verdict": "high_spam",
+         "subject": "*** ACİL *** Nijeryalı prensin yardıma ihtiyacı var", "verdict": "high_spam",
          "action": "quarantine", "total_score": 12.4, "scores": {"spamassassin": 9.2, "ai": 3.2},
+         "client_ip": "45.32.11.7",
          "headers_full": ("Return-Path: <spammer@junkmail.example>\n"
                           "Received: from junkmail.example (unknown [45.32.11.7])\n"
                           "  by mail.your.tld with ESMTP; Wed, 31 Jul 2026 10:14:22 +0000\n"
-                          "From: \"Prince Adamu\" <spammer@junkmail.example>\n"
+                          "From: \"Prens Adamu\" <spammer@junkmail.example>\n"
                           "To: user@your.tld\n"
-                          "Subject: *** URGENT *** Nigerian Prince needs your help\n"
+                          "Subject: *** ACİL *** Nijeryalı prensin yardıma ihtiyacı var\n"
+                          "X-Originating-IP: 45.32.11.7\n"
                           "X-Spam-Level: *********\n"
                           "X-Spam-Score: 12.4\n"),
-         "body_preview": ("Dear Beloved Friend,\n\nI am writing to inform you that a large sum of "
-                          "USD 45,000,000 has been left in an account in your name. To claim this "
-                          "urgent transfer, please reply with your bank details and $500 processing fee "
-                          "immediately.\n\nGod bless.\nPrince Adamu"),
-         "attachments": [{"filename": "claim_form.pdf", "content_type": "application/pdf",
+         "body_preview": ("Değerli Dost,\n\nSize hesabınıza bırakılmış 45,000,000 USD'lik büyük bir "
+                          "meblağdan bahsetmek üzere yazıyorum. Bu acil transferi talep etmek için "
+                          "lütfen banka bilgilerinizle birlikte 500$ işlem ücretini ivedilikle gönderin.\n\n"
+                          "Allah'ın rahmeti üzerinize olsun.\nPrens Adamu"),
+         "attachments": [{"filename": "talep_formu.pdf", "content_type": "application/pdf",
                           "size": 218450, "sha256": "3f4a…"}]},
         {"from_addr": "newsletter@shop.example", "to_addr": "user@your.tld",
-         "subject": "Haftalik indirim bulteni", "verdict": "clean",
+         "subject": "Haftalık indirim bülteni · %30'a varan fırsatlar", "verdict": "clean",
          "action": "accept", "total_score": 1.2, "scores": {"spamassassin": 1.2},
+         "client_ip": "185.42.11.203",
          "headers_full": ("From: Shop Newsletter <newsletter@shop.example>\n"
                           "To: user@your.tld\n"
-                          "Subject: Haftalik indirim bulteni\n"),
-         "body_preview": "Bu hafta %30'a varan indirimler basladı!\nUrunlerimizi görmek için tıklayın.",
+                          "Subject: =?UTF-8?B?SGFmdGFsxLFrIGluZGlyaW0gYsO8bHRlbmk=?=\n"
+                          "X-Originating-IP: 185.42.11.203\n"),
+         "body_preview": "Bu hafta %30'a varan indirimler başladı!\nÜrünlerimizi görmek için tıklayın.",
          "body_html": "<html><body style='font-family:sans-serif;'><h2>Haftalık İndirim</h2><p>%30'a varan indirimler!</p></body></html>"},
         {"from_addr": "phish@bank-fake.example", "to_addr": "user@your.tld",
-         "subject": "Hesabinizi dogrulayin - kimlik guncelleme", "verdict": "spam",
+         "subject": "Hesabınızı doğrulayın · kimlik güncelleme (ACİL)", "verdict": "spam",
          "action": "quarantine", "total_score": 7.8, "scores": {"spamassassin": 5.1, "ai": 2.7},
+         "client_ip": "190.211.45.22",
          "headers_full": ("From: <security@bank-fake.example>\n"
                           "Reply-To: <different@evil.example>\n"
-                          "Subject: Hesabinizi dogrulayin\n"
+                          "Subject: Hesabınızı doğrulayın\n"
                           "X-Originating-IP: 190.211.45.22\n"),
-         "body_preview": ("Sayin musteri,\n\nHesabinizin guvenligi icin lutfen asagidaki linke tiklayarak "
-                          "kimlik bilgilerinizi guncelleyin: http://bank-fake.example/verify?token=xyz\n\n"
-                          "24 saat icinde islem yapmazsaniz hesabiniz askiya alinacaktir."),
+         "body_preview": ("Sayın müşteri,\n\nHesabınızın güvenliği için lütfen aşağıdaki linke tıklayarak "
+                          "kimlik bilgilerinizi güncelleyin: http://bank-fake.example/verify?token=xyz\n\n"
+                          "24 saat içinde işlem yapmazsanız hesabınız askıya alınacaktır."),
          "attachments": []},
         {"from_addr": "virus@bad.example", "to_addr": "user@your.tld",
-         "subject": "Invoice_1023.doc.exe", "verdict": "virus",
+         "subject": "Fatura_1023.doc.exe", "verdict": "virus",
          "action": "reject", "total_score": 20.0, "scores": {"clamav": 15.0, "spamassassin": 5.0},
-         "headers_full": "From: virus@bad.example\nSubject: Invoice_1023.doc.exe\n",
-         "body_preview": "Please find attached the invoice for last month.",
-         "attachments": [{"filename": "Invoice_1023.doc.exe", "content_type": "application/octet-stream",
+         "client_ip": "218.94.55.101",
+         "headers_full": "From: virus@bad.example\nSubject: Fatura_1023.doc.exe\nX-Originating-IP: 218.94.55.101\n",
+         "body_preview": "Geçen ayın faturası ektedir. Lütfen ekli dosyayı inceleyin.",
+         "attachments": [{"filename": "Fatura_1023.doc.exe", "content_type": "application/octet-stream",
                           "size": 82340, "sha256": "e10a…", "malware": "Trojan.Generic.KX-2842"}]},
         {"from_addr": "friend@known.example", "to_addr": "user@your.tld",
-         "subject": "Bugun kahve icelim mi?", "verdict": "clean",
+         "subject": "Bugün kahve içelim mi? ☕", "verdict": "clean",
          "action": "accept", "total_score": 0.5, "scores": {"spamassassin": 0.5},
-         "headers_full": "From: friend@known.example\nSubject: Kahve\n",
-         "body_preview": "Selam! Yarin 15:00'de eski yerimizde bulusalim mi? Konusacak cok sey var :)"},
+         "client_ip": "78.186.42.19",
+         "headers_full": "From: friend@known.example\nSubject: Kahve\nX-Originating-IP: 78.186.42.19\n",
+         "body_preview": "Selam! Yarın 15:00'de eski yerimizde buluşalım mı? Konuşacak çok şey var :)"},
     ]
     now = datetime.now(timezone.utc)
     docs = []
@@ -379,6 +402,7 @@ async def test_ingest(license_key: str = Query(..., min_length=8)):
         d = {**s, "license_key": license_key,
              "server_ip": "89.19.15.58", "server_hostname": "ns1.gokyuzuhosting.com",
              "id": str(uuid.uuid4()),
+             "sender_ip": s.get("client_ip"),
              "ts": now.isoformat(),
              "ingested_at": now.isoformat()}
         docs.append(d)

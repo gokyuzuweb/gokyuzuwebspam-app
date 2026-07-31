@@ -1,12 +1,15 @@
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   ShieldAlert, ShieldCheck, Zap, Brain, Globe2, Radar, ArrowRight,
   CheckCircle2, Sparkles, Terminal, Server, Lock, Cpu, Mail, Activity,
-  BadgeCheck, Rocket,
+  BadgeCheck, Rocket, CreditCard, Building2, Copy, HeartPulse, Bug,
+  Globe, Database, Filter, FileText, MailCheck,
 } from "lucide-react";
 import { Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
+import { toast } from "sonner";
 import { useI18n, useT } from "@/i18n";
 
 const LANG_STRINGS = {
@@ -856,6 +859,241 @@ function Footer() {
   );
 }
 
+function ModulesShowcase() {
+  const modules = [
+    { icon: Filter, name: "MailScanner", desc: "Bağımsız spam/virüs tarayıcı motoru · Bayes filter · özel kural motoru · SIEM entegrasyonu",
+      color: "from-indigo-500 to-blue-500", link: "/panel/mailscanner" },
+    { icon: Globe, name: "Global Tehdit Zekası", desc: "URLhaus + Spamhaus real feeds · IOC yönetimi · DMARC agregasyon · KVKK/GDPR/HIPAA/SOC2 uyum",
+      color: "from-fuchsia-500 to-purple-500", link: "/panel/threat-intel" },
+    { icon: HeartPulse, name: "Mail Sağlık Kontrolü", desc: "MX · SPF · DKIM · DMARC · PTR DNS tabanlı toplu kontrol · 100 üzerinden skor",
+      color: "from-emerald-500 to-teal-500", link: "/panel/mail-health" },
+    { icon: Bug, name: "Exploit / Webshell Tarayıcı", desc: "10 imza · eval/base64/backdoor/RCE tespiti · genişletilebilir bulgular · Perl daemon",
+      color: "from-rose-500 to-pink-500", link: "/panel/security" },
+    { icon: Radar, name: "14 RBL Reputation", desc: "Spamhaus SBL/CSS/XBL · Barracuda · SORBS · UCEPROTECT · PSBL · DroneBL · PhishTank + delisting akışı",
+      color: "from-amber-500 to-orange-500", link: "/panel/blacklist" },
+    { icon: Brain, name: "AI Predict Score", desc: "50ms real-time skor · heuristic + Claude/GPT hybrid · otomatik karantina eşiği · self-training",
+      color: "from-violet-500 to-indigo-500", link: "/panel/mailscanner" },
+    { icon: Globe2, name: "Offline Attack Map", desc: "TopoJSON tabanlı canlı saldırı haritası · IP → ülke lookup · brute-force auto-block",
+      color: "from-cyan-500 to-blue-500", link: "/panel/security" },
+    { icon: Database, name: "DB Bakım Merkezi", desc: "Depolama raporu · seçici veri temizleme (ayarlar korunur) · toplu maintenance log",
+      color: "from-slate-500 to-slate-600", link: "/panel/maintenance" },
+  ];
+  return (
+    <section className="py-24 border-t border-slate-800/60 relative overflow-hidden" data-testid="landing-modules">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_50%,rgba(139,92,246,0.08),transparent_60%)]"/>
+      <div className="max-w-7xl mx-auto px-6 relative">
+        <div className="max-w-2xl mb-14">
+          <div className="text-xs uppercase tracking-widest text-violet-400 mono mb-2">v1.5 · 8 modül</div>
+          <h2 className="text-3xl sm:text-4xl font-bold text-slate-100 tracking-tight mb-3">
+            Kurumsal e-posta güvenliği için <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-fuchsia-400">tüm modüller</span> tek panelde.
+          </h2>
+          <p className="text-slate-400 text-lg">
+            Her modül bağımsız çalışır ama birbirini besler. Tehdit zekası MailScanner'ı, MailScanner Exploit'i besler.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {modules.map((m) => {
+            const Icon = m.icon;
+            return (
+              <Link key={m.name} to={m.link}
+                    data-testid={`landing-module-${m.name}`}
+                    className="group relative rounded-xl border border-slate-800 bg-slate-900/40 p-5 hover:border-slate-700 hover:-translate-y-0.5 transition-all overflow-hidden">
+                <div className={`absolute -top-6 -right-6 w-24 h-24 rounded-full bg-gradient-to-br ${m.color} opacity-10 group-hover:opacity-20 transition-opacity`}/>
+                <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${m.color} flex items-center justify-center mb-3 shadow-lg`}>
+                  <Icon className="w-5 h-5 text-white"/>
+                </div>
+                <div className="text-slate-100 font-semibold text-base mb-1.5">{m.name}</div>
+                <div className="text-xs text-slate-400 leading-relaxed mb-3">{m.desc}</div>
+                <div className="text-[11px] text-indigo-400 flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                  Modülü aç <ArrowRight className="w-3 h-3"/>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PaymentOptions() {
+  const [method, setMethod] = useState("paytr");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState(199);
+  const cfg = useQuery({ queryKey: ["payment-config"], queryFn: api.paymentConfig });
+  const [havaleData, setHavaleData] = useState(null);
+  const [iframeSrc, setIframeSrc] = useState(null);
+
+  const paytr = useMutation({
+    mutationFn: () => api.paytrCreate({
+      email, user_name: name || "Kullanıcı",
+      user_address: "Türkiye", user_phone: "05555555555",
+      items: [{ name: `GökyüzüWebSpam Lisans`, price: amount, qty: 1 }],
+      test_mode: 1, currency: "TL", lang: "tr",
+    }),
+    onSuccess: (d) => {
+      setIframeSrc(d.iframe_src);
+      toast.success(d.mock ? "Test modu — mock iframe" : "PayTR sayfası hazır");
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Ödeme başlatılamadı"),
+  });
+
+  const havale = useMutation({
+    mutationFn: () => api.havaleCreate({
+      email, user_name: name || "Kullanıcı", amount,
+      plan: "starter", note: "Landing ödeme",
+    }),
+    onSuccess: (d) => {
+      setHavaleData(d);
+      toast.success("Havale talebi oluşturuldu");
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "İşlem başarısız"),
+  });
+
+  const copy = (text) => {
+    navigator.clipboard.writeText(text);
+    toast.success("Kopyalandı");
+  };
+
+  return (
+    <section id="payment" className="py-24 border-t border-slate-800/60 relative overflow-hidden" data-testid="landing-payment">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_50%,rgba(16,185,129,0.08),transparent_60%)]"/>
+      <div className="max-w-5xl mx-auto px-6 relative">
+        <div className="text-center max-w-2xl mx-auto mb-10">
+          <div className="text-xs uppercase tracking-widest text-emerald-400 mono mb-2">Ödeme Seçenekleri</div>
+          <h2 className="text-3xl sm:text-4xl font-bold text-slate-100 mb-3 tracking-tight">
+            Hızlıca satın alın · TL cinsinden
+          </h2>
+          <p className="text-slate-400">
+            PayTR ile anında kartla ödeme (Visa/Mastercard/Troy) veya Havale/EFT ile.
+          </p>
+        </div>
+
+        {/* Method tabs */}
+        <div className="flex justify-center gap-2 mb-8">
+          <button onClick={() => { setMethod("paytr"); setIframeSrc(null); setHavaleData(null); }}
+                  data-testid="pay-tab-paytr"
+                  className={`px-5 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2 transition-all ${
+                    method === "paytr"
+                      ? "bg-indigo-500/20 text-indigo-200 border border-indigo-500/40"
+                      : "bg-slate-800/40 text-slate-400 border border-slate-800 hover:border-slate-700"
+                  }`}>
+            <CreditCard className="w-4 h-4"/> PayTR · Kartla Öde
+          </button>
+          <button onClick={() => { setMethod("havale"); setIframeSrc(null); setHavaleData(null); }}
+                  data-testid="pay-tab-havale"
+                  className={`px-5 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2 transition-all ${
+                    method === "havale"
+                      ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
+                      : "bg-slate-800/40 text-slate-400 border border-slate-800 hover:border-slate-700"
+                  }`}>
+            <Building2 className="w-4 h-4"/> Havale / EFT
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Form */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-6 space-y-3">
+            <div className="text-sm font-semibold text-slate-100 mb-1">Bilgileriniz</div>
+            <input value={name} onChange={(e) => setName(e.target.value)}
+                   placeholder="Ad Soyad"
+                   data-testid="pay-name"
+                   className="w-full px-3 py-2.5 bg-slate-950 border border-slate-800 rounded-md text-sm text-slate-100 focus:outline-none focus:border-indigo-500"/>
+            <input value={email} onChange={(e) => setEmail(e.target.value)}
+                   placeholder="E-posta adresi"
+                   data-testid="pay-email"
+                   type="email"
+                   className="w-full px-3 py-2.5 bg-slate-950 border border-slate-800 rounded-md text-sm text-slate-100 focus:outline-none focus:border-indigo-500"/>
+            <div className="flex gap-2">
+              <input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))}
+                     data-testid="pay-amount"
+                     className="flex-1 px-3 py-2.5 bg-slate-950 border border-slate-800 rounded-md text-sm text-slate-100 mono focus:outline-none focus:border-indigo-500"/>
+              <span className="px-3 py-2.5 bg-slate-800 border border-slate-800 rounded-md text-sm text-slate-400 mono">TL</span>
+            </div>
+            {method === "paytr" ? (
+              <button onClick={() => paytr.mutate()} disabled={!email || paytr.isPending}
+                      data-testid="pay-paytr-submit"
+                      className="w-full mt-2 px-4 py-3 rounded-md bg-gradient-to-br from-indigo-500 to-indigo-600 text-white font-medium shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 disabled:opacity-40 inline-flex items-center justify-center gap-2">
+                <CreditCard className="w-4 h-4"/>
+                {paytr.isPending ? "İşleniyor..." : `${amount} TL Kartla Öde`}
+              </button>
+            ) : (
+              <button onClick={() => havale.mutate()} disabled={!email || havale.isPending}
+                      data-testid="pay-havale-submit"
+                      className="w-full mt-2 px-4 py-3 rounded-md bg-gradient-to-br from-emerald-500 to-emerald-600 text-white font-medium shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 disabled:opacity-40 inline-flex items-center justify-center gap-2">
+                <Building2 className="w-4 h-4"/>
+                {havale.isPending ? "İşleniyor..." : "Havale Talebi Oluştur"}
+              </button>
+            )}
+            {cfg.data && !cfg.data.paytr_configured && method === "paytr" && (
+              <div className="text-[11px] text-amber-300 mt-2 flex items-start gap-1">
+                <span>ℹ️</span>
+                <span>PayTR test modunda. Canlı kullanım için MERCHANT bilgileri gereklidir.</span>
+              </div>
+            )}
+          </div>
+
+          {/* Result */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-6 min-h-[260px]">
+            {method === "paytr" && !iframeSrc && (
+              <div className="text-center text-sm text-slate-500 py-14">
+                <CreditCard className="w-12 h-12 text-slate-700 mx-auto mb-3"/>
+                Bilgileri girin, ödeme sayfası burada açılacak
+              </div>
+            )}
+            {method === "paytr" && iframeSrc && (
+              <div>
+                <div className="text-xs text-slate-400 mb-2">PayTR güvenli ödeme:</div>
+                <iframe src={iframeSrc} title="paytr" className="w-full h-72 rounded-md bg-white border border-slate-700"
+                        data-testid="paytr-iframe"/>
+              </div>
+            )}
+            {method === "havale" && !havaleData && (
+              <div className="text-center text-sm text-slate-500 py-14">
+                <Building2 className="w-12 h-12 text-slate-700 mx-auto mb-3"/>
+                Havale bilgileri talep sonrası burada gösterilecek
+              </div>
+            )}
+            {method === "havale" && havaleData && (
+              <div className="space-y-3" data-testid="havale-result">
+                <div className="text-sm font-semibold text-emerald-300 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4"/> Havale Bilgileri Hazır
+                </div>
+                <div className="space-y-1.5 text-xs">
+                  <BankRow label="Banka" value={havaleData.bank}/>
+                  <BankRow label="Alıcı" value={havaleData.beneficiary}/>
+                  <BankRow label="IBAN" value={havaleData.iban} copy={() => copy(havaleData.iban)}/>
+                  <BankRow label="Tutar" value={`${havaleData.amount} TL`}/>
+                  <BankRow label="Referans" value={havaleData.reference} copy={() => copy(havaleData.reference)}/>
+                </div>
+                <div className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded p-2.5 leading-relaxed">
+                  ⚠️ Açıklama alanına <b className="mono">{havaleData.reference}</b> yazmayı unutmayın!
+                  Ödemeniz doğrulandıktan sonra lisansınız 24 saat içinde e-postanıza gelir.
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BankRow({ label, value, copy }) {
+  return (
+    <div className="flex items-center justify-between gap-2 bg-slate-950 border border-slate-800 rounded px-3 py-2">
+      <span className="text-slate-500 uppercase text-[10px] tracking-widest w-16 shrink-0">{label}</span>
+      <span className="mono text-slate-100 flex-1 truncate">{value}</span>
+      {copy && (
+        <button onClick={copy} className="text-slate-400 hover:text-slate-100" title="Kopyala">
+          <Copy className="w-3 h-3"/>
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function Landing() {
   const { effective } = useI18n();
   return (
@@ -863,9 +1101,11 @@ export default function Landing() {
       <NavBar />
       <Hero />
       <Features />
+      <ModulesShowcase />
       <Stats />
       <HowItWorks />
       <Pricing />
+      <PaymentOptions />
       <FAQ />
       <Testimonials />
       <CTABottom />
