@@ -17,7 +17,7 @@ export default function MailEventDetail({ event, onClose, onAction }) {
     || "";
 
   const qc = useQueryClient();
-  const [tab, setTab] = useState("body"); // body | html | headers | attachments | scores
+  const [tab, setTab] = useState("summary"); // summary | body | html | headers | attachments | scores | sa
   const [rendered, setRendered] = useState(false);
 
   // Fetch full event (body + headers + attachments) on demand
@@ -79,6 +79,7 @@ export default function MailEventDetail({ event, onClose, onAction }) {
   };
 
   const availableTabs = [
+    { key: "summary", label: "Özet", Icon: FileText, count: null },
     hasBody     && { key: "body",        label: "Gövde",     Icon: FileText, count: null },
     hasHtml     && { key: "html",        label: "HTML",      Icon: Code2, count: null },
     hasHeaders  && { key: "headers",     label: "Başlıklar", Icon: Mail, count: null },
@@ -86,7 +87,7 @@ export default function MailEventDetail({ event, onClose, onAction }) {
     hasScores   && { key: "scores",      label: "Motorlar",  Icon: Shield, count: null },
     saReport    && { key: "sa",          label: "SA Rapor",  Icon: AlertOctagon, count: null },
   ].filter(Boolean);
-  const activeTab = availableTabs.find(t => t.key === tab)?.key || availableTabs[0]?.key || "body";
+  const activeTab = availableTabs.find(t => t.key === tab)?.key || availableTabs[0]?.key || "summary";
 
   return (
     <>
@@ -191,6 +192,41 @@ export default function MailEventDetail({ event, onClose, onAction }) {
         <div className="p-5 min-h-[200px]">
           {full.isLoading && (
             <div className="text-center text-xs text-slate-500 py-8">Detaylar yükleniyor…</div>
+          )}
+
+          {activeTab === "summary" && (
+            <div className="space-y-3" data-testid="detail-tab-summary-content">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">Mail Özeti</div>
+              <SumRow label="Konu" value={e.subject || "(yok)"} copy={() => copyText(e.subject || "", "Konu")} />
+              <SumRow label="Gönderen" value={e.from_addr || "-"} mono copy={() => copyText(e.from_addr || "", "Gönderen")} />
+              <SumRow label="Alıcı"    value={e.to_addr   || "-"} mono copy={() => copyText(e.to_addr   || "", "Alıcı")} />
+              <SumRow label="Verdict"  value={<span style={{ color: verdictColor }} className="uppercase font-semibold">{e.verdict}</span>} />
+              <SumRow label="Skor"     value={<span className="mono">{typeof e.total_score === "number" ? e.total_score.toFixed(2) : e.total_score}</span>} />
+              <SumRow label="Aksiyon"  value={<span className="mono uppercase text-xs">{e.action || "-"}</span>} />
+              <SumRow label="Exim MID" value={e.exim_mid || "-"} mono copy={() => copyText(e.exim_mid || "", "Exim MID")} />
+              <SumRow label="Sunucu"   value={e.server_hostname || "-"} mono />
+              <SumRow label="Sunucu IP"value={e.server_ip || "-"} mono />
+              <SumRow label="Zaman"    value={e.ts ? new Date(e.ts).toLocaleString("tr-TR", { hour12: false }) : "-"} mono />
+              {hasScores && (
+                <div className="pt-2 border-t border-slate-800 mt-3">
+                  <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">Motor Skorları</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(scores).filter(([k]) => k !== "sa_report").map(([k, v]) => (
+                      <span key={k} className="mono text-[11px] px-2 py-0.5 rounded border border-slate-700 bg-slate-800/60 text-slate-300">
+                        {k}: <span className={typeof v === "number" && v >= 5 ? "text-rose-400 font-semibold" : "text-slate-100"}>{typeof v === "number" ? v.toFixed(2) : String(v).slice(0, 30)}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!hasBody && !hasHtml && !hasHeaders && attachments.length === 0 && (
+                <div className="mt-3 p-2.5 rounded bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200">
+                  ⚠ Bu mailin gövdesi, başlıkları ve ekleri henüz panele senkronize edilmedi.
+                  WHM plugin'inizi güncelledikten sonra (↻ Guncelle) yeni mailler tam içerikle gelecek.
+                  Eski kayıtlar sadece meta veriyle gösterilir.
+                </div>
+              )}
+            </div>
           )}
 
           {activeTab === "body" && hasBody && (
@@ -362,5 +398,21 @@ export default function MailEventDetail({ event, onClose, onAction }) {
         )}
       </div>
     </>
+  );
+}
+
+function SumRow({ label, value, mono, copy }) {
+  return (
+    <div className="flex items-start gap-2 text-xs group">
+      <div className="text-[10px] uppercase tracking-widest text-slate-500 w-24 pt-0.5 shrink-0">{label}</div>
+      <div className={`flex-1 min-w-0 break-all ${mono ? "mono" : ""} text-slate-200`}>{value}</div>
+      {copy && (
+        <button onClick={copy}
+                className="opacity-0 group-hover:opacity-100 transition text-slate-500 hover:text-slate-200 shrink-0 p-0.5"
+                title="Kopyala">
+          <Copy className="w-3 h-3" />
+        </button>
+      )}
+    </div>
   );
 }

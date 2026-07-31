@@ -139,6 +139,18 @@ export const api = {
   adminOnboardingComplete: (licenseKey) =>
     client.post("/admin/onboarding-complete", null,
                 { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminAutoSuspendGet: (licenseKey) =>
+    client.get("/admin/auto-suspend", { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminAutoSuspendPut: (licenseKey, payload) =>
+    client.put("/admin/auto-suspend", payload,
+               { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminAutoSuspendRun: (licenseKey) =>
+    client.post("/admin/auto-suspend/run", null,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminAnalyticsExport: (licenseKey, days = 30) =>
+    `${client.defaults.baseURL}/admin/analytics/export?fmt=csv&days=${days}${licenseKey ? `&license_key=${encodeURIComponent(licenseKey)}` : ""}`,
+  pushVapidPublic: () => client.get("/push/vapid-public").then(r => r.data),
+  pushSubscribe: (payload) => client.post("/push/subscribe", payload).then(r => r.data),
   quarantineLocalDomains: () =>
     client.get("/quarantine/local-domains").then(r => r.data),
   quarantinePurgeDemo: () =>

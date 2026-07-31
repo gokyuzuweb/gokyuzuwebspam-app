@@ -449,6 +449,48 @@ async def _startup() -> None:
         await db.engines.create_index("name", unique=True)
     except Exception as ex:
         log.warning("engines dedupe skipped: %s", ex)
+    # Kick off background housekeeping tasks
+    asyncio.create_task(_auto_suspend_daily_task())
+
+
+async def _auto_suspend_daily_task():
+    """Nightly sweep: honor `auto_suspend` settings and suspend idle bayis.
+    Runs every 24h; first run 5 minutes after startup."""
+    await asyncio.sleep(300)
+    while True:
+        try:
+            cfg = await db.settings.find_one({"_key": "auto_suspend"}, {"_id": 0}) or {}
+            if cfg.get("enabled"):
+                threshold = int(cfg.get("idle_days_threshold", 30))
+                now = datetime.now(timezone.utc)
+                suspended = 0
+                async for r in db.resellers.find({"active": True}, {"_id": 0}):
+                    last = await db.reseller_logins.find_one(
+                        {"reseller_id": r["id"], "success": True},
+                        {"_id": 0}, sort=[("at", -1)],
+                    )
+                    anchor = last["at"] if last else r.get("created_at")
+                    if not anchor: continue
+                    try:
+                        days = (now - datetime.fromisoformat(anchor.replace("Z","+00:00"))).days
+                    except Exception:
+                        continue
+                    if days >= threshold:
+                        await db.resellers.update_one({"id": r["id"]}, {"$set": {
+                            "active": False,
+                            "auto_suspended_at": _iso(),
+                            "auto_suspend_reason": f"cron: {days} gün girişsiz",
+                        }})
+                        suspended += 1
+                await db.settings.update_one({"_key": "auto_suspend"}, {"$set": {
+                    "last_run_at": _iso(),
+                    "last_suspended_count": suspended,
+                }})
+                if suspended:
+                    log.info("auto-suspend: %d bayi askiya alindi", suspended)
+        except Exception as ex:
+            log.warning("auto-suspend task error: %s", ex)
+        await asyncio.sleep(86400)  # every 24h
 
 
 @app.on_event("shutdown")
@@ -1752,6 +1794,177 @@ async def admin_onboarding_complete(request: Request, license_key: Optional[str]
         upsert=True,
     )
     return {"ok": True}
+
+
+class AutoSuspendSettingsIn(BaseModel):
+    enabled: bool = False
+    idle_days_threshold: int = Field(30, ge=7, le=365)
+    notify_before: bool = True
+
+
+@api.get("/admin/auto-suspend")
+async def get_auto_suspend(request: Request, license_key: Optional[str] = None):
+    """Master-only. Auto-suspend rule config: how many days of inactivity
+    before a reseller is automatically suspended."""
+    await _require_master(request, license_key)
+    doc = await db.settings.find_one({"_key": "auto_suspend"}, {"_id": 0, "_key": 0}) or {}
+    return {
+        "enabled": bool(doc.get("enabled", False)),
+        "idle_days_threshold": int(doc.get("idle_days_threshold", 30)),
+        "notify_before": bool(doc.get("notify_before", True)),
+        "last_run_at": doc.get("last_run_at"),
+        "last_suspended_count": int(doc.get("last_suspended_count", 0)),
+    }
+
+
+@api.put("/admin/auto-suspend")
+async def put_auto_suspend(payload: AutoSuspendSettingsIn, request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    await db.settings.update_one(
+        {"_key": "auto_suspend"},
+        {"$set": {"_key": "auto_suspend", **payload.model_dump(), "updated_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api.post("/admin/auto-suspend/run")
+async def run_auto_suspend(request: Request, license_key: Optional[str] = None):
+    """Master-only. Manually trigger the auto-suspend sweep. Also invoked by
+    a nightly background task if enabled."""
+    await _require_master(request, license_key)
+    cfg = await get_auto_suspend(request, license_key)
+    if not cfg["enabled"]:
+        return {"ok": False, "reason": "disabled", "suspended": 0}
+    threshold = cfg["idle_days_threshold"]
+    now = datetime.now(timezone.utc)
+    suspended = []
+    async for r in db.resellers.find({"active": True}, {"_id": 0}):
+        last = await db.reseller_logins.find_one(
+            {"reseller_id": r["id"], "success": True},
+            {"_id": 0}, sort=[("at", -1)],
+        )
+        anchor = last["at"] if last else r.get("created_at")
+        if not anchor: continue
+        try:
+            days = (now - datetime.fromisoformat(anchor.replace("Z","+00:00"))).days
+        except Exception:
+            continue
+        if days >= threshold:
+            await db.resellers.update_one({"id": r["id"]}, {"$set": {
+                "active": False,
+                "auto_suspended_at": _iso(),
+                "auto_suspend_reason": f"{days} gün girişsiz",
+            }})
+            suspended.append({"email": r["email"], "days": days})
+            if cfg["notify_before"] and r.get("email"):
+                await _send_email(
+                    r["email"],
+                    "GökyüzüWebSpam · Hesabınız askıya alındı",
+                    f"Merhaba,\n\n{days} gündür bayi portalına giriş yapmadığınız için hesabınız otomatik olarak askıya alındı.\n"
+                    f"Tekrar aktifleştirmek için yönetici ile iletişime geçin: {MASTER_HOST}\n\n— Sistem",
+                )
+    await db.settings.update_one({"_key": "auto_suspend"}, {"$set": {
+        "last_run_at": _iso(),
+        "last_suspended_count": len(suspended),
+    }})
+    return {"ok": True, "suspended": len(suspended), "items": suspended}
+
+
+@api.get("/admin/analytics/export")
+async def admin_analytics_export(request: Request, license_key: Optional[str] = None,
+                                 fmt: str = "csv", days: int = 30):
+    """Master-only. Weekly/monthly aggregate: all bayis, sub-account counts,
+    login stats, mail volume. Returns CSV (fmt=csv) or JSON (fmt=json)."""
+    await _require_master(request, license_key)
+    days = max(1, min(days, 365))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = []
+    async for r in db.resellers.find({}, {"_id": 0, "password_hash": 0}):
+        sub_count = await db.subaccounts.count_documents({"reseller_id": r["id"]})
+        login_success = await db.reseller_logins.count_documents({"reseller_id": r["id"], "success": True, "at": {"$gte": cutoff}})
+        login_fail = await db.reseller_logins.count_documents({"reseller_id": r["id"], "success": False, "at": {"$gte": cutoff}})
+        mail_count = await db.mail_events.count_documents({"license_key": r["license_key"], "ts": {"$gte": cutoff}})
+        spam_count = await db.mail_events.count_documents({"license_key": r["license_key"], "verdict": {"$in": ["spam","high_spam","virus","phish"]}, "ts": {"$gte": cutoff}})
+        last_login = await db.reseller_logins.find_one({"reseller_id": r["id"], "success": True}, sort=[("at", -1)])
+        rows.append({
+            "email": r["email"],
+            "company": r.get("company", ""),
+            "plan": r.get("plan", ""),
+            "license_key": r["license_key"],
+            "active": r.get("active", True),
+            "created_at": (r.get("created_at") or "")[:10],
+            "sub_accounts": sub_count,
+            "logins_success_period": login_success,
+            "logins_failed_period": login_fail,
+            "mails_scanned_period": mail_count,
+            "spam_caught_period": spam_count,
+            "spam_ratio_pct": round(spam_count / mail_count * 100, 1) if mail_count else 0,
+            "last_login_at": (last_login.get("at") if last_login else "")[:19],
+        })
+    if fmt == "json":
+        return {"period_days": days, "generated_at": _iso(), "rows": rows}
+    # CSV format
+    import io, csv
+    buf = io.StringIO()
+    buf.write("\ufeff")  # BOM for Excel UTF-8
+    w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()) if rows else [
+        "email","company","plan","license_key","active","created_at","sub_accounts",
+        "logins_success_period","logins_failed_period","mails_scanned_period",
+        "spam_caught_period","spam_ratio_pct","last_login_at"])
+    w.writeheader()
+    for r in rows: w.writerow(r)
+    from fastapi.responses import Response
+    filename = f"bayi-analytics-{days}gun-{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
+    return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+# --- PWA Web Push subscription (VAPID foundation) ---
+class PushSubscribeIn(BaseModel):
+    reseller_token: Optional[str] = None
+    license_key: Optional[str] = None
+    subscription: dict  # { endpoint, keys: {p256dh, auth} }
+    user_agent: Optional[str] = None
+
+
+@api.post("/push/subscribe")
+async def push_subscribe(payload: PushSubscribeIn):
+    """Store a Web Push subscription so the server can send push messages.
+    Currently stores the subscription; server-side push (`pywebpush` + VAPID
+    private key) is a follow-up step."""
+    sub_endpoint = (payload.subscription or {}).get("endpoint")
+    if not sub_endpoint:
+        raise HTTPException(400, "Gecerli subscription endpoint'i gerekli")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "endpoint": sub_endpoint,
+        "keys": (payload.subscription or {}).get("keys", {}),
+        "reseller_token": payload.reseller_token,
+        "license_key": payload.license_key,
+        "user_agent": payload.user_agent,
+        "created_at": _iso(),
+    }
+    # Upsert by endpoint so re-subscribes replace old
+    await db.push_subscriptions.update_one(
+        {"endpoint": sub_endpoint}, {"$set": doc}, upsert=True,
+    )
+    return {"ok": True, "id": doc["id"]}
+
+
+@api.delete("/push/subscribe")
+async def push_unsubscribe(endpoint: str):
+    r = await db.push_subscriptions.delete_one({"endpoint": endpoint})
+    return {"ok": True, "deleted": r.deleted_count}
+
+
+@api.get("/push/vapid-public")
+async def push_vapid_public():
+    """Return the server's VAPID public key so browsers can subscribe.
+    If VAPID_PUBLIC_KEY env is set, use that; otherwise return a placeholder
+    indicating server push is not yet fully configured."""
+    return {"public_key": os.environ.get("VAPID_PUBLIC_KEY", ""),
+            "configured": bool(os.environ.get("VAPID_PUBLIC_KEY"))}
 
 
 @api.post("/admin/resellers/{rid}/toggle-active")

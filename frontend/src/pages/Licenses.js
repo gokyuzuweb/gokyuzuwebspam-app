@@ -12,6 +12,7 @@ import LicenseServerStatus from "@/components/LicenseServerStatus";
 import EditLicenseModal from "@/components/EditLicenseModal";
 import VersionPublishCard from "@/components/VersionPublishCard";
 import ResellerAdminPanel from "@/components/ResellerAdminPanel";
+import AdminOperationsCard from "@/components/AdminOperationsCard";
 import { useIsMaster } from "@/hooks/useIsMaster";
 
 /**
@@ -513,6 +514,7 @@ export default function Licenses() {
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <VersionPublishCard />
           <ResellerAdminPanel />
+          <AdminOperationsCard />
 
           <Card>
             <CardHeader title={<span className="flex items-center gap-2"><Users2 className="w-4 h-4 text-indigo-400" /> Nasıl çalışır?</span>} />
