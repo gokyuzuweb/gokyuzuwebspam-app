@@ -10,21 +10,20 @@ const LICKEY = () => (typeof window !== "undefined"
 export default function ControlBar({ onQueueClick }) {
   const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview, refetchInterval: 15000 });
   const qstats   = useQuery({ queryKey: ["queue-stats-bar"], queryFn: () => api.queueStats(LICKEY()), refetchInterval: 10000 });
-  const health   = useQuery({ queryKey: ["health-metrics-bar"], queryFn: () => api.healthMetrics(LICKEY()), refetchInterval: 20000 });
   const resel    = useQuery({ queryKey: ["adm-resellers-bar"], queryFn: () => api.adminResellers().catch(() => ({items: []})), refetchInterval: 60000 });
   const map      = useQuery({ queryKey: ["attack-map-bar"], queryFn: () => api.attackMap(LICKEY(), 1), refetchInterval: 15000 });
 
   const s = overview.data || {};
   const spam1h = s.spam_last_hour ?? Math.round((s.caught_today || 0) / 24);
   const queueTotal = qstats.data?.total ?? 0;
-  const wpm = health.data?.write_per_min ?? 0;
+  const wpm = Math.round((s.caught_today || 0) / 1440) || 0;
   const resellersTotal = (resel.data?.items || resel.data?.resellers || []).length;
   const countries = (map.data?.items || []).length;
 
   const cards = [
     { key: "queue", label: "Kuyrukta Bekleyen", val: queueTotal, sub: "tıkla → yönet", grad: "from-sky-500/20 via-sky-500/5 to-transparent", ring: "ring-sky-500/40", txt: "text-sky-300", Icon: Server, onClick: onQueueClick, testid: "control-queue" },
     { key: "spam1h", label: "Son 1 Saat Spam", val: spam1h, sub: "canlı", grad: "from-amber-500/20 via-amber-500/5 to-transparent", ring: "ring-amber-500/40", txt: "text-amber-300", Icon: ShieldAlert },
-    { key: "wpm", label: "Yazma Hızı", val: `${wpm}/dk`, sub: "mail_events insert", grad: "from-emerald-500/20 via-emerald-500/5 to-transparent", ring: "ring-emerald-500/40", txt: "text-emerald-300", Icon: Cpu },
+    { key: "wpm", label: "Yakalama / dk", val: `${wpm}/dk`, sub: "günlük ort.", grad: "from-emerald-500/20 via-emerald-500/5 to-transparent", ring: "ring-emerald-500/40", txt: "text-emerald-300", Icon: Cpu },
     { key: "engines", label: "Aktif Motorlar", val: `${s.engines_active ?? 0}/${s.engines_total ?? 0}`, sub: "SA · Bayes · ClamAV …", grad: "from-indigo-500/20 via-indigo-500/5 to-transparent", ring: "ring-indigo-500/40", txt: "text-indigo-300", Icon: Zap },
     { key: "resellers", label: "Bayi Sayısı", val: resellersTotal || "-", sub: "aktif portallar", grad: "from-fuchsia-500/20 via-fuchsia-500/5 to-transparent", ring: "ring-fuchsia-500/40", txt: "text-fuchsia-300", Icon: Users },
     { key: "geo", label: "Kaynak Ülke (1s)", val: countries, sub: "canlı saldırı haritası", grad: "from-rose-500/20 via-rose-500/5 to-transparent", ring: "ring-rose-500/40", txt: "text-rose-300", Icon: Activity },
