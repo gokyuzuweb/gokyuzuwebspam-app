@@ -7,6 +7,7 @@ import {
   Globe, Radar, ShieldCheck, FileCheck2, RefreshCw, Plus, X, Zap,
   AlertTriangle, TrendingUp, Award,
 } from "lucide-react";
+import ModuleFooter from "@/components/ModuleFooter";
 
 export default function ThreatIntel() {
   const [tab, setTab] = useState("ioc");
@@ -38,6 +39,25 @@ export default function ThreatIntel() {
       {tab === "dmarc" && <DmarcTab/>}
       {tab === "feeds" && <FeedsTab/>}
       {tab === "compliance" && <ComplianceTab/>}
+
+      <ModuleFooter
+        title="Global Tehdit Zekası — Nasıl Çalışır?"
+        howItWorks="4 alt-modül: (1) IOC feed — IP/domain/URL/hash/email tehdit göstergeleri, (2) DMARC aggregate — ISP'lerden gelen SPF/DKIM/DMARC raporları, (3) Global Feeds — URLhaus/Spamhaus/PhishTank vs. gerçek fetch, (4) Compliance — KVKK/GDPR/HIPAA/SOC2 auto-detection. IOC listesi ingest sırasında otomatik enforce olur (blocked verdict + ioc_hit metadata)."
+        technical={[
+          "URLhaus gerçek API: 20 URL/sync · 14 gün TTL",
+          "Spamhaus ZEN: son 24s'te top spam IP'ler için DNS lookup",
+          "IOC auto-block: /api/events/ingest içinde _ioc_enforce hook",
+          "DMARC XML parse: ingest endpoint (JSON pre-parsed) · rua= receiver şu an mock",
+          "Compliance: 11 item sistem state'inden otomatik (AUTO rozeti)",
+        ]}
+        recommendations={[
+          "URLhaus + Spamhaus feed'lerini 30dk peryotla senkronize et (WHM cron)",
+          "IOC'lere manuel IP/domain ekleyerek özel blok listesi oluştur",
+          "DMARC rua= adresini `dmarc@sizindomain.com` yap",
+          "Compliance %80+ hedefiyle manuel item'ları da tikle",
+          "SIEM export ile Splunk/QRadar'a IOC feed'i push et",
+        ]}
+      />
     </div>
   );
 }

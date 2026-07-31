@@ -719,6 +719,20 @@ function MediaGallery({ moduleKey, tone, moduleLabel }) {
 function AiModuleChat({ module }) {
   const [question, setQuestion] = useState("Bu modül ne işe yarar?");
   const [messages, setMessages] = useState([]);
+  // Load persistent Q&A history when module changes
+  const history = useQuery({
+    queryKey: ["module-qa", module.key],
+    queryFn: () => api.moduleQaLog(module.key),
+  });
+  useEffect(() => {
+    const items = history.data?.items || [];
+    // Reverse (oldest first) + convert to chat format
+    const msgs = [...items].reverse().flatMap(q => [
+      { role: "user", text: q.question, ts: q.created_at },
+      { role: "ai", text: q.answer, ts: q.created_at },
+    ]);
+    setMessages(msgs);
+  }, [history.data]);
   const ask = useMutation({
     mutationFn: (q) => api.moduleAsk({ module_key: module.key, module_label: module.label, question: q }),
     onSuccess: (d) => setMessages(m => [...m, { role: "user", text: question }, { role: "ai", text: d.answer }]),
@@ -730,6 +744,7 @@ function AiModuleChat({ module }) {
     <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-4">
       <div className="text-indigo-300 font-semibold text-sm flex items-center gap-2 mb-2">
         <Sparkles className="w-4 h-4"/> AI Modül Asistanı · Sor, öğren
+        {messages.length > 0 && <span className="text-[10px] text-slate-500 mono ml-1">· {Math.floor(messages.length / 2)} kayıtlı</span>}
       </div>
       <div className="flex flex-wrap gap-1 mb-2">
         {suggestions.map(s => (
@@ -759,7 +774,7 @@ function AiModuleChat({ module }) {
           </div>
         ))}
         {messages.length === 0 && (
-          <div className="text-xs text-slate-500 italic text-center py-2">Soruyu yaz ya da öneriden birine tıkla → AI yanıtlayacak</div>
+          <div className="text-xs text-slate-500 italic text-center py-2">Soruyu yaz ya da öneriden birine tıkla → AI yanıtlayacak · geçmiş kaydedilir</div>
         )}
       </div>
     </div>

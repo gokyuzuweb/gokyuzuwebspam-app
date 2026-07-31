@@ -12,6 +12,7 @@ import { Card, CardBody, CardHeader, StatCard, Badge } from "@/components/ui-pri
 import { api } from "@/lib/api";
 import { useT } from "@/i18n";
 import LiveMailEvents from "@/components/LiveMailEvents";
+import ModuleFooter from "@/components/ModuleFooter";
 import MultiServerRibbon from "@/components/MultiServerRibbon";
 import HealthScore from "@/components/HealthScore";
 import ComplianceSnapshot from "@/components/ComplianceSnapshot";
@@ -171,6 +172,25 @@ export default function Dashboard() {
 
       {/* Live tab */}
       {show("live") && <LiveMailEvents/>}
+
+      {/* Module footer — Nasıl Çalışır / Teknik / Öneriler */}
+      <ModuleFooter
+        title="Dashboard — Ana Kontrol Paneli"
+        howItWorks="7 tab'lı modern dashboard: canlı metrik kartları + interaktif Attack Map + trafiği + top IP drilldown + karantina özeti + sağlık skoru + canlı mail akışı. Tüm bölümler otomatik yenilenir (10-15sn peryot)."
+        technical={[
+          "Advanced Control Bar: 6 metrik kartı (queue, spam1h, wpm, engines, resellers, geo)",
+          "Attack Map: react-simple-maps + offline TopoJSON",
+          "IP Drilldown: bar tıklama → drawer + son 50 mail",
+          "Queue Modal: exim -bpc/-Mrm/-M sarmalayıcı",
+          "AI Predict: her ingest sonrası predicted_score + auto-quarantine",
+        ]}
+        recommendations={[
+          "İlk kurulumda Onboarding Wizard'ı bitir (SMTP + brand)",
+          "Coğrafi tab'ta brute-force auto-block'u aç",
+          "AI Auto-Quarantine eşiğini 7.0 ile başlat",
+          "Kritik trafik saatlerinde 'Kuyrukta Bekleyen' kartını canlı takip et",
+        ]}
+      />
 
       {/* Modals & drawers */}
       <QueueModal open={queueOpen} onClose={() => setQueueOpen(false)}/>

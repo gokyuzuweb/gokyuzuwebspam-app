@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { Filter, Brain, Sliders, Users, Trash2, Plus, Beaker, Link as LinkIcon, Sparkles, Info } from "lucide-react";
+import ModuleFooter from "@/components/ModuleFooter";
 
 const LICKEY = () => (typeof window !== "undefined"
   ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
@@ -175,6 +176,25 @@ export default function MailScanner() {
       {tab === "policy" && <><PolicyTab/><HelpPanel tabKey="policy"/></>}
       {tab === "url"    && <><UrlTab/><HelpPanel tabKey="url"/></>}
       {tab === "learn"  && <LearnTab/>}
+
+      <ModuleFooter
+        title="MailScanner — Bağımsız Motor"
+        howItWorks="ConfigServer'a bağlı olmayan kendi geliştirdiğimiz mail tarama motoru. SpamAssassin + Bayes + ClamAV + Rspamd ML + AI (Claude) katmanları birlikte çalışır. Her mail için heuristic + engine skoru + AI predict → verdict (clean/spam/high_spam/virus)."
+        technical={[
+          "Threshold: spam 5.0 · high_spam 10.0 (config)",
+          "8 motor toggle: SA/Bayes/ClamAV/DCC/Razor/Pyzor/Rspamd_ML/Sender_Rep",
+          "Bayes: kendi tokenizer + counter (mailscanner_bayes)",
+          "AI Analyze: LLM raporu (~15sn) · AI Self-Training: saatlik cron",
+          "Auto-Quarantine + Rule Auto-Apply: eşik-tabanlı (config)",
+        ]}
+        recommendations={[
+          "SPF Hard Fail + DKIM Required'ı aç (kimlik doğrulama)",
+          "En az 200 spam + 200 ham örnek ile Bayes'i besle",
+          "AI Auto-Quarantine'i test ortamında dene (threshold 8+)",
+          "URL Koruma tab: outbound maildeki URL'leri /r/{token}'a çevir",
+          "Haftada 1 AI Sistem Analizi'ni çalıştır — proaktif öneriler alacaksın",
+        ]}
+      />
     </div>
   );
 }
