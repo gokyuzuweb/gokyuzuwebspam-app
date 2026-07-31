@@ -129,6 +129,8 @@ export const api = {
   adminResellerCreate: (licenseKey, payload) =>
     client.post("/admin/resellers", payload,
                 { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminResellerActivity: (licenseKey, rid, days = 30) =>
+    client.get(`/admin/resellers/${rid}/activity`, { params: { days, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
   quarantineLocalDomains: () =>
     client.get("/quarantine/local-domains").then(r => r.data),
   quarantinePurgeDemo: () =>

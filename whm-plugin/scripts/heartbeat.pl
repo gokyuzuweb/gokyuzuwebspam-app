@@ -133,4 +133,67 @@ open my $sf, '>', $STATE or die "cannot write $STATE: $!";
 print $sf encode_json($state);
 close $sf;
 
+# --- cPanel accounts sync (her heartbeat'te) - GERÇEK kullanıcıları push et
+_sync_cpanel_accounts();
+
 exit 0;
+
+# ---------------------------------------------------------------------------
+# _sync_cpanel_accounts — WHM API'sinden liste alıp panele push eder. Böylece
+# admin panelindeki "Kullanıcılar" ekranı gerçek cPanel hesaplarını gösterir.
+# whmapi1 mevcut değilse (dev/preview) sessizce çıkar.
+sub _sync_cpanel_accounts {
+    # Panel URL — /etc/mailshield/mailshield.conf'ta panel.url ile override
+    my $panel_url = $conf{panel}{url}
+                 || $ENV{MAILSHIELD_PANEL_URL}
+                 || 'https://mailscanner-pro.preview.emergentagent.com';
+    my $listaccts = '/usr/local/cpanel/bin/whmapi1';
+    return unless -x $listaccts;
+
+    my $json_out = `$listaccts --output=json listaccts 2>/dev/null`;
+    return unless $json_out;
+    my $data = eval { decode_json($json_out) };
+    return unless $data && ref($data->{data}) eq 'HASH';
+    my $accts = $data->{data}{acct} || [];
+    return unless ref($accts) eq 'ARRAY' && @$accts;
+
+    my @out;
+    for my $a (@$accts) {
+        my $user   = $a->{user} || next;
+        my $domain = $a->{domain} || '';
+        # Best-effort: mail count today via dovecot statistics (skip if unavailable)
+        my $mail_today  = 0;
+        my $spam_today  = 0;
+        my $q_size      = 0;
+        # dovecot: sadece varsa
+        if (-x '/usr/sbin/dovecot' && $user) {
+            my $stat = `/usr/sbin/dovecot who -1 2>/dev/null | grep -c "^$user"`;
+            chomp $stat; $mail_today = ($stat =~ /^\d+$/) ? $stat + 0 : 0;
+        }
+        push @out, {
+            username         => $user,
+            domain           => $domain,
+            email_count_today => $mail_today,
+            spam_caught_today => $spam_today,
+            quarantine_size   => $q_size,
+            disk_used         => $a->{diskused},
+            plan              => $a->{plan},
+            suspended         => ($a->{suspended} ? \1 : \0),
+        };
+    }
+    return unless @out;
+    my $sync_req = HTTP::Request->new(POST => "$panel_url/api/users/sync");
+    $sync_req->header('Content-Type' => 'application/json');
+    $sync_req->content(encode_json({
+        license_key => $license_key,
+        accounts    => \@out,
+    }));
+    my $r = $ua->request($sync_req);
+    if ($r->is_success) {
+        open my $lf, '>>', '/var/log/mailshield/user-sync.log';
+        if ($lf) { print $lf scalar(gmtime())." · pushed " . scalar(@out) . " accounts · " . $r->content . "\n"; close $lf; }
+    } else {
+        warn "user-sync failed: " . $r->status_line . "\n";
+    }
+    return scalar @out;
+}

@@ -1601,7 +1601,7 @@ class ResellerResetPwIn(BaseModel):
 async def admin_reset_reseller_password(rid: str, payload: ResellerResetPwIn,
                                         request: Request, license_key: Optional[str] = None):
     """Master-only. Directly resets a reseller's password (bcrypt hashed) so master
-    can help a bayi who lost credentials."""
+    can help a bayi who lost credentials. Optional SMTP email notification to bayi."""
     await _require_master(request, license_key)
     import bcrypt
     r = await db.resellers.find_one({"id": rid}, {"_id": 0})
@@ -1613,11 +1613,60 @@ async def admin_reset_reseller_password(rid: str, payload: ResellerResetPwIn,
         {"$set": {"password_hash": new_hash,
                   "password_reset_by_master_at": _iso()}},
     )
+    # Notify the bayi by email — best-effort, don't fail the request if mail fails
+    email_result = {"sent": False, "via": None, "error": None}
+    if r.get("email"):
+        subj = "GökyüzüWebSpam · Bayi Portal Şifreniz Sıfırlandı"
+        body = (
+            f"Merhaba {r.get('company', 'Bayi')},\n\n"
+            f"Bayi portal şifreniz sistem yöneticisi tarafından sıfırlandı.\n\n"
+            f"  Yeni şifreniz: {payload.new_password}\n\n"
+            f"Lütfen girişten sonra hesap ayarlarından şifrenizi değiştirin.\n\n"
+            f"Giriş adresi: https://{MASTER_HOST}/reseller\n"
+            f"E-posta: {r['email']}\n\n"
+            f"Bu bilgileri kimseyle paylaşmayın.\n\n"
+            f"— GökyüzüWebSpam Sistem\n"
+            f"Zaman: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+        )
+        ok, via = await _send_email(r["email"], subj, body)
+        email_result = {"sent": ok, "via": via, "error": None if ok else via}
     await db.logs.insert_one(ActivityLog(
         source="admin", level="warn",
-        message=f"Master bayi sifresini sifirladi: {r.get('email')} ({rid[:8]})",
+        message=f"Master bayi sifresini sifirladi: {r.get('email')} · mail: {email_result['sent']}",
     ).model_dump())
-    return {"ok": True, "email": r.get("email")}
+    return {"ok": True, "email": r.get("email"), "notification": email_result}
+
+
+@api.get("/admin/resellers/{rid}/activity")
+async def admin_reseller_activity(rid: str, request: Request, license_key: Optional[str] = None, days: int = 30):
+    """Master-only. Aggregated login activity for a specific bayi over N days.
+    Returns per-day success/fail counts for a line chart."""
+    await _require_master(request, license_key)
+    r = await db.resellers.find_one({"id": rid}, {"_id": 0, "password_hash": 0})
+    if not r:
+        raise HTTPException(404, "Bayi bulunamadi")
+    days = max(1, min(days, 90))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    per_day = {}  # day -> {"success":N,"fail":N}
+    async for log in db.reseller_logins.find(
+        {"$or": [{"reseller_id": rid}, {"email": r.get("email")}],
+         "at": {"$gte": cutoff}},
+        {"_id": 0, "at": 1, "success": 1, "ip": 1},
+    ).sort("at", 1):
+        day = (log.get("at") or "")[:10]
+        d = per_day.setdefault(day, {"success": 0, "fail": 0})
+        if log.get("success"):
+            d["success"] += 1
+        else:
+            d["fail"] += 1
+    # Fill missing days with zeros so the chart has a continuous x-axis
+    out = []
+    for i in range(days - 1, -1, -1):
+        day = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+        d = per_day.get(day, {"success": 0, "fail": 0})
+        out.append({"day": day, **d, "total": d["success"] + d["fail"]})
+    return {"reseller": {"email": r.get("email"), "company": r.get("company", "")},
+            "days": days, "items": out}
 
 
 @api.post("/admin/resellers/{rid}/toggle-active")

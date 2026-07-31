@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Users, LogIn, Building2, CheckCircle2, XCircle, Clock, Search,
-  Shield, RefreshCw, KeyRound, Power, Trash2, UserPlus, X, Copy,
+  Shield, RefreshCw, KeyRound, Power, Trash2, UserPlus, X, Copy, TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { api } from "@/lib/api";
 
 const ago = (iso) => {
@@ -29,6 +30,7 @@ export default function ResellerAdminPanel() {
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [pwReset, setPwReset] = useState(null); // {id, email} | null
+  const [activity, setActivity] = useState(null); // {id, email} | null
   const qc = useQueryClient();
 
   const logins = useQuery({
@@ -148,6 +150,7 @@ export default function ResellerAdminPanel() {
             loading={resellers.isLoading}
             licenseKey={licenseKey}
             onResetPassword={(r) => setPwReset({ id: r.id, email: r.email })}
+            onShowActivity={(r) => setActivity({ id: r.id, email: r.email, company: r.company })}
           />
         )}
         {tab === "subaccounts" && <SubaccountsTable items={(subs.data?.items || []).filter(filterFn)} loading={subs.isLoading} />}
@@ -165,6 +168,13 @@ export default function ResellerAdminPanel() {
           licenseKey={licenseKey}
           reseller={pwReset}
           onClose={() => setPwReset(null)}
+        />
+      )}
+      {activity && (
+        <ActivityChartModal
+          licenseKey={licenseKey}
+          reseller={activity}
+          onClose={() => setActivity(null)}
         />
       )}
     </Card>
@@ -215,7 +225,7 @@ function LoginsTable({ items, loading }) {
   );
 }
 
-function ResellersTable({ items, loading, licenseKey, onResetPassword }) {
+function ResellersTable({ items, loading, licenseKey, onResetPassword, onShowActivity }) {
   const qc = useQueryClient();
   const toggle = useMutation({
     mutationFn: (rid) => api.adminResellerToggle(licenseKey, rid),
@@ -268,6 +278,14 @@ function ResellersTable({ items, loading, licenseKey, onResetPassword }) {
                   : <span className="text-emerald-400 text-[10px]">aktif</span>}
               </td>
               <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                <button
+                  onClick={() => onShowActivity(r)}
+                  title="30 günlük aktivite grafiği"
+                  data-testid={`admin-reseller-activity-${r.id}`}
+                  className="mr-1 inline-flex items-center p-1 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
+                >
+                  <TrendingUp className="w-3 h-3" />
+                </button>
                 <button
                   onClick={() => onResetPassword(r)}
                   title="Şifre sıfırla"
@@ -472,6 +490,104 @@ function F({ label, children, className = "" }) {
     <div className={className}>
       <label className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 block">{label}</label>
       {children}
+    </div>
+  );
+}
+
+/* --------------------------- Activity chart modal ------------------------- */
+function ActivityChartModal({ licenseKey, reseller, onClose }) {
+  const [days, setDays] = useState(30);
+  const q = useQuery({
+    queryKey: ["reseller-activity", reseller.id, days],
+    queryFn: () => api.adminResellerActivity(licenseKey, reseller.id, days),
+    retry: false,
+  });
+  const rows = (q.data?.items || []).map((d) => ({
+    ...d,
+    day_short: d.day.slice(5), // MM-DD
+  }));
+  const totalSuccess = rows.reduce((s, r) => s + (r.success || 0), 0);
+  const totalFail    = rows.reduce((s, r) => s + (r.fail    || 0), 0);
+  const totalDays    = rows.filter(r => r.total > 0).length;
+
+  return (
+    <>
+      <div onClick={onClose} className="fixed inset-0 bg-black/70 z-40" data-testid="activity-backdrop" />
+      <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[94vw] max-w-2xl z-50 bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-2xl"
+           data-testid="activity-modal">
+        <div className="p-5 border-b border-slate-800 flex items-start justify-between">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-indigo-400 font-bold">Login Aktivitesi</div>
+            <div className="text-slate-100 font-semibold text-base mt-0.5">{reseller.email}</div>
+            <div className="text-xs text-slate-400 mt-0.5">{reseller.company || "-"}</div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-100 p-1 rounded" data-testid="activity-close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-5 pt-4 flex items-center gap-2 text-xs">
+          <span className="text-slate-500">Dönem:</span>
+          {[7, 30, 90].map((d) => (
+            <button key={d} onClick={() => setDays(d)}
+                    data-testid={`activity-days-${d}`}
+                    className={`px-2.5 py-0.5 rounded text-[11px] ${
+                      days === d
+                        ? "bg-indigo-500/20 text-indigo-200 border border-indigo-500/40"
+                        : "border border-slate-700 bg-slate-800/40 text-slate-400 hover:text-slate-200"
+                    }`}>
+              {d} gün
+            </button>
+          ))}
+        </div>
+
+        <div className="px-5 py-3 grid grid-cols-3 gap-3 text-center">
+          <MetricPill label="Başarılı" value={totalSuccess} color="#10b981" />
+          <MetricPill label="Başarısız" value={totalFail} color="#ef4444" />
+          <MetricPill label="Aktif Gün" value={`${totalDays}/${days}`} color="#6366f1" />
+        </div>
+
+        <div className="px-5 pb-5">
+          <div className="h-56 w-full">
+            {q.isLoading ? (
+              <div className="h-full flex items-center justify-center text-slate-500 text-xs">Yükleniyor…</div>
+            ) : (
+              <ResponsiveContainer>
+                <LineChart data={rows} margin={{ top: 8, right: 10, left: -14, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis dataKey="day_short" stroke="#64748b" fontSize={10} tick={{ fill: "#94a3b8" }} />
+                  <YAxis stroke="#64748b" fontSize={10} allowDecimals={false} tick={{ fill: "#94a3b8" }} />
+                  <Tooltip
+                    contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 6, fontSize: 12 }}
+                    labelStyle={{ color: "#e2e8f0" }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="success" name="Başarılı" stroke="#10b981" strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="fail" name="Başarısız" stroke="#ef4444" strokeWidth={2} strokeDasharray="4 4" dot={{ r: 2 }} activeDot={{ r: 4 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+          {rows.every(r => r.total === 0) && !q.isLoading && (
+            <div className="text-center text-xs text-slate-500 mt-2">
+              Son {days} günde login kaydı yok
+            </div>
+          )}
+        </div>
+
+        <div className="p-3 border-t border-slate-800 text-[10px] text-slate-500 text-center mono">
+          Master → /api/admin/resellers/{reseller.id.slice(0, 8)}…/activity
+        </div>
+      </div>
+    </>
+  );
+}
+
+function MetricPill({ label, value, color }) {
+  return (
+    <div className="rounded-lg py-2 border" style={{ background: `${color}12`, borderColor: `${color}30` }}>
+      <div className="mono font-bold text-slate-100 text-lg">{value}</div>
+      <div className="text-[9px] uppercase tracking-widest text-slate-400">{label}</div>
     </div>
   );
 }

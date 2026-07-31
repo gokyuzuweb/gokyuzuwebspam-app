@@ -182,67 +182,208 @@ export default function Quarantine() {
       </Card>
 
       {preview && (
-        <div className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-6" onClick={() => setPreview(null)}>
-          <div data-testid="q-preview-modal" className="w-full max-w-3xl max-h-[85vh] bg-slate-900 border border-slate-800 rounded-lg overflow-hidden flex flex-col"
-               onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between p-5 border-b border-slate-800">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 mb-1">{verdictBadge(preview.verdict)}
-                  <span className="mono text-xs text-amber-300">{preview.score.toFixed(2)}</span>
-                  <span className="mono text-xs text-slate-500 uppercase">{preview.engine}</span>
+        <QuarantineDetail
+          item={preview}
+          onClose={() => setPreview(null)}
+          onAction={(action, id) => {
+            bulk.mutate({ action, ids: [id] });
+            setPreview(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* -------- Quarantine detail drawer (tabbed like MailEventDetail) --------- */
+function QuarantineDetail({ item, onClose, onAction }) {
+  const [tab, setTab] = useState(item.body_html ? "html" : "body");
+  const [rendered, setRendered] = useState(false);
+  const attachments = Array.isArray(item.attachments) ? item.attachments : [];
+  const rules = item.rules_matched || [];
+  const scores = item.scores || {};
+  const engineList = Object.keys(scores).filter(k => k !== "sa_report");
+
+  const verdictColor = {
+    clean: "#10b981", spam: "#f59e0b", high_spam: "#f43f5e",
+    virus: "#dc2626", phish: "#a855f7", blocked: "#7c3aed",
+  }[item.verdict] || "#64748b";
+
+  const humanSize = (n) => !n ? "0 B" : n < 1024 ? n + " B" : n < 1024*1024 ? (n/1024).toFixed(1)+" KB" : (n/1024/1024).toFixed(2)+" MB";
+  const copy = async (text, label) => { try { await navigator.clipboard.writeText(text); toast.success(`${label} kopyalandı`); } catch { toast.error("Kopyalanamadı"); } };
+
+  const tabs = [
+    item.body_preview && { key: "body",        label: "Gövde",     count: null },
+    item.body_html    && { key: "html",        label: "HTML",      count: null },
+    { key: "headers",     label: "Başlıklar", count: null },
+    { key: "attachments", label: "Ekler",     count: attachments.length },
+    { key: "rules",       label: "Kurallar",  count: rules.length },
+    engineList.length   && { key: "engines",   label: "Motorlar",  count: engineList.length },
+  ].filter(Boolean);
+  const active = tabs.find(t => t.key === tab)?.key || tabs[0]?.key || "headers";
+
+  return (
+    <>
+      <div onClick={onClose} className="fixed inset-0 bg-black/60 z-40" data-testid="q-detail-backdrop" />
+      <div className="fixed top-0 right-0 h-full w-full max-w-2xl bg-slate-950 border-l border-slate-800 z-50 overflow-y-auto shadow-2xl"
+           data-testid="q-detail-drawer">
+        <div className="sticky top-0 bg-slate-950 border-b border-slate-800 px-5 py-3 flex items-start justify-between z-10">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                    style={{ background: `${verdictColor}22`, color: verdictColor }}>
+                {item.verdict}
+              </span>
+              <span className="mono text-sm text-slate-300">skor {(item.score ?? 0).toFixed(2)}</span>
+              <span className="mono text-[11px] text-slate-500 uppercase">{item.engine || "-"}</span>
+            </div>
+            <div className="text-slate-100 font-medium text-[15px] truncate" title={item.subject}>{item.subject || "(konu yok)"}</div>
+            <div className="text-xs text-slate-400 mono mt-1 truncate">
+              {item.sender} <span className="text-slate-600 mx-1">→</span> {item.recipient}
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-800 text-slate-400" data-testid="q-detail-close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-5 py-2.5 border-b border-slate-800 grid grid-cols-3 gap-3 text-[11px] mono bg-slate-900/40">
+          <div><div className="text-slate-500 text-[9px] uppercase tracking-widest">Gönderen IP</div><div className="text-slate-300 truncate">{item.sender_ip || "-"}</div></div>
+          <div><div className="text-slate-500 text-[9px] uppercase tracking-widest">Boyut</div><div className="text-slate-300">{item.size_kb ? `${item.size_kb} KB` : "-"}</div></div>
+          <div><div className="text-slate-500 text-[9px] uppercase tracking-widest">Alındı</div><div className="text-slate-300 truncate">{item.received_at ? new Date(item.received_at).toLocaleString("tr-TR", { hour12: false }) : "-"}</div></div>
+        </div>
+
+        <div className="px-5 pt-3 border-b border-slate-800 flex gap-1 overflow-x-auto">
+          {tabs.map((t) => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs rounded-t-md border-b-2 whitespace-nowrap transition ${
+                active === t.key ? "border-indigo-400 text-indigo-300 bg-slate-900/50" : "border-transparent text-slate-500 hover:text-slate-300"
+              }`}
+              data-testid={`q-tab-${t.key}`}>
+              {t.label}
+              {t.count !== null && t.count !== undefined && (
+                <span className="text-[10px] mono px-1.5 rounded bg-slate-800 text-slate-400">{t.count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-5 min-h-[240px]">
+          {active === "body" && item.body_preview && (
+            <div className="space-y-2" data-testid="q-tab-body">
+              <div className="flex justify-between items-center">
+                <div className="text-[10px] uppercase tracking-widest text-slate-500">Metin Gövdesi</div>
+                <button onClick={() => copy(item.body_preview, "Gövde")} className="text-[10px] text-slate-400 hover:text-slate-200">kopyala</button>
+              </div>
+              <pre className="mono text-xs bg-slate-900/60 p-3 rounded whitespace-pre-wrap break-all border border-slate-800 max-h-[50vh] overflow-y-auto text-slate-200 leading-relaxed">{item.body_preview}</pre>
+            </div>
+          )}
+
+          {active === "html" && item.body_html && (
+            <div className="space-y-2" data-testid="q-tab-html">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] uppercase tracking-widest text-slate-500">HTML Gövde (sandbox)</div>
+                <button onClick={() => setRendered(v => !v)}
+                        className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700">
+                  {rendered ? "Kodu göster" : "Sanitize önizleme"}
+                </button>
+              </div>
+              {rendered ? (
+                <div className="border border-slate-800 rounded overflow-hidden bg-white">
+                  <iframe sandbox="" srcDoc={item.body_html} title="q-html" className="w-full min-h-[420px]" data-testid="q-html-iframe" />
                 </div>
-                <h2 className="text-lg font-semibold text-slate-100 truncate">{preview.subject}</h2>
-                <p className="text-xs text-slate-500 mono truncate">{preview.sender} → {preview.recipient}</p>
-              </div>
-              <button onClick={() => setPreview(null)} data-testid="q-preview-close" className="text-slate-500 hover:text-slate-100">
-                <X className="w-5 h-5" />
-              </button>
+              ) : (
+                <pre className="mono text-[10px] bg-slate-900/60 p-3 rounded whitespace-pre-wrap break-all border border-slate-800 max-h-[50vh] overflow-y-auto text-slate-400">{item.body_html}</pre>
+              )}
+              <div className="text-[9px] text-rose-500">⚠ Sandboxed iframe · script çalışmaz, hiçbir dış istek yapılmaz</div>
             </div>
-            <div className="grid grid-cols-3 border-b border-slate-800 text-xs">
-              <div className="p-4 border-r border-slate-800">
-                <div className="text-slate-500 uppercase tracking-widest text-[10px] mb-1 flex items-center gap-1"><Server className="w-3 h-3"/> {t("quarantine.modal_ip")}</div>
-                <div className="mono text-slate-200">{preview.sender_ip}</div>
-              </div>
-              <div className="p-4 border-r border-slate-800">
-                <div className="text-slate-500 uppercase tracking-widest text-[10px] mb-1 flex items-center gap-1"><Mail className="w-3 h-3"/> {t("quarantine.modal_size")}</div>
-                <div className="mono text-slate-200">{preview.size_kb} KB</div>
-              </div>
-              <div className="p-4">
-                <div className="text-slate-500 uppercase tracking-widest text-[10px] mb-1 flex items-center gap-1"><Hash className="w-3 h-3"/> {t("quarantine.modal_rules_count")}</div>
-                <div className="mono text-slate-200">{preview.rules_matched?.length || 0}</div>
-              </div>
+          )}
+
+          {active === "headers" && (
+            <div className="space-y-2" data-testid="q-tab-headers">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500">Ham Başlıklar</div>
+              <pre className="mono text-[10px] bg-slate-900/60 p-3 rounded whitespace-pre-wrap break-all border border-slate-800 max-h-[50vh] overflow-y-auto text-slate-300">{item.headers || item.headers_full || item.headers_preview || "(başlık kaydı yok)"}</pre>
             </div>
-            <div className="flex-1 overflow-y-auto">
-              <div className="p-5">
-                <h4 className="text-xs uppercase tracking-widest text-slate-500 mb-2">{t("quarantine.matched_rules")}</h4>
-                <div className="flex flex-wrap gap-1.5 mb-5">
-                  {(preview.rules_matched || []).map((r) => (
+          )}
+
+          {active === "attachments" && (
+            <div className="space-y-2" data-testid="q-tab-attachments">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Ekler ({attachments.length})</div>
+              {attachments.length === 0 ? (
+                <div className="text-center text-xs text-slate-500 py-6 border border-dashed border-slate-800 rounded">Bu mesajda ek yok</div>
+              ) : (
+                <div className="space-y-2">
+                  {attachments.map((a, i) => (
+                    <div key={i} className={`p-3 rounded-lg border flex items-start gap-3 ${a.malware ? "border-rose-500/30 bg-rose-500/5" : "border-slate-800 bg-slate-900/40"}`}
+                         data-testid={`q-attach-${i}`}>
+                      <div className={`w-9 h-9 rounded flex items-center justify-center shrink-0 ${a.malware ? "bg-rose-500/20 text-rose-300" : "bg-slate-800 text-slate-400"}`}>📎</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="mono text-sm font-medium text-slate-100 truncate" title={a.filename}>{a.filename}</div>
+                        <div className="mono text-[10px] text-slate-500 flex gap-2 mt-0.5">
+                          <span>{a.content_type || "?"}</span><span>·</span>
+                          <span>{humanSize(a.size)}</span>
+                          {a.sha256 && <><span>·</span><span title={a.sha256}>sha: {String(a.sha256).slice(0, 8)}…</span></>}
+                        </div>
+                        {a.malware && (
+                          <div className="text-[11px] text-rose-300 mt-1">⚠ {a.malware}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="text-[10px] text-slate-500 pt-2 border-t border-slate-800">💡 Panel yalnızca meta veri saklar · ekler sunucunuzun spool'unda</div>
+            </div>
+          )}
+
+          {active === "rules" && (
+            <div className="space-y-2" data-testid="q-tab-rules">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Eşleşen Kurallar ({rules.length})</div>
+              {rules.length === 0 ? (
+                <div className="text-center text-xs text-slate-500 py-6">Kural eşleşmesi kaydı yok</div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {rules.map((r) => (
                     <span key={r} className="mono text-[11px] px-2 py-0.5 rounded border border-slate-700 bg-slate-800/60 text-slate-300">{r}</span>
                   ))}
                 </div>
-                <h4 className="text-xs uppercase tracking-widest text-slate-500 mb-2">{t("quarantine.headers")}</h4>
-                <pre className="mono text-[11px] bg-slate-950 border border-slate-800 rounded p-3 text-slate-400 overflow-x-auto mb-5">{preview.headers}</pre>
-                <h4 className="text-xs uppercase tracking-widest text-slate-500 mb-2">{t("quarantine.body_preview")}</h4>
-                <pre className="mono text-[12px] bg-slate-950 border border-slate-800 rounded p-3 text-slate-300 whitespace-pre-wrap">{preview.body_preview}</pre>
-              </div>
+              )}
             </div>
-            <div className="p-4 border-t border-slate-800 flex items-center justify-end gap-2">
-              <button data-testid="q-preview-report" onClick={() => { bulk.mutate({ action: "report", ids: [preview.id] }); setPreview(null); }}
-                className="px-3 py-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm">
-                {t("quarantine.teach_bayes")}
-              </button>
-              <button data-testid="q-preview-delete" onClick={() => { bulk.mutate({ action: "delete", ids: [preview.id] }); setPreview(null); }}
-                className="px-3 py-1.5 rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-sm">
-                {t("quarantine.preview_delete")}
-              </button>
-              <button data-testid="q-preview-release" onClick={() => { bulk.mutate({ action: "release", ids: [preview.id] }); setPreview(null); }}
-                className="px-3 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm">
-                {t("quarantine.preview_release")}
-              </button>
+          )}
+
+          {active === "engines" && (
+            <div className="space-y-1.5" data-testid="q-tab-engines">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Motor Skorları</div>
+              {engineList.map((k) => (
+                <div key={k} className="flex justify-between text-xs bg-slate-900/60 px-3 py-2 rounded border border-slate-800">
+                  <span className="mono text-slate-400">{k}</span>
+                  <span className={`mono font-semibold ${typeof scores[k] === "number" && scores[k] >= 5 ? "text-rose-400" : "text-slate-300"}`}>
+                    {typeof scores[k] === "number" ? scores[k].toFixed(2) : String(scores[k]).slice(0, 60)}
+                  </span>
+                </div>
+              ))}
             </div>
-          </div>
+          )}
         </div>
-      )}
-    </div>
+
+        <div className="px-5 py-3 border-t border-slate-800 bg-slate-950/80 sticky bottom-0 flex gap-2 flex-wrap">
+          <button onClick={() => onAction("report", item.id)}
+                  className="text-xs px-3 py-1.5 rounded bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 inline-flex items-center gap-1"
+                  data-testid="q-detail-report">
+            <GraduationCap className="w-3 h-3" /> Bayes'e Öğret
+          </button>
+          <button onClick={() => onAction("release", item.id)}
+                  className="text-xs px-3 py-1.5 rounded bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 inline-flex items-center gap-1"
+                  data-testid="q-detail-release">
+            <RotateCcw className="w-3 h-3" /> Serbest Bırak
+          </button>
+          <button onClick={() => onAction("delete", item.id)}
+                  className="text-xs px-3 py-1.5 rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 inline-flex items-center gap-1 ml-auto"
+                  data-testid="q-detail-delete">
+            <Trash2 className="w-3 h-3" /> Sil
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
