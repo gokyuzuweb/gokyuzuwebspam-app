@@ -299,12 +299,13 @@ export default function Licenses() {
                 <thead>
                   <tr className="text-[11px] uppercase tracking-widest text-slate-500">
                     <th className="text-left px-4 py-3 font-semibold">Müşteri</th>
+                    <th className="text-left px-4 py-3 font-semibold">Durum</th>
                     <th className="text-left px-4 py-3 font-semibold">Anahtar</th>
                     <th className="text-left px-4 py-3 font-semibold">Plan</th>
                     <th className="text-left px-4 py-3 font-semibold">IP'ler</th>
                     <th className="text-left px-4 py-3 font-semibold">Bitiş</th>
                     <th className="text-left px-4 py-3 font-semibold">Son heartbeat</th>
-                    <th className="text-right px-4 py-3 font-semibold w-20"></th>
+                    <th className="text-right px-4 py-3 font-semibold w-24"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -316,6 +317,19 @@ export default function Licenses() {
                         <td className="px-4 py-2.5">
                           <div className="text-slate-200">{r.customer_name}</div>
                           <div className="text-[11px] text-slate-500 mono">{r.customer_email || "—"}</div>
+                        </td>
+                        <td className="px-4 py-2.5" data-testid={`lic-status-${r.id}`}>
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                            status === "active"   ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" :
+                            status === "expired"  ? "bg-rose-500/15 text-rose-300 border border-rose-500/30" :
+                                                    "bg-slate-700/40 text-slate-400 border border-slate-700"
+                          }`} data-testid={`lic-status-pill-${status}-${r.id}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              status === "active" ? "bg-emerald-400 animate-pulse" :
+                              status === "expired" ? "bg-rose-400" : "bg-slate-500"
+                            }`}></span>
+                            {status === "active" ? "AKTİF" : status === "expired" ? "SÜRESİ DOLDU" : "PASİF"}
+                          </span>
                         </td>
                         <td className="px-4 py-2.5">
                           <button onClick={() => copyKey(r.license_key)} className="mono text-[11px] text-indigo-300 hover:text-indigo-200 inline-flex items-center gap-1">
@@ -332,9 +346,6 @@ export default function Licenses() {
                         </td>
                         <td className="px-4 py-2.5">
                           <div className={`mono text-xs ${expired ? "text-rose-400" : "text-slate-300"}`}>{isoDate(r.valid_until)}</div>
-                          <div className="text-[10px]"><Badge tone={status === "active" ? "success" : status === "expired" ? "danger" : "warning"}>
-                            {status === "active" ? "AKTİF" : status === "expired" ? "SÜRESİ DOLDU" : "PASİF"}
-                          </Badge></div>
                         </td>
                         <td className="px-4 py-2.5">
                           {r.last_heartbeat_at ? (
