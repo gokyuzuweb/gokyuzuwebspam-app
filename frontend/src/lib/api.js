@@ -333,6 +333,11 @@ export const api = {
   docsMediaDelete: (id) =>
     client.delete(`/mailscanner/docs/media/${id}`).then(r => r.data),
 
+  // Module AI Assistant
+  moduleAsk: (payload) => llmClient.post("/mailscanner/ai/module-ask", payload).then(r => r.data),
+  moduleIllustrate: (payload) => llmClient.post("/mailscanner/ai/module-illustrate", payload).then(r => r.data),
+  moduleQaLog: (moduleKey) => client.get("/mailscanner/ai/module-qa-log", { params: moduleKey ? { module_key: moduleKey } : {} }).then(r => r.data),
+
   // Threat Intelligence
   tiIocList: (opts = {}) => client.get("/threat-intel/ioc", { params: opts }).then(r => r.data),
   tiIocAdd: (payload) => client.post("/threat-intel/ioc", payload).then(r => r.data),

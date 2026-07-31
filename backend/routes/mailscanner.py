@@ -922,3 +922,101 @@ async def delete_docs_media(media_id: str):
     except Exception: pass
     await db.docs_media.delete_one({"id": media_id})
     return {"ok": True}
+
+
+# ============================================================================
+#  AI MODULE ASSISTANT — soru sor, resim uret, otomatik kilavuz
+# ============================================================================
+class ModuleAskIn(BaseModel):
+    module_key: str
+    module_label: str
+    question: str = Field(..., min_length=1, max_length=1000)
+
+
+@router.post("/ai/module-ask")
+async def module_ask(payload: ModuleAskIn):
+    """Kullanici modul hakkinda soru sorar, LLM Turkce yanit verir."""
+    import os
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(500, "EMERGENT_LLM_KEY yok")
+    prompt = (
+        f"GökyüzüWebSpam panelindeki '{payload.module_label}' ({payload.module_key}) modulu hakkinda "
+        f"kullanicinin sorusu:\n\n{payload.question}\n\n"
+        "3-5 cumleyle Turkce, kisa ve konusma tarzi yanit ver. "
+        "Modul ne yapar, nasil kullanilir, ne zaman kullanilir? "
+        "Emoji ve jargon kullanma."
+    )
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=api_key, session_id=f"mod-ask-{uuid.uuid4().hex[:8]}",
+            system_message="Sen GokyuzuWebSpam paneli icin bir yardim asistanisin. Konusma tarzi Turkce yanitla.",
+        ).with_model("anthropic", "claude-sonnet-4-6")
+        r = await chat.send_message(UserMessage(text=prompt))
+        answer = (r or "").strip()
+    except Exception as ex:
+        raise HTTPException(500, f"LLM hatasi: {type(ex).__name__}")
+    # Save to Q&A log
+    await db.module_qa_log.insert_one({
+        "id": str(uuid.uuid4()),
+        "module_key": payload.module_key,
+        "question": payload.question,
+        "answer": answer,
+        "created_at": _iso(),
+    })
+    return {"answer": answer, "module_key": payload.module_key}
+
+
+class ModuleIllustrateIn(BaseModel):
+    module_key: str
+    module_label: str
+    style: Optional[str] = "modern flat illustration"
+
+
+@router.post("/ai/module-illustrate")
+async def module_illustrate(payload: ModuleIllustrateIn):
+    """Nano Banana / Gemini image generation ile modul icin illustrasyon uret.
+    Uretilen image'i /uploads/docs altina kaydet + docs_media koleksiyonuna ekle."""
+    import os
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(500, "EMERGENT_LLM_KEY yok")
+    prompt = (
+        f"A {payload.style} for a mail security dashboard module called '{payload.module_label}'. "
+        f"Dark cyberpunk theme, indigo/purple gradient, technical UI elements, shields, mail icons. "
+        f"No text on image. Vector-style, clean, professional."
+    )
+    try:
+        from emergentintegrations.llm.imagegen import OpenAIImageGeneration
+        img_gen = OpenAIImageGeneration(api_key=api_key)
+        images = await img_gen.generate_images(prompt=prompt, model="gpt-image-1", number_of_images=1)
+        if not images:
+            raise HTTPException(500, "Gorsel uretilemedi")
+        # image bytes -> save
+        img_bytes = images[0]
+        mid = str(uuid.uuid4())
+        filepath = _MEDIA_DIR / f"{mid}.png"
+        filepath.write_bytes(img_bytes)
+        doc = {
+            "id": mid, "module_key": payload.module_key,
+            "filename": f"ai-generated-{payload.module_key}.png",
+            "content_type": "image/png", "size": len(img_bytes),
+            "caption": f"🤖 AI ile üretildi · {payload.style}",
+            "url": f"/api/mailscanner/docs/media/{mid}",
+            "source": "ai_generated",
+            "created_at": _iso(),
+        }
+        await db.docs_media.insert_one(dict(doc))
+        return doc
+    except HTTPException:
+        raise
+    except Exception as ex:
+        raise HTTPException(500, f"Gorsel uretim hatasi: {type(ex).__name__}: {str(ex)[:100]}")
+
+
+@router.get("/ai/module-qa-log")
+async def module_qa_log(module_key: Optional[str] = None, limit: int = 20):
+    q = {"module_key": module_key} if module_key else {}
+    rows = await db.module_qa_log.find(q, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"items": rows}

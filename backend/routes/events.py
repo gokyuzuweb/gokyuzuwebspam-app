@@ -68,6 +68,12 @@ async def ingest_event(evt: MailEvent, request: Request):
         asyncio.create_task(evaluate_and_fire(evt.license_key, doc))
     except Exception:
         pass
+    # IOC otomatik enforce (ingest-time: client_ip / body url'lerini IOC listesiyle kontrol)
+    try:
+        import asyncio
+        asyncio.create_task(_ioc_enforce(doc))
+    except Exception:
+        pass
     # AI Batch Pre-generate: high_spam / virus verdictleri icin arkaplan LLM aciklama
     if doc.get("verdict") in ("high_spam", "virus"):
         try:
@@ -85,7 +91,7 @@ async def ingest_event(evt: MailEvent, request: Request):
 
 
 async def _ai_predict_bg(doc: dict) -> None:
-    """Hizli AI predict — heuristic sonucu event uzerine yazilir (predicted_verdict/predicted_score).
+    """Hizli AI predict — heuristic sonucu event uzerine yazilir.
     Config'de ai_auto_quarantine aktifse threshold uzeri predicted skorlar otomatik override eder."""
     try:
         from routes.mailscanner import PredictIn, _heuristic_score, _cfg
@@ -109,16 +115,49 @@ async def _ai_predict_bg(doc: dict) -> None:
         if (auto.get("enabled") and score >= float(auto.get("threshold", 6.0))
                 and doc.get("verdict") in ("clean", None, "")):
             action = auto.get("action", "quarantine")
-            override = {
-                "quarantine": "spam",
-                "tag": "spam",
-                "reject": "blocked",
-            }.get(action, "spam")
+            override = {"quarantine": "spam", "tag": "spam", "reject": "blocked"}.get(action, "spam")
             update["verdict"] = override
             update["ai_override"] = {"reason": "predict_auto_action",
                                       "orig_verdict": doc.get("verdict"),
                                       "score": score, "action": action}
         await db.mail_events.update_one({"id": doc["id"]}, {"$set": update})
+    except Exception:
+        return
+
+
+async def _ioc_enforce(doc: dict) -> None:
+    """Ingest sonrasi client_ip veya body url'lerini IOC listesiyle kontrol et.
+    Eslesirse verdict'i override et."""
+    try:
+        ip = doc.get("client_ip") or doc.get("server_ip")
+        if ip:
+            ioc = await db.threat_iocs.find_one({"type": "ip", "value": ip}, {"_id": 0})
+            if ioc:
+                await db.mail_events.update_one(
+                    {"id": doc["id"]},
+                    {"$set": {
+                        "verdict": "blocked" if ioc.get("tag") in ("malware", "c2", "ransomware") else "high_spam",
+                        "ioc_hit": {"type": "ip", "value": ip, "tag": ioc.get("tag"),
+                                     "confidence": ioc.get("confidence"),
+                                     "source": ioc.get("source")},
+                    }},
+                )
+                return
+        import re
+        urls = re.findall(r"https?://[^\s<>\"']+", (doc.get("body_preview") or "")[:2000])
+        for url in urls[:20]:
+            ioc = await db.threat_iocs.find_one({"type": "url", "value": url}, {"_id": 0})
+            if ioc:
+                await db.mail_events.update_one(
+                    {"id": doc["id"]},
+                    {"$set": {
+                        "verdict": "blocked",
+                        "ioc_hit": {"type": "url", "value": url, "tag": ioc.get("tag"),
+                                     "confidence": ioc.get("confidence"),
+                                     "source": ioc.get("source")},
+                    }},
+                )
+                return
     except Exception:
         return
 

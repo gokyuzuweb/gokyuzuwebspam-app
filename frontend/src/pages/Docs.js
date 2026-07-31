@@ -243,8 +243,10 @@ export default function Docs() {
             <div className="p-5 space-y-5">
               {/* Video-style Animated Walkthrough */}
               <AnimatedWalkthrough module_key={active.key} tone={active.tone}/>
-              {/* User uploaded media gallery */}
-              <MediaGallery moduleKey={active.key} tone={active.tone}/>
+              {/* User uploaded media gallery + AI illustration */}
+              <MediaGallery moduleKey={active.key} tone={active.tone} moduleLabel={active.label}/>
+              {/* AI Ask - Chat with module */}
+              <AiModuleChat module={active}/>
               {/* AI Sesli Kılavuz */}
               <AiNarration module={active}/>
 
@@ -634,7 +636,7 @@ function CacheScene() {
   );
 }
 
-function MediaGallery({ moduleKey, tone }) {
+function MediaGallery({ moduleKey, tone, moduleLabel }) {
   const [caption, setCaption] = useState("");
   const [uploading, setUploading] = useState(false);
   const qc = useQueryClient();
@@ -645,6 +647,11 @@ function MediaGallery({ moduleKey, tone }) {
   const del = useMutation({
     mutationFn: (id) => api.docsMediaDelete(id),
     onSuccess: () => { toast.success("Silindi"); qc.invalidateQueries({ queryKey: ["docs-media", moduleKey] }); },
+  });
+  const illustrate = useMutation({
+    mutationFn: () => api.moduleIllustrate({ module_key: moduleKey, module_label: moduleLabel || moduleKey }),
+    onSuccess: () => { toast.success("🤖 AI görseli üretildi"); qc.invalidateQueries({ queryKey: ["docs-media", moduleKey] }); },
+    onError: (e) => toast.error("Üretilemedi: " + (e?.response?.data?.detail || e.message)),
   });
   const onFile = async (e) => {
     const f = e.target.files?.[0];
@@ -676,6 +683,11 @@ function MediaGallery({ moduleKey, tone }) {
           {uploading ? "Yükleniyor..." : "+ GIF / Video / Görsel Yükle"}
           <input type="file" accept="image/gif,image/png,image/jpeg,image/webp,video/mp4,video/webm" className="hidden" onChange={onFile} disabled={uploading}/>
         </label>
+        <button onClick={() => illustrate.mutate()} disabled={illustrate.isPending}
+                data-testid={`docs-media-ai-${moduleKey}`}
+                className="text-xs px-3 py-1.5 rounded-md border border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-300 hover:bg-fuchsia-500/20 disabled:opacity-40">
+          <Sparkles className="w-3 h-3 inline mr-1"/>{illustrate.isPending ? "AI üretiyor..." : "AI ile Görsel Üret"}
+        </button>
       </div>
       <input value={caption} onChange={(e) => setCaption(e.target.value)}
              placeholder="Açıklama (opsiyonel, dosya yüklemeden önce yaz)"
@@ -700,6 +712,56 @@ function MediaGallery({ moduleKey, tone }) {
       ) : (
         <div className="text-xs text-slate-500 italic text-center py-4">Henüz görsel yok. GIF/screencap yükle → drawer'da otomatik görüntülenir.</div>
       )}
+    </div>
+  );
+}
+
+function AiModuleChat({ module }) {
+  const [question, setQuestion] = useState("Bu modül ne işe yarar?");
+  const [messages, setMessages] = useState([]);
+  const ask = useMutation({
+    mutationFn: (q) => api.moduleAsk({ module_key: module.key, module_label: module.label, question: q }),
+    onSuccess: (d) => setMessages(m => [...m, { role: "user", text: question }, { role: "ai", text: d.answer }]),
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const submit = () => { if (question.trim()) { ask.mutate(question); setQuestion(""); } };
+  const suggestions = ["Bu modül ne işe yarar?", "Nasıl kullanmalıyım?", "En iyi ayarlar neler?", "Hangi senaryolarda kullanılır?"];
+  return (
+    <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-4">
+      <div className="text-indigo-300 font-semibold text-sm flex items-center gap-2 mb-2">
+        <Sparkles className="w-4 h-4"/> AI Modül Asistanı · Sor, öğren
+      </div>
+      <div className="flex flex-wrap gap-1 mb-2">
+        {suggestions.map(s => (
+          <button key={s} onClick={() => { setQuestion(s); }} data-testid={`mod-ask-suggest-${s.slice(0,10)}`}
+                  className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+            {s}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2 mb-2">
+        <input value={question} onChange={(e) => setQuestion(e.target.value)}
+               onKeyDown={(e) => e.key === "Enter" && submit()}
+               data-testid="mod-ask-input"
+               placeholder="Bu modül hakkında sor..."
+               className="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm text-slate-100"/>
+        <button data-testid="mod-ask-btn" onClick={submit} disabled={ask.isPending || !question.trim()}
+                className="text-xs px-3 py-1.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-40">
+          {ask.isPending ? "Yanıtlanıyor..." : "Sor"}
+        </button>
+      </div>
+      <div className="space-y-2 max-h-64 overflow-y-auto">
+        {messages.map((m, i) => (
+          <div key={i} className={m.role === "user" ? "text-right" : ""}>
+            <div className={`inline-block max-w-[85%] rounded p-2 text-xs ${m.role === "user" ? "bg-slate-800 text-slate-300" : "bg-indigo-500/10 text-slate-100 border border-indigo-500/30"}`}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {messages.length === 0 && (
+          <div className="text-xs text-slate-500 italic text-center py-2">Soruyu yaz ya da öneriden birine tıkla → AI yanıtlayacak</div>
+        )}
+      </div>
     </div>
   );
 }
