@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { useT } from "@/i18n";
+import SmtpSettings from "@/components/SmtpSettings";
 
 function Toggle({ checked, onChange, testid }) {
   return (
@@ -66,6 +67,7 @@ export default function Notifications() {
   return (
     <div className="p-6 grid grid-cols-12 gap-6">
       <div className="col-span-12 lg:col-span-8 space-y-4">
+        <SmtpSettings />
         <Card>
           <CardHeader
             title={<span className="flex items-center gap-2"><Mail className="w-4 h-4 text-emerald-400" /> {t("notifications.admin_email_title")}</span>}
