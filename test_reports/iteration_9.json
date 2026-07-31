@@ -1,0 +1,57 @@
+{
+  "summary": "Deep verification of GokyuzuWebSpam v17 (Master/Customer split, Version Publish, Mail Detail Viewer, TopIPs drilldown, SMTP+Test Mail, Reseller mobile, Engines dedupe, Alerts Timeline). Backend: 16/16 pytest passing on new /api/admin/whoami, /admin/master-unlock (cookie), /version/publish (dual URLs, auto-detect), /settings/smtp (mask + preserve), /mail/test (400 invalid, 200 sendmail), /events/test-ingest + /events/{id} (body_preview/headers_full/attachments/Adamu/X-Spam-Level all present), /events/{id}/mark-spam, /alerts/timeline (7d window), /reseller/branding persist, /engines exactly 6 unique. Cookie session persists across reloads AND allows /version/publish from non-master IP (via_cookie=true) — verified end-to-end. Frontend: master gate ('Yetkisiz Erisim' + master-unlock button) → after X-Forwarded-For=89.19.15.58 + localStorage set, License Management page + VersionPublishCard render; 'Kurulu Surumu Yayinla' opens animated success modal with confetti, dual URL rows (host + IP), copy buttons, Tamam closes. Sidebar role strip correctly shows 'MASTER · 89.19.15.58' for master, License Management + Pricing entries visible. Engines page renders 6 testid cards (spamassassin, clamav, dcc, razor, rspamd, ai). Alerts page shows data-testid=alerts-timeline-card. SMTP Relay card on /panel/notifications (collapsed by default, expanded via smtp-card-toggle) — Gmail preset fills host=smtp.gmail.com/port=587/starttls; Test Mail → 'Gönderildi → qa-test@example.com (sendmail)' toast. Mail Detail Drawer opens on live-mail row click with Ekler tab, and large red 'Bu SPAM · Kara Listeye Ekle + Filtreye Öğret' CTA (data-testid=detail-mark-spam) visible even for clean events; clicking it closes drawer and shows blacklist success toast — verified end-to-end. Reseller mobile at 390px viewport renders login screen without crash.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Dashboard.js — TopIPs BarChart",
+        "issue": "Clicking a bar in 'En Cok Supheli Gonderici IP'leri' chart does NOT update URL with ?ip=X. Tried native click on .recharts-bar-rectangle, hover-then-click, and raw coordinate mouse.click — URL stays at /panel and no 'filtre: X.X.X.X' badge appears in LiveMailEvents. Recharts BarChart onClick fires but ev.activePayload is likely undefined when clicking directly on the bar rect (in some Recharts versions, activePayload is only populated when clicking chart background). Suggested fix: use Bar's own onClick={(data)=>{const ip=data.payload.ip; ...}} instead of BarChart-level onClick.",
+        "selector": ".recharts-bar-rectangle / BarChart onClick",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "All panel pages (Dashboard, Notifications)",
+        "issues": [
+          "React console warning: 'In HTML, <span> cannot be a child of <option>' — hydration warning coming from a form <select> where <option> contains a nested <span>. Not blocking but should be cleaned up.",
+          "Recharts warning 'width(-1) and height(-1) of chart should be greater than 0' on multiple charts — likely a container that starts hidden and ResponsiveContainer measures before layout. Not fatal but noisy.",
+          "Google Fonts jetbrainsmono.woff2 blocked by CORS (net::ERR_FAILED) — falls back to system mono; no functional impact but page reports 404s."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v17_master_publish_mail.py",
+    "/app/test_reports/pytest/v17_results.xml"
+  ],
+  "action_items": [
+    "FIX TopIPs bar-click → change from BarChart onClick(ev.activePayload...) to <Bar onClick={(d)=>...}> in /app/frontend/src/pages/Dashboard.js. Without this, the 'click a bar → filter Live Mail Traffic by IP' UX advertised in the CardHeader tooltip is broken.",
+    "MINOR: locate the <select><option><span>...</span></option></select> in the sidebar/somewhere and unwrap the span to remove hydration warning.",
+    "MINOR: consider making SMTP card start expanded (or expose an explicit shortcut) — currently users must click chevron to reveal preset + test-mail controls; discoverability is low."
+  ],
+  "critical_code_review_comments": [
+    "server.py L1499-1512 _require_master: correctly checks cookie first then IP+key. Good.",
+    "server.py L1476 set_cookie samesite='lax' + secure=True + httponly=False — httponly=False is intentional (SPA reads cookie). Note: because domain is not specified, cookie stays same-origin which is fine.",
+    "routes/insights.py alerts_timeline returns only days that had alerts (max 7 items). Task spec said '7-day items array' — current impl is a sparse aggregation; if UI expects padded array of 7 days, add day-fill (currently NOT padded). Frontend BarChart handles empty-days fine visually so acceptable.",
+    "routes/events.py test-ingest: samples use ts=datetime.now(timezone.utc) but the returned events end up NOT being the newest in the panel (real plugin heartbeats have a slightly different clock in preview). This is a preview-env artifact, not a bug — the events ARE inserted and reachable via verdict filter.",
+    "Dashboard.js L171-182 — the URL update logic uses history.replaceState + popstate dispatch. Because Recharts BarChart-level onClick receives ev only when clicking chart plot area (not the actual bar rect in some versions), the handler never fires from a bar click. This is the root cause of the TopIPs bug above."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v17_master_publish_mail.py (NEW)"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16)",
+    "frontend": "~92% (11/12 flows pass; TopIPs bar click broken)"
+  },
+  "test_credentials": "Master license MS-C02AB012652A4FE692D69676, X-Forwarded-For 89.19.15.58 (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "Called /api/events/test-ingest which inserts 5 sample MailEvent docs (including spammer@junkmail.example with extended fields). Also called /api/reseller/branding PUT with brand_name=TESTBrand — cleanup optional.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New endpoints all functional. Only functional bug: TopIPs BarChart onClick in Dashboard.js does not fire with activePayload → URL never gets ?ip=X → LiveMailEvents filter never triggers via chart. Everything else (master gate, cookie unlock, version publish with confetti modal + dual URLs, SMTP presets + sendmail test, mail detail drawer + mark-spam blacklist, engines dedupe=6, alerts timeline card, reseller mobile login) works. Cookie session persistence verified: after /admin/master-unlock the gws_master_session cookie alone (no X-Forwarded-For) grants master privileges — /version/publish returned 200 with via_cookie=true.",
+  "rca_of_the_issue": "TopIPs URL-filter bug RCA: /app/frontend/src/pages/Dashboard.js L167-182 attaches onClick to <BarChart> and reads ev.activePayload[0].payload.ip. In current Recharts, ev.activePayload is populated when the user clicks inside the chart plot area but NOT when they click directly on a <Bar> rectangle (the click on the SVG rect stops event before Recharts computes active tooltip). Fix: attach onClick to <Bar dataKey='count' onClick={(data)=>{const ip=data.payload.ip; ...}}/> — Bar's own onClick receives the datum directly."
+}

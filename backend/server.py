@@ -312,7 +312,14 @@ async def seed_if_empty() -> None:
     ]
     await db.rules.insert_many([r.model_dump() for r in rules])
 
-    await db.engines.insert_many([e.model_dump() for e in ENGINE_SEED])
+    # Engines — upsert each so restarts don't duplicate; unique index on 'name'
+    try:
+        await db.engines.create_index("name", unique=True)
+    except Exception:
+        pass
+    for e in ENGINE_SEED:
+        d = e.model_dump()
+        await db.engines.update_one({"name": d["name"]}, {"$setOnInsert": d}, upsert=True)
     await db.settings.insert_one({"_key": "policy", **PolicySettings().model_dump()})
     await db.settings.insert_one({"_key": "notifications", **NotificationSettings().model_dump()})
     # Version manifest + current version
@@ -430,6 +437,18 @@ async def seed_if_empty() -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     await seed_if_empty()
+    # Deduplicate engines (was seeded multiple times in earlier versions)
+    try:
+        seen = set()
+        async for e in db.engines.find({}, {"_id": 1, "name": 1}):
+            n = e.get("name")
+            if n in seen:
+                await db.engines.delete_one({"_id": e["_id"]})
+            else:
+                seen.add(n)
+        await db.engines.create_index("name", unique=True)
+    except Exception as ex:
+        log.warning("engines dedupe skipped: %s", ex)
 
 
 @app.on_event("shutdown")
@@ -1411,10 +1430,79 @@ async def admin_whoami(request: Request, license_key: Optional[str] = None):
     Version Publish, MRR panel). Sets a lightweight flag; the *authoritative* gating
     still happens on mutating endpoints via `_require_master`."""
     r = await _is_master(request, license_key)
+    # If session cookie carries a previously-issued master session, honor it.
+    cookie_master = request.cookies.get("gws_master_session")
+    if cookie_master:
+        row = await db.settings.find_one({"_key": f"master_session:{cookie_master}"}, {"_id": 0})
+        if row and row.get("valid_until", "") > datetime.now(timezone.utc).isoformat():
+            r["is_master"] = True
+            r["via_cookie"] = True
     return r
 
 
+class MasterUnlockIn(BaseModel):
+    license_key: str
+
+
+@api.post("/admin/master-unlock")
+async def admin_master_unlock(payload: MasterUnlockIn, request: Request):
+    """One-time unlock: verify IP+key, mint a 30-day master session cookie.
+    After unlock, subsequent requests are recognised as master via cookie
+    (no need to spoof X-Forwarded-For or keep the key in localStorage)."""
+    r = await _is_master(request, payload.license_key)
+    if not r["is_master"]:
+        raise HTTPException(
+            403,
+            f"Master oturum acilmadi (ip_match={r['ip_match']}, key_match={r['key_match']}). "
+            f"Bu istek {r['client_ip']} IP'sinden geldi.",
+        )
+    token = str(uuid.uuid4())
+    valid_until = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    await db.settings.update_one(
+        {"_key": f"master_session:{token}"},
+        {"$set": {
+            "_key": f"master_session:{token}",
+            "issued_to_ip": r["client_ip"],
+            "license_key": payload.license_key,
+            "valid_until": valid_until,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    resp = {"ok": True, "valid_until": valid_until, "token": token}
+    # Set as HttpOnly-ish cookie (we let JS read it too since our SPA runs in same origin)
+    from fastapi.responses import JSONResponse
+    r_ = JSONResponse(resp)
+    r_.set_cookie(
+        key="gws_master_session",
+        value=token,
+        max_age=30 * 86400,
+        samesite="lax",
+        httponly=False,
+        secure=True,
+        path="/",
+    )
+    return r_
+
+
+@api.post("/admin/master-logout")
+async def admin_master_logout(request: Request):
+    cookie_master = request.cookies.get("gws_master_session")
+    if cookie_master:
+        await db.settings.delete_one({"_key": f"master_session:{cookie_master}"})
+    from fastapi.responses import JSONResponse
+    r_ = JSONResponse({"ok": True})
+    r_.delete_cookie("gws_master_session", path="/")
+    return r_
+
+
 async def _require_master(request: Request, license_key: Optional[str]) -> None:
+    # Accept cookie-based session too
+    cookie_master = request.cookies.get("gws_master_session")
+    if cookie_master:
+        row = await db.settings.find_one({"_key": f"master_session:{cookie_master}"}, {"_id": 0})
+        if row and row.get("valid_until", "") > datetime.now(timezone.utc).isoformat():
+            return
     r = await _is_master(request, license_key)
     if not r["is_master"]:
         raise HTTPException(

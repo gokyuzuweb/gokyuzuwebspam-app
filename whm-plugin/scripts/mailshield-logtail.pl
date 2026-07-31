@@ -149,6 +149,9 @@ sub _process_line {
         $scores{spamassassin} = $spam_score + 0 if defined $spam_score;
         $scores{sa_report}    = substr($spam_report, 0, 500) if defined $spam_report;
 
+        # NEW: read body/attachments/headers from Exim spool if available
+        my ($headers_full, $body_preview, $attachments) = _spool_content($mid);
+
         _post_event({
             license_key     => $license,
             server_hostname => $host,
@@ -161,6 +164,9 @@ sub _process_line {
             action          => $action,
             total_score     => ($spam_score // 0) + 0,
             scores          => \%scores,
+            headers_full    => $headers_full,
+            body_preview    => $body_preview,
+            attachments     => $attachments,
             ts              => "${date}T${time}+00:00",
         });
         return;
@@ -207,6 +213,70 @@ sub _spam_from_spool {
         }
     }
     return ($score, $status, $report);
+}
+
+# Returns (headers_full, body_preview, attachments_arrayref) for a given Exim mid
+# by parsing the -H (headers) and -D (data/body) spool files.
+sub _spool_content {
+    my ($mid) = @_;
+    my ($headers_full, $body_preview);
+    my @attachments;
+    for my $sub ('', map { "$_/" } 0..9, 'A'..'F') {
+        my $h_path = "$spool/${sub}${mid}-H";
+        my $d_path = "$spool/${sub}${mid}-D";
+        if (-r $h_path) {
+            # Read raw headers (skip Exim internal prefix numbers)
+            if (open my $hf, '<', $h_path) {
+                my @lines;
+                my $skip_leading = 3;  # Exim prepends 3 metadata lines
+                while (my $l = <$hf>) {
+                    if ($skip_leading > 0) { $skip_leading--; next; }
+                    chomp $l;
+                    # Strip leading numeric length prefix used by Exim ("023 Header: value")
+                    $l =~ s/^\d{3}\s?//;
+                    push @lines, $l;
+                    last if length(join("\n", @lines)) > 8192;  # cap
+                }
+                close $hf;
+                $headers_full = join("\n", @lines);
+            }
+        }
+        if (-r $d_path) {
+            # Read body (starts after first line which is the message id)
+            if (open my $df, '<', $d_path) {
+                my $buf = '';
+                <$df>;  # skip first metadata line
+                while (my $l = <$df>) {
+                    $buf .= $l;
+                    last if length($buf) > 4096;   # 4KB preview
+                }
+                close $df;
+                # Cheap MIME peek: if body is multipart, extract only the first text part
+                if ($buf =~ /^\s*--[-A-Za-z0-9]+/m) {
+                    if ($buf =~ /Content-Type:\s*text\/plain[^\r\n]*\r?\n\r?\n(.*?)(?:\r?\n--)/msi) {
+                        $body_preview = substr($1, 0, 4096);
+                    } else {
+                        $body_preview = substr($buf, 0, 2048);
+                    }
+                    # Extract attachment filenames (best-effort)
+                    my @segs = split /\r?\n--/, $buf;
+                    for my $s (@segs) {
+                        if ($s =~ /Content-Disposition:\s*attachment[^;]*;\s*filename="?([^"\r\n]+)"?/i) {
+                            my $fn = $1;
+                            my $ct = ($s =~ /Content-Type:\s*([^;\r\n]+)/i) ? $1 : 'application/octet-stream';
+                            my $sz = length($s);
+                            push @attachments, { filename => $fn, content_type => $ct, size => $sz };
+                            last if scalar(@attachments) >= 10;
+                        }
+                    }
+                } else {
+                    $body_preview = substr($buf, 0, 4096);
+                }
+            }
+        }
+        last if defined $headers_full || defined $body_preview;
+    }
+    return ($headers_full, $body_preview, scalar(@attachments) ? \@attachments : undef);
 }
 
 sub _post_event {

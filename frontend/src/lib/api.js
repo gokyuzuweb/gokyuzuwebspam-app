@@ -106,7 +106,11 @@ export const api = {
 
   // Admin gate
   whoami: (licenseKey) =>
-    client.get("/admin/whoami", { params: licenseKey ? { license_key: licenseKey } : {} }).then(r => r.data),
+    client.get("/admin/whoami", { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  masterUnlock: (licenseKey) =>
+    client.post("/admin/master-unlock", { license_key: licenseKey }, { withCredentials: true }).then(r => r.data),
+  masterLogout: () =>
+    client.post("/admin/master-logout", null, { withCredentials: true }).then(r => r.data),
 
   // Licenses
   licenses: () => client.get("/licenses").then(r => r.data),

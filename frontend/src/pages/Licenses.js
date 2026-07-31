@@ -13,6 +13,56 @@ import EditLicenseModal from "@/components/EditLicenseModal";
 import VersionPublishCard from "@/components/VersionPublishCard";
 import { useIsMaster } from "@/hooks/useIsMaster";
 
+/**
+ * MasterUnlockButton — one-time master session bootstrap.
+ * When accessed via the WHM plugin (X-Forwarded-For carries master IP), clicking
+ * this button gets a 30-day cookie so future requests don't need spoofing.
+ */
+function MasterUnlockButton() {
+  const [key, setKey] = useState(
+    typeof window !== "undefined"
+      ? (localStorage.getItem("gws.event_license") || "")
+      : ""
+  );
+  const unlock = useMutation({
+    mutationFn: () => api.masterUnlock(key.trim()),
+    onSuccess: (data) => {
+      toast.success(`Master oturum açıldı · 30 gün geçerli (${new Date(data.valid_until).toLocaleDateString("tr-TR")}'e kadar)`);
+      setTimeout(() => window.location.reload(), 800);
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Oturum açılamadı"),
+  });
+  return (
+    <div className="mt-6 p-4 rounded-lg border border-indigo-500/25 bg-indigo-500/5 text-left">
+      <div className="text-[11px] uppercase tracking-widest text-indigo-400 font-bold mb-1">
+        Ana Yönetici Girişi
+      </div>
+      <p className="text-xs text-slate-400 mb-3">
+        Master IP'den (WHM plugin üzerinden) erişiyorsanız aşağıya lisans anahtarınızı
+        girin ve tek tıkla 30 günlük oturum başlatın. Sonrasında X-Forwarded-For
+        gerekmez, çerez tanır.
+      </p>
+      <div className="flex gap-2">
+        <input
+          value={key}
+          onChange={(e) => setKey(e.target.value.trim())}
+          placeholder="MS-XXXXXXXXXXXXXXXXXXX"
+          className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs mono text-slate-100 focus:outline-none focus:border-indigo-500/60"
+          data-testid="master-unlock-key"
+        />
+        <button
+          onClick={() => unlock.mutate()}
+          disabled={unlock.isPending || !key}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded bg-gradient-to-br from-indigo-500 to-indigo-600 text-white text-sm font-semibold shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 disabled:opacity-50 transition"
+          data-testid="master-unlock-btn"
+        >
+          {unlock.isPending ? "Doğrulanıyor…" : "Master Aç"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const isoDate = (iso) => iso ? new Date(iso).toLocaleDateString("tr-TR") : "—";
 const isoDateTime = (iso) => iso ? new Date(iso).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -246,11 +296,12 @@ export default function Licenses() {
           <ShieldAlert className="w-7 h-7 text-slate-500" />
         </div>
         <div className="text-slate-200 font-semibold text-lg mb-1">Yetkisiz Erişim</div>
-        <p className="text-sm text-slate-400 leading-relaxed">
+        <p className="text-sm text-slate-400 leading-relaxed mb-4">
           Bu sayfa yalnızca <span className="mono text-indigo-300">{masterIp || "ana yönetici sunucusu"}</span>{" "}
           IP'sinden ve master lisans anahtarıyla erişilebilir. Sizin IP'niz:{" "}
           <span className="mono text-slate-300">{clientIp || "bilinmiyor"}</span>
         </p>
+        <MasterUnlockButton />
       </div>
     );
   }

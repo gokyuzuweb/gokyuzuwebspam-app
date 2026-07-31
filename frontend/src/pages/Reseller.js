@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import BrandingSettings from "@/components/BrandingSettings";
+import ResellerMobile from "@/pages/ResellerMobile";
 
 const TOKEN_KEY = "gws_reseller_token";
 
@@ -482,9 +483,32 @@ function ResellerDashboard({ token, onLogout }) {
   );
 }
 
+/* --------------------------- Viewport detection --------------------------- */
+function useIsMobile() {
+  const [mobile, setMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 640px)").matches
+      || new URLSearchParams(window.location.search).get("mobile") === "1";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const onChange = () => {
+      const forced = new URLSearchParams(window.location.search).get("mobile") === "1";
+      setMobile(mq.matches || forced);
+    };
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
+  }, []);
+  return mobile;
+}
+
 /* ------------------------------ Route entry ------------------------------- */
 export default function Reseller() {
   const [token, setToken] = useResellerToken();
+  const branding = useBranding();
+  const mobile = useIsMobile();
   if (!token) return <AuthScreen onLogin={setToken} />;
+  if (mobile) return <ResellerMobile token={token} brand={branding} />;
   return <ResellerDashboard token={token} onLogout={() => setToken("")} />;
 }
