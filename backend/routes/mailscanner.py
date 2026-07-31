@@ -539,3 +539,145 @@ async def ai_analyze(license_key: str = Query(..., min_length=8)):
     }
     await db.mailscanner_ai_reports.insert_one(saved)
     return {"ok": True, "report": report, "generated_at": saved["generated_at"], "metrics": saved["metrics"]}
+
+
+# ============================================================================
+#  SISTEM-GENELINDE AI SELF-TRAINING — saatlik cron ile Bayes besleme
+#  + LLM ile yeni SA regex onerileri
+# ============================================================================
+async def run_self_training_once() -> dict:
+    """Son 1 saatteki high_spam/clean maillerinden Bayes'i otomatik egit.
+    Yaygin subject pattern'lerini bul ve LLM'e regex kural onerisi yaptır."""
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    # Distinct license keys with recent events
+    licenses = await db.mail_events.distinct("license_key", {"ingested_at": {"$gte": since}})
+    summary = {"licenses": 0, "trained_spam": 0, "trained_ham": 0, "rules_suggested": 0}
+    for lic in licenses:
+        summary["licenses"] += 1
+        # Spam samples
+        spam_docs = await db.mail_events.find(
+            {"license_key": lic, "ingested_at": {"$gte": since},
+             "verdict": {"$in": ["high_spam", "virus"]}},
+            {"_id": 0, "subject": 1, "body_preview": 1},
+        ).limit(30).to_list(30)
+        ham_docs = await db.mail_events.find(
+            {"license_key": lic, "ingested_at": {"$gte": since}, "verdict": "clean"},
+            {"_id": 0, "subject": 1, "body_preview": 1},
+        ).limit(30).to_list(30)
+        for label, docs in [("spam", spam_docs), ("ham", ham_docs)]:
+            for d in docs:
+                txt = ((d.get("subject") or "") + " " + (d.get("body_preview") or "")).strip()
+                if not txt:
+                    continue
+                for tok in _tokenize(txt):
+                    await db.mailscanner_bayes.update_one(
+                        {"license_key": lic, "token": tok},
+                        {"$inc": {f"{label}_count": 1, "total_count": 1},
+                         "$set": {"last_seen": _iso()}},
+                        upsert=True,
+                    )
+                if label == "spam": summary["trained_spam"] += 1
+                else: summary["trained_ham"] += 1
+        # Suggest a rule from top spam keywords if 5+ spam samples
+        if len(spam_docs) >= 5:
+            suggested = await _suggest_rule(lic, spam_docs)
+            if suggested:
+                summary["rules_suggested"] += 1
+    # Audit entry
+    entry = {"id": str(uuid.uuid4()), "run_at": _iso(),
+             "kind": "self_training", **summary}
+    await db.ai_training_log.insert_one(entry)
+    return summary
+
+
+async def _suggest_rule(license_key: str, spam_docs: list) -> Optional[dict]:
+    """LLM'e son spam ornekleri ver, subject icin regex kural onerisi al."""
+    import os
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        return None
+    subjects = [d.get("subject") or "" for d in spam_docs][:10]
+    prompt = (
+        "Son 1 saatte gelen spam mail konularini analiz et. Ortak kalibi bul.\n"
+        + "\n".join(f"- {s}" for s in subjects) + "\n\n"
+        "Sadece bir JSON dondur (baska yazi yok):\n"
+        '{"name": "kisa_isim", "pattern": "regex", "target": "subject", "score": 4.5, "description": "kisa aciklama"}\n'
+        "Regex Python re moduluyle uyumlu olsun. Turkce."
+    )
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=api_key, session_id=f"ms-selftrain-{uuid.uuid4()}",
+            system_message="Sen bir SpamAssassin regex kural onericisisin. JSON dondurursen kabul edilir.",
+        ).with_model("anthropic", "claude-sonnet-4-6")
+        r = await chat.send_message(UserMessage(text=prompt))
+        import json as _json, re
+        m = re.search(r"\{[\s\S]*\}", r or "")
+        if not m:
+            return None
+        payload = _json.loads(m.group(0))
+        # Save as ai_suggested rule (do NOT auto-apply — user reviews)
+        doc = {
+            "id": str(uuid.uuid4()), "license_key": license_key,
+            "name": (payload.get("name") or "ai_suggestion")[:80],
+            "pattern": payload.get("pattern") or "",
+            "target":  payload.get("target") or "subject",
+            "score":   float(payload.get("score") or 3.0),
+            "description": (payload.get("description") or "AI önerisi")[:400],
+            "source": "ai_self_training",
+            "applied": False,
+            "created_at": _iso(),
+        }
+        if doc["pattern"]:
+            await db.mailscanner_rule_suggestions.insert_one(doc)
+            return doc
+    except Exception:
+        return None
+    return None
+
+
+@router.post("/ai/self-train/run")
+async def trigger_self_train():
+    result = await run_self_training_once()
+    return {"ok": True, **result}
+
+
+@router.get("/ai/self-train/log")
+async def self_train_log(limit: int = 30):
+    rows = await db.ai_training_log.find({}, {"_id": 0}).sort("run_at", -1).limit(limit).to_list(limit)
+    return {"items": rows}
+
+
+@router.get("/ai/self-train/suggestions")
+async def rule_suggestions(license_key: str = Query(..., min_length=8), applied: bool = False):
+    q = {"license_key": license_key, "applied": applied}
+    rows = await db.mailscanner_rule_suggestions.find(q, {"_id": 0})\
+        .sort("created_at", -1).limit(100).to_list(100)
+    return {"items": rows}
+
+
+@router.post("/ai/self-train/apply/{suggestion_id}")
+async def apply_suggestion(suggestion_id: str, license_key: str = Query(..., min_length=8)):
+    """AI önerdiği kuralı normal mailscanner_rules'a taşı."""
+    doc = await db.mailscanner_rule_suggestions.find_one({"id": suggestion_id, "license_key": license_key})
+    if not doc:
+        raise HTTPException(404, "Öneri bulunamadı")
+    rule = {
+        "id": str(uuid.uuid4()), "license_key": license_key,
+        "name": doc["name"], "pattern": doc["pattern"], "target": doc["target"],
+        "score": doc["score"], "enabled": True,
+        "description": f"[AI] {doc.get('description', '')}",
+        "updated_at": _iso(), "created_at": _iso(),
+    }
+    await db.mailscanner_rules.insert_one(dict(rule))
+    await db.mailscanner_rule_suggestions.update_one(
+        {"id": suggestion_id}, {"$set": {"applied": True, "applied_at": _iso()}})
+    return {"ok": True, "rule": rule}
+
+
+@router.post("/ai/self-train/reject/{suggestion_id}")
+async def reject_suggestion(suggestion_id: str, license_key: str = Query(..., min_length=8)):
+    r = await db.mailscanner_rule_suggestions.delete_one({"id": suggestion_id, "license_key": license_key})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Öneri bulunamadı")
+    return {"ok": True}

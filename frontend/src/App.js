@@ -5,7 +5,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home,
-  Bug, Filter,
+  Bug, Filter, BookOpen,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -33,6 +33,7 @@ import Blacklist from "@/pages/Blacklist";
 import Reseller from "@/pages/Reseller";
 import Security from "@/pages/Security";
 import MailScanner from "@/pages/MailScanner";
+import Docs from "@/pages/Docs";
 import Header from "@/components/Header";
 
 const NAV = [
@@ -54,6 +55,7 @@ const NAV = [
   { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs" },
   { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
+  { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
 ];
 
 function Sidebar() {
@@ -143,6 +145,7 @@ function Shell() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/security" element={<Security />} />
             <Route path="/mailscanner" element={<MailScanner />} />
+            <Route path="/docs" element={<Docs />} />
             <Route path="/quarantine" element={<Quarantine />} />
             <Route path="/lists" element={<Lists />} />
             <Route path="/rules" element={<Rules />} />

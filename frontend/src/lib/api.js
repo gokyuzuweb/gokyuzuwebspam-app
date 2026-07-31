@@ -13,10 +13,11 @@ export const api = {
   topSenders: () => client.get("/stats/top-senders").then(r => r.data),
 
   // SaaS live mail events (from remote milter POST /api/events/ingest)
-  liveEvents: (licenseKey, limit = 25, scopeUser = null) =>
+  liveEvents: (licenseKey, limit = 60, scopeUser = null, verdict = null) =>
     client.get("/events", { params: {
       license_key: licenseKey, limit,
       ...(scopeUser ? { scope_user: scopeUser } : {}),
+      ...(verdict && verdict !== "all" ? { verdict } : {}),
     }}).then(r => r.data),
   liveEventsSummary: (licenseKey, scopeUser = null) =>
     client.get("/events/summary", { params: {
@@ -303,6 +304,16 @@ export const api = {
     client.get("/mailscanner/modules", { params: { license_key: licenseKey } }).then(r => r.data),
   msAiAnalyze: (licenseKey) =>
     llmClient.post("/mailscanner/ai/analyze", null, { params: { license_key: licenseKey } }).then(r => r.data),
+
+  // AI Self-training
+  msSelfTrainRun: () => llmClient.post("/mailscanner/ai/self-train/run").then(r => r.data),
+  msSelfTrainLog: (limit = 30) => client.get("/mailscanner/ai/self-train/log", { params: { limit } }).then(r => r.data),
+  msSuggestions: (licenseKey, applied = false) =>
+    client.get("/mailscanner/ai/self-train/suggestions", { params: { license_key: licenseKey, applied } }).then(r => r.data),
+  msSuggestionApply: (licenseKey, id) =>
+    client.post(`/mailscanner/ai/self-train/apply/${id}`, null, { params: { license_key: licenseKey } }).then(r => r.data),
+  msSuggestionReject: (licenseKey, id) =>
+    client.post(`/mailscanner/ai/self-train/reject/${id}`, null, { params: { license_key: licenseKey } }).then(r => r.data),
 
   // BEC / URL / Sandbox / Reputation / SIEM
   msBecCheck: (licenseKey, payload) =>

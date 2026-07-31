@@ -9,8 +9,8 @@ const LICKEY = () => (typeof window !== "undefined"
   ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
   : "MS-C02AB012652A4FE692D69676");
 
-// Public TopoJSON of world countries (react-simple-maps recommended source)
-const GEO_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
+// Bundled locally (see /public/geo/countries-110m.json). No CDN dependency.
+const GEO_URL = "/geo/countries-110m.json";
 
 // ISO country name lookup (short names for tooltip)
 const COUNTRY_NAMES = {

@@ -452,6 +452,7 @@ async def _startup() -> None:
     # Kick off background housekeeping tasks
     asyncio.create_task(_auto_suspend_daily_task())
     asyncio.create_task(_weekly_ai_report_task())
+    asyncio.create_task(_hourly_self_training_task())
 
 
 async def _auto_suspend_daily_task():
@@ -497,6 +498,20 @@ async def _auto_suspend_daily_task():
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     client.close()
+
+
+async def _hourly_self_training_task():
+    """Her saat basi mailscanner AI self-training calisir."""
+    # ilk calistirma icin 5 dk bekle (startup thundering herd icin)
+    await asyncio.sleep(300)
+    while True:
+        try:
+            from routes.mailscanner import run_self_training_once
+            r = await run_self_training_once()
+            log.info("self-training run: %s", r)
+        except Exception as ex:
+            log.warning("self-training loop error: %s", ex)
+        await asyncio.sleep(3600)  # her saatte bir
 
 
 async def _weekly_ai_report_task():

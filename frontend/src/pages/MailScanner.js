@@ -155,6 +155,7 @@ export default function MailScanner() {
             { k: "bayes", l: "Bayes", i: Brain },
             { k: "policy", l: "Kullanıcı Politika", i: Users },
             { k: "url", l: "URL Koruma", i: LinkIcon },
+            { k: "learn", l: "AI Öğrenme", i: Sparkles },
           ].map(({ k, l, i: Icon }) => (
             <button key={k} data-testid={`ms-tab-${k}`} onClick={() => setTab(k)}
                     className={`text-xs px-3 py-1.5 rounded transition-colors flex items-center gap-1
@@ -173,6 +174,7 @@ export default function MailScanner() {
       {tab === "bayes"  && <><BayesTab/><HelpPanel tabKey="bayes"/></>}
       {tab === "policy" && <><PolicyTab/><HelpPanel tabKey="policy"/></>}
       {tab === "url"    && <><UrlTab/><HelpPanel tabKey="url"/></>}
+      {tab === "learn"  && <LearnTab/>}
     </div>
   );
 }
@@ -497,4 +499,111 @@ function Stat({ label, value, tone = "text-slate-100" }) {
 
 function SkeletonCard() {
   return <Card><CardBody className="h-32 flex items-center justify-center text-slate-500 text-sm">Yükleniyor…</CardBody></Card>;
+}
+
+function LearnTab() {
+  const qc = useQueryClient();
+  const log = useQuery({ queryKey: ["ms-selftrain-log"], queryFn: () => api.msSelfTrainLog(30), refetchInterval: 30000 });
+  const suggs = useQuery({ queryKey: ["ms-suggestions", false], queryFn: () => api.msSuggestions(LICKEY(), false) });
+  const run = useMutation({
+    mutationFn: () => api.msSelfTrainRun(),
+    onSuccess: (d) => {
+      toast.success(`Öğrenme çalıştı: spam ${d.trained_spam}, ham ${d.trained_ham}, öneri ${d.rules_suggested}`);
+      qc.invalidateQueries({ queryKey: ["ms-selftrain-log"] });
+      qc.invalidateQueries({ queryKey: ["ms-suggestions"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const apply = useMutation({
+    mutationFn: (id) => api.msSuggestionApply(LICKEY(), id),
+    onSuccess: () => { toast.success("Kural onaylandı ve aktif edildi"); qc.invalidateQueries({ queryKey: ["ms-suggestions"] }); },
+  });
+  const reject = useMutation({
+    mutationFn: (id) => api.msSuggestionReject(LICKEY(), id),
+    onSuccess: () => { toast.success("Öneri reddedildi"); qc.invalidateQueries({ queryKey: ["ms-suggestions"] }); },
+  });
+  return (
+    <div className="grid grid-cols-12 gap-4">
+      <div className="col-span-12 lg:col-span-6">
+        <Card>
+          <CardHeader
+            title={<span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-fuchsia-400"/> AI Öğrenme Günlüğü</span>}
+            subtitle="Sistem her saat kendini eğitir: high_spam → Bayes, clean → Bayes"
+            right={
+              <button data-testid="selftrain-run" onClick={() => run.mutate()} disabled={run.isPending}
+                      className="text-xs px-3 py-1.5 rounded-md bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-500/30 disabled:opacity-40">
+                {run.isPending ? "Çalışıyor..." : "Şimdi Çalıştır"}
+              </button>
+            }
+          />
+          <CardBody>
+            <div className="space-y-1 max-h-96 overflow-y-auto">
+              {(log.data?.items || []).map(r => (
+                <div key={r.id} className="text-xs mono border border-slate-800 rounded p-2 bg-slate-950/50">
+                  <div className="text-slate-400 flex justify-between">
+                    <span>{r.run_at.slice(0, 19).replace("T", " ")}</span>
+                    <Badge tone="success">{r.rules_suggested} öneri</Badge>
+                  </div>
+                  <div className="mt-1 text-slate-500">
+                    spam: <span className="text-rose-300">{r.trained_spam}</span> ·
+                    ham: <span className="text-emerald-300">{r.trained_ham}</span> ·
+                    lisans: <span className="text-slate-300">{r.licenses}</span>
+                  </div>
+                </div>
+              ))}
+              {(log.data?.items || []).length === 0 && (
+                <div className="text-slate-500 text-center py-8 text-sm">Henüz self-training çalışması yok</div>
+              )}
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+      <div className="col-span-12 lg:col-span-6">
+        <Card>
+          <CardHeader title="AI Kural Önerileri" subtitle="Onayla → kurallar listesine eklenir · Reddet → sil"/>
+          <CardBody>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {(suggs.data?.items || []).map(s => (
+                <div key={s.id} data-testid={`suggestion-${s.id}`}
+                     className="border border-fuchsia-500/30 bg-fuchsia-500/5 rounded p-3">
+                  <div className="flex justify-between items-start gap-3 mb-1">
+                    <span className="text-sm text-slate-100 truncate">{s.name}</span>
+                    <Badge tone="warning">{s.score.toFixed(1)}</Badge>
+                  </div>
+                  <div className="text-[11px] mono text-slate-400 truncate mb-1">
+                    <span className="text-slate-500">{s.target}:</span> /{s.pattern}/
+                  </div>
+                  <div className="text-[11px] text-slate-400 mb-2">{s.description}</div>
+                  <div className="flex gap-2">
+                    <button data-testid={`suggestion-apply-${s.id}`} onClick={() => apply.mutate(s.id)}
+                            className="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30">
+                      Onayla
+                    </button>
+                    <button data-testid={`suggestion-reject-${s.id}`} onClick={() => reject.mutate(s.id)}
+                            className="text-[11px] px-2 py-1 rounded bg-rose-500/10 text-rose-300 border border-rose-500/40 hover:bg-rose-500/20">
+                      Reddet
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {(suggs.data?.items || []).length === 0 && (
+                <div className="text-slate-500 text-center py-8 text-sm">AI önerisi yok — self-train çalıştır</div>
+              )}
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+      <div className="col-span-12">
+        <div className="border border-indigo-500/20 bg-indigo-500/5 rounded-md p-3 text-xs">
+          <div className="text-indigo-300 font-semibold flex items-center gap-1 mb-1"><Info className="w-3.5 h-3.5"/>Sistem-Genelinde Otomatik AI</div>
+          <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+            <li>Her saat başı background job: son 1 saatteki high_spam/clean mailleri Bayes'e besler</li>
+            <li>5+ spam örnek biriktiğinde Claude LLM yeni SA regex kuralı önerir (subject pattern)</li>
+            <li>Öneriler bu tab'da görünür — otomatik apply değil, sen onaylarsın (güvenlik)</li>
+            <li>AI Batch Prewarm: yüksek riskli mailler için "Neden spam?" açıklaması ingest sırasında üretilip cache'lenir</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
 }

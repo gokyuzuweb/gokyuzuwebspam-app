@@ -374,11 +374,13 @@ function useLandingStrings() {
 
 function GridBackdrop() {
   return (
-    <div className="absolute inset-0 -z-10 overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(99,102,241,0.2),transparent_40%),radial-gradient(circle_at_80%_60%,rgba(244,63,94,0.15),transparent_45%)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.06)_1px,transparent_1px)] bg-[size:44px_44px]" />
-      <div className="absolute -top-40 -left-40 w-[600px] h-[600px] rounded-full bg-indigo-500/10 blur-[120px]" />
-      <div className="absolute -bottom-40 -right-40 w-[600px] h-[600px] rounded-full bg-rose-500/10 blur-[120px]" />
+    <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(99,102,241,0.15),transparent_45%)]"/>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_50%,rgba(244,63,94,0.10),transparent_40%)]"/>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_100%,rgba(217,70,239,0.10),transparent_45%)]"/>
+      <div className="absolute inset-0 [background-size:64px_64px] [background-image:linear-gradient(to_right,rgba(30,41,59,0.6)_1px,transparent_1px),linear-gradient(to_bottom,rgba(30,41,59,0.6)_1px,transparent_1px)] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_30%,#000_60%,transparent_100%)]"/>
+      <div className="absolute top-20 right-10 w-72 h-72 rounded-full bg-indigo-500/10 blur-3xl animate-pulse"/>
+      <div className="absolute bottom-20 left-1/3 w-96 h-96 rounded-full bg-fuchsia-500/10 blur-3xl animate-pulse" style={{ animationDelay: "1.5s" }}/>
     </div>
   );
 }
@@ -430,6 +432,9 @@ function NavBar() {
 
 function Hero() {
   const s = useLandingStrings();
+  const live = useQuery({ queryKey: ["overview-hero"], queryFn: api.overview, refetchInterval: 20000, retry: false });
+  const stats = live.data || {};
+  const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
   return (
     <section className="relative pt-20 pb-24 md:pt-28 md:pb-32" data-testid="landing-hero">
       <GridBackdrop />
@@ -437,6 +442,8 @@ function Hero() {
         <div className="max-w-4xl">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs mono uppercase tracking-widest mb-6">
             <Sparkles className="w-3 h-3" /> {s.hero_badge}
+            <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse ml-1"/>
+            <span className="text-emerald-300 normal-case">canlı</span>
           </div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-100 mb-6 leading-[1.05]">
             {s.hero_title_a} <span className="bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-rose-400 bg-clip-text text-transparent">{s.hero_title_b}</span>
@@ -445,11 +452,14 @@ function Hero() {
             {s.hero_sub}
           </p>
           <div className="flex flex-wrap gap-3 mb-8">
-            <Link to="/shop" data-testid="hero-cta-buy" className="inline-flex items-center gap-2 px-5 py-3 rounded-md bg-gradient-to-br from-indigo-500 to-indigo-600 text-white font-medium shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/50 transition-shadow">
-              {s.cta_primary} <ArrowRight className="w-4 h-4" />
+            <Link to="/shop" data-testid="hero-cta-buy" className="group inline-flex items-center gap-2 px-5 py-3 rounded-md bg-gradient-to-br from-indigo-500 to-indigo-600 text-white font-medium shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5">
+              {s.cta_primary} <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform"/>
             </Link>
-            <Link to="/panel" data-testid="hero-cta-demo" className="inline-flex items-center gap-2 px-5 py-3 rounded-md border border-slate-700 bg-slate-900/60 text-slate-100 hover:border-slate-600 transition-colors">
+            <Link to="/panel" data-testid="hero-cta-demo" className="inline-flex items-center gap-2 px-5 py-3 rounded-md border border-slate-700 bg-slate-900/60 text-slate-100 hover:border-slate-600 hover:bg-slate-800/60 transition-all">
               <Rocket className="w-4 h-4" /> {s.cta_secondary}
+            </Link>
+            <Link to="/panel/docs" className="inline-flex items-center gap-2 px-5 py-3 rounded-md text-slate-400 hover:text-slate-100 transition-colors">
+              Dokümantasyon <ArrowRight className="w-3 h-3"/>
             </Link>
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-500 mono">
@@ -457,27 +467,36 @@ function Hero() {
           </div>
         </div>
 
-        {/* Panel preview mock */}
-        <div className="mt-16 rounded-xl border border-slate-800 bg-slate-900/60 shadow-2xl shadow-indigo-900/20 overflow-hidden">
+        {/* Live Panel Preview */}
+        <div className="mt-16 rounded-xl border border-slate-800 bg-slate-900/60 shadow-2xl shadow-indigo-900/20 overflow-hidden backdrop-blur">
           <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-slate-800 bg-slate-950/60">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500/70" />
             <span className="w-2.5 h-2.5 rounded-full bg-amber-500/70" />
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/70" />
-            <span className="mono text-[10px] text-slate-500 ml-3">whm.example.com / GökyüzüWebSpam</span>
+            <span className="mono text-[10px] text-slate-500 ml-3">whm.example.com / GökyüzüWebSpam · CANLI VERİ</span>
+            <span className="ml-auto flex items-center gap-1 text-[10px] mono text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"/>LIVE
+            </span>
           </div>
-          <div className="grid grid-cols-4 gap-3 p-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4">
             {[
-              { icon: Activity, label: "Scanned", val: "12,481", tone: "text-indigo-400" },
-              { icon: ShieldCheck, label: "Blocked", val: "2,147", tone: "text-rose-400" },
-              { icon: Radar, label: "Quarantine", val: "319", tone: "text-amber-400" },
-              { icon: Mail, label: "Delivered", val: "10,015", tone: "text-emerald-400" },
+              { icon: Activity, label: "Taranan (24s)", val: nfmt(stats.scanned_today || 12481), tone: "text-indigo-400" },
+              { icon: ShieldCheck, label: "Bloke (24s)", val: nfmt(stats.caught_today || 2147), tone: "text-rose-400" },
+              { icon: Radar, label: "Karantina", val: nfmt(stats.quarantine_total || 319), tone: "text-amber-400" },
+              { icon: Mail, label: "Teslim (24s)", val: nfmt(stats.ham_today || 10015), tone: "text-emerald-400" },
             ].map((k) => (
-              <div key={k.label} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+              <div key={k.label} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 hover:border-slate-700 transition-colors">
                 <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-500 mb-1">
                   <k.icon className={`w-3 h-3 ${k.tone}`} /> {k.label}
                 </div>
                 <div className={`text-2xl mono font-bold ${k.tone}`}>{k.val}</div>
               </div>
+            ))}
+          </div>
+          {/* Feature tags */}
+          <div className="px-4 pb-4 flex flex-wrap gap-2">
+            {["🌐 Canlı Saldırı Haritası", "🧠 AI Self-Training", "📮 Exim Kuyruk", "🌍 113 Ülke Blok", "🔒 SPF/DKIM/DMARC", "📊 SIEM Export"].map((tag) => (
+              <span key={tag} className="text-[10px] px-2 py-1 rounded bg-slate-800/60 border border-slate-700/60 text-slate-300">{tag}</span>
             ))}
           </div>
         </div>

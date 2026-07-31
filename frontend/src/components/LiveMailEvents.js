@@ -132,8 +132,8 @@ export default function LiveMailEvents() {
   useEffect(() => { localStorage.setItem("gws.event_license", licenseKey); }, [licenseKey]);
 
   const events = useQuery({
-    queryKey: ["live-events", licenseKey, scopeUser],
-    queryFn: () => api.liveEvents(licenseKey, 30, scopeUser),
+    queryKey: ["live-events", licenseKey, scopeUser, verdictFilter],
+    queryFn: () => api.liveEvents(licenseKey, 100, scopeUser, verdictFilter),
     refetchInterval: 8000,
     enabled: !!licenseKey && licenseKey.length >= 8,
     retry: false,

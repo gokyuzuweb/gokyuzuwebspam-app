@@ -175,7 +175,7 @@ async def list_events(
             {"to_addr":   {"$regex": safe, "$options": "i"}},
             {"from_addr": {"$regex": safe, "$options": "i"}},
         ]
-    cursor = db.mail_events.find(q, {"_id": 0}).sort("ts", -1).limit(limit)
+    cursor = db.mail_events.find(q, {"_id": 0}).sort("ingested_at", -1).limit(limit)
     items = await cursor.to_list(length=limit)
     return {"items": items, "count": len(items)}
 

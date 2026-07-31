@@ -13,56 +13,54 @@ See `/app/memory/test_credentials.md`.
 ```
 /app/
 ├── backend/
-│   ├── server.py                 # Main entry, MongoDB, crons, legacy routes, weekly AI report
+│   ├── server.py                 # Main entry · MongoDB · crons (auto_suspend + weekly report + hourly self-training)
 │   ├── deps.py                   # shared client/db/require_master
 │   ├── routes/                   # modular routers
-│   │   ├── analytics.py, plugin.py, reseller.py, license_client.py
-│   │   ├── invoices.py, events.py (+ AI prewarm hook), alerts.py, insights.py
-│   │   ├── queue.py              # NEW · exim queue mgmt (list/stats/bulk/audit)
-│   │   ├── security_adv.py       # NEW · exploit scanner + attack map + IP drilldown
-│   │   │                         #        + country brute-force + country catalog
-│   │   └── mailscanner.py        # NEW · independent MailScanner (config/stats/rules
-│   │                             #        /bayes/policy/URL/BEC/sandbox/reputation/
-│   │                             #        SIEM/AI analyze/modules overview)
+│   │   ├── queue.py              # Exim queue (list/stats/bulk×6/audit)
+│   │   ├── security_adv.py       # Exploit + Attack Map + IP drilldown + Country brute-force + catalog
+│   │   ├── mailscanner.py        # Config/Stats/Rules/Bayes/Policy/URL/BEC/Sandbox/Reputation/SIEM/AI-Analyze/AI-Self-Training
+│   │   └── (existing) analytics/plugin/reseller/license_client/invoices/events(+AI prewarm)/alerts/insights
 ├── frontend/
+│   ├── public/geo/countries-110m.json  # Bundled TopoJSON (no CDN)
 │   ├── src/
 │   │   ├── pages/
-│   │   │   ├── Dashboard.js      # REWRITTEN · 7-tab layout (Genel/Coğrafi/Trafik/…/Tümü)
-│   │   │   ├── Security.js       # NEW · 10-module overview + Exploit/BEC/Sandbox/Reputation/Geo
-│   │   │   ├── MailScanner.js    # NEW · Config/Stats/Rules/Bayes/Policy/URL + AI Analyze card
-│   │   │   └── Dashboard, Quarantine, Licenses, Reseller, ... (existing)
-│   │   ├── components/
-│   │   │   ├── AttackMap.js      # NEW · react-simple-maps world map w/ hover tooltip
-│   │   │   ├── ControlBar.js     # NEW · 6 colored gradient stat cards
-│   │   │   ├── QueueModal.js     # NEW · Exim queue viewer w/ bulk actions
-│   │   │   ├── IpDrilldownDrawer.js # NEW · right-side drawer with mail traffic
-│   │   │   └── CountryBlockCard.js # REWRITTEN · 4 tabs (list/picker/time/brute)
-│   │   └── lib/api.js            # +30 new API methods
-├── whm-plugin/
+│   │   │   ├── Landing.js        # REDESIGNED · animated gradient orbs + live-stat hero + feature chips
+│   │   │   ├── Dashboard.js      # 7 tabs (Genel Bakış · Coğrafi · Trafik · Karantina · Sağlık · Canlı · Tümü)
+│   │   │   ├── Security.js       # 11-module overview + Exploit + BEC + Sandbox + Reputation + Coğrafi
+│   │   │   ├── MailScanner.js    # 7 tabs (Config/Stats/Rules/Bayes/Policy/URL/AI Öğrenme) + AI Analyze
+│   │   │   └── Docs.js           # NEW · Modül Dokümantasyonu (9 modül card + detay drawer + SVG preview)
+│   │   └── components/
+│   │       ├── AttackMap.js      # react-simple-maps + hover tooltip (IP/from/to/country/verdict)
+│   │       ├── ControlBar.js     # 6 gradient stat cards
+│   │       ├── QueueModal.js     # Exim queue viewer + 6 bulk actions
+│   │       ├── IpDrilldownDrawer.js  # right-side mail traffic drawer
+│   │       └── CountryBlockCard.js  # 4 tabs (list/picker/time/brute)
+│   └── src/lib/api.js            # +40 API methods
+└── whm-plugin/scripts/           # Perl heartbeat + milter + logtail + quarantine-prune
 ```
 
-## Completed (this session · 2026-02)
-- Feb: Queue Modal + Exim bulk-action wrapper (mock fallback, real cmd support)
-- Feb: Attack Map with react-simple-maps + tooltip showing IP/from/to/country
-- Feb: IP Drilldown Drawer (bar-chart click → mail traffic)
-- Feb: Advanced Control Bar (6 gradient cards, micro animations)
-- Feb: Country Blocking upgraded — full 113-country catalog + time-based scheduling (active_hours/days) + brute-force auto-block with TTL
-- Feb: Security page `/panel/security` — 11-module overview grid + Exploit Scanner + BEC tester + Sandbox + Reputation + Country tab
-- Feb: MailScanner page `/panel/mailscanner` — Config/Stats/Rules/Bayes/UserPolicy/URL tabs + AI System Analyze (LLM report)
-- Feb: 10 security modules: Antivirus/Spam-Phish/Sandbox/SPF-DKIM-DMARC/BEC/Quarantine/Outbound/URL/AI/SIEM
-- Feb: AI Batch Prewarm on `high_spam` ingest → cached explanation
+## Completed (Feb 2026 · v18-v19)
+- Feb: Queue Modal + Exim bulk-action wrapper (real subprocess when available)
+- Feb: Attack Map with react-simple-maps + rich hover tooltip (IP + traffic)
+- Feb: IP Drilldown Drawer
+- Feb: Advanced Control Bar (6 gradient cards)
+- Feb: Country Blocking upgraded — 113-country catalog + time-based scheduling + brute-force auto-block with TTL
+- Feb: `/panel/security` — 11-module overview + Exploit Scanner + BEC + Sandbox + Reputation + Coğrafi
+- Feb: `/panel/mailscanner` — Config/Stats/Rules/Bayes/UserPolicy/URL/AI-Learning tabs + AI System Analyze
+- Feb: **AI Self-Training** — hourly cron feeds Bayes + LLM rule suggestions (user-approved apply)
+- Feb: AI Batch Prewarm on `high_spam` ingest → cached
 - Feb: Weekly AI Report Cron (Pazartesi 07:00 UTC)
-- Feb: BEC/impersonation heuristic (Levenshtein lookalike + urgency)
-- Feb: URL rewrite + time-of-click inspection
-- Feb: Sandbox job queue + reputation heuristic + SIEM CEF/LEEF/JSON export
-- Feb: Dashboard tabbed (Genel Bakış / Coğrafi / Trafik / Karantina / Sağlık / Canlı / Tümünü Göster)
-- Feb: Sidebar nav for MailScanner + Güvenlik in Turkish
+- Feb: BEC/impersonation + URL rewrite + Sandbox queue + Reputation + SIEM (CEF/LEEF/JSON)
+- Feb: Dashboard 7-tabbed
+- Feb: **Landing redesign** — animated gradient orbs + live-stat hero (real /api/overview data) + feature chip row
+- Feb: **`/panel/docs` Modül Dokümantasyonu** — 9 module cards + detail drawer + SVG previews + search/category filter
+- Feb: **Offline TopoJSON** — `/public/geo/countries-110m.json` bundled locally, no CDN
+- Feb: **Live Mail Traffic bug fixed** — `events` endpoint sorts by `ingested_at` not `ts`, verdict filter now server-side (spam/virus events now visible)
 
 ## Backlog (P1/P2)
-- P1 · Landing / Home page redesign (user requested)
-- P1 · Local TopoJSON bundle for AttackMap (offline safety)
-- P1 · Real exim daemon integration on WHM (currently mock in preview)
-- P2 · Sandbox VM detonation actual runner (currently queue-only)
+- P1 · Weekly Report actual email delivery (currently stored-only; needs SMTP or Resend)
+- P1 · Real Exim daemon verification on live WHM server
+- P2 · Sandbox VM detonation runner
 - P2 · MaxMind GeoIP DB (replace /8 prefix map)
-- P2 · Weekly Report mail delivery (currently only stored, not emailed)
 - P2 · Reseller-scoped AI usage quota tracking
+- P2 · Interactive video walkthroughs in Docs
