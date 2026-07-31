@@ -1,19 +1,37 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
-## v1.6.1 (Feb 2026) — WHM Plugin ASCII/AppConfig Hardening
-Kullanıcının canlı cPanel (89.19.15.58) kurulumunda 403 "AppConfig disallows execution" hatası
-oluşuyordu. Tüm plugin dosyaları ASCII-safe hâle getirildi, install.sh sertleştirildi.
+## v1.6.1 (Feb 2026) — WHM Plugin CANLI SUNUCUDA ÇALIŞTI ✅
+Kullanıcının canlı cPanel (89.19.15.58) kurulumunda başarıyla çalışıyor.
 
-### Değişiklikler
+### KRITIK BULGU: cPanel AppConfig `acls=` (çoğul S ile) bekliyor
+Handoff'ta `acl=basic-whm-functions`, `acl=all`, `acl=any` denendi — hepsi başarısız.
+Sunucudaki çalışan diğer plugin'lerin (CSF, MailScanner) config'ini inceleyince gerçek
+alan adının `acls=` (**çoğul**) olduğu ortaya çıktı. Log mesajı `"acls missing"`
+tam da bu ipucunu veriyordu.
+
+### Nihai `/var/cpanel/apps/mailshield.conf` Formatı
+```
+name=mailshield
+service=whostmgr
+url=/cgi/mailshield/index.cgi
+user=root
+acls=all                              <-- çoğul S KRİTİK
+displayname=GokyuzuWebSpam
+entryurl=mailshield/index.cgi         <-- başında cgi/ YOK
+icon=mailshield/icon.png
+target=_self
+```
+
+### Tüm Değişiklikler
 - `GökyüzüWebSpam` → `GokyuzuWebSpam` (tüm `/app/whm-plugin/` dosyalarında)
-- `appconfig/mailshield.conf` yeniden yazıldı: yorum yok, `acl=all`, LF-only, BOM'suz
-- `install.sh`:
-  - CGI + tmpl artık `install -m` ile FORCE overwrite (eski bozuk dosyalar temizlenir)
-  - AppConfig register öncesi `unregister_appconfig` + `rm` (idempotent kurulum)
-  - `register_appconfig` başarısızsa hata detayı stderr'e (dosya içeriği dahil) basılır
-  - Kopyalanan tüm cPanel/WHM dosyalarında defensive sed ile CRLF/BOM stripping
-- `whm/icon.png` + `cpanel/icon.png` eklendi (48x48 mavi PNG, appconfig'in icon= satırı için)
-- Backend `/api/plugin/download` her istekte yeni tarball üretir → değişiklik anında yansır
+- WHM/cPanel CGI dizinleri **`root:root`** sahiplik (`mailshield:mailshield` cPanel 403 sebebi)
+- `mailshield.cgi` yeniden yazıldı: `Whostmgr::HTMLInterface::defheader/deffooter` resmi API +
+  manuel `Content-Type: text/html; charset=utf-8` header
+- Template TT plugin yerine plain HTML (WHM chrome Perl tarafında render ediliyor)
+- iframe frontend preview URL'sine yönlendi
+- `install.sh` sertleştirildi: FORCE overwrite, unregister+register idempotent
+- `whm/icon.png` + `cpanel/icon.png` eklendi (48x48 PNG)
+- Backend `/api/plugin/download` her istekte anlık tarball üretir
 
 ## v1.6 (Feb 2026) — Enterprise Polish Release
 Backend 17/17 + Frontend %100 · `iteration_6.json` (retest_needed: false, sıfır hata)
