@@ -221,6 +221,61 @@ function ConfigTab() {
             <Toggle testid="ms-attach" label="Ek Tarama" value={cfg.attachment_scan?.enabled} onChange={(v) => save.mutate({ attachment_scan: { ...cfg.attachment_scan, enabled: v } })}/>
           </div>
         </div>
+
+        {/* AI Auto Actions */}
+        <div className="pt-4 border-t border-slate-800">
+          <div className="text-[11px] uppercase tracking-widest text-fuchsia-400 mb-2">🤖 AI Otomatik Aksiyonlar</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 rounded-md bg-fuchsia-500/5 border border-fuchsia-500/30">
+              <div className="text-sm text-slate-100 font-medium mb-2">AI Auto-Quarantine</div>
+              <p className="text-[11px] text-slate-400 mb-2">
+                predicted_score ≥ eşik → otomatik karantina/tag/reject
+              </p>
+              <Toggle testid="ms-auto-quarantine" label="Aktif" value={cfg.ai_auto_quarantine?.enabled}
+                      onChange={(v) => save.mutate({ ai_auto_quarantine: { ...(cfg.ai_auto_quarantine || {}), enabled: v } })}/>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <label className="text-[10px] text-slate-400 space-y-0.5 block">
+                  <div>Eşik (0-15)</div>
+                  <input type="number" step="0.5" min="0" max="15"
+                         data-testid="ms-auto-quarantine-threshold"
+                         value={cfg.ai_auto_quarantine?.threshold ?? 6.0}
+                         onChange={(e) => save.mutate({ ai_auto_quarantine: { ...(cfg.ai_auto_quarantine || {}), threshold: Number(e.target.value) } })}
+                         className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs mono"/>
+                </label>
+                <label className="text-[10px] text-slate-400 space-y-0.5 block">
+                  <div>Aksiyon</div>
+                  <select data-testid="ms-auto-quarantine-action"
+                          value={cfg.ai_auto_quarantine?.action ?? "quarantine"}
+                          onChange={(e) => save.mutate({ ai_auto_quarantine: { ...(cfg.ai_auto_quarantine || {}), action: e.target.value } })}
+                          className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs">
+                    <option value="quarantine">Karantina</option>
+                    <option value="tag">Etiketle</option>
+                    <option value="reject">Reddet</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div className="p-3 rounded-md bg-indigo-500/5 border border-indigo-500/30">
+              <div className="text-sm text-slate-100 font-medium mb-2">AI Rule Auto-Apply</div>
+              <p className="text-[11px] text-slate-400 mb-2">
+                LLM önerileri skor ≥ eşikse otomatik kural eklenir
+              </p>
+              <Toggle testid="ms-rule-auto-apply" label="Aktif" value={cfg.ai_rule_auto_apply?.enabled}
+                      onChange={(v) => save.mutate({ ai_rule_auto_apply: { ...(cfg.ai_rule_auto_apply || {}), enabled: v } })}/>
+              <label className="text-[10px] text-slate-400 space-y-0.5 block mt-2">
+                <div>Min. Skor Eşiği (LLM önerisi için)</div>
+                <input type="number" step="0.5" min="0" max="15"
+                       data-testid="ms-rule-auto-apply-score"
+                       value={cfg.ai_rule_auto_apply?.min_score ?? 4.5}
+                       onChange={(e) => save.mutate({ ai_rule_auto_apply: { ...(cfg.ai_rule_auto_apply || {}), min_score: Number(e.target.value) } })}
+                       className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs mono"/>
+              </label>
+            </div>
+          </div>
+          <div className="mt-2 text-[10px] text-slate-500 italic">
+            ⚠️ Otomatik aksiyonlar açıkken sistem yardımınız olmadan kural ekleyip mail karantinalayabilir. Test ortamında dene.
+          </div>
+        </div>
       </CardBody>
     </Card>
   );

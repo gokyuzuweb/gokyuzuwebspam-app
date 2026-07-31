@@ -315,6 +315,24 @@ export const api = {
   msSuggestionReject: (licenseKey, id) =>
     client.post(`/mailscanner/ai/self-train/reject/${id}`, null, { params: { license_key: licenseKey } }).then(r => r.data),
 
+  // Docs Media upload
+  docsMediaList: (moduleKey = null) =>
+    client.get("/mailscanner/docs/media", { params: moduleKey ? { module_key: moduleKey } : {} }).then(r => r.data),
+  docsMediaUpload: async (moduleKey, file, caption = "") => {
+    const reader = new FileReader();
+    const b64 = await new Promise((res, rej) => {
+      reader.onload = () => res(String(reader.result).split(",")[1] || "");
+      reader.onerror = rej;
+      reader.readAsDataURL(file);
+    });
+    return client.post("/mailscanner/docs/media", {
+      module_key: moduleKey, filename: file.name,
+      content_type: file.type, data_b64: b64, caption,
+    }).then(r => r.data);
+  },
+  docsMediaDelete: (id) =>
+    client.delete(`/mailscanner/docs/media/${id}`).then(r => r.data),
+
   // AI Predict Score (ingest-time) + AI Docs Narration
   msPredictScore: (payload, useLlm = false) =>
     llmClient.post("/mailscanner/ai/predict-score", payload, { params: { use_llm: useLlm } }).then(r => r.data),

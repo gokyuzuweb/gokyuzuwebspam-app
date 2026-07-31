@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { api } from "@/lib/api";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import {
   BookOpen, Filter, Bug, Globe2, Inbox, Mail, ArrowUpRight, Bell, BellRing,
@@ -243,6 +243,8 @@ export default function Docs() {
             <div className="p-5 space-y-5">
               {/* Video-style Animated Walkthrough */}
               <AnimatedWalkthrough module_key={active.key} tone={active.tone}/>
+              {/* User uploaded media gallery */}
+              <MediaGallery moduleKey={active.key} tone={active.tone}/>
               {/* AI Sesli Kılavuz */}
               <AiNarration module={active}/>
 
@@ -628,6 +630,76 @@ function CacheScene() {
     <div className="flex items-center gap-2 text-[10px] mono">
       <div className="w-4 h-4 border-2 border-current/40 rounded-full border-t-current animate-spin"/>
       <span>prewarming AI explanation → cache</span>
+    </div>
+  );
+}
+
+function MediaGallery({ moduleKey, tone }) {
+  const [caption, setCaption] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const qc = useQueryClient();
+  const media = useQuery({
+    queryKey: ["docs-media", moduleKey],
+    queryFn: () => api.docsMediaList(moduleKey),
+  });
+  const del = useMutation({
+    mutationFn: (id) => api.docsMediaDelete(id),
+    onSuccess: () => { toast.success("Silindi"); qc.invalidateQueries({ queryKey: ["docs-media", moduleKey] }); },
+  });
+  const onFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 20 * 1024 * 1024) { toast.error("Dosya 20MB'dan büyük"); return; }
+    setUploading(true);
+    try {
+      await api.docsMediaUpload(moduleKey, f, caption);
+      toast.success("Yüklendi ✓");
+      setCaption("");
+      qc.invalidateQueries({ queryKey: ["docs-media", moduleKey] });
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || err.message);
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  };
+  const items = media.data?.items || [];
+  return (
+    <div className={`rounded-lg border ${TONE_MAP[tone]} bg-slate-950 p-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-sm font-semibold flex items-center gap-2">
+          <BookOpen className="w-4 h-4"/> Modül Görselleri / Videoları
+          <span className="text-[10px] text-slate-500 mono">{items.length} adet</span>
+        </div>
+        <label className="text-xs px-3 py-1.5 rounded-md border border-current/40 bg-current/10 hover:bg-current/20 cursor-pointer transition-colors"
+               data-testid={`docs-media-upload-${moduleKey}`}>
+          {uploading ? "Yükleniyor..." : "+ GIF / Video / Görsel Yükle"}
+          <input type="file" accept="image/gif,image/png,image/jpeg,image/webp,video/mp4,video/webm" className="hidden" onChange={onFile} disabled={uploading}/>
+        </label>
+      </div>
+      <input value={caption} onChange={(e) => setCaption(e.target.value)}
+             placeholder="Açıklama (opsiyonel, dosya yüklemeden önce yaz)"
+             className="w-full mb-3 px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-xs text-slate-100"/>
+      {items.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {items.map(m => (
+            <div key={m.id} className="border border-slate-800 rounded overflow-hidden bg-slate-950 group relative">
+              {m.content_type.startsWith("video/") ? (
+                <video src={m.url} controls className="w-full h-40 object-cover bg-black"/>
+              ) : (
+                <img src={m.url} alt={m.caption || m.filename} className="w-full h-40 object-cover"/>
+              )}
+              <button onClick={() => del.mutate(m.id)} title="Sil"
+                      className="absolute top-2 right-2 bg-rose-500/80 hover:bg-rose-500 text-white p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                <X className="w-3 h-3"/>
+              </button>
+              <div className="p-2 text-[11px] text-slate-400 truncate">{m.caption || m.filename}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-xs text-slate-500 italic text-center py-4">Henüz görsel yok. GIF/screencap yükle → drawer'da otomatik görüntülenir.</div>
+      )}
     </div>
   );
 }

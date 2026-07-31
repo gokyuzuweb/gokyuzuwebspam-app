@@ -85,9 +85,10 @@ async def ingest_event(evt: MailEvent, request: Request):
 
 
 async def _ai_predict_bg(doc: dict) -> None:
-    """Hizli AI predict — heuristic sonucu event uzerine yazilir (predicted_verdict/predicted_score)."""
+    """Hizli AI predict — heuristic sonucu event uzerine yazilir (predicted_verdict/predicted_score).
+    Config'de ai_auto_quarantine aktifse threshold uzeri predicted skorlar otomatik override eder."""
     try:
-        from routes.mailscanner import PredictIn, _heuristic_score
+        from routes.mailscanner import PredictIn, _heuristic_score, _cfg
         p = PredictIn(
             from_addr=doc.get("from_addr", ""),
             to_addr=doc.get("to_addr", ""),
@@ -100,11 +101,24 @@ async def _ai_predict_bg(doc: dict) -> None:
         if score >= 10: pred_verdict = "high_spam"
         elif score >= 5: pred_verdict = "spam"
         elif score >= 3: pred_verdict = "suspicious"
-        await db.mail_events.update_one(
-            {"id": doc["id"]},
-            {"$set": {"predicted_score": score, "predicted_verdict": pred_verdict,
-                      "predicted_reasons": reasons}},
-        )
+        update = {"predicted_score": score, "predicted_verdict": pred_verdict,
+                  "predicted_reasons": reasons}
+        # AI Auto-Action config check
+        cfg = await _cfg(doc.get("license_key", ""))
+        auto = cfg.get("ai_auto_quarantine") or {}
+        if (auto.get("enabled") and score >= float(auto.get("threshold", 6.0))
+                and doc.get("verdict") in ("clean", None, "")):
+            action = auto.get("action", "quarantine")
+            override = {
+                "quarantine": "spam",
+                "tag": "spam",
+                "reject": "blocked",
+            }.get(action, "spam")
+            update["verdict"] = override
+            update["ai_override"] = {"reason": "predict_auto_action",
+                                      "orig_verdict": doc.get("verdict"),
+                                      "score": score, "action": action}
+        await db.mail_events.update_one({"id": doc["id"]}, {"$set": update})
     except Exception:
         return
 

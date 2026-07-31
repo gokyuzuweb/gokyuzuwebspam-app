@@ -42,6 +42,17 @@ DEFAULT_CONFIG = {
     "dkim_required": False,
     "attachment_scan": {"enabled": True, "max_mb": 25, "block_ext": [".exe", ".scr", ".vbs", ".js"]},
     "quarantine_ttl_days": 30,
+    # AI Auto-Actions
+    "ai_auto_quarantine": {
+        "enabled": False,
+        "threshold": 6.0,          # predicted_score bu esikte quarantine'e alinir
+        "action": "quarantine",    # quarantine | tag | reject
+        "min_verdict_from_client": "clean",  # sadece client cleandiyorsa override et
+    },
+    "ai_rule_auto_apply": {
+        "enabled": False,
+        "min_score": 4.5,          # LLM oneri skoru >= bu ise otomatik apply
+    },
 }
 
 
@@ -70,6 +81,8 @@ class ConfigUpdate(BaseModel):
     dkim_required: Optional[bool] = None
     attachment_scan: Optional[dict] = None
     quarantine_ttl_days: Optional[int] = None
+    ai_auto_quarantine: Optional[dict] = None
+    ai_rule_auto_apply: Optional[dict] = None
 
 
 @router.put("/config")
@@ -628,9 +641,27 @@ async def _suggest_rule(license_key: str, spam_docs: list) -> Optional[dict]:
             "applied": False,
             "created_at": _iso(),
         }
-        if doc["pattern"]:
-            await db.mailscanner_rule_suggestions.insert_one(doc)
-            return doc
+        if not doc["pattern"]:
+            return None
+        # Auto-apply kontrolü: config allow ve skor esigi asilirsa dogrudan kural yaz
+        try:
+            cfg = await _cfg(license_key)
+            auto = cfg.get("ai_rule_auto_apply") or {}
+            if auto.get("enabled") and doc["score"] >= float(auto.get("min_score", 4.5)):
+                rule = {
+                    "id": str(uuid.uuid4()), "license_key": license_key,
+                    "name": doc["name"], "pattern": doc["pattern"],
+                    "target": doc["target"], "score": doc["score"],
+                    "enabled": True, "description": f"[AI-auto] {doc['description']}",
+                    "updated_at": _iso(), "created_at": _iso(),
+                }
+                await db.mailscanner_rules.insert_one(dict(rule))
+                doc["applied"] = True
+                doc["auto_applied_at"] = _iso()
+        except Exception:
+            pass
+        await db.mailscanner_rule_suggestions.insert_one(dict(doc))
+        return doc
     except Exception:
         return None
     return None
@@ -811,3 +842,83 @@ async def docs_narrate(payload: DocsNarrateIn):
         raise HTTPException(500, f"LLM hatasi: {type(ex).__name__}")
     return {"module_key": payload.module_key, "script": script,
             "word_count": len(script.split()), "generated_at": _iso()}
+
+
+# ============================================================================
+#  DOCS MEDIA UPLOAD — modul basi GIF/video/screencap yukleme
+# ============================================================================
+import base64 as _b64
+from pathlib import Path as _Path
+
+_MEDIA_DIR = _Path("/app/backend/uploads/docs")
+_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+
+_ALLOWED_MEDIA = {"image/gif", "image/png", "image/jpeg", "image/webp",
+                  "video/mp4", "video/webm"}
+_MAX_MEDIA_BYTES = 20 * 1024 * 1024   # 20 MB
+
+
+class MediaUploadIn(BaseModel):
+    module_key: str = Field(..., min_length=1, max_length=60)
+    filename: str = Field(..., min_length=3, max_length=200)
+    content_type: str
+    data_b64: str   # base64 encoded body
+    caption: Optional[str] = ""
+
+
+@router.post("/docs/media")
+async def upload_docs_media(payload: MediaUploadIn):
+    if payload.content_type not in _ALLOWED_MEDIA:
+        raise HTTPException(400, f"Desteklenmeyen tur: {payload.content_type}")
+    try:
+        raw = _b64.b64decode(payload.data_b64)
+    except Exception:
+        raise HTTPException(400, "Gecersiz base64")
+    if len(raw) > _MAX_MEDIA_BYTES:
+        raise HTTPException(413, f"Dosya cok buyuk (max {_MAX_MEDIA_BYTES // 1024 // 1024} MB)")
+    ext = payload.content_type.split("/")[-1].replace("jpeg", "jpg")
+    mid = str(uuid.uuid4())
+    filepath = _MEDIA_DIR / f"{mid}.{ext}"
+    filepath.write_bytes(raw)
+    doc = {
+        "id": mid, "module_key": payload.module_key,
+        "filename": payload.filename, "content_type": payload.content_type,
+        "size": len(raw), "caption": (payload.caption or "")[:400],
+        "url": f"/api/mailscanner/docs/media/{mid}",
+        "created_at": _iso(),
+    }
+    await db.docs_media.insert_one(dict(doc))
+    return doc
+
+
+@router.get("/docs/media/{media_id}")
+async def get_docs_media(media_id: str):
+    from fastapi.responses import FileResponse
+    doc = await db.docs_media.find_one({"id": media_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Media bulunamadi")
+    ext = doc["content_type"].split("/")[-1].replace("jpeg", "jpg")
+    path = _MEDIA_DIR / f"{media_id}.{ext}"
+    if not path.exists():
+        raise HTTPException(404, "Dosya sistemde yok")
+    return FileResponse(path, media_type=doc["content_type"])
+
+
+@router.get("/docs/media")
+async def list_docs_media(module_key: Optional[str] = None):
+    q = {"module_key": module_key} if module_key else {}
+    rows = await db.docs_media.find(q, {"_id": 0}).sort("created_at", -1).limit(100).to_list(100)
+    return {"items": rows}
+
+
+@router.delete("/docs/media/{media_id}")
+async def delete_docs_media(media_id: str):
+    doc = await db.docs_media.find_one({"id": media_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Media bulunamadi")
+    ext = doc["content_type"].split("/")[-1].replace("jpeg", "jpg")
+    path = _MEDIA_DIR / f"{media_id}.{ext}"
+    try: path.unlink(missing_ok=True)
+    except Exception: pass
+    await db.docs_media.delete_one({"id": media_id})
+    return {"ok": True}
