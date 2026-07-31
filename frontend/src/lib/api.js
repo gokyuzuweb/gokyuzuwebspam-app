@@ -31,6 +31,10 @@ export const api = {
     }).then(r => r.data),
   eventsByServer: (licenseKey) =>
     client.get("/events/by-server", { params: { license_key: licenseKey } }).then(r => r.data),
+  eventGet: (licenseKey, eventId) =>
+    client.get(`/events/${eventId}`, { params: { license_key: licenseKey } }).then(r => r.data),
+  eventMarkSpam: (licenseKey, eventId) =>
+    client.post(`/events/${eventId}/mark-spam`, null, { params: { license_key: licenseKey } }).then(r => r.data),
   alertsRules: (licenseKey) =>
     client.get("/alerts/rules", { params: { license_key: licenseKey } }).then(r => r.data),
   alertsRuleUpsert: (licenseKey, rule) =>
@@ -98,6 +102,11 @@ export const api = {
   versionManifest: () => client.get("/version/manifest").then(r => r.data),
   versionManifestPut: (payload) => client.put("/version/manifest", payload).then(r => r.data),
   versionCheckUpdate: () => client.get("/version/check-update").then(r => r.data),
+  versionPublish: (payload) => client.post("/version/publish", payload).then(r => r.data),
+
+  // Admin gate
+  whoami: (licenseKey) =>
+    client.get("/admin/whoami", { params: licenseKey ? { license_key: licenseKey } : {} }).then(r => r.data),
 
   // Licenses
   licenses: () => client.get("/licenses").then(r => r.data),

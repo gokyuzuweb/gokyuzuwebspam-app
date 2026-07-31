@@ -157,19 +157,40 @@ export default function Dashboard() {
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-7">
           <Card>
-            <CardHeader title="En Çok Şüpheli Gönderici IP'leri" subtitle="Karantinada en sık görülen kaynaklar" />
+            <CardHeader
+              title="En Çok Şüpheli Gönderici IP'leri"
+              subtitle="Bir çubuğa tıklayın → mail trafiği o IP'ye filtrelenir · Karantinada en sık görülen kaynaklar"
+            />
             <CardBody>
               <div className="h-64 w-full">
                 <ResponsiveContainer>
-                  <BarChart data={top.data || []} layout="vertical" margin={{ left: 6, right: 20 }}>
+                  <BarChart
+                    data={top.data || []}
+                    layout="vertical"
+                    margin={{ left: 6, right: 20 }}
+                    onClick={(ev) => {
+                      const ip = ev?.activePayload?.[0]?.payload?.ip;
+                      if (!ip) return;
+                      // Scroll to LiveMailEvents & append IP filter to URL
+                      const url = new URL(window.location.href);
+                      url.searchParams.set("ip", ip);
+                      window.history.replaceState({}, "", url.toString());
+                      const el = document.querySelector('[data-testid="live-events-card"]');
+                      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                      // Trigger a hashChange-like reload of LiveMailEvents by dispatching event
+                      window.dispatchEvent(new Event("popstate"));
+                    }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
                     <XAxis type="number" stroke="#475569" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }} tickLine={false} axisLine={false} />
-                    <YAxis dataKey="ip" type="category" width={130} stroke="#475569" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }} tickLine={false} axisLine={false} />
+                    <YAxis dataKey="ip" type="category" width={130} stroke="#475569" tick={{ fontSize: 11, fontFamily: "JetBrains Mono", cursor: "pointer" }} tickLine={false} axisLine={false} />
                     <Tooltip
                       contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 6, fontSize: 12 }}
                       cursor={{ fill: "rgba(99,102,241,0.08)" }}
+                      formatter={(val) => [`${val} mail`, "adet"]}
+                      labelFormatter={(ip) => `IP: ${ip} · tıkla → filtrele`}
                     />
-                    <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]} cursor="pointer" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

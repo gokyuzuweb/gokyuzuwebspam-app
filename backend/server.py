@@ -1355,8 +1355,142 @@ async def version_check_update():
         "latest": mf["latest_version"],
         "update_available": is_newer,
         "download_url": mf.get("download_url", ""),
+        "download_url_ip": mf.get("download_url_ip", ""),
         "changelog": mf.get("changelog", ""),
         "release_date": mf.get("release_date", ""),
+    }
+
+
+# ----- Master admin gate + auto-publish -----
+MASTER_IP = os.environ.get("MASTER_IP", "89.19.15.58")
+MASTER_HOST = os.environ.get("MASTER_HOST", "gokyuzuhosting.com")
+MASTER_LICENSE_KEY = os.environ.get("MASTER_LICENSE_KEY", "")
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
+async def _is_master(request: Request, license_key: Optional[str]) -> dict:
+    """Master authenticated when BOTH conditions match:
+       1) request originates from MASTER_IP (X-Forwarded-For chain contains it) OR license key
+          has that IP in its heartbeat/allowed list
+       2) license_key equals MASTER_LICENSE_KEY (or the license bound to MASTER_IP)
+    """
+    client_ip = _client_ip(request)
+    xff_chain = request.headers.get("x-forwarded-for", "") + "," + client_ip
+    ip_match = MASTER_IP and MASTER_IP in xff_chain
+
+    key_match = False
+    if license_key:
+        if MASTER_LICENSE_KEY and license_key == MASTER_LICENSE_KEY:
+            key_match = True
+        else:
+            lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0})
+            if lic and (
+                MASTER_IP in (lic.get("ip_addresses") or [])
+                or lic.get("last_heartbeat_ip") == MASTER_IP
+            ):
+                key_match = True
+    return {
+        "is_master": bool(ip_match and key_match),
+        "ip_match": bool(ip_match),
+        "key_match": bool(key_match),
+        "client_ip": client_ip,
+        "master_ip": MASTER_IP,
+        "master_host": MASTER_HOST,
+    }
+
+
+@api.get("/admin/whoami")
+async def admin_whoami(request: Request, license_key: Optional[str] = None):
+    """Frontend calls this to decide whether to show master-only UI (License Mgmt,
+    Version Publish, MRR panel). Sets a lightweight flag; the *authoritative* gating
+    still happens on mutating endpoints via `_require_master`."""
+    r = await _is_master(request, license_key)
+    return r
+
+
+async def _require_master(request: Request, license_key: Optional[str]) -> None:
+    r = await _is_master(request, license_key)
+    if not r["is_master"]:
+        raise HTTPException(
+            403,
+            f"Bu islem sadece ana yonetici tarafindan yapilabilir "
+            f"(ip_match={r['ip_match']}, key_match={r['key_match']})",
+        )
+
+
+class VersionPublishIn(BaseModel):
+    latest_version: Optional[str] = None
+    changelog: Optional[str] = ""
+    license_key: Optional[str] = None
+
+
+@api.post("/version/publish")
+async def version_publish(payload: VersionPublishIn, request: Request):
+    """Master-only: publish a new version. If `latest_version` is omitted, auto-detect
+    from the master license's last_heartbeat_version. Generates DUAL download URLs
+    (gokyuzuhosting.com + 89.19.15.58) so plugins can fall back if DNS fails."""
+    await _require_master(request, payload.license_key)
+
+    # Auto-detect version from master server's heartbeat
+    version = (payload.latest_version or "").strip().lstrip("v")
+    if not version:
+        master_lic = None
+        if MASTER_LICENSE_KEY:
+            master_lic = await db.licenses.find_one({"license_key": MASTER_LICENSE_KEY}, {"_id": 0})
+        if not master_lic:
+            master_lic = await db.licenses.find_one(
+                {"ip_addresses": {"$in": [MASTER_IP]}}, {"_id": 0}
+            ) or await db.licenses.find_one(
+                {"last_heartbeat_ip": MASTER_IP}, {"_id": 0}
+            )
+        if master_lic and master_lic.get("last_heartbeat_version"):
+            version = master_lic["last_heartbeat_version"].lstrip("v")
+        else:
+            # Fallback: bump patch of the current server manifest by 0.0.1
+            cur_mf = await db.settings.find_one({"_key": "version_manifest"}, {"_id": 0}) or {}
+            parts = [int(x) for x in (cur_mf.get("latest_version", "1.1.0")).replace("v", "").split(".") if x.isdigit()]
+            while len(parts) < 3: parts.append(0)
+            parts[2] += 1
+            version = ".".join(map(str, parts))
+
+    dl_host = f"https://{MASTER_HOST}/dist/gokyuzuwebspam-{version}.tar.gz"
+    dl_ip   = f"http://{MASTER_IP}/dist/gokyuzuwebspam-{version}.tar.gz"
+    release_date = datetime.now(timezone.utc).isoformat()
+
+    manifest = {
+        "_key": "version_manifest",
+        "latest_version": version,
+        "download_url": dl_host,
+        "download_url_ip": dl_ip,
+        "changelog": payload.changelog or f"Otomatik yayin — v{version} ({MASTER_HOST})",
+        "release_date": release_date,
+        "published_by_master": True,
+    }
+    await db.settings.update_one({"_key": "version_manifest"}, {"$set": manifest}, upsert=True)
+    await db.logs.insert_one(ActivityLog(
+        source="version-publish",
+        level="info",
+        message=f"Master yayinladi → v{version} (host={MASTER_HOST}, ip={MASTER_IP})",
+    ).model_dump())
+
+    # Count plugins that will pick up the update on next check
+    affected = await db.licenses.count_documents({"active": True})
+    return {
+        "ok": True,
+        "latest_version": version,
+        "download_url": dl_host,
+        "download_url_ip": dl_ip,
+        "changelog": manifest["changelog"],
+        "release_date": release_date,
+        "affected_clients": affected,
+        "master_host": MASTER_HOST,
+        "master_ip": MASTER_IP,
     }
 
 

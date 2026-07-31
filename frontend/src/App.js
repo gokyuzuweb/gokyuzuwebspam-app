@@ -9,6 +9,7 @@ import {
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { PluginStatusStripe, LicenseGate } from "@/components/LicenseGate";
+import { useIsMaster } from "@/hooks/useIsMaster";
 import { api } from "@/lib/api";
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
@@ -42,8 +43,8 @@ const NAV = [
   { to: "/panel/notifications", key: "notifications", icon: Bell, testid: "nav-notifications" },
   { to: "/panel/alerts", key: "alerts", icon: BellRing, testid: "nav-alerts" },
   { to: "/panel/reports", key: "reports", icon: FileText, testid: "nav-reports" },
-  { to: "/panel/licenses", key: "licenses", icon: Key, testid: "nav-licenses", sellerOnly: true },
-  { to: "/panel/pricing", key: "pricing", icon: DollarSign, testid: "nav-pricing", sellerOnly: true },
+  { to: "/panel/licenses", key: "licenses", icon: Key, testid: "nav-licenses", sellerOnly: true, masterOnly: true },
+  { to: "/panel/pricing", key: "pricing", icon: DollarSign, testid: "nav-pricing", sellerOnly: true, masterOnly: true },
   { to: "/panel/users", key: "users", icon: Users, testid: "nav-users" },
   { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs" },
   { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings" },
@@ -55,7 +56,12 @@ function Sidebar() {
   const { effective } = useI18n();
   const mode = useQuery({ queryKey: ["system-mode"], queryFn: api.systemMode });
   const isSeller = mode.data?.mode === "seller";
-  const items = NAV.filter((n) => isSeller || !n.sellerOnly);
+  const { isMaster, clientIp, masterIp } = useIsMaster();
+  const items = NAV.filter((n) => {
+    if (n.sellerOnly && !isSeller) return false;
+    if (n.masterOnly && !isMaster) return false;
+    return true;
+  });
   return (
     <aside data-testid="sidebar" className={`w-60 shrink-0 border-r border-slate-800 bg-slate-900/60 flex flex-col ${effective === "ar" ? "rtl" : ""}`}>
       <div className="h-14 flex items-center gap-2 px-3 border-b border-slate-800">
@@ -96,9 +102,22 @@ function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <div className="px-4 py-3 border-t border-slate-800 text-[11px] text-slate-500 mono flex items-center gap-2">
+      <div className="px-4 py-3 border-t border-slate-800 text-[11px] text-slate-500 mono flex items-center gap-2" data-testid="sidebar-role-strip">
         <GaugeCircle className="w-3.5 h-3.5" />
-        cPanel 136.0.32 · <span className={isSeller ? "text-indigo-400" : "text-emerald-400"}>{isSeller ? "SELLER" : "CUSTOMER"}</span>
+        {isMaster ? (
+          <>
+            <span className="text-indigo-400">MASTER</span>
+            <span className="text-slate-600">·</span>
+            <span className="text-slate-400">{masterIp}</span>
+          </>
+        ) : (
+          <>
+            <span className={isSeller ? "text-amber-400" : "text-emerald-400"}>
+              {isSeller ? "SELLER" : "CUSTOMER"}
+            </span>
+            {clientIp && <><span className="text-slate-600">·</span><span className="truncate max-w-[80px]">{clientIp}</span></>}
+          </>
+        )}
       </div>
     </aside>
   );

@@ -27,6 +27,10 @@ class MailEvent(BaseModel):
     total_score: float = 0.0
     scores: dict[str, Any] = Field(default_factory=dict)
     headers_preview: Optional[str] = None
+    headers_full: Optional[str] = None      # Complete SMTP headers (multi-line)
+    body_preview: Optional[str] = None      # Plain-text body (first N KB)
+    body_html: Optional[str] = None         # HTML body if available
+    attachments: Optional[list[dict]] = None  # [{filename, content_type, size, sha256}]
     ts: Optional[str] = None  # ISO ts, milter tarafinda uretilirse
 
 
@@ -186,19 +190,52 @@ async def test_ingest(license_key: str = Query(..., min_length=8)):
     samples = [
         {"from_addr": "spammer@junkmail.example", "to_addr": "user@your.tld",
          "subject": "*** URGENT *** Nigerian Prince needs your help", "verdict": "high_spam",
-         "action": "quarantine", "total_score": 12.4, "scores": {"spamassassin": 9.2, "ai": 3.2}},
+         "action": "quarantine", "total_score": 12.4, "scores": {"spamassassin": 9.2, "ai": 3.2},
+         "headers_full": ("Return-Path: <spammer@junkmail.example>\n"
+                          "Received: from junkmail.example (unknown [45.32.11.7])\n"
+                          "  by mail.your.tld with ESMTP; Wed, 31 Jul 2026 10:14:22 +0000\n"
+                          "From: \"Prince Adamu\" <spammer@junkmail.example>\n"
+                          "To: user@your.tld\n"
+                          "Subject: *** URGENT *** Nigerian Prince needs your help\n"
+                          "X-Spam-Level: *********\n"
+                          "X-Spam-Score: 12.4\n"),
+         "body_preview": ("Dear Beloved Friend,\n\nI am writing to inform you that a large sum of "
+                          "USD 45,000,000 has been left in an account in your name. To claim this "
+                          "urgent transfer, please reply with your bank details and $500 processing fee "
+                          "immediately.\n\nGod bless.\nPrince Adamu"),
+         "attachments": [{"filename": "claim_form.pdf", "content_type": "application/pdf",
+                          "size": 218450, "sha256": "3f4a…"}]},
         {"from_addr": "newsletter@shop.example", "to_addr": "user@your.tld",
          "subject": "Haftalik indirim bulteni", "verdict": "clean",
-         "action": "accept", "total_score": 1.2, "scores": {"spamassassin": 1.2}},
+         "action": "accept", "total_score": 1.2, "scores": {"spamassassin": 1.2},
+         "headers_full": ("From: Shop Newsletter <newsletter@shop.example>\n"
+                          "To: user@your.tld\n"
+                          "Subject: Haftalik indirim bulteni\n"),
+         "body_preview": "Bu hafta %30'a varan indirimler basladı!\nUrunlerimizi görmek için tıklayın.",
+         "body_html": "<html><body style='font-family:sans-serif;'><h2>Haftalık İndirim</h2><p>%30'a varan indirimler!</p></body></html>"},
         {"from_addr": "phish@bank-fake.example", "to_addr": "user@your.tld",
          "subject": "Hesabinizi dogrulayin - kimlik guncelleme", "verdict": "spam",
-         "action": "quarantine", "total_score": 7.8, "scores": {"spamassassin": 5.1, "ai": 2.7}},
+         "action": "quarantine", "total_score": 7.8, "scores": {"spamassassin": 5.1, "ai": 2.7},
+         "headers_full": ("From: <security@bank-fake.example>\n"
+                          "Reply-To: <different@evil.example>\n"
+                          "Subject: Hesabinizi dogrulayin\n"
+                          "X-Originating-IP: 190.211.45.22\n"),
+         "body_preview": ("Sayin musteri,\n\nHesabinizin guvenligi icin lutfen asagidaki linke tiklayarak "
+                          "kimlik bilgilerinizi guncelleyin: http://bank-fake.example/verify?token=xyz\n\n"
+                          "24 saat icinde islem yapmazsaniz hesabiniz askiya alinacaktir."),
+         "attachments": []},
         {"from_addr": "virus@bad.example", "to_addr": "user@your.tld",
          "subject": "Invoice_1023.doc.exe", "verdict": "virus",
-         "action": "reject", "total_score": 20.0, "scores": {"clamav": 15.0, "spamassassin": 5.0}},
+         "action": "reject", "total_score": 20.0, "scores": {"clamav": 15.0, "spamassassin": 5.0},
+         "headers_full": "From: virus@bad.example\nSubject: Invoice_1023.doc.exe\n",
+         "body_preview": "Please find attached the invoice for last month.",
+         "attachments": [{"filename": "Invoice_1023.doc.exe", "content_type": "application/octet-stream",
+                          "size": 82340, "sha256": "e10a…", "malware": "Trojan.Generic.KX-2842"}]},
         {"from_addr": "friend@known.example", "to_addr": "user@your.tld",
          "subject": "Bugun kahve icelim mi?", "verdict": "clean",
-         "action": "accept", "total_score": 0.5, "scores": {"spamassassin": 0.5}},
+         "action": "accept", "total_score": 0.5, "scores": {"spamassassin": 0.5},
+         "headers_full": "From: friend@known.example\nSubject: Kahve\n",
+         "body_preview": "Selam! Yarin 15:00'de eski yerimizde bulusalim mi? Konusacak cok sey var :)"},
     ]
     now = datetime.now(timezone.utc)
     docs = []
@@ -216,6 +253,43 @@ async def test_ingest(license_key: str = Query(..., min_length=8)):
     )
     return {"ok": True, "inserted": len(docs),
             "message": "5 ornek event olusturuldu. Panelde canli event akisinda gorulmelidir."}
+
+
+@router.post("/{event_id}/mark-spam")
+async def mark_event_spam(event_id: str, license_key: str = Query(..., min_length=8)):
+    """User marks a mail as spam. Updates the event, adds sender to blacklist,
+    queues a sa-learn report action for the WHM daemon to consume."""
+    await _validate_license(license_key)
+    evt = await db.mail_events.find_one({"id": event_id, "license_key": license_key}, {"_id": 0})
+    if not evt:
+        raise HTTPException(404, "Event bulunamadi")
+    # Update the event verdict
+    await db.mail_events.update_one(
+        {"id": event_id},
+        {"$set": {"verdict": "high_spam", "marked_spam_at": datetime.now(timezone.utc).isoformat(),
+                  "marked_by": "user"}},
+    )
+    # Add sender to blacklist
+    if evt.get("from_addr"):
+        await db.lists.update_one(
+            {"kind": "blacklist", "value": evt["from_addr"], "license_key": license_key},
+            {"$set": {"kind": "blacklist", "value": evt["from_addr"], "type": "email",
+                      "reason": f"Marked spam by user (event {event_id[:8]})",
+                      "license_key": license_key, "created_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+    # Queue report_spam action for the daemon (mirrors quarantine-action flow)
+    action_doc = {
+        "id": str(uuid.uuid4()),
+        "license_key": license_key,
+        "event_id": event_id,
+        "exim_mid": evt.get("exim_mid"),
+        "action": "report_spam",
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.quarantine_actions.insert_one(action_doc)
+    return {"ok": True, "marked": True, "blacklisted": evt.get("from_addr")}
 
 
 # --- Quarantine Sync ---
@@ -268,6 +342,16 @@ class ActionResult(BaseModel):
     action_id: str
     result: str
     message: Optional[str] = None
+
+
+@router.get("/{event_id}")
+async def get_event(event_id: str, license_key: str = Query(..., min_length=8)):
+    """Get full mail event including body and attachments (if stored)."""
+    await _validate_license(license_key)
+    evt = await db.mail_events.find_one({"id": event_id, "license_key": license_key}, {"_id": 0})
+    if not evt:
+        raise HTTPException(404, "Event bulunamadi")
+    return evt
 
 
 @router.post("/complete-action")

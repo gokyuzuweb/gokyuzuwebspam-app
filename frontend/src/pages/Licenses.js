@@ -10,6 +10,8 @@ import { api } from "@/lib/api";
 import MrrPanel from "@/components/MrrPanel";
 import LicenseServerStatus from "@/components/LicenseServerStatus";
 import EditLicenseModal from "@/components/EditLicenseModal";
+import VersionPublishCard from "@/components/VersionPublishCard";
+import { useIsMaster } from "@/hooks/useIsMaster";
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const isoDate = (iso) => iso ? new Date(iso).toLocaleDateString("tr-TR") : "—";
@@ -183,8 +185,9 @@ function VersionCard() {
 
 export default function Licenses() {
   const qc = useQueryClient();
-  const licenses = useQuery({ queryKey: ["licenses"], queryFn: api.licenses, refetchInterval: 20000 });
-  const violations = useQuery({ queryKey: ["violations"], queryFn: api.violations, refetchInterval: 15000 });
+  const { isMaster, isLoading: masterLoading, clientIp, masterIp } = useIsMaster();
+  const licenses = useQuery({ queryKey: ["licenses"], queryFn: api.licenses, refetchInterval: 20000, enabled: isMaster });
+  const violations = useQuery({ queryKey: ["violations"], queryFn: api.violations, refetchInterval: 15000, enabled: isMaster });
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState("");
   const [planFilter, setPlanFilter] = useState("all");
@@ -232,6 +235,25 @@ export default function Licenses() {
     try { await navigator.clipboard.writeText(k); toast.success("Anahtar kopyalandı"); }
     catch { toast.error("Kopyalanamadı"); }
   };
+
+  if (masterLoading) {
+    return <div className="p-10 text-slate-500 text-center">Yetki kontrolü yapılıyor…</div>;
+  }
+  if (!isMaster) {
+    return (
+      <div className="p-10 max-w-md mx-auto text-center" data-testid="lic-not-master">
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700">
+          <ShieldAlert className="w-7 h-7 text-slate-500" />
+        </div>
+        <div className="text-slate-200 font-semibold text-lg mb-1">Yetkisiz Erişim</div>
+        <p className="text-sm text-slate-400 leading-relaxed">
+          Bu sayfa yalnızca <span className="mono text-indigo-300">{masterIp || "ana yönetici sunucusu"}</span>{" "}
+          IP'sinden ve master lisans anahtarıyla erişilebilir. Sizin IP'niz:{" "}
+          <span className="mono text-slate-300">{clientIp || "bilinmiyor"}</span>
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -437,7 +459,7 @@ export default function Licenses() {
         </div>
 
         <div className="col-span-12 lg:col-span-4 space-y-4">
-          <VersionCard />
+          <VersionPublishCard />
 
           <Card>
             <CardHeader title={<span className="flex items-center gap-2"><Users2 className="w-4 h-4 text-indigo-400" /> Nasıl çalışır?</span>} />

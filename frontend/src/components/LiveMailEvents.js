@@ -93,10 +93,19 @@ function VerdictDonut({ byVerdict, total, activeVerdict, onSelect }) {
 }
 
 export default function LiveMailEvents() {
-  // URL query param: ?scope=user&user=<cpuser> — cPanel end-user modu
+  // URL query params: ?scope=user&user=<cpuser> — cPanel end-user modu
+  //                   ?ip=<sender_ip> — Top Suspicious IPs chart drilldown
+  const [urlTick, setUrlTick] = useState(0); // bumps on popstate to re-read URL
+  useEffect(() => {
+    const onPop = () => setUrlTick((n) => n + 1);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   const urlParams = typeof window !== "undefined"
     ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const scopeUser = urlParams.get("scope") === "user" ? urlParams.get("user") : null;
+  const ipFilter = urlParams.get("ip") || "";
+  void urlTick; // trigger re-render on URL change
 
   const [licenseKey, setLicenseKey] = useState(() =>
     localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676"
@@ -204,9 +213,14 @@ export default function LiveMailEvents() {
   const total = summary.data?.total || 0;
   const invalid = events.isError;
 
-  // Client-side filtering — subject/from/to arama + verdict dropdown
+  // Client-side filtering — subject/from/to arama + verdict dropdown + IP drilldown
   const filtered = items.filter((e) => {
     if (verdictFilter !== "all" && e.verdict !== verdictFilter) return false;
+    if (ipFilter && !(e.from_addr || "").includes(ipFilter) && !(e.server_ip || "").includes(ipFilter)) {
+      // Also check for X-Originating-IP inside headers
+      const headers = e.headers_full || e.headers_preview || "";
+      if (!headers.includes(ipFilter)) return false;
+    }
     if (search) {
       const q = search.toLowerCase();
       const hay = `${e.from_addr || ""} ${e.to_addr || ""} ${e.subject || ""}`.toLowerCase();
@@ -236,6 +250,14 @@ export default function LiveMailEvents() {
               data-testid="live-events-license-edit-btn"
             >{licenseKey.slice(0, 12)}…</button>
             {scopeUser && <> {" · "}<span className="text-amber-400" data-testid="live-events-scope-badge">scope: {scopeUser}</span></>}
+            {ipFilter && <> {" · "}<span className="text-rose-400 mono" data-testid="live-events-ip-filter">
+              filtre: {ipFilter}
+              <button onClick={() => {
+                const url = new URL(window.location.href);
+                url.searchParams.delete("ip");
+                window.location.href = url.toString();
+              }} className="ml-1 text-rose-300 hover:text-rose-200 underline">temizle</button>
+            </span></>}
             {" · "}Toplam: <span className="mono text-slate-300" data-testid="live-events-total">{total}</span>
             {summary.data?.last_event_at && <> {" · "}Son: <span className="mono text-slate-300">{timeAgo(summary.data.last_event_at)} önce</span></>}
           </>

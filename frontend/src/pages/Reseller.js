@@ -221,15 +221,36 @@ function ResellerDashboard({ token, onLogout }) {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       {/* Header */}
-      <header className="border-b border-slate-800/60 bg-slate-950/60 backdrop-blur-md">
+      <header className="border-b border-slate-800/60 bg-slate-950/60 backdrop-blur-md"
+              style={{ borderColor: `${primary}30` }}>
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5">
-            <div className="relative w-9 h-9 rounded-md bg-gradient-to-br from-indigo-500 to-rose-500 flex items-center justify-center">
-              <ShieldAlert className="w-5 h-5 text-white" />
+            <div
+              className="relative w-9 h-9 rounded-md flex items-center justify-center overflow-hidden"
+              style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}
+            >
+              {logoUrl ? (
+                <img
+                  src={logoUrl}
+                  alt=""
+                  className="w-full h-full object-contain p-1"
+                  onError={(e) => { e.currentTarget.style.display = "none"; }}
+                  data-testid="reseller-header-logo"
+                />
+              ) : (
+                <ShieldAlert className="w-5 h-5 text-white" />
+              )}
             </div>
             <div className="leading-tight">
-              <div className="text-slate-100 font-bold text-[15px]">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-              <div className="text-[10px] uppercase tracking-widest text-indigo-400 mono">BAYİ PORTALI</div>
+              <div className="text-slate-100 font-bold text-[15px]" data-testid="reseller-header-brand">
+                {brandName}
+              </div>
+              <div
+                className="text-[10px] uppercase tracking-widest mono"
+                style={{ color: accent }}
+              >
+                BAYİ PORTALI
+              </div>
             </div>
           </Link>
           <div className="flex items-center gap-3">
