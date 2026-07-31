@@ -523,6 +523,11 @@ function ActivityChartModal({ licenseKey, reseller, onClose }) {
     queryFn: () => api.adminResellerActivity(licenseKey, reseller.id, days),
     retry: false,
   });
+  const bk = useQuery({
+    queryKey: ["reseller-breakdown", reseller.id, days],
+    queryFn: () => api.adminResellerBreakdown(licenseKey, reseller.id, days),
+    retry: false,
+  });
   const rows = (q.data?.items || []).map((d) => ({
     ...d,
     day_short: d.day.slice(5), // MM-DD
@@ -595,6 +600,58 @@ function ActivityChartModal({ licenseKey, reseller, onClose }) {
             </div>
           )}
         </div>
+
+        {/* IP + UserAgent breakdown */}
+        {bk.data && (bk.data.ips?.length > 0 || bk.data.user_agents?.length > 0) && (
+          <div className="px-5 pb-5 space-y-3 border-t border-slate-800 pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">IP Dağılımı</div>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {bk.data.ips.map((ip) => {
+                    const total = ip.success + ip.fail;
+                    const pct = total ? (ip.success / total * 100) : 0;
+                    return (
+                      <div key={ip.ip} className="p-1.5 rounded bg-slate-900/60 border border-slate-800 text-xs"
+                           data-testid={`activity-ip-${ip.ip}`}>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="mono text-slate-200 truncate">{ip.ip}</span>
+                          <span className="mono text-[10px] text-slate-500">
+                            <span className="text-emerald-400">{ip.success}</span> · <span className="text-rose-400">{ip.fail}</span>
+                          </span>
+                        </div>
+                        <div className="h-1 bg-slate-800 rounded overflow-hidden">
+                          <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Tarayıcı / Cihaz</div>
+                <div className="space-y-1">
+                  {bk.data.user_agents.map((ua) => {
+                    const total = bk.data.user_agents.reduce((s, u) => s + u.count, 0);
+                    const pct = total ? (ua.count / total * 100) : 0;
+                    return (
+                      <div key={ua.family} className="p-1.5 rounded bg-slate-900/60 border border-slate-800 text-xs"
+                           data-testid={`activity-ua-${ua.family}`}>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-slate-200 font-medium">{ua.family}</span>
+                          <span className="mono text-[10px] text-slate-500">{ua.count} kez · %{pct.toFixed(0)}</span>
+                        </div>
+                        <div className="h-1 bg-slate-800 rounded overflow-hidden">
+                          <div className="h-full bg-indigo-500" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="p-3 border-t border-slate-800 text-[10px] text-slate-500 text-center mono">
           Master → /api/admin/resellers/{reseller.id.slice(0, 8)}…/activity

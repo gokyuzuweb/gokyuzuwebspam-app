@@ -1960,11 +1960,191 @@ async def push_unsubscribe(endpoint: str):
 
 @api.get("/push/vapid-public")
 async def push_vapid_public():
-    """Return the server's VAPID public key so browsers can subscribe.
-    If VAPID_PUBLIC_KEY env is set, use that; otherwise return a placeholder
-    indicating server push is not yet fully configured."""
+    """Return the server's VAPID public key so browsers can subscribe."""
     return {"public_key": os.environ.get("VAPID_PUBLIC_KEY", ""),
             "configured": bool(os.environ.get("VAPID_PUBLIC_KEY"))}
+
+
+class PushSendIn(BaseModel):
+    license_key: Optional[str] = None
+    reseller_token: Optional[str] = None
+    title: str
+    body: str
+    url: Optional[str] = "/reseller?mobile=1"
+    tag: Optional[str] = "gws-admin"
+
+
+@api.post("/push/send")
+async def push_send(payload: PushSendIn, request: Request):
+    """Master-only. Send a Web Push notification to all subscriptions matching
+    license_key (or reseller_token). Uses pywebpush + VAPID for real Web Push."""
+    await _require_master(request, payload.license_key)
+    import base64 as _b64
+    priv_b64 = os.environ.get("VAPID_PRIVATE_KEY_B64", "")
+    subject = os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com")
+    if not priv_b64:
+        raise HTTPException(500, "VAPID_PRIVATE_KEY_B64 yapilandirilmamis")
+    try:
+        priv_pem = _b64.b64decode(priv_b64).decode()
+    except Exception:
+        raise HTTPException(500, "VAPID private key decode hatasi")
+
+    q = {}
+    if payload.license_key:    q["license_key"]    = payload.license_key
+    if payload.reseller_token: q["reseller_token"] = payload.reseller_token
+    subs = await db.push_subscriptions.find(q, {"_id": 0}).to_list(500)
+    if not subs:
+        return {"ok": True, "sent": 0, "reason": "no_subscribers"}
+
+    from pywebpush import webpush, WebPushException
+    import json as _json
+    ok_count = 0
+    dead = []
+    for s in subs:
+        try:
+            webpush(
+                subscription_info={"endpoint": s["endpoint"], "keys": s.get("keys", {})},
+                data=_json.dumps({
+                    "title": payload.title,
+                    "body": payload.body,
+                    "url": payload.url,
+                    "tag": payload.tag,
+                }),
+                vapid_private_key=priv_pem,
+                vapid_claims={"sub": subject},
+            )
+            ok_count += 1
+        except WebPushException as ex:
+            # 410 Gone / 404 Not Found → subscription expired, clean up
+            if getattr(ex, "response", None) is not None and ex.response.status_code in (404, 410):
+                dead.append(s["endpoint"])
+        except Exception as ex:
+            log.warning("push send error: %s", ex)
+    if dead:
+        await db.push_subscriptions.delete_many({"endpoint": {"$in": dead}})
+    return {"ok": True, "sent": ok_count, "total": len(subs), "cleaned": len(dead)}
+
+
+@api.get("/admin/resellers/{rid}/activity-breakdown")
+async def admin_reseller_activity_breakdown(rid: str, request: Request,
+                                            license_key: Optional[str] = None,
+                                            days: int = 30):
+    """Master-only. IP + UserAgent breakdown for a specific bayi's login history."""
+    await _require_master(request, license_key)
+    r = await db.resellers.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Bayi bulunamadi")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    ips = {}
+    uas = {}
+    total_success = 0
+    total_fail = 0
+    async for lg in db.reseller_logins.find(
+        {"$or": [{"reseller_id": rid}, {"email": r.get("email")}], "at": {"$gte": cutoff}},
+        {"_id": 0, "ip": 1, "user_agent": 1, "success": 1, "at": 1},
+    ):
+        ip = lg.get("ip") or "?"
+        ua_raw = (lg.get("user_agent") or "")[:200]
+        # naive UA fingerprint (browser family)
+        ua_family = "Other"
+        for kw, name in [("Firefox","Firefox"),("Edg","Edge"),("Chrome","Chrome"),
+                         ("Safari","Safari"),("iPhone","iOS"),("Android","Android"),
+                         ("curl","curl"),("Postman","Postman")]:
+            if kw in ua_raw: ua_family = name; break
+        ok = bool(lg.get("success"))
+        if ok: total_success += 1
+        else:  total_fail += 1
+        ips.setdefault(ip, {"ip": ip, "success": 0, "fail": 0, "last_at": None})
+        ips[ip]["success" if ok else "fail"] += 1
+        if not ips[ip]["last_at"] or (lg.get("at") or "") > ips[ip]["last_at"]:
+            ips[ip]["last_at"] = lg.get("at")
+        uas.setdefault(ua_family, {"family": ua_family, "count": 0})
+        uas[ua_family]["count"] += 1
+    return {
+        "reseller": {"email": r.get("email"), "company": r.get("company", "")},
+        "days": days,
+        "total_success": total_success,
+        "total_fail": total_fail,
+        "ips": sorted(ips.values(), key=lambda x: -(x["success"] + x["fail"]))[:20],
+        "user_agents": sorted(uas.values(), key=lambda x: -x["count"])[:10],
+    }
+
+
+# --- AI Spam Explanation (Emergent LLM) ---
+class SpamExplainIn(BaseModel):
+    sender:      Optional[str] = None
+    recipient:   Optional[str] = None
+    subject:     Optional[str] = None
+    body_preview:Optional[str] = None
+    verdict:     Optional[str] = None
+    score:       Optional[float] = None
+    rules_matched: Optional[list[str]] = None
+    scores:      Optional[dict] = None
+    force:       Optional[bool] = False  # bypass cache
+
+
+@api.post("/ai/explain-spam")
+async def ai_explain_spam(payload: SpamExplainIn):
+    """LLM-powered Turkish natural-language explanation of why a mail is spam.
+    Cached in `ai_explanations` collection keyed on (sender, subject, verdict)
+    so we don't re-invoke the LLM on repeat views of the same event."""
+    if not (payload.sender or payload.subject):
+        raise HTTPException(400, "sender veya subject gerekli")
+
+    cache_key = f"{payload.sender}|{payload.subject}|{payload.verdict}|{payload.score}"[:200]
+    if not payload.force:
+        cached = await db.ai_explanations.find_one({"key": cache_key}, {"_id": 0})
+        if cached and cached.get("text"):
+            return {"text": cached["text"], "cached": True,
+                    "generated_at": cached.get("generated_at")}
+
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(500, "EMERGENT_LLM_KEY yapilandirilmamis")
+
+    prompt = (
+        f"Bir spam filtresi bir e-postayi karantinaya aldi. Kullanicilara 2-3 cumleyle "
+        f"anlasilir Turkce olarak neden spam/tehlikeli oldugunu acikla. Teknik terimlerden kacin.\n\n"
+        f"Gonderen: {payload.sender or '(bilinmiyor)'}\n"
+        f"Alici: {payload.recipient or '(bilinmiyor)'}\n"
+        f"Konu: {payload.subject or '(konu yok)'}\n"
+        f"Verdict: {payload.verdict or 'unknown'}\n"
+        f"Skor: {payload.score or 0}\n"
+        f"Eslesen kurallar: {', '.join(payload.rules_matched or []) or '(yok)'}\n"
+        f"Motor skorlari: {payload.scores or {}}\n\n"
+        f"Ilk cumle: mailin ne oldugunu ve niye supheli oldugunu 1 cumlede ozetle.\n"
+        f"Ikinci cumle: kullanici acmali mi/acmamali mi ve nedeni.\n"
+        f"Ucuncu cumle (opsiyonel): benzer riskleri onlemek icin kisa oneri.\n"
+        f"Emoji kullanma, madde isareti kullanma, teknik jargon kullanma."
+    )
+
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"spam-explain-{uuid.uuid4()}",
+            system_message="Sen bir e-posta guvenlik uzmanisin. Kullanicilara sade, arkadas canlisi Turkce ile spam maillerini aciklarsin.",
+        ).with_model("anthropic", "claude-sonnet-4-6")
+        r = await chat.send_message(UserMessage(text=prompt))
+        text = (r or "").strip()
+    except Exception as ex:
+        log.warning("LLM explain failed: %s", ex)
+        raise HTTPException(500, f"AI aciklama uretilemedi: {type(ex).__name__}")
+
+    await db.ai_explanations.update_one(
+        {"key": cache_key},
+        {"$set": {
+            "key": cache_key,
+            "text": text,
+            "sender": payload.sender,
+            "subject": payload.subject,
+            "verdict": payload.verdict,
+            "score": payload.score,
+            "generated_at": _iso(),
+        }},
+        upsert=True,
+    )
+    return {"text": text, "cached": False, "generated_at": _iso()}
 
 
 @api.post("/admin/resellers/{rid}/toggle-active")

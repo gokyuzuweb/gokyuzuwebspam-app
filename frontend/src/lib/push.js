@@ -59,17 +59,51 @@ export async function registerServiceWorker() {
 
 export async function requestPermission() {
   if (!("Notification" in window)) return "unsupported";
-  if (Notification.permission === "granted") {
-    localStorage.setItem(KEY_ENABLED, "1");
-    return "granted";
-  }
   if (Notification.permission === "denied") return "denied";
-  const p = await Notification.requestPermission();
-  if (p === "granted") {
-    localStorage.setItem(KEY_ENABLED, "1");
-    await registerServiceWorker();
+  if (Notification.permission !== "granted") {
+    const p = await Notification.requestPermission();
+    if (p !== "granted") return p;
   }
-  return p;
+  localStorage.setItem(KEY_ENABLED, "1");
+  const reg = await registerServiceWorker();
+  // Also subscribe for real Web Push if VAPID public key is configured
+  await subscribeToPush(reg).catch((e) => console.warn("push subscribe failed:", e));
+  return "granted";
+}
+
+/** Subscribe the browser to Web Push using the server's VAPID public key. */
+async function subscribeToPush(reg) {
+  if (!reg || !reg.pushManager) return null;
+  try {
+    const { api } = await import("./api");
+    const { public_key, configured } = await api.pushVapidPublic();
+    if (!configured || !public_key) return null;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(public_key),
+    });
+    const licenseKey = localStorage.getItem("gws.event_license") || "";
+    const resellerToken = localStorage.getItem("gws_reseller_token") || "";
+    await api.pushSubscribe({
+      subscription: sub.toJSON(),
+      license_key: licenseKey || null,
+      reseller_token: resellerToken || null,
+      user_agent: navigator.userAgent.slice(0, 200),
+    });
+    return sub;
+  } catch (e) {
+    console.warn("push subscribe error:", e);
+    return null;
+  }
+}
+
+function urlBase64ToUint8Array(b64) {
+  const padding = "=".repeat((4 - (b64.length % 4)) % 4);
+  const s = (b64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(s);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
 }
 
 export function pushEnabled() {

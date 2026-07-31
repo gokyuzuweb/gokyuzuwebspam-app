@@ -151,6 +151,10 @@ export const api = {
     `${client.defaults.baseURL}/admin/analytics/export?fmt=csv&days=${days}${licenseKey ? `&license_key=${encodeURIComponent(licenseKey)}` : ""}`,
   pushVapidPublic: () => client.get("/push/vapid-public").then(r => r.data),
   pushSubscribe: (payload) => client.post("/push/subscribe", payload).then(r => r.data),
+  pushSend: (payload) => client.post("/push/send", payload, { withCredentials: true }).then(r => r.data),
+  aiExplainSpam: (payload) => client.post("/ai/explain-spam", payload).then(r => r.data),
+  adminResellerBreakdown: (licenseKey, rid, days = 30) =>
+    client.get(`/admin/resellers/${rid}/activity-breakdown`, { params: { days, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
   quarantineLocalDomains: () =>
     client.get("/quarantine/local-domains").then(r => r.data),
   quarantinePurgeDemo: () =>

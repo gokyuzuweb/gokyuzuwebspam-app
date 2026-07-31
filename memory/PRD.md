@@ -1,34 +1,46 @@
 # GökyüzüWebSpam · PRD (Feb 2026)
 
-## User language
-Turkish only.
-
-## Implemented (cumulative — 6 sessions worth)
-- Master/Customer split with cookie session, Modern Publish Modal (confetti), Mail Detail Viewer with tabs+Mark Spam, Top IP drilldown, SMTP Relay & Test Mail (10 presets), Compliance PDF, Alerts Timeline, Reseller Branding UI + header injection, Mobile Bayi View, Reseller Portal Management (login audit + CRUD + create + reset password + activation), Users page WHM/DEMO badges + purge, Quarantine `_DEMO_DOMAINS` + purge, Engines dedupe, WHM Daemon `/users/sync` + `/quarantine-sync`, Password reset e-mail, Reseller Activity LineChart, Idle Bayi rozeti + reminder mail, Master Onboarding Wizard, PWA Push (client-side), Auto-suspend cron, Analytics CSV export.
+## Implemented (cumulative)
+- Master/Customer split + cookie session + master unlock button
+- Modern Publish Success Modal (confetti + animated)
+- Mail Detail Viewer tabbed drawer (Özet/Gövde/HTML/Başlıklar/Ekler/Motorlar/SA + Mark Spam + **AI Açıklama**)
+- Top Suspicious IPs → LiveMailEvents drilldown
+- SMTP Relay & Test Mail (10 provider presets)
+- Compliance PDF + Alerts Timeline BarChart + Reseller Branding
+- Mobile Bayi View + Push permission button
+- Reseller Portal Management (login audit, CRUD, create, reset password w/ email, activation)
+- Users page WHM/DEMO badges + purge, Quarantine `_DEMO_DOMAINS` purge
+- Engines dedupe, WHM daemon `/users/sync` + `/quarantine-sync`
+- Reseller Activity LineChart (7/30/90d), Idle badge, Reminder mail
+- Master Onboarding Wizard (4-step, animated progress)
+- PWA Push client-side (Notification API + service worker)
+- Auto-suspend cron + `AdminOperationsCard`
+- Analytics CSV Export (Excel BOM, per-bayi aggregates)
 - **This turn**:
-  - **VAPID Web Push foundation**: `POST /api/push/subscribe` stores endpoint+keys in `push_subscriptions` collection. `GET /api/push/vapid-public` returns configured public key. Server-side push send using `pywebpush` is one env var (`VAPID_PUBLIC_KEY`+`VAPID_PRIVATE_KEY`) away from working end-to-end.
-  - **Auto-suspend cron**: Background asyncio task `_auto_suspend_daily_task` runs every 24h. Reads `settings.auto_suspend`, suspends idle bayis, updates `last_run_at`/`last_suspended_count`. Sends notification email if enabled.
-  - **Analytics CSV Export**: `GET /api/admin/analytics/export?fmt=csv&days=30` returns Excel-BOM CSV with per-bayi aggregate: sub_accounts, login stats (period), mail volume, spam count, spam ratio, last_login. Direct download link in `AdminOperationsCard`.
-  - **Mail Detay Özet sekmesi** (user-reported bug fix): MailEventDetail now always shows an "Özet" tab as the default with structured metadata (Konu, Gönderen, Alıcı, Verdict, Skor, Aksiyon, Exim MID, Sunucu, IP, Zaman, motor skorları). When body/headers/attachments aren't stored yet, a friendly amber notice explains that the WHM plugin needs to be updated to sync full mail content.
-  - **AdminOperationsCard**: New Licenses page card with auto-suspend rule toggle + threshold + notify-before checkbox + "Şimdi Çalıştır" button, and analytics CSV download with 7/30/90/365-day selector.
+  - **AI Karantina Öneri Motoru**: `POST /api/ai/explain-spam` uses `emergentintegrations` LlmChat with `claude-sonnet-4-6`. Turkish 2-3-sentence explanation of why a mail was flagged. Cached in `ai_explanations` collection keyed on (sender|subject|verdict|score). MailEventDetail's Özet tab now shows an "AI Açıklama" panel with a "Neden Spam?" / "Bu mail hakkında" button that lazy-loads the explanation.
+  - **VAPID Web Push COMPLETE**: `pywebpush 2.3.0` + `py-vapid 1.9.4` installed. VAPID key pair generated and stored in `.env` as `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY_B64`, `VAPID_SUBJECT`. New endpoints: `POST /api/push/send` (master-only, VAPID-signed), auto-cleanup of expired subscriptions (410/404). Client `push.js` extended: on `requestPermission()` grant, also calls `pushManager.subscribe()` with the VAPID public key and POSTs `/api/push/subscribe`. Full end-to-end real Web Push ready.
+  - **Bayi Aktivite IP/UA Breakdown**: `GET /api/admin/resellers/{rid}/activity-breakdown` returns per-IP success/fail counts + last_at + browser/device family aggregation. ActivityChartModal now shows two side-by-side panels below the line chart: IP dağılımı with per-IP success/fail progress bar, and Tarayıcı/Cihaz with per-family count + percentage.
+  - **DEFERRED**: Master Setup Wizard inline mini-wizards (would require in-place SMTP/branding forms inside the onboarding kart — each step still routes to its dedicated page for now; the routing UX is fine).
 
-## Backend endpoints (this turn)
-- `GET  /api/admin/auto-suspend` / `PUT` / `POST /run`
-- `GET  /api/admin/analytics/export?fmt=csv&days=N`
-- `POST /api/push/subscribe`, `DELETE /api/push/subscribe?endpoint=…`
-- `GET  /api/push/vapid-public`
-
-## Key files (this turn)
-- `/app/backend/server.py` — auto-suspend endpoints + startup task, analytics export, push subscribe, vapid-public
-- `/app/frontend/src/components/AdminOperationsCard.js` (new)
-- `/app/frontend/src/components/MailEventDetail.js` — Özet tab with `SumRow` helper
-- `/app/frontend/src/pages/Licenses.js` — mounts `AdminOperationsCard`
-- `/app/frontend/src/lib/api.js` — 7 new API methods (auto-suspend, analytics, push)
+## New endpoints (this turn)
+- `POST /api/ai/explain-spam` — LLM explanation (Claude Sonnet 4.6)
+- `POST /api/push/send` — server-side Web Push send
+- `GET  /api/admin/resellers/{rid}/activity-breakdown` — IP + UA aggregation
 
 ## Backlog
-- 🟡 VAPID key generation + server-side push send (pywebpush + FastAPI trigger)
-- 🟡 Reseller Dashboard mobile detail bottom-sheet (started but deferred)
-- 🟡 Full frontend testing agent regression pass
+- 🟡 Master Setup Wizard inline mini-wizards (SMTP preset picker, branding preview, Stripe key form — all embedded in the Onboarding card without navigation)
+- 🟡 AI explanation: batch pre-generate for all high_spam events on ingest so they're instant to view
+- 🟡 Push Send UI: add "Test Push Gönder" button in AdminOperationsCard so master can verify subscribers
+- 🟡 Full frontend regression pass via testing agent
+
+## Key files (this turn)
+- `/app/backend/server.py` — /ai/explain-spam, /push/send, /admin/resellers/{rid}/activity-breakdown
+- `/app/backend/requirements.txt` — pywebpush, py-vapid, http-ece
+- `/app/backend/.env` — VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY_B64, VAPID_SUBJECT
+- `/app/frontend/src/components/MailEventDetail.js` — Özet + AIExplainPanel
+- `/app/frontend/src/components/ResellerAdminPanel.js` — IP/UA breakdown in ActivityChartModal
+- `/app/frontend/src/lib/push.js` — VAPID subscribe wiring
+- `/app/frontend/src/lib/api.js` — 3 new methods
 
 ## Test credentials
 See `/app/memory/test_credentials.md`.

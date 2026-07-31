@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   X, Shield, Clock, Server, Hash, User, Mail, FileText, Paperclip, AlertOctagon,
-  Code2, Ban, Send, Bug, Copy, Download, ShieldOff,
+  Code2, Ban, Send, Bug, Copy, Download, ShieldOff, Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -226,6 +226,9 @@ export default function MailEventDetail({ event, onClose, onAction }) {
                   Eski kayıtlar sadece meta veriyle gösterilir.
                 </div>
               )}
+
+              {/* AI-powered natural-language explanation */}
+              <AIExplainPanel event={e} isSpam={isSpam} />
             </div>
           )}
 
@@ -412,6 +415,71 @@ function SumRow({ label, value, mono, copy }) {
                 title="Kopyala">
           <Copy className="w-3 h-3" />
         </button>
+      )}
+    </div>
+  );
+}
+
+/* --------------------------- AI explanation panel ------------------------- */
+function AIExplainPanel({ event, isSpam }) {
+  const [state, setState] = useState({ loading: false, text: null, cached: false, error: null });
+  const explain = async () => {
+    setState({ loading: true, text: null, cached: false, error: null });
+    try {
+      const r = await api.aiExplainSpam({
+        sender: event.from_addr,
+        recipient: event.to_addr,
+        subject: event.subject,
+        body_preview: event.body_preview,
+        verdict: event.verdict,
+        score: event.total_score,
+        rules_matched: event.rules_matched,
+        scores: event.scores,
+      });
+      setState({ loading: false, text: r.text, cached: r.cached, error: null });
+    } catch (err) {
+      const msg = err?.response?.data?.detail || "AI açıklama alınamadı";
+      setState({ loading: false, text: null, cached: false, error: msg });
+      toast.error(msg);
+    }
+  };
+  return (
+    <div className="mt-4 p-3 rounded-lg border border-indigo-500/25 bg-gradient-to-br from-indigo-500/10 via-slate-900/40 to-transparent" data-testid="ai-explain-panel">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+          <span className="text-xs font-medium text-slate-100">AI Açıklama</span>
+          {state.cached && <span className="text-[9px] mono px-1 rounded bg-slate-800 text-slate-500">önbellek</span>}
+        </div>
+        {!state.text && !state.loading && (
+          <button
+            onClick={explain}
+            className="text-[11px] px-2.5 py-1 rounded bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30 font-medium inline-flex items-center gap-1"
+            data-testid="ai-explain-btn"
+          >
+            <Sparkles className="w-3 h-3" />
+            {isSpam ? "Neden Spam?" : "Bu mail hakkında"}
+          </button>
+        )}
+      </div>
+      {state.loading && (
+        <div className="text-xs text-slate-400 flex items-center gap-2 animate-pulse">
+          <Sparkles className="w-3 h-3 text-indigo-400 animate-spin" />
+          Claude düşünüyor…
+        </div>
+      )}
+      {state.text && (
+        <p className="text-xs text-slate-200 leading-relaxed whitespace-pre-wrap" data-testid="ai-explain-text">
+          {state.text}
+        </p>
+      )}
+      {state.error && (
+        <p className="text-xs text-rose-300">{state.error}</p>
+      )}
+      {!state.text && !state.loading && !state.error && (
+        <p className="text-[10px] text-slate-500">
+          Bu maili neden spam/temiz olarak sınıflandırdığımızı yapay zekaya sade Türkçe ile açıklat.
+        </p>
       )}
     </div>
   );
