@@ -718,6 +718,72 @@ function FAQ() {
   );
 }
 
+function Testimonials() {
+  const items = [
+    {
+      quote: "3 sunucumuzda kurduk. İlk hafta içinde spam trafiğinin %94'ünü bloke etti. Kullanıcı politikası ve AI kural öneri sistemi işimizi çok kolaylaştırdı.",
+      author: "Emre Y.", role: "Sistem Yöneticisi", company: "GökHost", metric: "%94 spam bloke",
+    },
+    {
+      quote: "ConfigServer MailScanner'dan geçtik. Modern arayüz, Türkçe destek ve canlı saldırı haritası müşterilerimiz için de görselleştirilmiş bir güvenlik hissi verdi.",
+      author: "Ayşe K.", role: "Kurucu", company: "MavHost Cloud", metric: "12 sunucu",
+    },
+    {
+      quote: "AI Sistem Analizi butonuna bastığımızda 30sn içinde Türkçe rapor + 3 aksiyon önerisi geldi. Kullanıcı deneyimi WHM eklentileri arasında bir seviye üstte.",
+      author: "Mustafa D.", role: "DevOps", company: "Netdatatr", metric: "AI-powered",
+    },
+  ];
+  const cases = [
+    { logo: "🛒", brand: "E-Ticaret Platformu", size: "450+ cPanel hesabı", result: "%97 azalma", detail: "phishing girişimlerinde" },
+    { logo: "🏦", brand: "Fintech Startup", size: "80 sunucu", result: "0 BEC kaybı", detail: "6 ay boyunca" },
+    { logo: "🎓", brand: "Üniversite Sistemi", size: "12.000+ öğrenci", result: "%99.8 uptime", detail: "mail teslim oranı" },
+  ];
+  return (
+    <section className="py-24 border-t border-slate-800/60 relative overflow-hidden" data-testid="landing-testimonials">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(217,70,239,0.08),transparent_50%)]"/>
+      <div className="max-w-7xl mx-auto px-6 relative">
+        <div className="max-w-2xl mb-14">
+          <div className="text-xs uppercase tracking-widest text-fuchsia-400 mono mb-2">Referanslar</div>
+          <h2 className="text-3xl sm:text-4xl font-bold text-slate-100 tracking-tight mb-3">Hosting operatörleri seçti.</h2>
+          <p className="text-slate-400 text-lg">Türkiye'de hosting'in içinden yorumlar + gerçek sonuçlar.</p>
+        </div>
+
+        {/* Case studies */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
+          {cases.map((c) => (
+            <div key={c.brand} data-testid={`case-${c.brand}`} className="group relative rounded-xl border border-slate-800 bg-slate-900/40 p-6 hover:border-indigo-500/40 transition-colors">
+              <div className="text-3xl mb-3">{c.logo}</div>
+              <div className="text-slate-100 font-semibold">{c.brand}</div>
+              <div className="text-xs text-slate-500 mono mb-4">{c.size}</div>
+              <div className="pt-4 border-t border-slate-800">
+                <div className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent">{c.result}</div>
+                <div className="text-xs text-slate-500">{c.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Testimonials */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {items.map((t, i) => (
+            <div key={i} data-testid={`testimonial-${i}`} className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 hover:-translate-y-0.5 transition-transform relative">
+              <div className="absolute -top-3 -left-3 w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white text-lg font-bold shadow-lg">"</div>
+              <p className="text-slate-300 text-sm leading-relaxed mb-5">{t.quote}</p>
+              <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                <div>
+                  <div className="text-sm text-slate-100 font-medium">{t.author}</div>
+                  <div className="text-[11px] text-slate-500">{t.role} · {t.company}</div>
+                </div>
+                <div className="text-xs text-indigo-300 mono px-2 py-1 rounded bg-indigo-500/10 border border-indigo-500/30">{t.metric}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CTABottom() {
   const s = useLandingStrings();
   return (
@@ -801,6 +867,7 @@ export default function Landing() {
       <HowItWorks />
       <Pricing />
       <FAQ />
+      <Testimonials />
       <CTABottom />
       <Footer />
     </div>

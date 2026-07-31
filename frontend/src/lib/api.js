@@ -315,6 +315,15 @@ export const api = {
   msSuggestionReject: (licenseKey, id) =>
     client.post(`/mailscanner/ai/self-train/reject/${id}`, null, { params: { license_key: licenseKey } }).then(r => r.data),
 
+  // AI Predict Score (ingest-time) + AI Docs Narration
+  msPredictScore: (payload, useLlm = false) =>
+    llmClient.post("/mailscanner/ai/predict-score", payload, { params: { use_llm: useLlm } }).then(r => r.data),
+  msDocsNarrate: (payload) =>
+    llmClient.post("/mailscanner/ai/docs-narrate", payload).then(r => r.data),
+
+  // Weekly report test email
+  weeklyMailTest: () => client.post("/settings/smtp/test-weekly").then(r => r.data),
+
   // BEC / URL / Sandbox / Reputation / SIEM
   msBecCheck: (licenseKey, payload) =>
     client.post("/mailscanner/bec/check", { license_key: licenseKey, ...payload }).then(r => r.data),

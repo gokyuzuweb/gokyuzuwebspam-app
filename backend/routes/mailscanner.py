@@ -681,3 +681,133 @@ async def reject_suggestion(suggestion_id: str, license_key: str = Query(..., mi
     if r.deleted_count == 0:
         raise HTTPException(404, "Öneri bulunamadı")
     return {"ok": True}
+
+
+# ============================================================================
+#  AI PREDICT SCORE — ingest anında hızlı LLM spam skor tahmini
+#  AI DOCS NARRATION — modül drawer'ında sesli/metin kılavuz
+# ============================================================================
+class PredictIn(BaseModel):
+    from_addr: Optional[str] = ""
+    to_addr: Optional[str] = ""
+    subject: Optional[str] = ""
+    body_preview: Optional[str] = ""
+    client_ip: Optional[str] = ""
+
+
+# In-memory LRU-lite cache (max 500 entries)
+_PREDICT_CACHE: dict[str, dict] = {}
+
+
+def _predict_key(payload: PredictIn) -> str:
+    return f"{payload.from_addr}|{payload.subject}"[:200]
+
+
+async def _heuristic_score(p: PredictIn) -> tuple[float, list[str]]:
+    """LLM olmadan hizli heuristic (2-5ms)."""
+    score = 0.0
+    reasons = []
+    subj = (p.subject or "").lower()
+    body = (p.body_preview or "").lower()
+    frm = (p.from_addr or "").lower()
+
+    if any(w in subj for w in ["tebrikler", "kazand", "iban", "acil", "urgent",
+                                "wire", "havale", "click here", "verify", "suspended"]):
+        score += 3.0; reasons.append("Konuda spam anahtar kelimeleri")
+    if any(w in body for w in ["click here", "buraya tikla", "hemen odeme", "kazand"]):
+        score += 2.0; reasons.append("Body'de tehlikeli link cagrisi")
+    if "@" in frm and any(sub in frm for sub in [".ru", ".cn", ".tk", ".xyz"]):
+        score += 1.5; reasons.append("Yuksek riskli TLD")
+    if len(subj) > 90:
+        score += 0.5; reasons.append("Cok uzun konu satiri")
+    if subj != p.subject and subj:  # gostersiz karakterler
+        score += 0.5
+    if not p.from_addr or p.from_addr == "<>":
+        score += 1.0; reasons.append("Bounce/empty envelope")
+    return round(score, 2), reasons
+
+
+@router.post("/ai/predict-score")
+async def predict_score(payload: PredictIn, use_llm: bool = False):
+    """Hizli heuristic (2-5ms) + opsiyonel LLM ile skor tahmini (~500ms)."""
+    key = _predict_key(payload)
+    if key in _PREDICT_CACHE:
+        cached = _PREDICT_CACHE[key]
+        return {**cached, "cache": True}
+    heur_score, reasons = await _heuristic_score(payload)
+    verdict = "clean"
+    if heur_score >= 10: verdict = "high_spam"
+    elif heur_score >= 5: verdict = "spam"
+    elif heur_score >= 3: verdict = "suspicious"
+    result = {"score": heur_score, "verdict": verdict, "reasons": reasons,
+              "method": "heuristic", "cache": False}
+    if use_llm:
+        import os
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+        if api_key:
+            try:
+                from emergentintegrations.llm.chat import LlmChat, UserMessage
+                prompt = (
+                    f"Kisa yanit ver: Bu mail spam mi?\n"
+                    f"Gonderen: {payload.from_addr}\nKonu: {payload.subject}\n"
+                    f"Body ozet: {(payload.body_preview or '')[:200]}\n\n"
+                    f"Yalnizca JSON dondur (baska yazi yok):\n"
+                    '{"score": 0-10 arasi float, "verdict": "clean/suspicious/spam/high_spam", "reason": "tek cumle"}'
+                )
+                chat = LlmChat(
+                    api_key=api_key, session_id=f"predict-{uuid.uuid4().hex[:8]}",
+                    system_message="Sen bir hizli spam siniflandiricisin. JSON dondur.",
+                ).with_model("anthropic", "claude-sonnet-4-6")
+                r = await chat.send_message(UserMessage(text=prompt))
+                import json as _json, re
+                m = re.search(r"\{[\s\S]*\}", r or "")
+                if m:
+                    parsed = _json.loads(m.group(0))
+                    llm_score = float(parsed.get("score", heur_score))
+                    combined = round(0.6 * llm_score + 0.4 * heur_score, 2)
+                    verdict = parsed.get("verdict", verdict)
+                    reasons.append(f"AI: {parsed.get('reason', '')}")
+                    result.update({
+                        "score": combined, "verdict": verdict, "reasons": reasons,
+                        "method": "hybrid", "llm_score": llm_score,
+                    })
+            except Exception:
+                pass
+    if len(_PREDICT_CACHE) > 500:
+        _PREDICT_CACHE.pop(next(iter(_PREDICT_CACHE)))
+    _PREDICT_CACHE[key] = result
+    return result
+
+
+class DocsNarrateIn(BaseModel):
+    module_key: str
+    module_label: str
+    features: list[str] = []
+    style: Optional[str] = "friendly"  # friendly / technical / casual
+
+
+@router.post("/ai/docs-narrate")
+async def docs_narrate(payload: DocsNarrateIn):
+    """Bir modul icin Turkce, 20-30sn'lik konusma kilavuzu uretir (script)."""
+    import os
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(500, "EMERGENT_LLM_KEY yok")
+    prompt = (
+        f"'{payload.module_label}' modulu icin 3-4 kisa Turkce cumleyle konusma tarzi kilavuz uret.\n"
+        f"Ozellikler: {', '.join(payload.features[:5])}\n"
+        f"Ton: {payload.style} · sanki bir kullaniciya panel uzerinde anlatiyorsun.\n"
+        f"Emoji kullanma, jargon kullanma, 20-30sn okuma suresi."
+    )
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=api_key, session_id=f"narrate-{uuid.uuid4().hex[:8]}",
+            system_message="Sen bir arayuz kilavuzcusun. Kullaniciyla dost bir tonla konusursun.",
+        ).with_model("anthropic", "claude-sonnet-4-6")
+        r = await chat.send_message(UserMessage(text=prompt))
+        script = (r or "").strip()
+    except Exception as ex:
+        raise HTTPException(500, f"LLM hatasi: {type(ex).__name__}")
+    return {"module_key": payload.module_key, "script": script,
+            "word_count": len(script.split()), "generated_at": _iso()}

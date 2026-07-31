@@ -533,7 +533,8 @@ async def _weekly_ai_report_task():
 
 
 async def _run_weekly_report() -> dict:
-    """LLM ile son 7 gün spam özet raporu üretir. `weekly_reports` koleksiyonuna kaydeder."""
+    """LLM ile son 7 gün spam özet raporu üretir. `weekly_reports` koleksiyonuna kaydeder.
+    SMTP yapılandırılmışsa master admin'e otomatik email gönderir."""
     api_key = os.environ.get("EMERGENT_LLM_KEY")
     if not api_key:
         log.info("weekly report atlandi: EMERGENT_LLM_KEY yok")
@@ -582,7 +583,56 @@ async def _run_weekly_report() -> dict:
     }
     await db.weekly_reports.insert_one(doc)
     log.info("weekly ai report saved: %s", doc["id"])
-    return {"ok": True, "id": doc["id"], "summary": summary}
+    # Mail gönderimi (SMTP yapılandırılmışsa)
+    mail_result = await _send_weekly_report_email(doc)
+    if mail_result.get("sent"):
+        await db.weekly_reports.update_one({"id": doc["id"]}, {"$set": {"emailed_to": mail_result.get("to"), "emailed_at": _iso()}})
+    return {"ok": True, "id": doc["id"], "summary": summary, **mail_result}
+
+
+async def _send_weekly_report_email(report: dict) -> dict:
+    """Mevcut SMTP settings (db.settings _key=smtp) ile master admin'e mail atar."""
+    cfg = await db.settings.find_one({"_key": "smtp"}, {"_id": 0}) or {}
+    if not cfg.get("enabled") or not cfg.get("host"):
+        return {"sent": False, "reason": "smtp_not_configured"}
+    ns = await db.settings.find_one({"_key": "notifications"}, {"_id": 0}) or {}
+    to_email = cfg.get("weekly_report_to") or ns.get("email_to") or cfg.get("from_addr")
+    if not to_email:
+        return {"sent": False, "reason": "no_recipient"}
+    subject = f"[GökyüzüWebSpam] Haftalık AI Rapor - {report['generated_at'][:10]}"
+    body_txt = (
+        f"Son 7 gün özeti:\n"
+        f"- Taranan: {report['total_scanned']}\n- Spam: {report['spam']}\n"
+        f"- Virüs: {report['virus']}\n\n{report['summary']}\n"
+    )
+    try:
+        ok, via = await _send_email(to_email, subject, body_txt,
+                                     from_addr=cfg.get("from_addr", "noreply@gokyuzuwebspam"))
+        return {"sent": ok, "to": to_email, "via": via}
+    except Exception as ex:
+        log.warning("weekly report email failed: %s", ex)
+        return {"sent": False, "reason": f"{type(ex).__name__}"}
+
+
+class SMTPSettings(BaseModel):
+    host: str
+    port: int = 587
+    user: Optional[str] = ""
+    password: Optional[str] = ""
+    from_addr: str
+    weekly_report_to: Optional[str] = None
+
+
+@api.post("/settings/smtp/test-weekly")
+async def test_smtp_weekly(request: Request, license_key: Optional[str] = None):
+    """Ornek haftalik raporu master admin'e gonderir (SMTP test)."""
+    await _require_master(request, license_key)
+    fake_report = {
+        "id": "test", "generated_at": _iso(),
+        "total_scanned": 12345, "spam": 234, "virus": 5,
+        "summary": "Bu bir test mailidir. SMTP yapılandırması çalışıyor.",
+    }
+    return await _send_weekly_report_email(fake_report)
 
 
 @api.post("/ai/weekly-report/run")

@@ -75,7 +75,38 @@ async def ingest_event(evt: MailEvent, request: Request):
             asyncio.create_task(_ai_prewarm(doc))
         except Exception:
             pass
+    # AI Predict Score: her mail icin heuristic + cache (opsiyonel LLM ile hybrid)
+    try:
+        import asyncio
+        asyncio.create_task(_ai_predict_bg(doc))
+    except Exception:
+        pass
     return {"ok": True, "id": doc["id"]}
+
+
+async def _ai_predict_bg(doc: dict) -> None:
+    """Hizli AI predict — heuristic sonucu event uzerine yazilir (predicted_verdict/predicted_score)."""
+    try:
+        from routes.mailscanner import PredictIn, _heuristic_score
+        p = PredictIn(
+            from_addr=doc.get("from_addr", ""),
+            to_addr=doc.get("to_addr", ""),
+            subject=doc.get("subject", ""),
+            body_preview=doc.get("body_preview", ""),
+            client_ip=doc.get("client_ip", ""),
+        )
+        score, reasons = await _heuristic_score(p)
+        pred_verdict = "clean"
+        if score >= 10: pred_verdict = "high_spam"
+        elif score >= 5: pred_verdict = "spam"
+        elif score >= 3: pred_verdict = "suspicious"
+        await db.mail_events.update_one(
+            {"id": doc["id"]},
+            {"$set": {"predicted_score": score, "predicted_verdict": pred_verdict,
+                      "predicted_reasons": reasons}},
+        )
+    except Exception:
+        return
 
 
 async def _ai_prewarm(doc: dict) -> None:

@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import {
   BookOpen, Filter, Bug, Globe2, Inbox, Mail, ArrowUpRight, Bell, BellRing,
   Cpu, Wrench, Radar, Terminal, Users, PackageOpen, Settings2, Key, Beaker,
-  ShieldCheck, Brain, Server, LinkIcon, UserX, Activity, X, Search,
+  ShieldCheck, Brain, Server, LinkIcon, UserX, Activity, X, Search, Sparkles,
+  Play, Volume2,
 } from "lucide-react";
 
 const MODULES = [
@@ -237,10 +241,11 @@ export default function Docs() {
                       className="p-2 rounded hover:bg-slate-800 text-slate-400"><X className="w-4 h-4"/></button>
             </div>
             <div className="p-5 space-y-5">
-              {/* Preview visual — SVG mock */}
-              <div className={`rounded-lg p-4 border ${TONE_MAP[active.tone]} bg-slate-950/50`}>
-                <MockPreview module_key={active.key}/>
-              </div>
+              {/* Video-style Animated Walkthrough */}
+              <AnimatedWalkthrough module_key={active.key} tone={active.tone}/>
+              {/* AI Sesli Kılavuz */}
+              <AiNarration module={active}/>
+
               <section>
                 <h3 className="text-slate-100 font-semibold text-sm mb-2">Ne yapar?</h3>
                 <p className="text-slate-300 text-sm leading-relaxed">{active.what}</p>
@@ -330,5 +335,299 @@ function MockPreview({ module_key }) {
       <rect x="10" y="10" width="380" height="80" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.5"/>
       <text x="200" y="55" textAnchor="middle" fontSize="14" fill="currentColor" opacity="0.7">modül önizleme</text>
     </svg>
+  );
+}
+
+// Video-style animated walkthrough — CSS keyframe scenes cycling every 4s
+function AnimatedWalkthrough({ module_key, tone }) {
+  const [scene, setScene] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const scenes = SCENES[module_key] || SCENES.default;
+  const total = scenes.length;
+  useEffect(() => {
+    if (!playing) return;
+    const t = setInterval(() => setScene(s => (s + 1) % total), 4000);
+    return () => clearInterval(t);
+  }, [playing, total]);
+  const cls = TONE_MAP[tone];
+  return (
+    <div className={`rounded-lg border ${cls} bg-slate-950 overflow-hidden`}>
+      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800">
+        <div className="flex items-center gap-2 text-[11px] mono">
+          <Play className={`w-3 h-3 ${playing ? "text-emerald-400" : "text-slate-500"}`}/>
+          <span className="text-slate-400">30sn animasyonlu kılavuz</span>
+          <span className="text-slate-500">· Sahne {scene + 1} / {total}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {scenes.map((_, i) => (
+            <button key={i} onClick={() => setScene(i)}
+                    className={`w-1.5 h-1.5 rounded-full transition-all ${i === scene ? "bg-slate-100 w-4" : "bg-slate-600"}`}/>
+          ))}
+          <button onClick={() => setPlaying(!playing)} className="ml-2 text-slate-400 hover:text-slate-100 text-[10px]">
+            {playing ? "⏸" : "▶"}
+          </button>
+        </div>
+      </div>
+      <div className="p-6 h-48 relative overflow-hidden">
+        {scenes.map((s, i) => (
+          <div key={i}
+               className={`absolute inset-0 p-6 transition-all duration-700 ease-out
+                 ${i === scene ? "opacity-100 translate-y-0" : (i < scene ? "opacity-0 -translate-y-4 pointer-events-none" : "opacity-0 translate-y-4 pointer-events-none")}`}>
+            <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Adım {i + 1}</div>
+            <div className="text-sm text-slate-100 mb-3 font-medium">{s.title}</div>
+            <div className="text-xs text-slate-400">{s.body}</div>
+            <div className="mt-3">{s.visual}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function useEffectAdvance() { /* deprecated - replaced by direct useEffect */ }
+
+function AiNarration({ module }) {
+  const [text, setText] = useState("");
+  const [display, setDisplay] = useState("");
+  const gen = useMutation({
+    mutationFn: () => api.msDocsNarrate({
+      module_key: module.key, module_label: module.label,
+      features: module.features, style: "friendly",
+    }),
+    onSuccess: (d) => {
+      setText(d.script || "");
+      // typewriter effect
+      let i = 0;
+      setDisplay("");
+      const t = setInterval(() => {
+        i++;
+        setDisplay((d.script || "").slice(0, i));
+        if (i >= (d.script || "").length) clearInterval(t);
+      }, 25);
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const speak = () => {
+    if (typeof window === "undefined" || !window.speechSynthesis) {
+      toast.error("Tarayıcı sesli okuma desteklemiyor");
+      return;
+    }
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "tr-TR";
+    u.rate = 0.95;
+    window.speechSynthesis.speak(u);
+  };
+  return (
+    <div className="rounded-lg border border-fuchsia-500/30 bg-fuchsia-500/5 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-fuchsia-300 font-semibold text-sm flex items-center gap-2">
+          <Sparkles className="w-4 h-4"/> AI Sesli Kılavuz (Claude · Türkçe)
+        </div>
+        <div className="flex gap-2">
+          <button
+            data-testid="docs-narrate-btn"
+            onClick={() => gen.mutate()} disabled={gen.isPending}
+            className="text-xs px-3 py-1.5 rounded-md bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-500/30 disabled:opacity-40">
+            {gen.isPending ? "Yazılıyor..." : "AI Kılavuz Üret"}
+          </button>
+          {text && (
+            <button onClick={speak} data-testid="docs-narrate-speak"
+                    className="text-xs px-3 py-1.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30">
+              <Volume2 className="w-3 h-3 inline mr-1"/>Sesli Oku
+            </button>
+          )}
+        </div>
+      </div>
+      {display && (
+        <div className="text-sm text-slate-200 leading-relaxed bg-slate-950 rounded p-3 mt-2">
+          {display}
+          {display.length < text.length && <span className="inline-block w-1.5 h-3.5 bg-fuchsia-400 animate-pulse ml-0.5"/>}
+        </div>
+      )}
+      {!display && !gen.isPending && (
+        <div className="text-xs text-slate-500 italic">Butona bas → 20-30sn'lik konuşma tarzı kılavuz üretilecek + tarayıcı sesli okuyabilir</div>
+      )}
+    </div>
+  );
+}
+
+// Scene definitions per module — CSS/SVG animated frames
+const SCENES = {
+  dashboard: [
+    { title: "1) Advanced Control Bar", body: "Üstteki 6 renkli kart canlı metriklerinizi gösterir.", visual: <BarScene/> },
+    { title: "2) Tab bar", body: "7 tab arasında geçiş: Genel/Coğrafi/Trafik/Karantina/Sağlık/Canlı/Tümü.", visual: <TabScene/> },
+    { title: "3) Kuyruk Modal", body: "Kuyruk kartına tıkla → toplu sil/ilet/dondur işlemleri.", visual: <QueueScene/> },
+  ],
+  mailscanner: [
+    { title: "1) Yapılandırma", body: "Threshold ve motorları (SA/Bayes/ClamAV/Rspamd) tek tıkla aç/kapat.", visual: <ToggleScene/> },
+    { title: "2) AI Analiz", body: "Claude sistemi okur, Türkçe rapor + aksiyon önerisi verir.", visual: <AiScene/> },
+    { title: "3) Öğrenme", body: "Saatlik cron: high_spam → Bayes'e otomatik beslenir + LLM regex önerir.", visual: <LearnScene/> },
+  ],
+  security: [
+    { title: "1) 11 Modül Overview", body: "Her modülün rozetli durum kartı bir bakışta.", visual: <GridScene/> },
+    { title: "2) Exploit Tarayıcı", body: "Tek tık → 1500+ dosya taranır, kritik bulgular listelenir.", visual: <BugScene/> },
+    { title: "3) BEC Tester", body: "Lookalike domain + display-name + urgency heuristic ile CEO fraud tespit.", visual: <BecScene/> },
+  ],
+  geoblocking: [
+    { title: "1) Ülke Seç", body: "113 ülke katalog · toplu seçim · TTL ile otomatik silme.", visual: <FlagScene/> },
+    { title: "2) Zaman-Tabanlı", body: "Sadece gece 00-06 arası CN/RU blokla senaryosu.", visual: <ClockScene/> },
+    { title: "3) Brute-Force Otomatik", body: "Eşik aşan ülkeler TTL süresince otomatik bloklanır.", visual: <ZapScene/> },
+  ],
+  queue: [
+    { title: "1) Aç", body: "Dashboard'da 'Kuyrukta Bekleyen' kartına tıkla.", visual: <QueueScene/> },
+    { title: "2) Seç", body: "Satırları tıkla veya 'Tümünü seç' — toplu işlem hazır.", visual: <SelectScene/> },
+    { title: "3) Uygula", body: "6 aksiyon: sil, ilet, dondur, çöz, döndür, tekrar dene.", visual: <ActionScene/> },
+  ],
+  ai: [
+    { title: "1) AI Analiz", body: "Sistemi tara → LLM Türkçe rapor + aksiyon önerisi.", visual: <AiScene/> },
+    { title: "2) Öğrenme", body: "Saatlik cron Bayes'i besler + LLM SA regex önerir.", visual: <LearnScene/> },
+    { title: "3) Prewarm", body: "High_spam ingest → arka planda açıklama üretilir, cache'lenir.", visual: <CacheScene/> },
+  ],
+  default: [
+    { title: "1) Genel Bakış", body: "Modül açıklaması ve giriş.", visual: <BarScene/> },
+    { title: "2) Kullanım", body: "Ana ekran ve aksiyonlar.", visual: <TabScene/> },
+    { title: "3) İpucu", body: "Best practice ve öneriler.", visual: <AiScene/> },
+  ],
+};
+
+// Small SVG scene components with CSS animations
+function BarScene() {
+  return (
+    <div className="flex gap-2">
+      {[0,1,2,3,4,5].map(i => (
+        <div key={i} className="flex-1 h-10 rounded animate-pulse"
+             style={{ background: `linear-gradient(to top, currentColor ${20+i*10}%, transparent)`, opacity: 0.4, animationDelay: `${i*0.1}s` }}/>
+      ))}
+    </div>
+  );
+}
+function TabScene() {
+  return (
+    <div className="flex gap-1">
+      {["Genel","Coğrafi","Trafik","Canlı","+3"].map((t, i) => (
+        <div key={t} className={`px-2 py-1 rounded text-[10px] mono border ${i === 0 ? "bg-current/20 border-current text-slate-100" : "border-slate-700 text-slate-500"}`}>{t}</div>
+      ))}
+    </div>
+  );
+}
+function QueueScene() {
+  return (
+    <div className="space-y-1">
+      {[0,1,2].map(i => (
+        <div key={i} className="flex items-center gap-2 text-[10px] mono">
+          <div className="w-3 h-3 border border-current rounded"/>
+          <div className="flex-1 h-2 bg-current/30 rounded animate-pulse" style={{ animationDelay: `${i*0.2}s` }}/>
+        </div>
+      ))}
+    </div>
+  );
+}
+function ToggleScene() {
+  return (
+    <div className="flex gap-1 flex-wrap">
+      {["SA","Bayes","ClamAV","Rspamd"].map((e, i) => (
+        <div key={e} className={`px-2 py-1 rounded text-[10px] mono border ${i < 3 ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300" : "bg-slate-800 border-slate-700 text-slate-500"}`}>● {e}</div>
+      ))}
+    </div>
+  );
+}
+function AiScene() {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-8 h-8 rounded-full bg-current/20 animate-pulse flex items-center justify-center text-[10px]">AI</div>
+      <div className="flex-1 space-y-1">
+        <div className="h-1.5 bg-current/40 rounded animate-pulse"/>
+        <div className="h-1.5 bg-current/30 rounded animate-pulse w-3/4" style={{ animationDelay: "0.2s" }}/>
+      </div>
+    </div>
+  );
+}
+function LearnScene() {
+  return (
+    <svg viewBox="0 0 200 40" className="w-full h-10">
+      <path d="M0,30 Q50,10 100,20 T200,15" stroke="currentColor" strokeWidth="1.5" fill="none">
+        <animate attributeName="stroke-dasharray" from="0 300" to="300 0" dur="2s" repeatCount="indefinite"/>
+      </path>
+    </svg>
+  );
+}
+function GridScene() {
+  return (
+    <div className="grid grid-cols-4 gap-1">
+      {Array.from({length: 8}).map((_, i) => (
+        <div key={i} className="h-4 border border-current/40 rounded animate-pulse" style={{ animationDelay: `${i*0.1}s` }}/>
+      ))}
+    </div>
+  );
+}
+function BugScene() {
+  return (
+    <div className="flex items-center gap-2 text-[10px] mono">
+      <div className="w-3 h-3 rounded-full bg-rose-400 animate-ping"/>
+      <span>/var/www/wp/x.php:12 · eval_base64</span>
+    </div>
+  );
+}
+function BecScene() {
+  return (
+    <div className="text-[10px] mono">
+      <div className="text-slate-400">from: <span className="text-rose-400 line-through">info@sirket.com</span></div>
+      <div className="text-slate-400">gerçek: <span className="text-emerald-400">info@sikertim.com</span></div>
+    </div>
+  );
+}
+function FlagScene() {
+  return (
+    <div className="flex gap-1 flex-wrap">
+      {["TR","US","CN","RU","DE","IN"].map((c, i) => (
+        <div key={c} className={`px-2 py-1 rounded text-[10px] mono border border-current/30 ${i%2 ? "bg-current/20" : ""}`}>{c}</div>
+      ))}
+    </div>
+  );
+}
+function ClockScene() {
+  return (
+    <svg viewBox="0 0 40 40" className="w-10 h-10">
+      <circle cx="20" cy="20" r="18" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.4"/>
+      <line x1="20" y1="20" x2="20" y2="8" stroke="currentColor" strokeWidth="1.5">
+        <animateTransform attributeName="transform" type="rotate" from="0 20 20" to="360 20 20" dur="3s" repeatCount="indefinite"/>
+      </line>
+    </svg>
+  );
+}
+function ZapScene() {
+  return (
+    <div className="text-[10px] mono text-rose-400 animate-pulse">
+      🚨 CN: 74 spam · auto-blocked (180min TTL)
+    </div>
+  );
+}
+function SelectScene() {
+  return (
+    <div className="space-y-1">
+      {[0,1,2].map(i => (
+        <div key={i} className="flex items-center gap-2 text-[10px]">
+          <div className={`w-3 h-3 rounded ${i < 2 ? "bg-current/60" : "border border-current/40"}`}/>
+          <div className="flex-1 h-1.5 bg-current/20 rounded"/>
+        </div>
+      ))}
+    </div>
+  );
+}
+function ActionScene() {
+  return (
+    <div className="flex gap-1 flex-wrap text-[9px] mono">
+      {["remove","deliver","freeze","thaw","retry","bounce"].map(a => (
+        <span key={a} className="px-1.5 py-0.5 rounded border border-current/30 bg-current/10">{a}</span>
+      ))}
+    </div>
+  );
+}
+function CacheScene() {
+  return (
+    <div className="flex items-center gap-2 text-[10px] mono">
+      <div className="w-4 h-4 border-2 border-current/40 rounded-full border-t-current animate-spin"/>
+      <span>prewarming AI explanation → cache</span>
+    </div>
   );
 }
