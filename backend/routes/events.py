@@ -1,0 +1,166 @@
+"""
+Mail Event ingestion + listing (SaaS mode).
+Milter (yerel WHM sunucusu) her taranmis mail icin buraya POST atar,
+panel de buradan license_key'e gore filtreli olarak listeler.
+"""
+from __future__ import annotations
+from datetime import datetime, timezone
+from typing import Optional, Any
+from fastapi import APIRouter, HTTPException, Header, Query, Request
+from pydantic import BaseModel, Field
+from deps import db
+import uuid
+
+router = APIRouter(prefix="/events", tags=["events"])
+
+
+class MailEvent(BaseModel):
+    license_key: str = Field(..., min_length=8)
+    server_ip: Optional[str] = None
+    server_hostname: Optional[str] = None
+    from_addr: Optional[str] = None
+    to_addr: Optional[str] = None
+    subject: Optional[str] = None
+    verdict: str = Field(..., pattern="^(clean|spam|high_spam|virus|blocked|whitelisted)$")
+    action: Optional[str] = None
+    total_score: float = 0.0
+    scores: dict[str, Any] = Field(default_factory=dict)
+    headers_preview: Optional[str] = None
+    ts: Optional[str] = None  # ISO ts, milter tarafinda uretilirse
+
+
+async def _validate_license(license_key: str) -> dict:
+    lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0})
+    if not lic:
+        raise HTTPException(401, "Gecersiz lisans anahtari")
+    if lic.get("active") is False:
+        raise HTTPException(403, "Lisans pasif/iptal")
+    return lic
+
+
+@router.post("/ingest")
+async def ingest_event(evt: MailEvent, request: Request):
+    """Milter -> backend. Tek mail rapor.
+    Rate limiting yok (guven license anahtarina). Failsafe: ts eksikse simdi.
+    """
+    await _validate_license(evt.license_key)
+    doc = evt.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["ts"] = doc.get("ts") or datetime.now(timezone.utc).isoformat()
+    doc["ingested_at"] = datetime.now(timezone.utc).isoformat()
+    doc["client_ip"] = request.client.host if request.client else None
+    await db.mail_events.insert_one(doc)
+    await db.licenses.update_one(
+        {"license_key": evt.license_key},
+        {"$set": {"last_event_at": doc["ingested_at"]},
+         "$inc": {"total_events": 1}}
+    )
+    return {"ok": True, "id": doc["id"]}
+
+
+@router.post("/ingest-batch")
+async def ingest_batch(events: list[MailEvent]):
+    """Milter offline-cache burst upload icin (network flap sonrasi)."""
+    if not events:
+        return {"ok": True, "inserted": 0}
+    lic_keys = {e.license_key for e in events}
+    if len(lic_keys) > 1:
+        raise HTTPException(400, "Batch icinde tek license_key olmali")
+    key = lic_keys.pop()
+    await _validate_license(key)
+    now = datetime.now(timezone.utc).isoformat()
+    docs = []
+    for e in events:
+        d = e.model_dump()
+        d["id"] = str(uuid.uuid4())
+        d["ts"] = d.get("ts") or now
+        d["ingested_at"] = now
+        docs.append(d)
+    await db.mail_events.insert_many(docs)
+    await db.licenses.update_one(
+        {"license_key": key},
+        {"$set": {"last_event_at": now}, "$inc": {"total_events": len(docs)}}
+    )
+    return {"ok": True, "inserted": len(docs)}
+
+
+@router.get("")
+async def list_events(
+    license_key: str = Query(..., min_length=8),
+    limit: int = Query(50, ge=1, le=500),
+    verdict: Optional[str] = Query(None),
+    since: Optional[str] = Query(None),
+):
+    """Panelden cagirilir. Sadece verilen license_key'e ait eventleri doner."""
+    await _validate_license(license_key)
+    q: dict[str, Any] = {"license_key": license_key}
+    if verdict:
+        q["verdict"] = verdict
+    if since:
+        q["ts"] = {"$gte": since}
+    cursor = db.mail_events.find(q, {"_id": 0}).sort("ts", -1).limit(limit)
+    items = await cursor.to_list(length=limit)
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/summary")
+async def events_summary(
+    license_key: str = Query(..., min_length=8),
+):
+    """Ozet istatistik - son 24 saat / 7 gun / verdict breakdown."""
+    await _validate_license(license_key)
+    total = await db.mail_events.count_documents({"license_key": license_key})
+    pipeline = [
+        {"$match": {"license_key": license_key}},
+        {"$group": {"_id": "$verdict", "count": {"$sum": 1}}},
+    ]
+    breakdown = {}
+    async for row in db.mail_events.aggregate(pipeline):
+        breakdown[row["_id"]] = row["count"]
+    lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0, "last_event_at": 1})
+    return {
+        "total": total,
+        "by_verdict": breakdown,
+        "last_event_at": (lic or {}).get("last_event_at"),
+    }
+
+
+# --- TEST/DEMO endpoint (kullanici kolay test edebilsin) ---
+@router.post("/test-ingest")
+async def test_ingest(license_key: str = Query(..., min_length=8)):
+    """Curl ile tetiklenir. 5 ornek event yaratir, panele hemen dusmesi icin."""
+    await _validate_license(license_key)
+    import random
+    samples = [
+        {"from_addr": "spammer@junkmail.example", "to_addr": "user@your.tld",
+         "subject": "*** URGENT *** Nigerian Prince needs your help", "verdict": "high_spam",
+         "action": "quarantine", "total_score": 12.4, "scores": {"spamassassin": 9.2, "ai": 3.2}},
+        {"from_addr": "newsletter@shop.example", "to_addr": "user@your.tld",
+         "subject": "Haftalik indirim bulteni", "verdict": "clean",
+         "action": "accept", "total_score": 1.2, "scores": {"spamassassin": 1.2}},
+        {"from_addr": "phish@bank-fake.example", "to_addr": "user@your.tld",
+         "subject": "Hesabinizi dogrulayin - kimlik guncelleme", "verdict": "spam",
+         "action": "quarantine", "total_score": 7.8, "scores": {"spamassassin": 5.1, "ai": 2.7}},
+        {"from_addr": "virus@bad.example", "to_addr": "user@your.tld",
+         "subject": "Invoice_1023.doc.exe", "verdict": "virus",
+         "action": "reject", "total_score": 20.0, "scores": {"clamav": 15.0, "spamassassin": 5.0}},
+        {"from_addr": "friend@known.example", "to_addr": "user@your.tld",
+         "subject": "Bugun kahve icelim mi?", "verdict": "clean",
+         "action": "accept", "total_score": 0.5, "scores": {"spamassassin": 0.5}},
+    ]
+    now = datetime.now(timezone.utc)
+    docs = []
+    for i, s in enumerate(samples):
+        d = {**s, "license_key": license_key,
+             "server_ip": "89.19.15.58", "server_hostname": "ns1.gokyuzuhosting.com",
+             "id": str(uuid.uuid4()),
+             "ts": now.isoformat(),
+             "ingested_at": now.isoformat()}
+        docs.append(d)
+    await db.mail_events.insert_many(docs)
+    await db.licenses.update_one(
+        {"license_key": license_key},
+        {"$set": {"last_event_at": now.isoformat()}, "$inc": {"total_events": len(docs)}}
+    )
+    return {"ok": True, "inserted": len(docs),
+            "message": "5 ornek event olusturuldu. Panelde canli event akisinda gorulmelidir."}

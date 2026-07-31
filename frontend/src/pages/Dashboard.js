@@ -7,6 +7,7 @@ import { ShieldAlert, Ban, Bug, MailWarning, MailCheck, Activity } from "lucide-
 import { Card, CardBody, CardHeader, StatCard, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { useT } from "@/i18n";
+import LiveMailEvents from "@/components/LiveMailEvents";
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 
@@ -191,6 +192,13 @@ export default function Dashboard() {
               </div>
             </CardBody>
           </Card>
+        </div>
+      </div>
+
+      {/* --- SaaS Canli Mail Trafigi (milter -> POST /api/events/ingest) --- */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12">
+          <LiveMailEvents />
         </div>
       </div>
     </div>

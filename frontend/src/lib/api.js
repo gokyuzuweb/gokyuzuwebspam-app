@@ -12,6 +12,14 @@ export const api = {
   traffic: (hours = 24) => client.get(`/stats/traffic?hours=${hours}`).then(r => r.data),
   topSenders: () => client.get("/stats/top-senders").then(r => r.data),
 
+  // SaaS live mail events (from remote milter POST /api/events/ingest)
+  liveEvents: (licenseKey, limit = 25) =>
+    client.get("/events", { params: { license_key: licenseKey, limit } }).then(r => r.data),
+  liveEventsSummary: (licenseKey) =>
+    client.get("/events/summary", { params: { license_key: licenseKey } }).then(r => r.data),
+  testIngestEvents: (licenseKey) =>
+    client.post(`/events/test-ingest?license_key=${encodeURIComponent(licenseKey)}`).then(r => r.data),
+
   quarantine: (params = {}) => client.get("/quarantine", { params }).then(r => r.data),
   quarantineGet: (id) => client.get(`/quarantine/${id}`).then(r => r.data),
   quarantineRelease: (ids) => client.post("/quarantine/release", { ids }).then(r => r.data),
