@@ -369,3 +369,87 @@ async def ip_drilldown(
         "total": total_all, "spam_total": spam_count,
         "sample": rows,
     }
+
+
+# ============================================================================
+#  3) COUNTRY BRUTE-FORCE AUTO-BLOCK (adaptif zaman-tabanlı)
+# ============================================================================
+class BruteForceIn(BaseModel):
+    license_key: str = Field(..., min_length=8)
+    minutes: int = Field(60, ge=5, le=1440)   # bakılacak pencere
+    threshold: int = Field(50, ge=5)          # eşik: bu kadar spam gelmişse
+    ttl_minutes: int = Field(180, ge=10)      # kaç dakika bloklu kalsın
+
+
+@router.post("/security/country-brute-force/scan")
+async def country_brute_force_scan(payload: BruteForceIn):
+    """Son N dakikadaki spam kaynak ülkeleri sayar, eşik üstündekiler için
+    otomatik `block` kuralı ekler (TTL ile — süre dolunca kaldırılır)."""
+    since = (datetime.now(timezone.utc) - timedelta(minutes=payload.minutes)).isoformat()
+    q = {"license_key": payload.license_key,
+         "verdict": {"$in": ["spam", "high_spam", "virus"]},
+         "ingested_at": {"$gte": since}}
+    counter: dict[str, int] = {}
+    async for e in db.mail_events.find(q, {"_id": 0, "client_ip": 1, "server_ip": 1}):
+        ip = e.get("client_ip") or e.get("server_ip")
+        cc = _ip_to_country(ip)
+        if not cc or cc == "LOCAL":
+            continue
+        counter[cc] = counter.get(cc, 0) + 1
+    triggered = [cc for cc, n in counter.items() if n >= payload.threshold]
+    if not triggered:
+        return {"ok": True, "triggered": [], "counter": counter}
+    expire = (datetime.now(timezone.utc) + timedelta(minutes=payload.ttl_minutes)).isoformat()
+    now = _iso()
+    for cc in triggered:
+        await db.country_rules.update_one(
+            {"country_code": cc},
+            {"$set": {
+                "country_code": cc, "action": "block", "reason": "brute_force",
+                "note": f"Otomatik: {counter[cc]} spam / {payload.minutes} dk",
+                "auto_expire_at": expire, "active_hours": None, "active_days": None,
+                "id": str(uuid.uuid4()), "created_at": now,
+            }},
+            upsert=True,
+        )
+    return {"ok": True, "triggered": triggered, "counter": counter,
+            "expire_at": expire, "ttl_minutes": payload.ttl_minutes}
+
+
+@router.get("/security/country-catalog")
+async def country_catalog():
+    """Tam ISO 3166-1 alpha-2 katalog: kod + Türkçe isim + lat/lon."""
+    catalog = [
+        ("AF", "Afganistan"), ("AL", "Arnavutluk"), ("DZ", "Cezayir"), ("AR", "Arjantin"),
+        ("AM", "Ermenistan"), ("AU", "Avustralya"), ("AT", "Avusturya"), ("AZ", "Azerbaycan"),
+        ("BH", "Bahreyn"), ("BD", "Bangladeş"), ("BY", "Belarus"), ("BE", "Belçika"),
+        ("BO", "Bolivya"), ("BA", "Bosna-Hersek"), ("BR", "Brezilya"), ("BG", "Bulgaristan"),
+        ("KH", "Kamboçya"), ("CA", "Kanada"), ("CL", "Şili"), ("CN", "Çin"),
+        ("CO", "Kolombiya"), ("HR", "Hırvatistan"), ("CU", "Küba"), ("CY", "Kıbrıs"),
+        ("CZ", "Çek Cumh."), ("DK", "Danimarka"), ("DO", "Dominik"), ("EC", "Ekvador"),
+        ("EG", "Mısır"), ("EE", "Estonya"), ("ET", "Etiyopya"), ("FI", "Finlandiya"),
+        ("FR", "Fransa"), ("GE", "Gürcistan"), ("DE", "Almanya"), ("GH", "Gana"),
+        ("GR", "Yunanistan"), ("HU", "Macaristan"), ("IS", "İzlanda"), ("IN", "Hindistan"),
+        ("ID", "Endonezya"), ("IR", "İran"), ("IQ", "Irak"), ("IE", "İrlanda"),
+        ("IL", "İsrail"), ("IT", "İtalya"), ("JP", "Japonya"), ("JO", "Ürdün"),
+        ("KZ", "Kazakistan"), ("KE", "Kenya"), ("KP", "K. Kore"), ("KR", "G. Kore"),
+        ("KW", "Kuveyt"), ("KG", "Kırgızistan"), ("LV", "Letonya"), ("LB", "Lübnan"),
+        ("LY", "Libya"), ("LT", "Litvanya"), ("LU", "Lüksemburg"), ("MY", "Malezya"),
+        ("MX", "Meksika"), ("MD", "Moldova"), ("MN", "Moğolistan"), ("MA", "Fas"),
+        ("MM", "Myanmar"), ("NP", "Nepal"), ("NL", "Hollanda"), ("NZ", "Yeni Zelanda"),
+        ("NG", "Nijerya"), ("NO", "Norveç"), ("OM", "Umman"), ("PK", "Pakistan"),
+        ("PS", "Filistin"), ("PA", "Panama"), ("PY", "Paraguay"), ("PE", "Peru"),
+        ("PH", "Filipinler"), ("PL", "Polonya"), ("PT", "Portekiz"), ("QA", "Katar"),
+        ("RO", "Romanya"), ("RU", "Rusya"), ("SA", "S. Arabistan"), ("RS", "Sırbistan"),
+        ("SG", "Singapur"), ("SK", "Slovakya"), ("SI", "Slovenya"), ("ZA", "G. Afrika"),
+        ("ES", "İspanya"), ("LK", "Sri Lanka"), ("SD", "Sudan"), ("SE", "İsveç"),
+        ("CH", "İsviçre"), ("SY", "Suriye"), ("TW", "Tayvan"), ("TJ", "Tacikistan"),
+        ("TZ", "Tanzanya"), ("TH", "Tayland"), ("TN", "Tunus"), ("TR", "Türkiye"),
+        ("TM", "Türkmenistan"), ("UG", "Uganda"), ("UA", "Ukrayna"), ("AE", "BAE"),
+        ("GB", "Birleşik Krallık"), ("US", "ABD"), ("UY", "Uruguay"), ("UZ", "Özbekistan"),
+        ("VE", "Venezuela"), ("VN", "Vietnam"), ("YE", "Yemen"), ("ZM", "Zambiya"),
+        ("ZW", "Zimbabwe"),
+    ]
+    items = [{"code": c, "name": n} for (c, n) in catalog]
+    items.sort(key=lambda x: x["name"])
+    return {"items": items, "count": len(items)}

@@ -245,4 +245,85 @@ export const api = {
   pluginUpgrade: () => client.post("/plugin/upgrade").then(r => r.data),
 
   scanTest: (payload) => client.post("/scan/test", payload).then(r => r.data),
+
+  // Queue management (Exim)
+  queueList: (licenseKey, opts = {}) =>
+    client.get("/queue", { params: { license_key: licenseKey, limit: 100, ...opts } }).then(r => r.data),
+  queueStats: (licenseKey) =>
+    client.get("/queue/stats", { params: { license_key: licenseKey } }).then(r => r.data),
+  queueBulk: (licenseKey, mids, action, forwardTo = null) =>
+    client.post("/queue/bulk", { license_key: licenseKey, mids, action, forward_to: forwardTo }).then(r => r.data),
+  queueAudit: (licenseKey) =>
+    client.get("/queue/audit", { params: { license_key: licenseKey, limit: 50 } }).then(r => r.data),
+
+  // Attack map + IP drilldown + geo lookup
+  attackMap: (licenseKey, hours = 1) =>
+    client.get("/security/attack-map", { params: { license_key: licenseKey, hours } }).then(r => r.data),
+  ipDrilldown: (licenseKey, ip) =>
+    client.get("/security/ip-drilldown", { params: { license_key: licenseKey, ip } }).then(r => r.data),
+  geoLookup: (ip) =>
+    client.get("/geo/lookup", { params: { ip } }).then(r => r.data),
+
+  // Exploit scanner
+  exploitRun: (licenseKey, rootPath = "/var/www") =>
+    client.post(`/security/exploit-scan/run?license_key=${encodeURIComponent(licenseKey)}&root_path=${encodeURIComponent(rootPath)}`).then(r => r.data),
+  exploitLatest: (licenseKey) =>
+    client.get("/security/exploit-scan/latest", { params: { license_key: licenseKey } }).then(r => r.data),
+  exploitScans: (licenseKey) =>
+    client.get("/security/exploit-scan/scans", { params: { license_key: licenseKey } }).then(r => r.data),
+  exploitFindings: (licenseKey, filters = {}) =>
+    client.get("/security/exploit-scan/findings", { params: { license_key: licenseKey, ...filters } }).then(r => r.data),
+  exploitDismiss: (licenseKey, findingId) =>
+    client.post(`/security/exploit-scan/dismiss/${findingId}`, null, { params: { license_key: licenseKey } }).then(r => r.data),
+  exploitSignatures: () => client.get("/security/exploit-scan/signatures").then(r => r.data),
+
+  // MailScanner independent module
+  msConfig: (licenseKey) =>
+    client.get("/mailscanner/config", { params: { license_key: licenseKey } }).then(r => r.data),
+  msConfigPut: (licenseKey, payload) =>
+    client.put("/mailscanner/config", { license_key: licenseKey, ...payload }).then(r => r.data),
+  msStats: (licenseKey, hours = 24) =>
+    client.get("/mailscanner/stats", { params: { license_key: licenseKey, hours } }).then(r => r.data),
+  msRules: (licenseKey) =>
+    client.get("/mailscanner/rules", { params: { license_key: licenseKey } }).then(r => r.data),
+  msRuleUpsert: (licenseKey, rule) =>
+    client.post("/mailscanner/rules", { license_key: licenseKey, ...rule }).then(r => r.data),
+  msRuleDelete: (licenseKey, ruleId) =>
+    client.delete(`/mailscanner/rules/${ruleId}`, { params: { license_key: licenseKey } }).then(r => r.data),
+  msPolicies: (licenseKey) =>
+    client.get("/mailscanner/user-policy", { params: { license_key: licenseKey } }).then(r => r.data),
+  msPolicyPut: (licenseKey, payload) =>
+    client.put("/mailscanner/user-policy", { license_key: licenseKey, ...payload }).then(r => r.data),
+  msBayesTrain: (licenseKey, label, samples) =>
+    client.post("/mailscanner/train-bayes", { license_key: licenseKey, label, samples }).then(r => r.data),
+  msBayesStatus: (licenseKey) =>
+    client.get("/mailscanner/bayes-status", { params: { license_key: licenseKey } }).then(r => r.data),
+  msHealth: () => client.get("/mailscanner/health").then(r => r.data),
+  msModules: (licenseKey) =>
+    client.get("/mailscanner/modules", { params: { license_key: licenseKey } }).then(r => r.data),
+  msAiAnalyze: (licenseKey) =>
+    llmClient.post("/mailscanner/ai/analyze", null, { params: { license_key: licenseKey } }).then(r => r.data),
+
+  // BEC / URL / Sandbox / Reputation / SIEM
+  msBecCheck: (licenseKey, payload) =>
+    client.post("/mailscanner/bec/check", { license_key: licenseKey, ...payload }).then(r => r.data),
+  msUrlRewrite: (licenseKey, urls) =>
+    client.post("/mailscanner/url/rewrite", { license_key: licenseKey, urls }).then(r => r.data),
+  msUrlInspect: (token) =>
+    client.get("/mailscanner/url/inspect", { params: { token } }).then(r => r.data),
+  msSandboxSubmit: (licenseKey, payload) =>
+    client.post("/mailscanner/sandbox/submit", { license_key: licenseKey, ...payload }).then(r => r.data),
+  msSandboxJobs: (licenseKey) =>
+    client.get("/mailscanner/sandbox/jobs", { params: { license_key: licenseKey } }).then(r => r.data),
+  msReputation: (licenseKey) =>
+    client.get("/mailscanner/reputation", { params: { license_key: licenseKey } }).then(r => r.data),
+  msSiemExport: (licenseKey, format = "cef", hours = 24) =>
+    client.post("/mailscanner/siem/export", { license_key: licenseKey, format, hours }, { responseType: "text" }).then(r => r.data),
+
+  // AI weekly report
+  aiWeeklyRun: (licenseKey) =>
+    client.post("/ai/weekly-report/run", null,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  aiWeeklyLatest: () => client.get("/ai/weekly-report/latest").then(r => r.data),
+  aiWeeklyList: () => client.get("/ai/weekly-report/list").then(r => r.data),
 };

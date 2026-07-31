@@ -5,6 +5,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home,
+  Bug, Filter,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -30,10 +31,14 @@ import Pricing from "@/pages/Pricing";
 import Shop, { CheckoutSuccess } from "@/pages/Shop";
 import Blacklist from "@/pages/Blacklist";
 import Reseller from "@/pages/Reseller";
+import Security from "@/pages/Security";
+import MailScanner from "@/pages/MailScanner";
 import Header from "@/components/Header";
 
 const NAV = [
   { to: "/panel", key: "dashboard", icon: Activity, testid: "nav-dashboard", end: true },
+  { to: "/panel/mailscanner", key: "mailscanner", icon: Filter, testid: "nav-mailscanner", label: "MailScanner" },
+  { to: "/panel/security", key: "security", icon: Bug, testid: "nav-security", label: "Güvenlik" },
   { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine" },
   { to: "/panel/lists", key: "lists", icon: ListChecks, testid: "nav-lists" },
   { to: "/panel/blacklist", key: "blacklist", icon: Radar, testid: "nav-blacklist" },
@@ -98,7 +103,7 @@ function Sidebar() {
             }
           >
             <n.icon className="w-4 h-4" strokeWidth={1.75} />
-            <span>{t(`nav.${n.key}`)}</span>
+            <span>{n.label || t(`nav.${n.key}`)}</span>
           </NavLink>
         ))}
       </nav>
@@ -132,10 +137,12 @@ function Shell() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <PluginStatusStripe />
-        <Header title={active ? t(`nav.${active.key}`) : "GökyüzüWebSpam"} />
+        <Header title={active ? (active.label || t(`nav.${active.key}`)) : "GökyüzüWebSpam"} />
         <main className="flex-1 min-w-0 overflow-x-hidden">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/security" element={<Security />} />
+            <Route path="/mailscanner" element={<MailScanner />} />
             <Route path="/quarantine" element={<Quarantine />} />
             <Route path="/lists" element={<Lists />} />
             <Route path="/rules" element={<Rules />} />

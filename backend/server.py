@@ -451,6 +451,7 @@ async def _startup() -> None:
         log.warning("engines dedupe skipped: %s", ex)
     # Kick off background housekeeping tasks
     asyncio.create_task(_auto_suspend_daily_task())
+    asyncio.create_task(_weekly_ai_report_task())
 
 
 async def _auto_suspend_daily_task():
@@ -496,6 +497,95 @@ async def _auto_suspend_daily_task():
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     client.close()
+
+
+async def _weekly_ai_report_task():
+    """Her Pazartesi 07:00 UTC — son 7 günün spam trendini LLM ile özetler, master admin'e mail atar."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            # next Monday 07:00 UTC
+            days_ahead = (7 - now.weekday()) % 7
+            if days_ahead == 0 and now.hour >= 7:
+                days_ahead = 7
+            target = (now + timedelta(days=days_ahead)).replace(hour=7, minute=0, second=0, microsecond=0)
+            wait_s = max(60, (target - now).total_seconds())
+            await asyncio.sleep(wait_s)
+            await _run_weekly_report()
+        except Exception as ex:
+            log.warning("weekly ai report loop error: %s", ex)
+            await asyncio.sleep(3600)
+
+
+async def _run_weekly_report() -> dict:
+    """LLM ile son 7 gün spam özet raporu üretir. `weekly_reports` koleksiyonuna kaydeder."""
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        log.info("weekly report atlandi: EMERGENT_LLM_KEY yok")
+        return {"ok": False, "reason": "no_key"}
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    total = await db.mail_events.count_documents({"ingested_at": {"$gte": since}})
+    spam = await db.mail_events.count_documents(
+        {"ingested_at": {"$gte": since}, "verdict": {"$in": ["spam", "high_spam"]}}
+    )
+    virus = await db.mail_events.count_documents(
+        {"ingested_at": {"$gte": since}, "verdict": "virus"}
+    )
+    top_senders: list[dict] = []
+    async for row in db.mail_events.aggregate([
+        {"$match": {"ingested_at": {"$gte": since}, "verdict": {"$ne": "clean"}}},
+        {"$group": {"_id": "$from_addr", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}, {"$limit": 10},
+    ]):
+        top_senders.append({"from_addr": row["_id"], "count": row["count"]})
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"weekly-report-{uuid.uuid4()}",
+            system_message="Sen bir e-posta güvenlik analistisin. Yönetici için Türkçe haftalık executive özet üretirsin.",
+        ).with_model("anthropic", "claude-sonnet-4-6")
+        prompt = (
+            f"Son 7 gün içinde GökyüzüWebSpam paneli:\n"
+            f"- Toplam taranan mail: {total}\n- Spam: {spam}\n- Virus: {virus}\n"
+            f"- En sık şüpheli gönderenler: " + ", ".join(f"{s['from_addr']}({s['count']})" for s in top_senders[:6]) + "\n\n"
+            f"3 paragraflık executive özet yaz (200 kelime).\n"
+            f"1) Genel trend + rakamlar\n2) Riskler ve dikkat çeken kalıplar\n3) Öneriler."
+        )
+        r = await chat.send_message(UserMessage(text=prompt))
+        summary = (r or "").strip()
+    except Exception as ex:
+        log.warning("weekly report LLM error: %s", ex)
+        summary = f"(LLM üretilemedi: {type(ex).__name__}) — Rakamlar: taranan {total}, spam {spam}, virus {virus}."
+    doc = {
+        "id": str(uuid.uuid4()),
+        "period_days": 7,
+        "generated_at": _iso(),
+        "total_scanned": total, "spam": spam, "virus": virus,
+        "top_suspicious_senders": top_senders,
+        "summary": summary,
+    }
+    await db.weekly_reports.insert_one(doc)
+    log.info("weekly ai report saved: %s", doc["id"])
+    return {"ok": True, "id": doc["id"], "summary": summary}
+
+
+@api.post("/ai/weekly-report/run")
+async def trigger_weekly_report(request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    return await _run_weekly_report()
+
+
+@api.get("/ai/weekly-report/latest")
+async def get_latest_weekly_report():
+    doc = await db.weekly_reports.find_one({}, {"_id": 0}, sort=[("generated_at", -1)])
+    return doc or {}
+
+
+@api.get("/ai/weekly-report/list")
+async def list_weekly_reports(limit: int = 12):
+    rows = await db.weekly_reports.find({}, {"_id": 0}).sort("generated_at", -1).limit(limit).to_list(limit)
+    return {"items": rows}
 
 
 # ---------- Endpoints -------------------------------------------------------
@@ -2088,12 +2178,61 @@ class CountryRule(BaseModel):
     country_code: str = Field(..., min_length=2, max_length=2)  # ISO 3166-1 alpha-2 (TR, US, RU..)
     action: str = Field("block", pattern="^(block|allow)$")
     note: Optional[str] = ""
+    # Zaman tabanlı: hours 0-23 listesi, days 0-6 (Pzt=0), ttl dakika
+    active_hours: Optional[list[int]] = None  # None = 7/24 aktif
+    active_days: Optional[list[int]] = None    # None = hafta boyu
+    auto_expire_at: Optional[str] = None       # ISO datetime — geçince kural pasif
+    reason: Optional[str] = None               # "brute_force", "manual"
 
 
 @api.get("/security/country-rules")
 async def get_country_rules():
-    rows = await db.country_rules.find({}, {"_id": 0}).sort("country_code", 1).to_list(300)
+    # Auto-expire pasüre olanları temizle
+    now_iso = _iso()
+    await db.country_rules.delete_many({"auto_expire_at": {"$lt": now_iso, "$ne": None}})
+    rows = await db.country_rules.find({}, {"_id": 0}).sort("country_code", 1).to_list(500)
+    now = datetime.now(timezone.utc)
+    hour = now.hour
+    day = now.weekday()
+    for r in rows:
+        ah = r.get("active_hours")
+        ad = r.get("active_days")
+        r["currently_active"] = (not ah or hour in ah) and (not ad or day in ad)
     return {"items": rows}
+
+
+class BulkCountryRule(BaseModel):
+    codes: list[str] = Field(..., min_length=1, max_length=200)
+    action: str = Field("block", pattern="^(block|allow)$")
+    note: Optional[str] = ""
+    active_hours: Optional[list[int]] = None
+    active_days: Optional[list[int]] = None
+    ttl_minutes: Optional[int] = None
+    reason: Optional[str] = "manual"
+
+
+@api.post("/security/country-rules/bulk")
+async def bulk_country_rules(payload: BulkCountryRule, request: Request, license_key: Optional[str] = None):
+    """Birden çok ülkeyi tek işlemde ekle. TTL varsa auto_expire_at set eder."""
+    await _require_master(request, license_key)
+    now = datetime.now(timezone.utc)
+    expire = None
+    if payload.ttl_minutes and payload.ttl_minutes > 0:
+        expire = (now + timedelta(minutes=payload.ttl_minutes)).isoformat()
+    inserted = 0
+    for code in payload.codes:
+        code = code.strip().upper()
+        if len(code) != 2:
+            continue
+        doc = {
+            "country_code": code, "action": payload.action, "note": payload.note or "",
+            "active_hours": payload.active_hours, "active_days": payload.active_days,
+            "auto_expire_at": expire, "reason": payload.reason or "manual",
+            "id": str(uuid.uuid4()), "created_at": _iso(),
+        }
+        await db.country_rules.update_one({"country_code": code}, {"$set": doc}, upsert=True)
+        inserted += 1
+    return {"ok": True, "inserted": inserted, "expire_at": expire}
 
 
 @api.post("/security/country-rules")
