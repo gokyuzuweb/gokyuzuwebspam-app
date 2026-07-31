@@ -1,5 +1,5 @@
 [Unit]
-Description=GökyüzüWebSpam Haftalık PDF Raporu
+Description=GokyuzuWebSpam Haftalık PDF Raporu
 
 [Service]
 Type=oneshot

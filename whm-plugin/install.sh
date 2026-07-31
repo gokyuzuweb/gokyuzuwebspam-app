@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# GökyüzüWebSpam — WHM/cPanel plugin installer
+# GokyuzuWebSpam — WHM/cPanel plugin installer
 # Target: cPanel/WHM 110+ (tested on 136.0.32)
 #
 # GÜVENLİK GARANTİLERİ:
@@ -9,7 +9,7 @@
 #   2) Exim'e milter otomatik BAĞLANMAZ. Bu adım opt-in ve manueldir.
 #      (WHM > Exim Configuration Manager üzerinden siz kararlaştırırsınız.)
 #   3) SpamAssassin, ClamAV, DCC, Razor sistem servisleri OLDUKLARI GİBİ bırakılır.
-#      GökyüzüWebSpam sadece "spamc / clamdscan / dccif / razor-check" komutlarını ÇAĞIRIR.
+#      GokyuzuWebSpam sadece "spamc / clamdscan / dccif / razor-check" komutlarını ÇAĞIRIR.
 #   4) Milter servisi kurulur ama BAŞLATILMAZ (--start-milter geçmediğiniz sürece).
 #      Böylece Exim üzerine yönlendirme yapana kadar hiçbir e-posta akışına
 #      dokunulmaz.
@@ -89,22 +89,41 @@ run "cp -n  '$SRC/mailshieldctl'                '$INSTALL_DIR/bin/mailshieldctl'
 run "chmod +x '$INSTALL_DIR/bin/'*"
 run "ln -sfn '$INSTALL_DIR/bin/mailshieldctl' /usr/local/sbin/mailshieldctl"
 
-echo "==> [4/9] WHM CGI proxy kuruluyor"
-run "cp -n '$SRC/whm/mailshield.cgi'   '$CGI_DIR/index.cgi'"
-run "cp -n '$SRC/whm/mailshield.tmpl'  '$CGI_DIR/mailshield.tmpl'"
-run "chmod 755 '$CGI_DIR/index.cgi'"
+echo "==> [4/9] WHM CGI proxy kuruluyor (force-overwrite)"
+# Force overwrite: our own CGI files, önceki başarısız kurulumdan kalıntıları temizle
+run "install -m 0755 '$SRC/whm/mailshield.cgi'   '$CGI_DIR/index.cgi'"
+run "install -m 0644 '$SRC/whm/mailshield.tmpl'  '$CGI_DIR/mailshield.tmpl'"
+if [[ -f "$SRC/whm/icon.png" ]]; then
+  run "install -m 0644 '$SRC/whm/icon.png' '$CGI_DIR/icon.png'"
+fi
+# CRLF/BOM defensively strip in case tar/copy tainted files
+run "sed -i '1s/^\\xEF\\xBB\\xBF//' '$CGI_DIR/index.cgi' '$CGI_DIR/mailshield.tmpl'"
+run "sed -i 's/\\r\$//' '$CGI_DIR/index.cgi' '$CGI_DIR/mailshield.tmpl'"
 
 echo "==> [5/9] cPanel MailControl plugin kuruluyor"
-run "cp -n '$SRC/cpanel/mailshield.live.php'       '$CPANEL_PLUGIN_DIR/index.live.php'"
-run "cp -n '$SRC/cpanel/mailshield.cpanelplugin'   '$CPANEL_PLUGIN_DIR/mailshield.cpanelplugin'"
+run "install -m 0644 '$SRC/cpanel/mailshield.live.php'     '$CPANEL_PLUGIN_DIR/index.live.php'"
+run "install -m 0644 '$SRC/cpanel/mailshield.cpanelplugin' '$CPANEL_PLUGIN_DIR/mailshield.cpanelplugin'"
 if [[ -x /usr/local/cpanel/scripts/install_plugin && $DRY_RUN -eq 0 ]]; then
   /usr/local/cpanel/scripts/install_plugin "$CPANEL_PLUGIN_DIR/mailshield.cpanelplugin" || true
 fi
 
-echo "==> [6/9] AppConfig kaydediliyor (WHM menüsüne eklenir)"
-run "install -m 0644 '$SRC/appconfig/mailshield.conf' '$APPCONFIG'"
+echo "==> [6/9] AppConfig kaydediliyor (WHM menusune eklenir)"
+# Eski bozuk kaydı temizle
 if [[ $DRY_RUN -eq 0 ]]; then
-  /usr/local/cpanel/bin/register_appconfig "$APPCONFIG"
+  /usr/local/cpanel/bin/unregister_appconfig mailshield 2>/dev/null || true
+  rm -f "$APPCONFIG"
+fi
+run "install -m 0644 '$SRC/appconfig/mailshield.conf' '$APPCONFIG'"
+# Defensive: encoding düzeltmesi (CRLF/BOM cPanel'i 500'e düşürebilir)
+run "sed -i '1s/^\\xEF\\xBB\\xBF//' '$APPCONFIG'"
+run "sed -i 's/\\r\$//' '$APPCONFIG'"
+if [[ $DRY_RUN -eq 0 ]]; then
+  if ! /usr/local/cpanel/bin/register_appconfig "$APPCONFIG"; then
+    echo "!! register_appconfig BASARISIZ. Dosya icerigi:" >&2
+    cat "$APPCONFIG" >&2
+    exit 1
+  fi
+  echo "    AppConfig basariyla kaydedildi."
 fi
 
 echo "==> Yapılandırma yerleştirme"
@@ -192,7 +211,7 @@ fi
 cat <<EOF
 
 ============================================================
-  GökyüzüWebSpam kurulumu tamamlandı.
+  GokyuzuWebSpam kurulumu tamamlandı.
 
   cPanel sisteminize DOKUNULMADI:
     · Exim yapılandırması        → değişmedi (opt-in)
@@ -200,8 +219,8 @@ cat <<EOF
     · Mevcut Postfix / dovecot   → değişmedi
 
   Erişim:
-    · WHM > Plugins > GökyüzüWebSpam
-    · Kullanıcılar: cPanel > Email > GökyüzüWebSpam MailControl
+    · WHM > Plugins > GokyuzuWebSpam
+    · Kullanıcılar: cPanel > Email > GokyuzuWebSpam MailControl
 
   Milter'ı etkinleştirmek İSTERSENİZ (opt-in):
     systemctl enable --now mailshield-milter.service

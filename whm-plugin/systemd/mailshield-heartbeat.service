@@ -1,5 +1,5 @@
 [Unit]
-Description=GökyüzüWebSpam Lisans Heartbeat
+Description=GokyuzuWebSpam Lisans Heartbeat
 
 [Service]
 Type=oneshot

@@ -1,5 +1,5 @@
 [Unit]
-Description=GökyüzüWebSpam karantina temizliği (retention süresi geçen kayıtlar)
+Description=GokyuzuWebSpam karantina temizliği (retention süresi geçen kayıtlar)
 
 [Service]
 Type=oneshot

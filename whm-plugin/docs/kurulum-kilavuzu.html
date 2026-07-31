@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8" />
-<title>GökyüzüWebSpam — WHM/cPanel Kurulum Kılavuzu</title>
+<title>GokyuzuWebSpam — WHM/cPanel Kurulum Kılavuzu</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
@@ -92,7 +92,7 @@
 <body>
 
 <header>
-  <h1>GökyüzüWebSpam — WHM/cPanel Kurulum Kılavuzu</h1>
+  <h1>GokyuzuWebSpam — WHM/cPanel Kurulum Kılavuzu</h1>
   <p>ConfigServer MailScanner alternatifi · Apache SpamAssassin + ClamAV + DCC + Razor + AI</p>
   <div class="badge">Hedef sürüm: cPanel 136.0.32</div>
 </header>
@@ -146,7 +146,7 @@
     <div class="step-num">2</div>
     <div class="step-body">
       <h2>MongoDB kurulumu (yoksa)</h2>
-      <p>GökyüzüWebSpam karantina, liste ve log verilerini yerel MongoDB'de tutar.
+      <p>GokyuzuWebSpam karantina, liste ve log verilerini yerel MongoDB'de tutar.
          Sunucuda MongoDB yoksa şu komutları çalıştırın:</p>
       <pre>cat &gt;/etc/yum.repos.d/mongodb-org-7.0.repo &lt;&lt;'EOF'
 [mongodb-org-7.0]
@@ -211,7 +211,7 @@ chmod +x install.sh uninstall.sh mailshieldctl</pre>
     <div class="step-body">
       <h2>WHM'de panele erişim</h2>
       <p>WHM'ye root ile giriş yapın. Sol menüde:</p>
-      <p><b>Plugins → GökyüzüWebSpam</b> tıklayın. Panel açılacaktır.</p>
+      <p><b>Plugins → GokyuzuWebSpam</b> tıklayın. Panel açılacaktır.</p>
       <div class="warn">
         Panel görünmüyorsa manuel refresh yapın:
         <pre>/usr/local/cpanel/bin/register_appconfig /var/cpanel/apps/mailshield.conf
@@ -224,7 +224,7 @@ chmod +x install.sh uninstall.sh mailshieldctl</pre>
     <div class="step-num">6</div>
     <div class="step-body">
       <h2>Milter bağlantısı (OPT-IN — gerçek koruma bu adımda başlar)</h2>
-      <p>Kurulumdan sonra GökyüzüWebSpam <b>gözlem modundadır</b> — dashboard çalışır,
+      <p>Kurulumdan sonra GokyuzuWebSpam <b>gözlem modundadır</b> — dashboard çalışır,
          karantina/liste yönetimi manuel yapılabilir; ancak Exim ile bağ kurmadıkça
          gerçek mail akışına dokunmaz.</p>
       <p>Gerçek mail süzmeyi başlatmak için:</p>
@@ -261,7 +261,7 @@ echo "test spam viagra" | mail -s "Test" root@localhost</pre>
       <h2>Motor entegrasyonları</h2>
 
       <h3>Apache SpamAssassin</h3>
-      <p>Zaten WHM &gt; Service Manager'da yönetilir. GökyüzüWebSpam yalnızca
+      <p>Zaten WHM &gt; Service Manager'da yönetilir. GokyuzuWebSpam yalnızca
       <code class="inline">spamc</code> komutunu çağırır — SA yapılandırmanız değişmez.</p>
 
       <h3>ClamAV (opsiyonel)</h3>
@@ -298,12 +298,12 @@ emergent_llm_key   = sk-emergent-...</pre>
       <h2>cPanel kullanıcıları için MailControl</h2>
       <p>Kullanıcılar için MailControl arayüzü otomatik eklenir:</p>
       <ul>
-        <li>cPanel &gt; <b>Email</b> &gt; <b>GökyüzüWebSpam MailControl</b></li>
+        <li>cPanel &gt; <b>Email</b> &gt; <b>GokyuzuWebSpam MailControl</b></li>
         <li>Kullanıcı yalnızca kendi karantinasını görür (virtusers eşleşmesi ile yalıtım)</li>
       </ul>
       <p>Belirli reseller/paket için gizlemek isterseniz:</p>
       <ul>
-        <li>WHM &gt; <b>Feature Manager</b> &gt; "GökyüzüWebSpam MailControl" satırını istediğiniz
+        <li>WHM &gt; <b>Feature Manager</b> &gt; "GokyuzuWebSpam MailControl" satırını istediğiniz
         Feature List'ten çıkarın.</li>
       </ul>
     </div>
@@ -345,7 +345,7 @@ emergent_llm_key   = sk-emergent-...</pre>
       <pre>cd /root/whm-plugin
 ./uninstall.sh</pre>
       <ul>
-        <li>GökyüzüWebSpam servisleri durdurulur</li>
+        <li>GokyuzuWebSpam servisleri durdurulur</li>
         <li>AppConfig kaydı silinir</li>
         <li><code class="inline">/usr/local/mailshield</code> kaldırılır</li>
         <li><b><code class="inline">/etc/mailshield/</code> ve
@@ -401,7 +401,7 @@ mailshieldctl engine enable clamav</pre>
 </main>
 
 <footer>
-  GökyüzüWebSpam v1.0 · WHM/cPanel 136.0.32 uyumlu · Bu kılavuz kurulumdan önce ekran görüntülerinize eşlik eder.
+  GokyuzuWebSpam v1.0 · WHM/cPanel 136.0.32 uyumlu · Bu kılavuz kurulumdan önce ekran görüntülerinize eşlik eder.
 </footer>
 
 </body>

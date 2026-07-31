@@ -1,8 +1,8 @@
 #!/usr/local/cpanel/3rdparty/bin/perl
 #
-# GökyüzüWebSpam — WHM CGI proxy
+# GokyuzuWebSpam — WHM CGI proxy
 #
-# Renders the WHM chrome + iframes the GökyüzüWebSpam API dashboard.
+# Renders the WHM chrome + iframes the GokyuzuWebSpam API dashboard.
 # Also exposes a passthrough API at /cgi/mailshield/api/* that authenticates
 # via WHM session and forwards to the local FastAPI service.
 #
@@ -56,7 +56,7 @@ Cpanel::Template::process_template(
     {
         'template_file'    => '/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/mailshield.tmpl',
         'print'            => 1,
-        'app_title'        => 'GökyüzüWebSpam',
+        'app_title'        => 'GokyuzuWebSpam',
         'api_base'         => '/cgi/mailshield/api',
     },
 );

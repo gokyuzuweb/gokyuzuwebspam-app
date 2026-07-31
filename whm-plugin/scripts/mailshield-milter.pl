@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# GökyüzüWebSpam milter entry-point (invoked by systemd).
+# GokyuzuWebSpam milter entry-point (invoked by systemd).
 #
 use strict;
 use warnings;

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# mailshieldctl — administrative CLI for GökyüzüWebSpam
+# mailshieldctl — administrative CLI for GokyuzuWebSpam
 #
 set -euo pipefail
 
@@ -53,7 +53,7 @@ case "$cmd" in
     ;;
   help|--help|-h|"")
     cat <<EOF
-mailshieldctl — WHM GökyüzüWebSpam CLI
+mailshieldctl — WHM GokyuzuWebSpam CLI
 
 Usage:
   mailshieldctl status

@@ -1,5 +1,5 @@
 [Unit]
-Description=GökyüzüWebSpam Haftalık Rapor Zamanlayıcısı
+Description=GokyuzuWebSpam Haftalık Rapor Zamanlayıcısı
 
 [Timer]
 # Her Pazartesi 09:00 UTC'de çalışır

@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# GökyüzüWebSpam — Lisans Heartbeat Daemon
+# GokyuzuWebSpam — Lisans Heartbeat Daemon
 #
 # WHM sunucusunda systemd timer ile 15 dakikada bir çalışır. Merkez lisans
 # sunucusuna aşağıdaki bilgileri gönderir:

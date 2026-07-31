@@ -1,5 +1,5 @@
 [Unit]
-Description=GökyüzüWebSpam Heartbeat Zamanlayıcısı
+Description=GokyuzuWebSpam Heartbeat Zamanlayıcısı
 
 [Timer]
 OnBootSec=2min

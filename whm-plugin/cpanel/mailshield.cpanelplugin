@@ -1,6 +1,6 @@
 order=8
 target=mainFrame
-name=GökyüzüWebSpam MailControl
+name=GokyuzuWebSpam MailControl
 uri=mailshield/index.live.php
 icon=mailshield/icon.png
 featuremanager=1

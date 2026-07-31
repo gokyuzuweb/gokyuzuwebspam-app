@@ -1,5 +1,5 @@
 [Unit]
-Description=GökyüzüWebSpam API
+Description=GokyuzuWebSpam API
 After=network-online.target mongod.service
 Wants=mongod.service
 

@@ -1,5 +1,20 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
+## v1.6.1 (Feb 2026) — WHM Plugin ASCII/AppConfig Hardening
+Kullanıcının canlı cPanel (89.19.15.58) kurulumunda 403 "AppConfig disallows execution" hatası
+oluşuyordu. Tüm plugin dosyaları ASCII-safe hâle getirildi, install.sh sertleştirildi.
+
+### Değişiklikler
+- `GökyüzüWebSpam` → `GokyuzuWebSpam` (tüm `/app/whm-plugin/` dosyalarında)
+- `appconfig/mailshield.conf` yeniden yazıldı: yorum yok, `acl=all`, LF-only, BOM'suz
+- `install.sh`:
+  - CGI + tmpl artık `install -m` ile FORCE overwrite (eski bozuk dosyalar temizlenir)
+  - AppConfig register öncesi `unregister_appconfig` + `rm` (idempotent kurulum)
+  - `register_appconfig` başarısızsa hata detayı stderr'e (dosya içeriği dahil) basılır
+  - Kopyalanan tüm cPanel/WHM dosyalarında defensive sed ile CRLF/BOM stripping
+- `whm/icon.png` + `cpanel/icon.png` eklendi (48x48 mavi PNG, appconfig'in icon= satırı için)
+- Backend `/api/plugin/download` her istekte yeni tarball üretir → değişiklik anında yansır
+
 ## v1.6 (Feb 2026) — Enterprise Polish Release
 Backend 17/17 + Frontend %100 · `iteration_6.json` (retest_needed: false, sıfır hata)
 

@@ -1,4 +1,4 @@
-# GökyüzüWebSpam — Kurulum Kılavuzu
+# GokyuzuWebSpam — Kurulum Kılavuzu
 
 **Hedef:** cPanel/WHM **136.0.32** (110+ ile uyumlu)
 **Öncelik:** Aktif cPanel sisteminize dokunmadan, tamamen opt-in kurulum.
@@ -72,7 +72,7 @@ Kurulum sırasında **hiçbir mevcut cPanel dosyası** yeniden yazılmaz.
 
 ## 4. WHM'de Panele Erişim
 
-WHM'ye giriş yapın → sol menüde **Plugins → GökyüzüWebSpam** görünecektir.
+WHM'ye giriş yapın → sol menüde **Plugins → GokyuzuWebSpam** görünecektir.
 Görünmüyorsa:
 
 ```bash
@@ -84,7 +84,7 @@ Görünmüyorsa:
 
 ## 5. Milter Bağlantısı (**OPT-IN** — mail akışını gerçekten koruma zamanı)
 
-GökyüzüWebSpam kurulumdan sonra **gözlem modundadır** — dashboard çalışır,
+GokyuzuWebSpam kurulumdan sonra **gözlem modundadır** — dashboard çalışır,
 manuel karantina/liste yönetimi yapılabilir, ama gerçek e-posta akışına
 dokunmaz.
 
@@ -123,7 +123,7 @@ echo "test" | mail -s "Test" root@localhost
 ## 6. Motor Entegrasyonları
 
 ### SpamAssassin
-Zaten WHM > Service Manager'dan yönetilir. GökyüzüWebSpam yalnızca `spamc` çağırır.
+Zaten WHM > Service Manager'dan yönetilir. GokyuzuWebSpam yalnızca `spamc` çağırır.
 
 ### ClamAV (opsiyonel)
 ```bash
@@ -164,12 +164,12 @@ Ardından panel > Motorlar > **AI Sınıflandırma** → Başlat.
 ## 7. cPanel Kullanıcı Erişimi
 
 Kullanıcılar için MailControl arayüzü otomatik eklenir:
-- cPanel > **Email** > **GökyüzüWebSpam MailControl**
+- cPanel > **Email** > **GokyuzuWebSpam MailControl**
 - Kullanıcı kendi karantinasını görür, sadece kendi hesabına ait mesajları
   release/delete edebilir.
 
 Belirli reseller/paket için feature kısıtlaması:
-- WHM > **Feature Manager** > "GökyüzüWebSpam MailControl" satırını istediğiniz
+- WHM > **Feature Manager** > "GokyuzuWebSpam MailControl" satırını istediğiniz
   Feature List'inden çıkarın/ekleyin.
 
 ---
@@ -181,7 +181,7 @@ cd /root/whm-plugin
 ./uninstall.sh
 ```
 
-- GökyüzüWebSpam servisleri durdurulur
+- GokyuzuWebSpam servisleri durdurulur
 - AppConfig kaydı silinir
 - `/usr/local/mailshield` kaldırılır
 - **`/etc/mailshield/` ve `/var/log/mailshield/` KORUNUR** (denetim için)
