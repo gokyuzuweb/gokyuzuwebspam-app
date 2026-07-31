@@ -186,6 +186,9 @@ export default function Licenses() {
   const licenses = useQuery({ queryKey: ["licenses"], queryFn: api.licenses, refetchInterval: 20000 });
   const violations = useQuery({ queryKey: ["violations"], queryFn: api.violations, refetchInterval: 15000 });
   const [editing, setEditing] = useState(null);
+  const [search, setSearch] = useState("");
+  const [planFilter, setPlanFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const del = useMutation({
     mutationFn: (id) => api.licenseDelete(id),
@@ -208,7 +211,18 @@ export default function Licenses() {
       qc.invalidateQueries({ queryKey: ["violations"] }); },
   });
 
-  const rows = licenses.data || [];
+  const allRows = licenses.data || [];
+  const rows = allRows.filter((r) => {
+    if (planFilter !== "all" && r.plan !== planFilter) return false;
+    if (statusFilter === "active"   && !r.active) return false;
+    if (statusFilter === "inactive" &&  r.active) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const hay = `${r.customer_name || ""} ${r.customer_email || ""} ${r.license_key || ""} ${(r.ip_addresses || []).join(" ")}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
   const violRows = violations.data || [];
   const activeCount = rows.filter(r => r.active && !isExpired(r.valid_until)).length;
   const expiredCount = rows.filter(r => isExpired(r.valid_until) || !r.active).length;
@@ -245,6 +259,40 @@ export default function Licenses() {
             <CardBody className="border-b border-slate-800 bg-slate-950/40">
               <AddLicenseForm onAdded={() => qc.invalidateQueries({ queryKey: ["licenses"] })} />
             </CardBody>
+
+            {/* Search + Filter bar */}
+            <div className="px-4 py-3 border-b border-slate-800 bg-slate-950/20 flex flex-wrap items-center gap-2" data-testid="lic-filters">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Ara: ad / e-posta / anahtar / IP"
+                className="flex-1 min-w-[220px] bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                data-testid="lic-search-input"
+              />
+              <select value={planFilter} onChange={(e) => setPlanFilter(e.target.value)}
+                      className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-100"
+                      data-testid="lic-plan-filter">
+                <option value="all">Tüm Planlar</option>
+                <option value="starter">Starter</option>
+                <option value="pro">Pro</option>
+                <option value="enterprise">Enterprise</option>
+              </select>
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+                      className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-100"
+                      data-testid="lic-status-filter">
+                <option value="all">Aktif + Pasif</option>
+                <option value="active">Sadece Aktif</option>
+                <option value="inactive">Sadece Pasif</option>
+              </select>
+              {(search || planFilter !== "all" || statusFilter !== "all") && (
+                <button onClick={() => { setSearch(""); setPlanFilter("all"); setStatusFilter("all"); }}
+                        className="text-xs px-2 py-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                        data-testid="lic-filters-reset">Temizle</button>
+              )}
+              <span className="text-xs text-slate-500" data-testid="lic-filter-count">
+                <span className="mono text-slate-300">{rows.length}</span> / {allRows.length}
+              </span>
+            </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

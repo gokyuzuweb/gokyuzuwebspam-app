@@ -4,7 +4,7 @@ import { Toaster } from "sonner";
 import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
-  Bell, FileText, Key, Radar, DollarSign, Home,
+  Bell, BellRing, FileText, Key, Radar, DollarSign, Home,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -24,6 +24,7 @@ import Install from "@/pages/Install";
 import Notifications from "@/pages/Notifications";
 import Reports from "@/pages/Reports";
 import Licenses from "@/pages/Licenses";
+import AlertsRules from "@/pages/AlertsRules";
 import Pricing from "@/pages/Pricing";
 import Shop, { CheckoutSuccess } from "@/pages/Shop";
 import Blacklist from "@/pages/Blacklist";
@@ -39,6 +40,7 @@ const NAV = [
   { to: "/panel/engines", key: "engines", icon: Cpu, testid: "nav-engines" },
   { to: "/panel/outbound", key: "outbound", icon: ArrowUpRight, testid: "nav-outbound" },
   { to: "/panel/notifications", key: "notifications", icon: Bell, testid: "nav-notifications" },
+  { to: "/panel/alerts", key: "alerts", icon: BellRing, testid: "nav-alerts" },
   { to: "/panel/reports", key: "reports", icon: FileText, testid: "nav-reports" },
   { to: "/panel/licenses", key: "licenses", icon: Key, testid: "nav-licenses", sellerOnly: true },
   { to: "/panel/pricing", key: "pricing", icon: DollarSign, testid: "nav-pricing", sellerOnly: true },
@@ -121,6 +123,7 @@ function Shell() {
             <Route path="/engines" element={<Engines />} />
             <Route path="/outbound" element={<Outbound />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/alerts" element={<AlertsRules />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/licenses" element={<Licenses />} />
             <Route path="/pricing" element={<Pricing />} />

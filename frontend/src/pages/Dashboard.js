@@ -8,6 +8,7 @@ import { Card, CardBody, CardHeader, StatCard, Badge } from "@/components/ui-pri
 import { api } from "@/lib/api";
 import { useT } from "@/i18n";
 import LiveMailEvents from "@/components/LiveMailEvents";
+import MultiServerRibbon from "@/components/MultiServerRibbon";
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 
@@ -57,6 +58,11 @@ export default function Dashboard() {
 
       {/* --- SaaS Canli Mail Trafigi — sunucudaki Exim mainlog'undan gelen gercek mailler --- */}
       <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12">
+          <MultiServerRibbon licenseKey={typeof window !== "undefined"
+            ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
+            : "MS-C02AB012652A4FE692D69676"} />
+        </div>
         <div className="col-span-12">
           <LiveMailEvents />
         </div>

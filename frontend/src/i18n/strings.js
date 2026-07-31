@@ -12,7 +12,7 @@ const tr = {
     rules: "Kurallar",
     engines: "Motorlar",
     outbound: "Giden Posta",
-    notifications: "Bildirimler",
+    notifications: "Bildirimler", alerts: "Alarm Kurallari",
     reports: "Raporlar",
     licenses: "Lisans Yönetimi",
     pricing: "Fiyatlandırma",
@@ -280,7 +280,7 @@ const en = {
   nav: {
     dashboard: "Dashboard", quarantine: "Quarantine", lists: "Whitelist / Blacklist",
     blacklist: "RBL Delisting", rules: "Rules", engines: "Engines",
-    outbound: "Outbound Mail", notifications: "Notifications", reports: "Reports",
+    outbound: "Outbound Mail", notifications: "Notifications", alerts: "Alert Rules", reports: "Reports",
     licenses: "License Management", pricing: "Pricing", users: "Users", logs: "Logs",
     settings: "Settings", install: "Installation Guide",
   },
@@ -616,7 +616,7 @@ const fr = {
   nav: {
     dashboard: "Tableau de bord", quarantine: "Quarantaine", lists: "Liste blanche / noire",
     blacklist: "Radiation RBL", rules: "Règles", engines: "Moteurs",
-    outbound: "Courrier sortant", notifications: "Notifications", reports: "Rapports",
+    outbound: "Courrier sortant", notifications: "Notifications", alerts: "Alert Rules", reports: "Rapports",
     licenses: "Gestion des licences", pricing: "Tarifs", users: "Utilisateurs", logs: "Journaux",
     settings: "Paramètres", install: "Guide d'installation",
   },

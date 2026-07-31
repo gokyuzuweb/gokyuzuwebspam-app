@@ -1,5 +1,17 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
+## v1.6.7 (Feb 2026) — Multi-Server + Alert Rules UI + License Search + Bulk IP
+- **Multi-Server Ribbon**: Dashboard'da 4 stat kart altına inject edildi; renkli chip'lerde
+  hostname + total + spam + last_seen. `GET /events/by-server` MongoDB aggregation.
+- **Alert Rules Sayfası** (`AlertsRules.js`): Sidebar'da yeni "Alert Rules" sekmesi (BellRing icon).
+  Kural CRUD formu (isim/tetikleyici/eşik/pencere/webhook_kind/URL) + son tetiklenen 20 alarm
+  timeline (10sn refresh). Slack/Discord/generic webhook seçimi.
+- **License Search + Filter**: Search input (ad/email/anahtar/IP substring), Plan dropdown
+  (all/starter/pro/enterprise), Status dropdown (all/aktif/pasif), Temizle + `X/Y` sayaç.
+- **Bulk IP Operations**: EditLicenseModal'da `onPaste` detection — boşluk/virgül/tab içeriyorsa
+  otomatik bulk parse. "Toplu Ekle" butonu ile manuel de tetiklenebilir. IPv4/IPv6 regex validation,
+  duplicate skip, hem success hem invalid count toast'ta gösterilir.
+
 ## v1.6.6 (Feb 2026) — License Edit Modal (IP CRUD + Active Toggle)
 - Yeni `EditLicenseModal.js` component (backdrop + ESC close, full CRUD form)
 - Lisans satırında ✏ Pencil ikonu (Radio ve Trash'ın solunda)

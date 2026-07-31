@@ -45,6 +45,33 @@ export default function EditLicenseModal({ license, onClose }) {
     setForm({ ...form, ip_addresses: [...form.ip_addresses, v] });
     setIpDraft("");
   }
+  function bulkAddIps(text) {
+    // Split by whitespace / newline / comma / semicolon / tab
+    const parts = String(text || "").split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const ipRe = /^([\d]{1,3}(?:\.[\d]{1,3}){3}|[\da-fA-F:]+)$/;
+    const validNew = [];
+    const invalid = [];
+    const existing = new Set(form.ip_addresses);
+    for (const p of parts) {
+      if (!ipRe.test(p)) { invalid.push(p); continue; }
+      if (existing.has(p)) continue;
+      existing.add(p);
+      validNew.push(p);
+    }
+    if (validNew.length) setForm({ ...form, ip_addresses: [...form.ip_addresses, ...validNew] });
+    const msg = `${validNew.length} eklendi` + (invalid.length ? ` · ${invalid.length} geçersiz atlandı` : "");
+    if (validNew.length) toast.success(msg);
+    else if (invalid.length) toast.error(`Geçerli IP bulunamadı (${invalid.length} atlandı)`);
+    setIpDraft("");
+  }
+  function handleIpPaste(e) {
+    const pasted = e.clipboardData?.getData("text") || "";
+    if (/[\s,;]/.test(pasted)) {
+      e.preventDefault();
+      bulkAddIps(pasted);
+    }
+  }
   function removeIp(ip) {
     setForm({ ...form, ip_addresses: form.ip_addresses.filter(x => x !== ip) });
   }
@@ -169,8 +196,9 @@ export default function EditLicenseModal({ license, onClose }) {
               <input
                 value={ipDraft}
                 onChange={(e) => setIpDraft(e.target.value)}
+                onPaste={handleIpPaste}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addIp(); } }}
-                placeholder="203.0.113.10 (Enter ile ekle)"
+                placeholder="203.0.113.10 (Enter ile ekle · CSV/space yapıştır → toplu)"
                 className="flex-1 bg-slate-900 border border-slate-800 rounded px-3 py-2 text-sm text-slate-100 mono"
                 data-testid="edit-lic-ip-input"
               />
@@ -182,6 +210,18 @@ export default function EditLicenseModal({ license, onClose }) {
               >
                 <Plus className="w-3.5 h-3.5" /> Ekle
               </button>
+              <button
+                type="button"
+                onClick={() => bulkAddIps(ipDraft)}
+                className="px-3 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs"
+                data-testid="edit-lic-ip-bulk"
+                title="Input'taki boşluk/virgül/satır ayrılmış IP listesini toplu ekle"
+              >
+                Toplu Ekle
+              </button>
+            </div>
+            <div className="text-[10px] text-slate-500 mt-1">
+              💡 Excel/CSV'den IP kolonunu kopyalayıp bu input'a yapıştırın — hepsi otomatik eklenir
             </div>
           </Field>
 
