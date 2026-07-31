@@ -13,10 +13,16 @@ export const api = {
   topSenders: () => client.get("/stats/top-senders").then(r => r.data),
 
   // SaaS live mail events (from remote milter POST /api/events/ingest)
-  liveEvents: (licenseKey, limit = 25) =>
-    client.get("/events", { params: { license_key: licenseKey, limit } }).then(r => r.data),
-  liveEventsSummary: (licenseKey) =>
-    client.get("/events/summary", { params: { license_key: licenseKey } }).then(r => r.data),
+  liveEvents: (licenseKey, limit = 25, scopeUser = null) =>
+    client.get("/events", { params: {
+      license_key: licenseKey, limit,
+      ...(scopeUser ? { scope_user: scopeUser } : {}),
+    }}).then(r => r.data),
+  liveEventsSummary: (licenseKey, scopeUser = null) =>
+    client.get("/events/summary", { params: {
+      license_key: licenseKey,
+      ...(scopeUser ? { scope_user: scopeUser } : {}),
+    }}).then(r => r.data),
   testIngestEvents: (licenseKey) =>
     client.post(`/events/test-ingest?license_key=${encodeURIComponent(licenseKey)}`).then(r => r.data),
 

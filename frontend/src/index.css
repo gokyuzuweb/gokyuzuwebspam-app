@@ -98,3 +98,11 @@ input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin
     * { @apply border-border; }
     body { @apply bg-background text-foreground; }
 }
+
+/* LiveMailEvents — glow animation for newly arrived rows */
+@keyframes gws-row-flash {
+  0%   { background-color: rgba(99, 102, 241, 0.35); box-shadow: inset 3px 0 0 #6366f1; }
+  50%  { background-color: rgba(99, 102, 241, 0.15); box-shadow: inset 3px 0 0 #6366f1; }
+  100% { background-color: transparent; box-shadow: none; }
+}
+.gws-row-glow { animation: gws-row-flash 2.5s ease-out; }

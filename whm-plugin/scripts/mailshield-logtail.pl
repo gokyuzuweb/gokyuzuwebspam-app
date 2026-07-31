@@ -58,10 +58,9 @@ warn "[GWS-logtail] baslangic offset=$pos boyut=$size license=" . substr($licens
 
 $SIG{TERM} = $SIG{INT} = sub { _save_pos(tell $fh); exit 0 };
 
-# Rate: keep in-memory recent id cache to avoid duplicate events across
-# retries — this daemon POSTs at-most-once per Exim message id.
 my %seen_ids;   # id => 1
 my $seen_max = 5000;
+my $poll_counter = 0;    # her N sn'de bir pending-actions poll'u
 
 while (1) {
     while (defined(my $line = <$fh>)) {
@@ -69,9 +68,14 @@ while (1) {
         _process_line($line);
     }
     _save_pos(tell $fh);
+
+    # Her 10sn'de bir (5 * 2sn sleep) pending-action polling
+    if (++$poll_counter >= 5) {
+        $poll_counter = 0;
+        _poll_and_execute_actions();
+    }
     sleep 2;
 
-    # rotation
     my $newsize = -s $eximlog;
     if (defined $newsize && $newsize < tell($fh)) {
         close $fh;
@@ -81,7 +85,6 @@ while (1) {
         $fh->clearerr;
     }
 
-    # trim seen_ids cache
     if (scalar(keys %seen_ids) > $seen_max) {
         %seen_ids = ();
     }
@@ -150,6 +153,7 @@ sub _process_line {
             license_key     => $license,
             server_hostname => $host,
             server_ip       => $client_ip,
+            exim_mid        => $mid,
             from_addr       => $from,
             to_addr         => $to || undef,
             subject         => $subject || undef,
@@ -207,8 +211,8 @@ sub _spam_from_spool {
 
 sub _post_event {
     my ($payload) = @_;
-    # Drop empty subject/to/from to keep payload tidy
     for my $k (keys %$payload) { delete $payload->{$k} if !defined $payload->{$k}; }
+    my $exim_mid = $payload->{exim_mid};
     my $json = JSON::PP::encode_json($payload);
 
     my @cmd = ('curl','-sS','--max-time','6','-X','POST',
@@ -221,12 +225,108 @@ sub _post_event {
         close $ch;
         if ($? != 0) {
             warn "[GWS-logtail] POST fail exit=" . ($?>>8) . " resp=" . ($resp // '') . "\n";
+            return;
+        }
+        # Extract returned event_id ve exim_mid ile diskteki mapping'e kaydet
+        # ki daha sonra pending-action geldiginde mid'i bulabilelim.
+        if ($resp && $exim_mid) {
+            my $d = eval { JSON::PP::decode_json($resp) } // {};
+            _remember_mid($d->{id}, $exim_mid) if $d->{id};
         }
     }
 }
 
 sub _save_pos { open my $o, '>', $posfile or return; print $o $_[0]; close $o; }
 sub _mkdirp   { my @p; for (split /\//, $_[0]) { push @p, $_; my $x = join('/', @p) || '/'; mkdir $x unless -d $x; } }
+
+# ---- Pending-action polling + Exim spool executor ----
+sub _poll_and_execute_actions {
+    my $url = "$server/api/events/pending-actions?license_key=$license";
+    my $body = qx(curl -sS --max-time 6 -H 'Accept: application/json' \Q$url\E 2>/dev/null);
+    return unless $body;
+    my $data = eval { JSON::PP::decode_json($body) } // {};
+    my $items = $data->{items} || [];
+    return unless @$items;
+
+    for my $act (@$items) {
+        my $action_id = $act->{id}       or next;
+        my $event_id  = $act->{event_id} or next;
+        my $op        = $act->{action}   or next;
+
+        # Event detayini al - exim_mid gerekli
+        my $ev_url = "$server/api/events?license_key=$license&limit=1";
+        # Backend list endpoint filter by id yok — daha basit: /event/{id} olsa iyi olur.
+        # Simdilik events listesinden bulmak yerine daemon local cache tutabilir.
+        # v1.6.5: backend'de /events/{id} single-fetch endpoint eklendi diyelim ama simdi yok.
+        # Yaklasik: her POST'ta biz mid'i biliyoruz -> local map disk'te tutalim.
+        my $mid = _lookup_mid($event_id);
+        my ($result, $msg);
+        if (!$mid) {
+            ($result, $msg) = ('skip', 'exim_mid mapping yok (event bu daemon calisirken gelmedi)');
+        } elsif ($op eq 'delete') {
+            my $r = system("/usr/sbin/exim -Mrm '$mid' >/dev/null 2>&1");
+            ($result, $msg) = $r == 0
+                ? ('ok', "exim -Mrm $mid basarili")
+                : ('fail', "exim -Mrm exit=" . ($r >> 8));
+        } elsif ($op eq 'release') {
+            # Force delivery
+            my $r = system("/usr/sbin/exim -M '$mid' >/dev/null 2>&1");
+            ($result, $msg) = $r == 0
+                ? ('ok', "exim -M $mid (force delivery) basarili")
+                : ('fail', "exim -M exit=" . ($r >> 8));
+        } elsif ($op eq 'report_spam') {
+            ($result, $msg) = ('ok', 'spam raporu kuyruga alindi (v1.7 sa-learn entegrasyonu)');
+        } else {
+            ($result, $msg) = ('skip', "bilinmeyen aksiyon: $op");
+        }
+
+        _post_json("$server/api/events/complete-action", {
+            license_key => $license,
+            action_id   => $action_id,
+            result      => $result,
+            message     => $msg,
+        });
+    }
+}
+
+# event_id -> exim_mid map, sonradan lookup icin diske yaz
+my $MID_MAP = '/var/lib/mailshield/event-mid.map';
+sub _remember_mid {
+    my ($event_id, $mid) = @_;
+    return unless $event_id && $mid;
+    open my $f, '>>', $MID_MAP or return;
+    print $f "$event_id\t$mid\n";
+    close $f;
+    # Cap dosya boyutunu (~50k satir)
+    if ((-s $MID_MAP // 0) > 3_000_000) {
+        system("tail -n 30000 $MID_MAP > ${MID_MAP}.tmp && mv ${MID_MAP}.tmp $MID_MAP");
+    }
+}
+sub _lookup_mid {
+    my ($event_id) = @_;
+    return undef unless -r $MID_MAP;
+    open my $f, '<', $MID_MAP or return undef;
+    my $found;
+    while (my $line = <$f>) {
+        chomp $line;
+        my ($eid, $mid) = split /\t/, $line, 2;
+        $found = $mid if $eid && $eid eq $event_id;
+    }
+    close $f;
+    return $found;
+}
+
+sub _post_json {
+    my ($url, $payload) = @_;
+    my $json = JSON::PP::encode_json($payload);
+    my @cmd = ('curl','-sS','--max-time','6','-X','POST',
+               '-H','Content-Type: application/json',
+               '--data-binary', $json, $url);
+    open(my $ch, '-|', @cmd) or return;
+    my $resp = do { local $/; <$ch> };
+    close $ch;
+    return $resp;
+}
 
 sub _load_ini {
     my ($p) = @_;

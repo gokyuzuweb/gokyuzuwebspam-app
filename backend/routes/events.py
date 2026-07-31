@@ -18,6 +18,7 @@ class MailEvent(BaseModel):
     license_key: str = Field(..., min_length=8)
     server_ip: Optional[str] = None
     server_hostname: Optional[str] = None
+    exim_mid: Optional[str] = None   # Exim message id (spool executor icin)
     from_addr: Optional[str] = None
     to_addr: Optional[str] = None
     subject: Optional[str] = None
@@ -90,14 +91,26 @@ async def list_events(
     limit: int = Query(50, ge=1, le=500),
     verdict: Optional[str] = Query(None),
     since: Optional[str] = Query(None),
+    scope_user: Optional[str] = Query(None),
 ):
-    """Panelden cagirilir. Sadece verilen license_key'e ait eventleri doner."""
+    """Panelden cagirilir. Sadece verilen license_key'e ait eventleri doner.
+    scope_user verilirse to_addr veya from_addr'ta o cPanel kullanicisi olan mailleri filtreler.
+    """
     await _validate_license(license_key)
     q: dict[str, Any] = {"license_key": license_key}
     if verdict:
         q["verdict"] = verdict
     if since:
         q["ts"] = {"$gte": since}
+    if scope_user:
+        # cPanel end-user modu: substring match — kullanici 'user@domain' veya 'domain'
+        # verebilir. Regex.escape ile safe injection'a karsi koruma.
+        import re
+        safe = re.escape(scope_user)
+        q["$or"] = [
+            {"to_addr":   {"$regex": safe, "$options": "i"}},
+            {"from_addr": {"$regex": safe, "$options": "i"}},
+        ]
     cursor = db.mail_events.find(q, {"_id": 0}).sort("ts", -1).limit(limit)
     items = await cursor.to_list(length=limit)
     return {"items": items, "count": len(items)}
@@ -106,14 +119,20 @@ async def list_events(
 @router.get("/summary")
 async def events_summary(
     license_key: str = Query(..., min_length=8),
+    scope_user: Optional[str] = Query(None),
 ):
-    """Ozet istatistik - son 24 saat / 7 gun / verdict breakdown."""
+    """Ozet istatistik - toplam + verdict breakdown."""
     await _validate_license(license_key)
-    total = await db.mail_events.count_documents({"license_key": license_key})
-    pipeline = [
-        {"$match": {"license_key": license_key}},
-        {"$group": {"_id": "$verdict", "count": {"$sum": 1}}},
-    ]
+    match: dict[str, Any] = {"license_key": license_key}
+    if scope_user:
+        import re
+        safe = re.escape(scope_user)
+        match["$or"] = [
+            {"to_addr":   {"$regex": safe, "$options": "i"}},
+            {"from_addr": {"$regex": safe, "$options": "i"}},
+        ]
+    total = await db.mail_events.count_documents(match)
+    pipeline = [{"$match": match}, {"$group": {"_id": "$verdict", "count": {"$sum": 1}}}]
     breakdown = {}
     async for row in db.mail_events.aggregate(pipeline):
         breakdown[row["_id"]] = row["count"]

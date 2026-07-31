@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -28,7 +28,75 @@ function timeAgo(iso) {
   return `${Math.floor(s/86400)}g`;
 }
 
+function VerdictDonut({ byVerdict, total, activeVerdict, onSelect }) {
+  const segments = [
+    { key: "clean",     color: "#10b981", label: "Temiz" },
+    { key: "spam",      color: "#f59e0b", label: "Spam" },
+    { key: "high_spam", color: "#f43f5e", label: "Yük.Spam" },
+    { key: "virus",     color: "#dc2626", label: "Virüs" },
+    { key: "blocked",   color: "#7c3aed", label: "Blocked" },
+  ];
+  const parts = segments.map((s) => ({ ...s, count: byVerdict[s.key] || 0 }))
+                        .filter((s) => s.count > 0);
+  const sum = parts.reduce((a, b) => a + b.count, 0) || 1;
+  const R = 42, C = 2 * Math.PI * R;
+  let offset = 0;
+  return (
+    <div className="flex items-center gap-4">
+      <svg width="110" height="110" viewBox="0 0 110 110" className="shrink-0">
+        <circle cx="55" cy="55" r={R} fill="none" stroke="#1e293b" strokeWidth="12" />
+        {parts.map((p) => {
+          const pct = p.count / sum;
+          const dash = pct * C;
+          const gap  = C - dash;
+          const el = (
+            <circle
+              key={p.key}
+              cx="55" cy="55" r={R}
+              fill="none"
+              stroke={p.color}
+              strokeWidth="12"
+              strokeDasharray={`${dash} ${gap}`}
+              strokeDashoffset={-offset}
+              transform="rotate(-90 55 55)"
+              opacity={activeVerdict === "all" || activeVerdict === p.key ? 1 : 0.25}
+              onClick={() => onSelect(activeVerdict === p.key ? "all" : p.key)}
+              style={{ cursor: "pointer", transition: "opacity .2s" }}
+            />
+          );
+          offset += dash;
+          return el;
+        })}
+        <text x="55" y="52" textAnchor="middle" fill="#e2e8f0" fontSize="18" fontWeight="700"
+              fontFamily="JetBrains Mono, monospace">{total}</text>
+        <text x="55" y="68" textAnchor="middle" fill="#64748b" fontSize="9">mail</text>
+      </svg>
+      <div className="text-xs space-y-1">
+        {parts.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => onSelect(activeVerdict === p.key ? "all" : p.key)}
+            className={`flex items-center gap-2 px-2 py-0.5 rounded transition ${
+              activeVerdict === p.key ? "bg-slate-800" : "hover:bg-slate-800/50"
+            }`}
+            data-testid={`donut-legend-${p.key}`}
+          >
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: p.color }}></span>
+            <span className="text-slate-300">{p.label}</span>
+            <span className="mono text-slate-500">{p.count}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function LiveMailEvents() {
+  // URL query param: ?scope=user&user=<cpuser> — cPanel end-user modu
+  const urlParams = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const scopeUser = urlParams.get("scope") === "user" ? urlParams.get("user") : null;
+
   const [licenseKey, setLicenseKey] = useState(() =>
     localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676"
   );
@@ -36,24 +104,56 @@ export default function LiveMailEvents() {
   const [draft, setDraft] = useState(licenseKey);
   const [search, setSearch] = useState("");
   const [verdictFilter, setVerdictFilter] = useState("all");
+  const [newIds, setNewIds] = useState(new Set());
+  const seenIdsRef = useRef(new Set());
   const qc = useQueryClient();
 
   useEffect(() => { localStorage.setItem("gws.event_license", licenseKey); }, [licenseKey]);
 
   const events = useQuery({
-    queryKey: ["live-events", licenseKey],
-    queryFn: () => api.liveEvents(licenseKey, 30),
+    queryKey: ["live-events", licenseKey, scopeUser],
+    queryFn: () => api.liveEvents(licenseKey, 30, scopeUser),
     refetchInterval: 8000,
     enabled: !!licenseKey && licenseKey.length >= 8,
     retry: false,
   });
   const summary = useQuery({
-    queryKey: ["live-events-summary", licenseKey],
-    queryFn: () => api.liveEventsSummary(licenseKey),
+    queryKey: ["live-events-summary", licenseKey, scopeUser],
+    queryFn: () => api.liveEventsSummary(licenseKey, scopeUser),
     refetchInterval: 15000,
     enabled: !!licenseKey && licenseKey.length >= 8,
     retry: false,
   });
+
+  // Detect newly arrived rows and highlight them for 2 seconds (glow animation)
+  useEffect(() => {
+    const items = events.data?.items || [];
+    if (!items.length) return;
+    const currentIds = new Set(items.map((e) => e.id));
+    const seen = seenIdsRef.current;
+    if (seen.size === 0) {
+      // First load - don't glow existing rows
+      seenIdsRef.current = currentIds;
+      return;
+    }
+    const fresh = items.filter((e) => !seen.has(e.id)).map((e) => e.id);
+    if (fresh.length) {
+      setNewIds((prev) => {
+        const next = new Set(prev);
+        fresh.forEach((id) => next.add(id));
+        return next;
+      });
+      // Clear glow after 2.5s
+      setTimeout(() => {
+        setNewIds((prev) => {
+          const next = new Set(prev);
+          fresh.forEach((id) => next.delete(id));
+          return next;
+        });
+      }, 2500);
+    }
+    seenIdsRef.current = currentIds;
+  }, [events.data]);
 
   async function handleTestIngest() {
     try {
@@ -101,6 +201,7 @@ export default function LiveMailEvents() {
               className="text-indigo-400 hover:text-indigo-300 mono"
               data-testid="live-events-license-edit-btn"
             >{licenseKey.slice(0, 12)}…</button>
+            {scopeUser && <> {" · "}<span className="text-amber-400" data-testid="live-events-scope-badge">scope: {scopeUser}</span></>}
             {" · "}Toplam: <span className="mono text-slate-300" data-testid="live-events-total">{total}</span>
             {summary.data?.last_event_at && <> {" · "}Son: <span className="mono text-slate-300">{timeAgo(summary.data.last_event_at)} önce</span></>}
           </>
@@ -148,6 +249,16 @@ export default function LiveMailEvents() {
 
         {!invalid && items.length > 0 && (
           <>
+            {/* Verdict donut + filter shortcut */}
+            <div className="mb-4 p-3 bg-slate-900/40 rounded border border-slate-800" data-testid="verdict-donut">
+              <VerdictDonut
+                byVerdict={summary.data?.by_verdict || {}}
+                total={total}
+                activeVerdict={verdictFilter}
+                onSelect={setVerdictFilter}
+              />
+            </div>
+
             {/* Filter bar */}
             <div className="flex gap-2 mb-3 flex-wrap" data-testid="live-events-filters">
               <input
@@ -208,10 +319,11 @@ export default function LiveMailEvents() {
                 {filtered.map((e, idx) => {
                   const m = VERDICT_META[e.verdict] || { tone: "default", label: e.verdict?.toUpperCase(), Icon: ShieldCheck, row: "" };
                   const Icon = m.Icon;
+                  const isNew = newIds.has(e.id);
                   return (
                     <tr
                       key={e.id}
-                      className={`border-b border-slate-800/50 hover:bg-slate-800/40 ${m.row}`}
+                      className={`border-b border-slate-800/50 hover:bg-slate-800/40 ${m.row} ${isNew ? "gws-row-glow" : ""}`}
                       data-testid={`live-event-row-${e.id}`}
                     >
                       <td className="px-3 py-2 text-slate-600">{idx + 1}</td>

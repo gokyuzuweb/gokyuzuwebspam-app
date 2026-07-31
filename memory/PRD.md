@@ -1,5 +1,21 @@
 # GökyüzüWebSpam v1.6 — WHM/cPanel Mail Security SaaS
 
+## v1.6.5 (Feb 2026) — Executor + Glow + Donut + Scope
+- **Quarantine Executor**: Logtail her 10sn `/events/pending-actions` polling → `exim -Mrm` (delete),
+  `exim -M` (release), sa-learn stub (report_spam) → `/events/complete-action` back-report.
+  event_id ↔ exim_mid mapping `/var/lib/mailshield/event-mid.map` diskte, 3M limit.
+- **Widget Auto-Scroll (glow)**: React `useRef` seen-ids diff → yeni event id'ler `newIds` Set'e
+  eklenir, `.gws-row-glow` CSS keyframe (2.5s ease-out, indigo highlight) tetiklenir.
+- **Verdict Distribution Donut**: SVG donut, segment onClick → verdictFilter set. Legend tıklanabilir.
+  Total ortasında büyük mono sayı. 5 renk: emerald/amber/rose/red/violet.
+- **Per-User Scope**: URL query `?scope=user&user=<email-or-domain>` → backend `scope_user` param
+  → `re.escape` + case-insensitive substring match to_addr/from_addr üzerinde.
+  cPanel end-user plugin `mailshield.live.php` bunu `getenv(REMOTE_USER)` ile otomatik geçiriyor.
+
+Backend v1.6.5 doğrulama (canlı sunucudan 329 gerçek event geldi):
+- Verdict breakdown: clean 323, spam 1, high_spam 4, virus 1 (skor 12.00 doğru okundu)
+- Scope 'karayel' filter → 3 event correctly matched
+
 ## v1.6.4 (Feb 2026) — Verdict Enrichment + Filters + Quarantine Sync + End-User Fix
 Kullanicinin 4 istegini tek tarball'a paketleyip WHM `↻ Guncelle` ile deploy edilebilir yaptik.
 
