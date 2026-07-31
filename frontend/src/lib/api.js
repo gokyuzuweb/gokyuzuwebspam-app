@@ -84,6 +84,10 @@ export const api = {
   notificationsTest: (channel) => client.post("/notifications/test", { channel }).then(r => r.data),
   notificationsSimulate: () => client.post("/notifications/simulate-threat").then(r => r.data),
 
+  smtpGet: () => client.get("/settings/smtp").then(r => r.data),
+  smtpPut: (payload) => client.put("/settings/smtp", payload).then(r => r.data),
+  mailTest: (payload) => client.post("/mail/test", payload).then(r => r.data),
+
   reportDownload: () => `${API}/reports/weekly`,
   reportSend: (recipient) => client.post("/reports/weekly/send", { recipient }).then(r => r.data),
 

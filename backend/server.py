@@ -810,23 +810,60 @@ async def _send_telegram(token: str, chat_id: str, text: str) -> bool:
         log.warning("telegram error: %s", e); return False
 
 
+async def _smtp_settings() -> dict:
+    doc = await db.settings.find_one({"_key": "smtp"}, {"_id": 0, "_key": 0}) or {}
+    return {
+        "enabled":   bool(doc.get("enabled", False)),
+        "host":      doc.get("host", ""),
+        "port":      int(doc.get("port", 587)),
+        "username":  doc.get("username", ""),
+        "password":  doc.get("password", ""),
+        "from_addr": doc.get("from_addr", ""),
+        "use_tls":   doc.get("use_tls", "starttls"),  # 'starttls' | 'ssl' | 'none'
+    }
+
+
+def _send_via_smtp(cfg: dict, to_addr: str, msg_bytes: bytes, from_addr: str) -> tuple[bool, str]:
+    """Blocking SMTP send — runs inside asyncio.to_thread. Uses standard smtplib."""
+    import smtplib
+    host = cfg.get("host")
+    port = int(cfg.get("port") or 587)
+    user = cfg.get("username") or ""
+    pw   = cfg.get("password") or ""
+    mode = cfg.get("use_tls") or "starttls"
+    if not host:
+        return False, "smtp_no_host"
+    try:
+        if mode == "ssl":
+            s = smtplib.SMTP_SSL(host, port, timeout=15)
+        else:
+            s = smtplib.SMTP(host, port, timeout=15)
+            if mode == "starttls":
+                s.starttls()
+        if user:
+            s.login(user, pw)
+        s.sendmail(from_addr, [to_addr], msg_bytes)
+        s.quit()
+        return True, f"smtp:{host}:{port}"
+    except Exception as e:
+        return False, f"smtp_error:{type(e).__name__}:{str(e)[:120]}"
+
+
 async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "gokyuzuwebspam@localhost") -> tuple[bool, str]:
-    """Send via local /usr/sbin/sendmail (WHM/Exim). Falls back to queued log in preview."""
+    """Send email. Tries configured SMTP first, then falls back to local /usr/sbin/sendmail (Exim on WHM)."""
     if not to_addr:
         return False, "no_recipient"
     try:
-        import subprocess
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
         msg = MIMEMultipart("alternative")
-        msg["From"] = from_addr
-        msg["To"] = to_addr
         msg["Subject"] = subject
+        msg["To"] = to_addr
         text_part = body
         html_part = (
             "<html><body style='font-family:-apple-system,Segoe UI,sans-serif;"
             "background:#0f172a;color:#e2e8f0;padding:24px;'>"
-            f"<div style='max-width:640px;margin:0 auto;background:#1e293b;border-radius:8px;"
+            "<div style='max-width:640px;margin:0 auto;background:#1e293b;border-radius:8px;"
             "padding:24px;border:1px solid #334155;'>"
             "<div style='display:flex;align-items:center;gap:8px;margin-bottom:16px;'>"
             "<div style='width:32px;height:32px;background:linear-gradient(135deg,#6366f1,#f43f5e);"
@@ -841,6 +878,23 @@ async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "g
         )
         msg.attach(MIMEText(text_part, "plain", "utf-8"))
         msg.attach(MIMEText(html_part, "html", "utf-8"))
+
+        # 1) Try configured SMTP relay
+        cfg = await _smtp_settings()
+        if cfg["enabled"] and cfg["host"]:
+            eff_from = cfg["from_addr"] or from_addr
+            msg["From"] = eff_from
+            ok, info = await asyncio.to_thread(_send_via_smtp, cfg, to_addr, msg.as_bytes(), eff_from)
+            if ok:
+                return True, info
+            # Log the smtp error but try sendmail as a graceful fallback
+            log.warning("SMTP send failed (%s) — falling back to local sendmail", info)
+            # Rebuild without SMTP From for local delivery
+            del msg["From"]
+
+        # 2) Local sendmail (WHM/Exim)
+        msg["From"] = from_addr
+        import subprocess
         proc = subprocess.run(
             ["/usr/sbin/sendmail", "-t", "-oi", "-f", from_addr],
             input=msg.as_bytes(), capture_output=True, timeout=15,
@@ -940,6 +994,78 @@ async def notifications_simulate_threat():
         raise HTTPException(404, "Örnek kayıt yok")
     result = await _fire_alerts(sample)
     return {"sample": {"sender": sample["sender"], "score": sample["score"], "verdict": sample["verdict"]}, **result}
+
+
+# ---- SMTP relay settings + test send ----
+class SmtpSettingsIn(BaseModel):
+    enabled: bool = False
+    host: str = ""
+    port: int = 587
+    username: str = ""
+    password: str = ""
+    from_addr: str = ""
+    use_tls: Literal["starttls", "ssl", "none"] = "starttls"
+
+
+class MailTestIn(BaseModel):
+    to: str
+    subject: Optional[str] = None
+    body: Optional[str] = None
+
+
+@api.get("/settings/smtp")
+async def get_smtp_settings():
+    doc = await db.settings.find_one({"_key": "smtp"}, {"_id": 0, "_key": 0}) or {}
+    return {
+        "enabled":   bool(doc.get("enabled", False)),
+        "host":      doc.get("host", ""),
+        "port":      int(doc.get("port", 587)),
+        "username":  doc.get("username", ""),
+        "password":  "" if not doc.get("password") else "********",
+        "from_addr": doc.get("from_addr", ""),
+        "use_tls":   doc.get("use_tls", "starttls"),
+    }
+
+
+@api.put("/settings/smtp")
+async def put_smtp_settings(payload: SmtpSettingsIn):
+    doc = payload.model_dump()
+    # If password is empty or masked, keep the existing password.
+    if not doc["password"] or doc["password"] == "********":
+        existing = await db.settings.find_one({"_key": "smtp"}, {"_id": 0, "password": 1}) or {}
+        doc["password"] = existing.get("password", "")
+    doc["_key"] = "smtp"
+    doc["updated_at"] = _iso()
+    await db.settings.update_one({"_key": "smtp"}, {"$set": doc}, upsert=True)
+    return {"ok": True}
+
+
+@api.post("/mail/test")
+async def mail_send_test(payload: MailTestIn):
+    """Send a real test email to `to`. Uses SMTP settings if enabled, otherwise local sendmail."""
+    if "@" not in payload.to:
+        raise HTTPException(400, "Gecerli bir e-posta adresi girin")
+    ns = await _notify_settings()
+    cfg = await _smtp_settings()
+    from_addr = cfg.get("from_addr") or ns.get("email_from") or "gokyuzuwebspam@localhost"
+    subject = payload.subject or "GökyüzüWebSpam · Test E-postası"
+    body = payload.body or (
+        "Merhaba,\n\n"
+        "Bu e-posta GökyüzüWebSpam panelinizden gönderilen bir test mesajıdır.\n"
+        "Bu mesajı almanız, sunucunuzun mail gönderme kanalının doğru şekilde\n"
+        "yapılandırıldığı ve çalıştığı anlamına gelir.\n\n"
+        f"Zaman: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+        f"Gönderen: {from_addr}\n"
+    )
+    ok, via = await _send_email(payload.to, subject, body, from_addr=from_addr)
+    await db.logs.insert_one(ActivityLog(
+        source="mail-test",
+        level="info" if ok else "warn",
+        message=f"Test mail → {payload.to} · via={via} · ok={ok}",
+    ).model_dump())
+    if not ok:
+        raise HTTPException(400, f"Gönderilemedi: {via}")
+    return {"ok": True, "via": via, "to": payload.to, "from": from_addr}
 
 
 # ----- AI Classification (Emergent LLM: Claude/GPT/Gemini) -----

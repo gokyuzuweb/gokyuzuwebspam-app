@@ -207,11 +207,12 @@ function ResellerDashboard({ token, onLogout }) {
     if (me.error) onLogout();
   }, [me.error]); // eslint-disable-line
 
+  const branding = useBranding();
+
   if (me.isLoading) return <div className="p-10 text-slate-500 text-center">Yükleniyor…</div>;
   if (!me.data) return null;
   const { reseller, subaccounts, quota } = me.data;
   const quotaFull = quota.current >= quota.max_subaccounts;
-  const branding = useBranding();
   const brandName = branding?.brand_name || "GökyüzüWebSpam";
   const primary  = branding?.primary_color || "#6366f1";
   const accent   = branding?.accent_color  || "#ef4444";
