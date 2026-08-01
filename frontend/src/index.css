@@ -126,9 +126,10 @@ input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin
     box-shadow: 0 8px 24px -8px rgba(99, 102, 241, 0.35);
 }
 
-/* border-b tab bars (Payments, Quarantine, MailEventDetail) */
+/* border-b tab bars (Payments, Quarantine, MailEventDetail, ResellerAdmin) */
 div.flex.border-b.border-slate-800:has(button[data-testid*="tab-"]),
-div.flex.gap-2.border-b.border-slate-800:has(button[data-testid*="tab-"]) {
+div.flex.gap-2.border-b.border-slate-800:has(button[data-testid*="tab-"]),
+div.flex.gap-1.border-b.border-slate-800:has(button[data-testid*="tab-"]) {
     border-bottom: 3px solid transparent !important;
     border-image: linear-gradient(90deg, #6366f1 0%, #10b981 50%, #f43f5e 100%) 1 !important;
     background: linear-gradient(180deg, rgba(99, 102, 241, 0.04), transparent) !important;
@@ -195,8 +196,12 @@ button[class*="ring-1"][class*="ring-indigo-500"][data-testid*="tab-"] {
     z-index: 1;
 }
 
-/* 2) Underline-style (border-b-2 border-indigo-500) */
-button[class*="border-b-2"][class*="border-indigo-500"] {
+/* 2) Underline-style (border-b-2 border-indigo-500 or border-indigo-400) */
+button[class*="border-b-2"][class*="border-indigo-500"],
+button[class*="border-b-2"][class*="border-indigo-400"],
+button[data-testid^="admin-tab-"][class*="text-indigo-300"],
+button[data-testid^="ms-tab-"][class*="text-indigo-300"],
+button[data-testid^="sec-tab-"][class*="text-indigo-300"] {
     color: #ffffff !important;
     background: linear-gradient(180deg,
         rgba(99, 102, 241, 0.20) 0%,
@@ -211,7 +216,9 @@ button[class*="border-b-2"][class*="border-indigo-500"] {
 
 /* Aktif tab'ta parlayan üst çubuk (indicator bar) */
 button[class*="bg-indigo-500/20"][data-testid*="tab-"]::before,
-button[class*="border-b-2"][class*="border-indigo-500"]::before {
+button[class*="border-b-2"][class*="border-indigo-500"]::before,
+button[class*="border-b-2"][class*="border-indigo-400"]::before,
+button[data-testid^="admin-tab-"][class*="text-indigo-300"]::before {
     content: "";
     position: absolute;
     left: 12%; right: 12%;
@@ -230,7 +237,9 @@ button[class*="border-b-2"][class*="border-indigo-500"]::before {
 
 /* Aktif tab'ın sağ üstünde nabız gibi atan işaret */
 button[class*="bg-indigo-500/20"][data-testid*="tab-"]::after,
-button[class*="border-b-2"][class*="border-indigo-500"]::after {
+button[class*="border-b-2"][class*="border-indigo-500"]::after,
+button[class*="border-b-2"][class*="border-indigo-400"]::after,
+button[data-testid^="admin-tab-"][class*="text-indigo-300"]::after {
     content: "";
     position: absolute;
     right: 6px;

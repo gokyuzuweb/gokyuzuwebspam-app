@@ -187,3 +187,32 @@ Home / Dashboard / MailScanner / Mail Sağlık / Tehdit Zekası / Güvenlik / Qu
 - `_notify_settings()` artık eski docs'a pydantic default'ları merge ediyor
 - Test: yeni alanlar (alert_on_attack, thresholds) default değerlerle döner
 
+
+## 2026-02-08 (4) · Alt-tab CSS Genişletme
+
+### Sorun
+Kullanıcı Yönetim tab'ının içindeki ResellerAdminPanel alt-tab'larının (Girişler/Bayiler/Alt Hesaplar) hala sönük kaldığını raporladı. Bunlar `border-indigo-400 text-indigo-300` kullanıyordu, önceki CSS ise sadece `border-indigo-500` yakalıyordu.
+
+### Fix
+`index.css` v3 selector'leri genişletildi:
+- Aktif underline tab için: `border-indigo-500`, `border-indigo-400`, `admin-tab-*[text-indigo-300]`, `ms-tab-*`, `sec-tab-*` hepsi yakalanıyor
+- Tab bar container: `.flex.gap-1.border-b.border-slate-800` da eklendi (ResellerAdmin container)
+- Shimmer bar + pulse dot artık admin-tab pattern'lerinde de görünüyor
+- Screenshot ile MailScanner "Yapılandırma" tab'ı üzerinde doğrulandı ✓
+
+Etkilenen sayfalar (otomatik):
+- ResellerAdminPanel (Licenses > Yönetim içinde)
+- MailScanner (ms-tab-*)
+- Security (sec-tab-*)
+- MailEventDetail modal
+- Quarantine (qtab-*)
+- PaymentsAdmin (pa-tab-*)
+- Licenses (lictab-*)
+- Dashboard (dashtab-*)
+- Smart POS sub-tabs (sptab-*)
+
+### Alarm Simülasyonu Doğrulaması
+- `POST /api/events/simulate-alert { kind: attack }` → inbox'a `attack_alert` düştü ✓
+- `POST /api/events/simulate-alert { kind: bulk_mail }` → inbox'a `bulk_mail_alert` düştü ✓
+- Test sonucu inbox'ta 7 okunmamış bildirim biriktiği doğrulandı
+
