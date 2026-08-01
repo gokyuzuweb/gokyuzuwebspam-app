@@ -367,9 +367,13 @@ async def geo_country_detail(cc: str, limit: int = 50):
 # ============================================================================
 @router.post("/trust-score/snapshot")
 async def trust_score_snapshot(score: int, findings: int = 0, rbl_listed: int = 0):
-    """Frontend her Dashboard yüklemesinde günlük skor bırakır. Aynı gün için upsert."""
+    """Frontend her Dashboard yüklemesinde günlük skor bırakır. Aynı gün için upsert.
+    Skor 60 altına düşerse admin'e e-posta uyarısı gönderir (günde bir kez)."""
     from datetime import date
     today = date.today().isoformat()
+    # Önceki durum
+    prev = await db.trust_score_history.find_one({"date": today}, {"_id": 0}) or {}
+    prev_score = prev.get("score")
     await db.trust_score_history.update_one(
         {"date": today},
         {"$set": {
@@ -379,7 +383,38 @@ async def trust_score_snapshot(score: int, findings: int = 0, rbl_listed: int = 
         }},
         upsert=True,
     )
-    return {"ok": True, "date": today, "score": score}
+    # Uyarı tetikle: skor 60 altına yeni düştüyse
+    alert_fired = False
+    if score < 60 and (prev_score is None or prev_score >= 60):
+        cfg = await db.settings.find_one({"_key": "auto_cleanup"}, {"_id": 0}) or {}
+        admin_email = cfg.get("email_to")
+        if admin_email:
+            try:
+                from server import _send_email
+                subj = f"⚠️ Güven Skoru Uyarısı — GökyüzüWebSpam · Skor: {score}"
+                body = (
+                    f"Güven skorunuz 60 eşiğinin altına düştü!\n\n"
+                    f"Şu anki skor: {score}/100\n"
+                    f"Kritik bulgu: {findings}\n"
+                    f"RBL listeleme: {rbl_listed}\n"
+                    f"Bir önceki skor: {prev_score or 'kayıt yok'}\n\n"
+                    f"Öneri:\n"
+                    f"  1. Güvenlik → Exploit sekmesinden bulguları temizleyin\n"
+                    f"  2. Reputation sekmesinden RBL delisting başlatın\n"
+                    f"  3. Kapalı modülleri Genel sekmesinden aktive edin\n\n"
+                    f"Panel: /panel/security"
+                )
+                await _send_email(admin_email, subj, body)
+                alert_fired = True
+                await db.notifications_inbox.insert_one({
+                    "id": str(uuid.uuid4()), "kind": "trust_score_alert",
+                    "score": score, "prev_score": prev_score,
+                    "findings": findings, "rbl_listed": rbl_listed,
+                    "created_at": _iso(), "read": False,
+                })
+            except Exception:
+                pass
+    return {"ok": True, "date": today, "score": score, "alert_fired": alert_fired}
 
 
 @router.get("/trust-score/history")
@@ -407,6 +442,63 @@ async def trust_score_history(days: int = 30):
         "avg": round(sum(scores) / len(scores), 1) if scores else None,
         "delta": (series[-1]["score"] - series[0]["score"])
                  if series[-1]["score"] is not None and series[0]["score"] is not None else None,
+    }
+
+
+# ============================================================================
+# PUBLIC LANDING STATS: bugünkü + 30 gün bloklanan mail sayısı
+# ============================================================================
+@router.get("/public/blocked-stats")
+async def public_blocked_stats():
+    """Landing için: bugün bloklanan sayı + son 30 gün bar chart verisi.
+    Cache dostu, license gerektirmez."""
+    from datetime import date, timedelta, datetime as _dt
+    today = date.today()
+    today_iso = today.isoformat()
+    start = today - timedelta(days=29)
+
+    verdict_filter = {"verdict": {"$in": ["spam", "high_spam", "virus"]}}
+
+    # Bugünkü sayaç
+    today_count = await db.mail_events.count_documents({
+        **verdict_filter,
+        "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
+    })
+    total_events_today = await db.mail_events.count_documents({
+        "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
+    })
+    # Toplam (yaklaşık)
+    total_blocked_all_time = await db.mail_events.count_documents(verdict_filter)
+
+    # 30 gün aggregation (Mongo yerine Python — küçük veri seti)
+    since_iso = start.isoformat()
+    by_day: dict[str, int] = {}
+    async for e in db.mail_events.find(
+        {**verdict_filter,
+         "$or": [{"ts": {"$gte": since_iso}}, {"ingested_at": {"$gte": since_iso}}]},
+        {"ts": 1, "ingested_at": 1, "_id": 0},
+    ).limit(50000):
+        raw = e.get("ts") or e.get("ingested_at") or ""
+        day_key = raw[:10] if raw else None
+        if day_key:
+            by_day[day_key] = by_day.get(day_key, 0) + 1
+    # 30 slot doldur
+    series: list[dict] = []
+    for i in range(30):
+        d = (start + timedelta(days=i)).isoformat()
+        series.append({"date": d, "count": by_day.get(d, 0)})
+    peak = max((s["count"] for s in series), default=0)
+    avg = round(sum(s["count"] for s in series) / 30, 1)
+
+    return {
+        "today_blocked": today_count,
+        "today_total": total_events_today,
+        "block_rate": round(today_count * 100 / max(1, total_events_today), 1),
+        "all_time_blocked": total_blocked_all_time,
+        "series_30d": series,
+        "peak_30d": peak,
+        "avg_30d": avg,
+        "last_updated": _iso(),
     }
 
 
@@ -458,6 +550,28 @@ async def ip_unblock(payload: IPBlockIn):
     r2 = await db.threat_iocs.delete_many({"type": "ip", "value": payload.ip})
     return {"ok": True, "removed_lists": r1.deleted_count,
             "removed_iocs": r2.deleted_count}
+
+
+@router.post("/ip/whitelist")
+async def ip_whitelist(payload: IPBlockIn):
+    """Bir IP'yi bloktan kaldır ve kalıcı whitelist'e ekle."""
+    # Önce blacklist ve IOC'lerden temizle
+    await db.lists.delete_many({"kind": "blacklist", "type": "ip", "value": payload.ip})
+    await db.threat_iocs.delete_many({"type": "ip", "value": payload.ip})
+    # Whitelist'e ekle
+    await db.lists.update_one(
+        {"kind": "whitelist", "type": "ip", "value": payload.ip},
+        {"$set": {
+            "id": str(uuid.uuid4()),
+            "kind": "whitelist", "type": "ip", "value": payload.ip,
+            "reason": payload.reason or "Yanlış pozitif düzeltmesi",
+            "license_key": payload.license_key,
+            "source": "false_positive_recovery",
+            "created_at": _iso(),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "ip": payload.ip, "whitelisted": True}
 
 
 @router.get("/ip/status")

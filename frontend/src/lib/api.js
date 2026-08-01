@@ -396,6 +396,7 @@ export const api = {
   cleanupLog: () => client.get("/maintenance/cleanup-log").then(r => r.data),
   ipBlock: (payload) => client.post("/maintenance/ip/block", payload).then(r => r.data),
   ipUnblock: (payload) => client.post("/maintenance/ip/unblock", payload).then(r => r.data),
+  ipWhitelist: (payload) => client.post("/maintenance/ip/whitelist", payload).then(r => r.data),
   ipStatus: (ip) => client.get("/maintenance/ip/status", { params: { ip } }).then(r => r.data),
 
   // Payments: PayTR + Havale
@@ -423,4 +424,6 @@ export const api = {
                 { params: { score, findings, rbl_listed: rblListed } }).then(r => r.data),
   trustHistory: (days = 30) =>
     client.get("/maintenance/trust-score/history", { params: { days } }).then(r => r.data),
+  publicBlockedStats: () =>
+    client.get("/maintenance/public/blocked-stats").then(r => r.data),
 };

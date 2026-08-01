@@ -449,6 +449,7 @@ function Hero() {
             <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse ml-1"/>
             <span className="text-emerald-300 normal-case">canlı</span>
           </div>
+          <LiveBlockCounter/>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-100 mb-6 leading-[1.05]">
             {s.hero_title_a} <span className="bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-rose-400 bg-clip-text text-transparent">{s.hero_title_b}</span>
           </h1>
@@ -1164,6 +1165,7 @@ export default function Landing() {
     <div className={`min-h-screen bg-slate-950 text-slate-100 ${effective === "ar" ? "rtl" : ""}`} dir={effective === "ar" ? "rtl" : "ltr"} data-testid="landing-page">
       <NavBar />
       <Hero />
+      <BlockedTrendWidget />
       <Features />
       <ModulesShowcase />
       <GeoBlockedHeatmap />
