@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   CreditCard, Building2, CheckCircle2, XCircle, Bell, Clock, RefreshCw, User, Mail, Hash,
-  X, Upload, FileText, Wand2, Settings2, Eye, EyeOff, LayoutGrid,
+  X, Upload, FileText, Wand2, Settings2, Eye, EyeOff, LayoutGrid, Percent, Plus, Minus,
 } from "lucide-react";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -298,6 +298,8 @@ function Field({ icon: Icon, label, value, mono = false }) {
 
 function SmartPosPanel() {
   const [configProvider, setConfigProvider] = useState(null);
+  const [installmentProvider, setInstallmentProvider] = useState(null);
+  const [subTab, setSubTab] = useState("gateway");
   const providers = useQuery({ queryKey: ["smart-pos-providers"], queryFn: api.smartPosProviders, refetchInterval: 30000 });
   const stats = useQuery({ queryKey: ["smart-pos-stats"], queryFn: api.smartPosStats, refetchInterval: 30000 });
   const items = providers.data?.providers || [];
@@ -305,113 +307,102 @@ function SmartPosPanel() {
   const totalRev = stats.data?.total_revenue_30d || 0;
   const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 
-  // Kategori grupla
   const groups = {
     gateway: items.filter((p) => p.category === "gateway"),
     bank_pos: items.filter((p) => p.category === "bank_pos"),
     manual: items.filter((p) => p.category === "manual"),
   };
-  const GROUP_META = {
-    gateway: { title: "💳 Sanal POS / Ödeme Ağ Geçitleri", subtitle: "PayTR, iyzico, Param, ipara, Shopier, Moka, SiPay" },
-    bank_pos: { title: "🏛️ Banka Sanal POS'ları", subtitle: "Garanti · YKB · Akbank · İş Bankası · Ziraat · Halk · Vakıf · Deniz · TEB · QNB Finans · Kuveyt Türk · Albaraka" },
-    manual: { title: "🏦 Manuel / Havale", subtitle: "Havale · EFT · FAST" },
-  };
+  const configuredCount = items.filter((p) => p.configured).length;
+  const recommendedCount = items.filter((p) => p.recommended).length;
+  const installmentCount = items.filter((p) => (p.supports || []).includes("installment")).length;
+
+  const SUB_TABS = [
+    { key: "gateway",  label: "Sanal POS / Ödeme Ağ Geçitleri", icon: "💳", count: groups.gateway.length, hint: "PayTR · iyzico · Param · ipara · Shopier · Moka · SiPay" },
+    { key: "bank_pos", label: "Banka Sanal POS'ları",             icon: "🏛️", count: groups.bank_pos.length, hint: "Garanti · YKB · Akbank · İş · Ziraat · Halk · Vakıf · Deniz · TEB · QNB · Kuveyt · Albaraka" },
+    { key: "manual",   label: "Havale · EFT · FAST",              icon: "🏦", count: groups.manual.length, hint: "Manuel banka havalesi ve otomatik ekstre eşleşme" },
+    { key: "installment", label: "Taksit Oranları",               icon: "📊", count: installmentCount,     hint: "Taksit oranları ve komisyon yansıtma yönetimi" },
+  ];
+
+  const list = groups[subTab] || [];
 
   return (
     <div className="space-y-4">
-      {/* Total revenue */}
-      <div className="bg-gradient-to-br from-emerald-500/10 to-indigo-500/10 border border-emerald-500/30 rounded-lg p-6">
-        <div className="text-[10px] uppercase tracking-widest text-emerald-300 mb-1">Son 30 Gün Toplam Gelir</div>
-        <div className="text-4xl font-bold mono text-emerald-100">{nfmt(totalRev)} TL</div>
-        <div className="text-xs text-slate-400 mt-1">
-          {items.length} sağlayıcı · {items.filter((p) => p.recommended).length} aktif · {items.filter((p) => p.configured).length} configured
+      {/* Üst istatistik kartları */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="col-span-1 md:col-span-2 relative overflow-hidden rounded-xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 via-slate-900 to-indigo-500/10 p-5">
+          <div className="absolute -right-8 -top-8 w-32 h-32 rounded-full bg-emerald-500/10 blur-3xl"/>
+          <div className="text-[10px] uppercase tracking-widest text-emerald-300 mb-1">Son 30 Gün Toplam Gelir</div>
+          <div className="text-3xl md:text-4xl font-bold mono text-emerald-100">{nfmt(totalRev)} ₺</div>
+          <div className="text-[11px] text-slate-400 mt-1.5">
+            {items.length} sağlayıcı · {recommendedCount} öneri · {configuredCount} yapılandırıldı
+          </div>
         </div>
+        <SmartPosMiniStat label="Aktif POS" value={recommendedCount} total={items.length} tone="emerald" icon="✅"/>
+        <SmartPosMiniStat label="Taksitli Ödeme" value={installmentCount} total={items.length} tone="indigo" icon="📊"/>
       </div>
 
-      {/* Provider groups */}
-      {Object.entries(groups).map(([cat, list]) => (
-        <div key={cat} className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <div>
-              <h3 className="text-slate-100 font-semibold text-sm">{GROUP_META[cat].title}</h3>
-              <p className="text-[11px] text-slate-500">{GROUP_META[cat].subtitle}</p>
+      {/* Alt tab bar — kategori sekmeleri */}
+      <div className="flex gap-1 p-1 rounded-xl bg-slate-900/60 border border-slate-800 overflow-x-auto"
+           data-testid="smart-pos-subtabs">
+        {SUB_TABS.map((t) => (
+          <button key={t.key}
+                  onClick={() => setSubTab(t.key)}
+                  data-testid={`sptab-${t.key}`}
+                  className={`flex-1 min-w-[180px] px-3 py-2 rounded-lg text-xs transition-all ${
+                    subTab === t.key
+                      ? "bg-indigo-500/20 border border-indigo-500/40 text-indigo-100 shadow-lg shadow-indigo-500/10"
+                      : "border border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                  }`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 font-semibold">
+                <span className="text-base leading-none">{t.icon}</span> {t.label}
+              </span>
+              <span className={`mono text-[10px] px-1.5 rounded ${
+                subTab === t.key ? "bg-indigo-500/30 text-indigo-100" : "bg-slate-800 text-slate-400"
+              }`}>{t.count}</span>
             </div>
-            <span className="text-[11px] text-slate-500 mono">{list.length} sağlayıcı</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {list.map((p) => {
-              const st = stObj[p.key] || {};
-              return (
-                <div key={p.key}
-                     data-testid={`smart-pos-provider-${p.key}`}
-                     className={`rounded-lg border p-3 ${
-                       p.recommended ? "bg-emerald-500/5 border-emerald-500/40"
-                       : p.configured ? "bg-slate-900/40 border-slate-800"
-                       : "bg-slate-900/20 border-slate-800 opacity-70"
-                     }`}>
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xl leading-none">{p.logo}</span>
-                      <div className="min-w-0">
-                        <div className="text-slate-100 font-semibold text-sm truncate">{p.name}</div>
-                        <div className="text-[9px] text-slate-500 mono uppercase">
-                          #{p.priority} · {p.type} · {p.commission}
-                        </div>
-                      </div>
-                    </div>
-                    {p.recommended ? <Badge tone="success">✓</Badge>
-                    : p.configured ? <Badge tone="info">aktif</Badge>
-                    : <Badge>test</Badge>}
-                  </div>
-                  <div className="grid grid-cols-3 gap-1 text-[10px] mb-2">
-                    <div>
-                      <div className="text-[8px] text-slate-500 uppercase">30G</div>
-                      <div className="mono text-slate-200">{st.total || 0}</div>
-                    </div>
-                    <div>
-                      <div className="text-[8px] text-slate-500 uppercase">Başarı</div>
-                      <div className="mono text-emerald-300">%{st.success_rate || 0}</div>
-                    </div>
-                    <div>
-                      <div className="text-[8px] text-slate-500 uppercase">Gelir</div>
-                      <div className="mono text-emerald-200 truncate">{nfmt(st.revenue || 0)}</div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-0.5">
-                    {(p.supports || []).slice(0, 6).map((s) => (
-                      <span key={s} className="text-[8px] mono px-1 py-0.5 rounded bg-slate-800 text-slate-400 uppercase">{s}</span>
-                    ))}
-                  </div>
-                  {!p.configured && p.category !== "manual" && (
-                    <div className="text-[9px] text-amber-400/70 mt-2 border-t border-slate-800 pt-1.5 truncate"
-                         title={p.configured_env.join(", ")}>
-                      ⚠️ .env: <span className="mono">{p.configured_env[0]}...</span>
-                    </div>
-                  )}
-                  <button
-                    onClick={() => setConfigProvider(p.key)}
-                    data-testid={`pos-config-btn-${p.key}`}
-                    className="w-full mt-2 text-[10px] px-2 py-1.5 rounded bg-indigo-500/15 text-indigo-200 border border-indigo-500/30 hover:bg-indigo-500/25 inline-flex items-center justify-center gap-1"
-                  >
-                    ⚙️ API Anahtarlarını Ayarla
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-
-      {/* Havale Ekstre Yükle */}
-      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
-        <div className="text-sm font-semibold text-emerald-200 mb-2">📄 Banka Ekstresi Yükle · Otomatik Havale Eşleştirme</div>
-        <p className="text-xs text-slate-400 mb-3">
-          Banka ekstrenizin metnini yapıştırın. Sistem TRF... referanslarını otomatik yakalar ve bekleyen havalelerle eşleştirir.
-        </p>
-        <StatementMatchForm/>
+            <div className="text-[9px] text-slate-500 mt-0.5 truncate normal-case text-left">{t.hint}</div>
+          </button>
+        ))}
       </div>
 
-      {/* Config Modal */}
+      {/* Ana içerik alanı */}
+      {subTab === "manual" && (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-emerald-300"/>
+            <div className="text-sm font-semibold text-emerald-200">
+              Banka Ekstresi Yükle · Otomatik Havale Eşleştirme
+            </div>
+          </div>
+          <p className="text-xs text-slate-400">
+            Banka ekstre metnini yapıştırın veya PDF/TXT/CSV yükleyin. Sistem TRF... referanslarını otomatik yakalar ve bekleyen havalelerle eşleştirir.
+          </p>
+          <StatementMatchForm/>
+        </div>
+      )}
+
+      {subTab === "installment" && (
+        <InstallmentOverview providers={items.filter(p => (p.supports || []).includes("installment"))}
+                             onOpen={(k) => setInstallmentProvider(k)}/>
+      )}
+
+      {(subTab === "gateway" || subTab === "bank_pos" || subTab === "manual") && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {list.map((p) => (
+            <ProviderCard key={p.key} p={p} st={stObj[p.key] || {}} nfmt={nfmt}
+                          onConfig={() => setConfigProvider(p.key)}
+                          onInstallment={() => setInstallmentProvider(p.key)}/>
+          ))}
+          {list.length === 0 && (
+            <div className="col-span-3 text-center text-sm text-slate-500 py-10">
+              Bu kategoride sağlayıcı yok
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modallar */}
       {configProvider && (
         <PosConfigModal
           providerKey={configProvider}
@@ -419,26 +410,190 @@ function SmartPosPanel() {
           onSaved={() => { providers.refetch(); stats.refetch(); }}
         />
       )}
+      {installmentProvider && (
+        <InstallmentConfigModal
+          providerKey={installmentProvider}
+          onClose={() => setInstallmentProvider(null)}
+        />
+      )}
 
       <ModuleFooter
         title="Akıllı POS Router — Nasıl Çalışır?"
-        howItWorks="Ödeme talebi geldiğinde /smart-pos/route endpoint'i sırayla değerlendirir: 1) 'prefer' varsa öncelik. 2) Configured olmayanlar sona atılır. 3) Son 1 saatte başarı oranı %40 altında ise 'unhealthy'. 4) Priority düşük olan seçilir. Failover chain (fallback_chain) client'a döner."
+        howItWorks="Ödeme talebi geldiğinde /smart-pos/route uç noktası sırayla değerlendirir: 1) 'tercih' varsa öncelik verilir. 2) Yapılandırılmamış sağlayıcılar sona atılır. 3) Son 1 saatte başarı oranı %40 altında ise 'sağlıksız' kabul edilir. 4) Önceliği düşük olan seçilir. Yedek zincir (fallback_chain) istemciye döner."
         technical={[
-          "22 sağlayıcı: 7 gateway + 14 banka VPOS + 1 manuel (havale)",
-          "Gateway'ler: PayTR/iyzico/Param/ipara/Shopier/Moka/SiPay",
-          "Banka VPOS'ları: Garanti/YKB/Akbank/İş/Ziraat/Halk/Vakıf/Deniz/TEB/QNB/Kuveyt/Albaraka",
-          "Her sağlayıcı için .env'e ilgili MERCHANT/TERMINAL bilgileri eklenir",
+          "22 sağlayıcı: 7 ağ geçidi + 14 banka VPOS + 1 manuel (havale)",
+          "Ağ geçitleri: PayTR / iyzico / Param / ipara / Shopier / Moka / SiPay",
+          "Banka VPOS: Garanti · YKB · Akbank · İş · Ziraat · Halk · Vakıf · Deniz · TEB · QNB · Kuveyt · Albaraka",
+          "Her sağlayıcı için ilgili MERCHANT/TERMINAL bilgileri panelden veya .env'den girilir",
+          "Taksit oranları ve komisyon yansıtma (vade farkı) sağlayıcı bazında düzenlenir",
         ]}
         recommendations={[
-          "En az 2 gateway + 1 banka POS configured yapın — failover için",
-          "Havale'yi son fallback olarak bırakın (manuel onay)",
-          "Aylık success_rate < %90 ise ilgili sağlayıcıyla iletişime geçin",
-          "Banka POS'ları için EST/PosNet SDK'sı gerektirir (ek entegrasyon)",
+          "En az 2 ağ geçidi + 1 banka POS yapılandırın (yedekleme için)",
+          "Havale'yi son yedek olarak bırakın (manuel onay gerektirir)",
+          "Aylık başarı oranı %90'ın altına düşen sağlayıcıyla iletişime geçin",
+          "Taksit vade farkını müşteriye yansıtın (varsayılan), veya satıcı üstlensin",
         ]}
       />
     </div>
   );
 }
+
+function SmartPosMiniStat({ label, value, total, tone, icon }) {
+  const pct = total ? Math.round((value / total) * 100) : 0;
+  const colors = {
+    emerald: "border-emerald-500/30 bg-emerald-500/5 text-emerald-200",
+    indigo: "border-indigo-500/30 bg-indigo-500/5 text-indigo-200",
+  }[tone] || "";
+  return (
+    <div className={`rounded-xl border ${colors} p-4`}>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] uppercase tracking-widest opacity-80">{label}</span>
+        <span className="text-lg leading-none">{icon}</span>
+      </div>
+      <div className="text-2xl font-bold mono">{value}<span className="text-sm text-slate-500">/{total}</span></div>
+      <div className="mt-1.5 h-1 rounded bg-slate-800/60 overflow-hidden">
+        <div className={`h-full ${tone === "emerald" ? "bg-emerald-400" : "bg-indigo-400"}`}
+             style={{ width: `${pct}%` }}/>
+      </div>
+    </div>
+  );
+}
+
+function ProviderCard({ p, st, nfmt, onConfig, onInstallment }) {
+  const supportsInstallment = (p.supports || []).includes("installment");
+  const SUPPORT_LABELS = {
+    visa: "Visa", mc: "MC", troy: "Troy", amex: "Amex", bonus: "Bonus", world: "World",
+    axess: "Axess", maximum: "Maximum", cardfinans: "CardFinans", paraf: "Paraf",
+    "3dsecure": "3D Secure", installment: "Taksit", recurring: "Abonelik",
+  };
+  return (
+    <div data-testid={`smart-pos-provider-${p.key}`}
+         className={`group relative rounded-xl border p-4 transition-all hover:-translate-y-0.5 hover:shadow-lg ${
+           p.recommended
+             ? "bg-gradient-to-br from-emerald-500/10 to-slate-900 border-emerald-500/40 shadow-emerald-500/5"
+             : p.configured
+             ? "bg-slate-900/50 border-slate-800 hover:border-indigo-500/40"
+             : "bg-slate-900/20 border-slate-800/60 hover:border-slate-700"
+         }`}>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="text-2xl leading-none">{p.logo}</span>
+          <div className="min-w-0">
+            <div className="text-slate-100 font-semibold text-sm truncate flex items-center gap-1">
+              {p.name}
+              {p.recommended && <span className="text-emerald-400 text-[10px]">●</span>}
+            </div>
+            <div className="text-[9px] text-slate-500 mono uppercase">
+              #{p.priority} · {p.commission}
+            </div>
+          </div>
+        </div>
+        {p.recommended ? <Badge tone="success">Aktif</Badge>
+        : p.configured ? <Badge tone="info">Hazır</Badge>
+        : <Badge>Test</Badge>}
+      </div>
+
+      {/* İstatistikler */}
+      <div className="grid grid-cols-3 gap-2 mb-3 p-2 rounded-lg bg-slate-950/50 border border-slate-800/40">
+        <div>
+          <div className="text-[8px] text-slate-500 uppercase">30 Gün</div>
+          <div className="mono text-slate-200 text-xs">{st.total || 0}</div>
+        </div>
+        <div>
+          <div className="text-[8px] text-slate-500 uppercase">Başarı</div>
+          <div className="mono text-emerald-300 text-xs">%{st.success_rate || 0}</div>
+        </div>
+        <div>
+          <div className="text-[8px] text-slate-500 uppercase">Gelir</div>
+          <div className="mono text-emerald-200 text-xs truncate">{nfmt(st.revenue || 0)} ₺</div>
+        </div>
+      </div>
+
+      {/* Kart aileleri / destekler */}
+      <div className="flex flex-wrap gap-1 mb-3 min-h-[20px]">
+        {(p.supports || []).slice(0, 6).map((s) => (
+          <span key={s}
+                className="text-[9px] mono px-1.5 py-0.5 rounded bg-slate-800/60 text-slate-300 border border-slate-700/40">
+            {SUPPORT_LABELS[s] || s}
+          </span>
+        ))}
+      </div>
+
+      {/* Yapılandırma durumu */}
+      {!p.configured && p.category !== "manual" && (
+        <div className="text-[9px] text-amber-400/70 mb-2 pb-2 border-b border-slate-800 truncate"
+             title={(p.configured_env || []).join(", ")}>
+          <span className="text-amber-500">⚠</span> Yapılandırılmadı: <span className="mono">{p.configured_env?.[0]}...</span>
+        </div>
+      )}
+
+      {/* Butonlar */}
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={onConfig}
+          data-testid={`pos-config-btn-${p.key}`}
+          className="flex-1 text-[10px] px-2 py-1.5 rounded-lg bg-indigo-500/15 text-indigo-200 border border-indigo-500/30 hover:bg-indigo-500/25 hover:border-indigo-500/50 inline-flex items-center justify-center gap-1 transition-all">
+          <Settings2 className="w-3 h-3"/> API Anahtarları
+        </button>
+        {supportsInstallment && (
+          <button
+            onClick={onInstallment}
+            data-testid={`pos-installment-btn-${p.key}`}
+            className="flex-1 text-[10px] px-2 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-200 border border-emerald-500/30 hover:bg-emerald-500/25 hover:border-emerald-500/50 inline-flex items-center justify-center gap-1 transition-all">
+            <Percent className="w-3 h-3"/> Taksit Oranları
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InstallmentOverview({ providers, onOpen }) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4">
+        <div className="flex items-center gap-2 mb-1.5">
+          <Percent className="w-4 h-4 text-indigo-300"/>
+          <div className="text-sm font-semibold text-indigo-200">Taksit Oranları ve Komisyon Yansıtma</div>
+        </div>
+        <p className="text-xs text-slate-400">
+          Taksitli ödemeyi destekleyen sağlayıcılar için aylık vade farklarını ve komisyon yansıtma modunu buradan yönetin.
+          Müşteri checkout ekranında gördüğü aylık tutar bu oranlara göre hesaplanır.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" data-testid="installment-overview">
+        {providers.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => onOpen(p.key)}
+            data-testid={`installment-tile-${p.key}`}
+            className="text-left rounded-xl border border-slate-800 bg-slate-900/40 p-4 hover:border-emerald-500/40 hover:bg-slate-900/60 transition-all">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-2xl leading-none">{p.logo}</span>
+              <div className="min-w-0">
+                <div className="text-slate-100 font-semibold text-sm truncate">{p.name}</div>
+                <div className="text-[10px] text-slate-500">Komisyon: {p.commission}</div>
+              </div>
+            </div>
+            <div className="text-xs text-slate-400 mb-2">
+              1-12 taksit desteği · vade farkı yansıtma
+            </div>
+            <div className="inline-flex items-center gap-1 text-[10px] text-emerald-300">
+              <Settings2 className="w-3 h-3"/> Oranları Düzenle
+            </div>
+          </button>
+        ))}
+        {providers.length === 0 && (
+          <div className="col-span-3 text-center text-sm text-slate-500 py-8">
+            Taksit destekleyen sağlayıcı yok
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 // ============================================================================
 // StatementMatchForm — Banka ekstresi yapıştır + otomatik havale eşleştir
@@ -827,6 +982,291 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// InstallmentConfigModal — Taksit oranları + komisyon yansıtma editörü
+// ============================================================================
+function InstallmentConfigModal({ providerKey, onClose }) {
+  const qc = useQueryClient();
+  const cfg = useQuery({
+    queryKey: ["installment-config", providerKey],
+    queryFn: () => api.smartPosGetInstallments(providerKey),
+  });
+  const [enabled, setEnabled] = useState(true);
+  const [maxInstallments, setMaxInstallments] = useState(12);
+  const [rates, setRates] = useState({});
+  const [surchargeMode, setSurchargeMode] = useState("reflect_to_customer");
+  const [surchargeExtra, setSurchargeExtra] = useState(0);
+  const [minAmount, setMinAmount] = useState(100);
+  const [previewAmount, setPreviewAmount] = useState(1499);
+  const [preview, setPreview] = useState(null);
+  const [initialized, setInitialized] = useState(false);
+
+  if (cfg.data?.config && !initialized) {
+    const c = cfg.data.config;
+    setEnabled(!!c.enabled);
+    setMaxInstallments(c.max_installments || 12);
+    setRates(c.rates || {});
+    setSurchargeMode(c.surcharge_mode || "reflect_to_customer");
+    setSurchargeExtra(c.surcharge_extra || 0);
+    setMinAmount(c.min_amount_for_installment || 100);
+    setInitialized(true);
+  }
+
+  const save = useMutation({
+    mutationFn: (payload) => api.smartPosSetInstallments(providerKey, payload),
+    onSuccess: (data) => {
+      toast.success(data.message || "Taksit oranları kaydedildi");
+      qc.invalidateQueries({ queryKey: ["installment-config", providerKey] });
+      onClose();
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Kaydetme başarısız"),
+  });
+
+  const previewCalc = () => {
+    const opts = [];
+    for (let n = 1; n <= maxInstallments; n++) {
+      const rate = parseFloat(rates[String(n)] ?? 0);
+      const extra = parseFloat(surchargeExtra || 0);
+      const effective = surchargeMode === "absorb" ? 0 : (rate + (n > 1 ? extra : 0));
+      const total = +(previewAmount * (1 + effective / 100)).toFixed(2);
+      opts.push({
+        n, rate: effective.toFixed(2),
+        monthly: (total / n).toFixed(2),
+        total: total.toFixed(2),
+        surcharge: (total - previewAmount).toFixed(2),
+      });
+    }
+    setPreview(opts);
+  };
+
+  const setRate = (n, v) => setRates({ ...rates, [String(n)]: v });
+  const submit = () => {
+    const cleaned = {};
+    for (let n = 1; n <= maxInstallments; n++) {
+      cleaned[String(n)] = parseFloat(rates[String(n)] ?? 0) || 0;
+    }
+    save.mutate({
+      enabled,
+      max_installments: parseInt(maxInstallments) || 12,
+      rates: cleaned,
+      surcharge_mode: surchargeMode,
+      surcharge_extra: parseFloat(surchargeExtra) || 0,
+      min_amount_for_installment: parseFloat(minAmount) || 0,
+    });
+  };
+  const d = cfg.data;
+  const nfmt = (n) => new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2 }).format(parseFloat(n) || 0);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+         data-testid="installment-modal">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-4xl w-full max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800 bg-gradient-to-r from-emerald-500/5 to-indigo-500/5">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="text-2xl leading-none">{d?.logo || "📊"}</span>
+            <div className="min-w-0">
+              <div className="text-slate-100 font-semibold text-sm truncate">
+                Taksit Oranları · {d?.name || providerKey}
+              </div>
+              <div className="text-[10px] text-slate-500 mono">
+                {d?.supports_installment ? "Taksitli ödeme destekleniyor" : "Bu sağlayıcı taksit desteklemiyor"}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200 p-1"
+                  data-testid="installment-close">
+            <X className="w-4 h-4"/>
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 p-5">
+          <div className="space-y-4">
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 space-y-3">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Genel Ayarlar</div>
+              <label className="flex items-center gap-2 text-xs text-slate-200 cursor-pointer">
+                <input type="checkbox" checked={enabled}
+                       onChange={(e) => setEnabled(e.target.checked)}
+                       data-testid="installment-enabled"/>
+                Taksitli ödeme etkin
+              </label>
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 block">
+                  Maksimum Taksit Sayısı
+                </label>
+                <input type="number" min="1" max="12" value={maxInstallments}
+                       onChange={(e) => setMaxInstallments(parseInt(e.target.value) || 12)}
+                       className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-1.5 text-xs mono text-slate-200 focus:border-emerald-500/50 outline-none"
+                       data-testid="installment-max"/>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 block">
+                  Taksit için Minimum Tutar (₺)
+                </label>
+                <input type="number" min="0" step="10" value={minAmount}
+                       onChange={(e) => setMinAmount(e.target.value)}
+                       className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-1.5 text-xs mono text-slate-200 focus:border-emerald-500/50 outline-none"/>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 space-y-3">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Komisyon Yansıtma</div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <label className={`p-2 rounded border cursor-pointer transition-all ${
+                  surchargeMode === "reflect_to_customer"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                    : "border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700"
+                }`}>
+                  <input type="radio" checked={surchargeMode === "reflect_to_customer"}
+                         onChange={() => setSurchargeMode("reflect_to_customer")}
+                         className="mr-1.5" data-testid="surcharge-reflect"/>
+                  Müşteriye Yansıt
+                  <div className="text-[9px] text-slate-500 mt-0.5">Vade farkı müşteri tarafından ödenir</div>
+                </label>
+                <label className={`p-2 rounded border cursor-pointer transition-all ${
+                  surchargeMode === "absorb"
+                    ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-100"
+                    : "border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700"
+                }`}>
+                  <input type="radio" checked={surchargeMode === "absorb"}
+                         onChange={() => setSurchargeMode("absorb")}
+                         className="mr-1.5" data-testid="surcharge-absorb"/>
+                  Satıcı Üstlensin
+                  <div className="text-[9px] text-slate-500 mt-0.5">Fiyatlar sabit kalır (siz komisyona katlanırsınız)</div>
+                </label>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 block">
+                  Ek Komisyon Yansıtma (%) <span className="text-slate-600 normal-case">— 2+ taksitlere ek</span>
+                </label>
+                <input type="number" min="0" max="20" step="0.1" value={surchargeExtra}
+                       onChange={(e) => setSurchargeExtra(e.target.value)}
+                       className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-1.5 text-xs mono text-slate-200 focus:border-emerald-500/50 outline-none"
+                       data-testid="surcharge-extra"/>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
+                  Aylık Vade Farkı Oranları (%)
+                </div>
+                <button onClick={() => {
+                  const defaults = { 1: 0, 2: 1.19, 3: 1.75, 4: 2.29, 5: 2.79, 6: 3.29,
+                                     7: 3.79, 8: 4.29, 9: 4.79, 10: 5.29, 11: 5.79, 12: 6.29 };
+                  setRates(Object.fromEntries(Object.entries(defaults).map(([k,v]) => [k, v])));
+                }}
+                className="text-[10px] text-indigo-400 hover:text-indigo-300">
+                  varsayılan
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {Array.from({ length: maxInstallments }, (_, i) => i + 1).map((n) => (
+                  <div key={n} className="flex items-center gap-1.5">
+                    <span className="text-[10px] mono text-slate-500 w-6 shrink-0">{n}x</span>
+                    <input type="number" step="0.01" min="0"
+                           value={rates[String(n)] ?? ""}
+                           onChange={(e) => setRate(n, e.target.value)}
+                           placeholder="0.00"
+                           className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-[11px] mono text-slate-200 focus:border-emerald-500/50 outline-none"
+                           data-testid={`rate-${n}`}/>
+                    <span className="text-[10px] text-slate-500 w-3">%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+              <div className="text-[10px] uppercase tracking-widest text-emerald-300 font-semibold mb-2">
+                Canlı Ödeme Simülatörü
+              </div>
+              <div className="flex items-center gap-2 mb-3">
+                <label className="text-[10px] uppercase tracking-widest text-slate-500">Tutar</label>
+                <input type="number" min="1" step="10" value={previewAmount}
+                       onChange={(e) => setPreviewAmount(parseFloat(e.target.value) || 0)}
+                       className="flex-1 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs mono text-slate-200 focus:border-emerald-500/50 outline-none"
+                       data-testid="preview-amount"/>
+                <span className="text-slate-400 text-xs">₺</span>
+                <button onClick={previewCalc}
+                        className="text-[10px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/30 inline-flex items-center gap-1"
+                        data-testid="preview-calc-btn">
+                  <Wand2 className="w-3 h-3"/> Hesapla
+                </button>
+              </div>
+              {preview ? (
+                <div className="rounded overflow-hidden border border-slate-800">
+                  <table className="w-full text-[11px]" data-testid="preview-table">
+                    <thead className="bg-slate-950">
+                      <tr className="text-left text-slate-500">
+                        <th className="px-2 py-1.5">Taksit</th>
+                        <th className="px-2 py-1.5">Oran</th>
+                        <th className="px-2 py-1.5 text-right">Aylık</th>
+                        <th className="px-2 py-1.5 text-right">Toplam</th>
+                        <th className="px-2 py-1.5 text-right">Fark</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.map((r) => (
+                        <tr key={r.n} className="border-t border-slate-800/60 hover:bg-slate-800/30">
+                          <td className="px-2 py-1 mono text-slate-200">{r.n}x</td>
+                          <td className="px-2 py-1 mono text-slate-400">%{r.rate}</td>
+                          <td className="px-2 py-1 mono text-right text-slate-200">{nfmt(r.monthly)} ₺</td>
+                          <td className="px-2 py-1 mono text-right text-emerald-300">{nfmt(r.total)} ₺</td>
+                          <td className={`px-2 py-1 mono text-right ${
+                            parseFloat(r.surcharge) > 0 ? "text-amber-300" : "text-slate-500"
+                          }`}>
+                            {parseFloat(r.surcharge) > 0 ? `+${nfmt(r.surcharge)}` : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center text-[11px] text-slate-500 py-6 border border-dashed border-slate-800 rounded">
+                  Hesapla butonuna basın · müşterinin göreceği taksit tablosu burada oluşur
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-[11px] text-slate-400 space-y-1.5">
+              <div className="font-semibold text-slate-300 mb-1">Kart Aile Limitleri</div>
+              {Object.entries(d?.card_family_caps || {}).map(([fam, cap]) => (
+                <div key={fam} className="flex items-center justify-between">
+                  <span className="capitalize">{fam}</span>
+                  <span className="mono">{cap} taksit</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-slate-800 bg-slate-950/50">
+          <div className="text-[10px] text-slate-500">
+            {surchargeMode === "reflect_to_customer"
+              ? "💡 Müşteri taksit farkını görecek"
+              : "💡 Fiyatlar sabit, komisyonu siz üstleneceksiniz"}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose}
+                    className="text-xs px-3 py-1.5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
+                    data-testid="installment-cancel">
+              İptal
+            </button>
+            <button onClick={submit} disabled={save.isPending}
+                    className="text-xs px-4 py-1.5 rounded bg-emerald-500/20 text-emerald-100 border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-40 inline-flex items-center gap-1.5"
+                    data-testid="installment-save">
+              <CheckCircle2 className="w-3 h-3"/> {save.isPending ? "Kaydediliyor..." : "Oranları Kaydet"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

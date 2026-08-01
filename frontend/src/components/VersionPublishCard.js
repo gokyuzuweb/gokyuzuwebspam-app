@@ -59,10 +59,17 @@ export default function VersionPublishCard() {
   if (!isMaster) return null;
 
   const startAutoPublish = () => {
-    // Explicit publish button — sends without a version to trigger backend auto-detect
+    // Send the currently installed panel version explicitly.
+    // This prevents backend from ever auto-bumping when master heartbeat is missing.
+    const installedVersion = (cur.data?.version || "").trim();
+    if (!installedVersion) {
+      toast.error("Kurulu sürüm henüz belirlenmedi — biraz bekleyin");
+      return;
+    }
     publish.mutate({
       license_key: licenseKey,
-      changelog: `Otomatik yayın · ${new Date().toLocaleDateString("tr-TR")}`,
+      latest_version: installedVersion,
+      changelog: `Kurulu sürüm yayınlandı · ${new Date().toLocaleDateString("tr-TR")}`,
     });
   };
 

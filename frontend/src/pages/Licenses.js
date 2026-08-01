@@ -414,7 +414,7 @@ export default function Licenses() {
                         <td className="px-4 py-2.5"><Badge tone={PLAN_TONE[r.plan]}>{r.plan.toUpperCase()}</Badge></td>
                         <td className="px-4 py-2.5">
                           <div className="flex flex-wrap gap-1">
-                            {r.ip_addresses.map(ip => (
+                            {(r.ip_addresses || []).map(ip => (
                               <span key={ip} className="mono text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-300">{ip}</span>
                             ))}
                           </div>

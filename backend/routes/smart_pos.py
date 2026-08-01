@@ -324,6 +324,136 @@ async def _delegate_to_havale(payload: RouteRequest, merchant_oid: str):
     }
 
 
+# ============================================================================
+# TAKSİT ORANLARI ve KOMİSYON YANSITMA
+# ============================================================================
+# TR pazarı için varsayılan taksit oranları (aylık vade farkı %)
+# Örn: 1x = 0% (peşin), 3x = 1.75%, 6x = 3.90%, 9x = 5.20%, 12x = 6.80%
+DEFAULT_INSTALLMENT_RATES = {
+    1: 0.0, 2: 1.19, 3: 1.75, 4: 2.29, 5: 2.79, 6: 3.29,
+    7: 3.79, 8: 4.29, 9: 4.79, 10: 5.29, 11: 5.79, 12: 6.29,
+}
+
+# Kart ailesine göre desteklenen taksit tavanları (regülasyon)
+CARD_FAMILY_MAX_INSTALLMENTS = {
+    "bonus": 12, "world": 12, "axess": 12, "maximum": 12,
+    "cardfinans": 12, "paraf": 12, "bankkart": 9,
+    "advantage": 9, "wings": 9, "troy": 9,
+    "visa": 12, "mc": 12, "amex": 3,
+}
+
+
+def _default_installment_config():
+    """Sağlayıcı için varsayılan taksit config'i döner."""
+    return {
+        "enabled": True,
+        "max_installments": 12,
+        "rates": {str(k): v for k, v in DEFAULT_INSTALLMENT_RATES.items()},
+        "surcharge_mode": "reflect_to_customer",  # veya "absorb" (satıcı yüklenir)
+        "surcharge_extra": 0.0,  # % olarak ek komisyon yansıtma
+        "min_amount_for_installment": 100.0,
+    }
+
+
+class InstallmentCalcIn(BaseModel):
+    provider: str
+    amount: float = Field(..., gt=0)
+    card_family: Optional[str] = None  # visa/mc/bonus/world/axess/maximum...
+
+
+@router.post("/installments/calculate")
+async def calculate_installments(payload: InstallmentCalcIn):
+    """Bir sipariş tutarı için tüm taksit seçenekleri + toplam bedelleri hesaplar.
+    Frontend checkout ekranında kullanıcıya taksit tablosunu göstermek için."""
+    p = next((x for x in PROVIDERS if x["key"] == payload.provider), None)
+    if not p:
+        raise HTTPException(404, "Sağlayıcı bulunamadı")
+    if "installment" not in p.get("supports", []):
+        return {"provider": payload.provider, "supports_installment": False, "options": []}
+    doc = await db.settings.find_one({"_key": f"installment_{payload.provider}"}, {"_id": 0}) or {}
+    cfg = _default_installment_config()
+    cfg.update({k: v for k, v in doc.items() if not k.startswith("_")})
+
+    if not cfg["enabled"] or payload.amount < cfg["min_amount_for_installment"]:
+        return {"provider": payload.provider, "supports_installment": True,
+                "reason": "amount below minimum",
+                "options": [{"installments": 1, "monthly": payload.amount,
+                             "total": payload.amount, "rate": 0.0, "surcharge": 0.0}]}
+
+    card_cap = CARD_FAMILY_MAX_INSTALLMENTS.get(payload.card_family or "visa", 12)
+    max_ins = min(int(cfg["max_installments"]), card_cap)
+    options = []
+    for n in range(1, max_ins + 1):
+        rate = float(cfg["rates"].get(str(n), DEFAULT_INSTALLMENT_RATES.get(n, 0.0)))
+        extra = float(cfg.get("surcharge_extra", 0.0))
+        effective_rate = rate + (extra if n > 1 else 0.0)
+        total = round(payload.amount * (1 + effective_rate / 100.0), 2)
+        if cfg.get("surcharge_mode") == "absorb":
+            total = payload.amount
+            effective_rate = 0.0
+        monthly = round(total / n, 2)
+        options.append({
+            "installments": n,
+            "monthly": monthly,
+            "total": total,
+            "rate": round(effective_rate, 2),
+            "surcharge": round(total - payload.amount, 2),
+        })
+    return {
+        "provider": payload.provider,
+        "supports_installment": True,
+        "surcharge_mode": cfg["surcharge_mode"],
+        "card_family": payload.card_family or "visa",
+        "card_family_cap": card_cap,
+        "base_amount": payload.amount,
+        "options": options,
+    }
+
+
+@router.get("/installments/{key}")
+async def get_installment_config(key: str):
+    """Sağlayıcı için taksit oranları ve komisyon yansıtma ayarlarını döner."""
+    p = next((x for x in PROVIDERS if x["key"] == key), None)
+    if not p:
+        raise HTTPException(404, "Sağlayıcı bulunamadı")
+    doc = await db.settings.find_one({"_key": f"installment_{key}"}, {"_id": 0}) or {}
+    cfg = _default_installment_config()
+    cfg.update({k: v for k, v in doc.items() if not k.startswith("_")})
+    return {
+        "provider": key, "name": p["name"], "logo": p["logo"],
+        "supports_installment": "installment" in p.get("supports", []),
+        "config": cfg,
+        "card_family_caps": CARD_FAMILY_MAX_INSTALLMENTS,
+    }
+
+
+class InstallmentConfigIn(BaseModel):
+    enabled: bool = True
+    max_installments: int = Field(12, ge=1, le=12)
+    rates: dict = Field(default_factory=dict)  # {"1": 0.0, "3": 1.75, ...}
+    surcharge_mode: str = "reflect_to_customer"  # veya "absorb"
+    surcharge_extra: float = Field(0.0, ge=0.0, le=20.0)
+    min_amount_for_installment: float = Field(100.0, ge=0)
+
+
+@router.post("/installments/{key}")
+async def set_installment_config(key: str, payload: InstallmentConfigIn):
+    """Sağlayıcı için taksit oranları + komisyon yansıtma modu kaydeder."""
+    p = next((x for x in PROVIDERS if x["key"] == key), None)
+    if not p:
+        raise HTTPException(404, "Sağlayıcı bulunamadı")
+    data = payload.dict()
+    data["_key"] = f"installment_{key}"
+    data["updated_at"] = _iso()
+    await db.settings.update_one(
+        {"_key": f"installment_{key}"},
+        {"$set": data},
+        upsert=True,
+    )
+    return {"ok": True, "provider": key, "installment_count": len(payload.rates),
+            "message": f"{p['name']} taksit oranları kaydedildi"}
+
+
 @router.get("/stats")
 async def smart_pos_stats():
     """Sağlayıcı bazlı 30 gün istatistikleri — admin dashboard için."""

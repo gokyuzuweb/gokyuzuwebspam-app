@@ -72,3 +72,41 @@ Home / Dashboard / MailScanner / Mail Sağlık / Tehdit Zekası / Güvenlik / Qu
 - P2: Legacy mojibake purge (user-triggered from DB Bakım)
 - P2: More sophisticated country geoIP (currently /8 prefix map)
 - P2: Multi-tenant PHP bridge with per-license headers
+
+## 2026-02-08 · Ödeme Panosu Modernizasyonu + Version Publish Fix
+### Smart POS Panel — Tab yapısı + Taksit sistemi
+- SmartPosPanel tamamen yeniden tasarlandı: gradient stat kartları + 4 alt-tab
+- Alt-tab'lar: 💳 Sanal POS / 🏛️ Banka POS'ları / 🏦 Havale / 📊 Taksit Oranları
+- Her sağlayıcı kartı modern hover animasyonu + kart aile chip'leri + Aktif/Hazır/Test rozeti
+- 2 modal: `PosConfigModal` (API anahtarları) + `InstallmentConfigModal` (taksit + komisyon)
+
+### Taksit Sistemi (backend + UI)
+- Backend: `GET/POST /api/smart-pos/installments/{key}` — sağlayıcı bazlı oran matrisi
+- Backend: `POST /api/smart-pos/installments/calculate` — canlı taksit hesaplama
+- Frontend: 1-12 taksit matrisi + canlı ödeme simülatörü + kart aile limitleri
+- Komisyon yansıtma modları: `reflect_to_customer` (müşteriye yansıt) veya `absorb` (satıcı üstlensin)
+- Ek komisyon (%) — 2+ taksitlere ek yansıtma
+
+### Bug Fix — Sürüm yayınlama otomatik-bump
+- **Sorun**: Boş `latest_version` ile publish edildiğinde backend patch'i +1 yapıyordu (1.3.5 → 1.3.6 → 1.3.7)
+- **Kök neden**: `server.py:version_publish` fallback yolunda `parts[2] += 1`
+- **Çözüm**: 
+  - Backend fallback artık `settings.version.version` (kurulu sürüm) kullanıyor, bump yok
+  - Frontend "Kurulu Sürümü Yayınla" butonu artık explicit olarak `cur.data.version` gönderiyor
+- Test: 3 kez üst üste boş publish → hepsi `1.3.3` yayınlandı ✓
+
+### Bug Fix — Licenses.js runtime crash
+- **Sorun**: `r.ip_addresses.map is undefined` — bazı lisans kayıtlarında ip_addresses eksik
+- **Çözüm**: `(r.ip_addresses || []).map(...)` null-safe guard
+
+### Yeni Endpoint'ler
+- `POST /api/payments/havale/statement-upload` — PDF/TXT/CSV yükleme, pypdf ile text çıkarma
+- `POST /api/smart-pos/installments/calculate` — checkout için taksit tablosu
+- `GET/POST /api/smart-pos/installments/{key}` — oran matrisi CRUD
+
+### Yeni Frontend Component'ler (PaymentsAdmin.js)
+- `StatementMatchForm` — ekstre yapıştırma + PDF/TXT/CSV upload + auto-approve
+- `PosConfigModal` — sağlayıcı API anahtarları + show/hide secrets
+- `OrdersKanban` — 4 sütun drag-drop (Bekleyen/Bildirim/Onaylandı/Reddedildi)
+- `ProviderCard`, `InstallmentOverview`, `InstallmentConfigModal`, `SmartPosMiniStat`
+

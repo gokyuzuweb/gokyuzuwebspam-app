@@ -2782,7 +2782,9 @@ async def version_publish(payload: VersionPublishIn, request: Request):
     (gokyuzuhosting.com + 89.19.15.58) so plugins can fall back if DNS fails."""
     await _require_master(request, payload.license_key)
 
-    # Auto-detect version from master server's heartbeat
+    # Auto-detect version from the installed version (no auto-bump).
+    # Precedence: 1) master heartbeat, 2) installed panel version.
+    # We NEVER bump automatically — user asked us to publish exactly what is installed.
     version = (payload.latest_version or "").strip().lstrip("v")
     if not version:
         master_lic = None
@@ -2797,12 +2799,9 @@ async def version_publish(payload: VersionPublishIn, request: Request):
         if master_lic and master_lic.get("last_heartbeat_version"):
             version = master_lic["last_heartbeat_version"].lstrip("v")
         else:
-            # Fallback: bump patch of the current server manifest by 0.0.1
-            cur_mf = await db.settings.find_one({"_key": "version_manifest"}, {"_id": 0}) or {}
-            parts = [int(x) for x in (cur_mf.get("latest_version", "1.1.0")).replace("v", "").split(".") if x.isdigit()]
-            while len(parts) < 3: parts.append(0)
-            parts[2] += 1
-            version = ".".join(map(str, parts))
+            # Fallback: use the installed panel version — NO auto-bump.
+            installed = await db.settings.find_one({"_key": "version"}, {"_id": 0}) or {}
+            version = (installed.get("version") or "1.1.0").lstrip("v")
 
     dl_host = f"https://{MASTER_HOST}/dist/gokyuzuwebspam-{version}.tar.gz"
     dl_ip   = f"http://{MASTER_IP}/dist/gokyuzuwebspam-{version}.tar.gz"

@@ -438,6 +438,9 @@ export const api = {
   smartPosGetConfig: (key) => client.get(`/smart-pos/provider/${key}/config`).then(r => r.data),
   smartPosSetConfig: (key, payload) => client.post(`/smart-pos/provider/${key}/config`, payload).then(r => r.data),
   smartPosTestConfig: (key) => client.post(`/smart-pos/provider/${key}/test`).then(r => r.data),
+  smartPosGetInstallments: (key) => client.get(`/smart-pos/installments/${key}`).then(r => r.data),
+  smartPosSetInstallments: (key, payload) => client.post(`/smart-pos/installments/${key}`, payload).then(r => r.data),
+  smartPosCalcInstallments: (payload) => client.post(`/smart-pos/installments/calculate`, payload).then(r => r.data),
   havaleStatementMatch: (payload) => client.post("/payments/havale/statement-match", payload).then(r => r.data),
 
   masterCheck: () => client.get("/master/check").then(r => r.data),
