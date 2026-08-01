@@ -183,6 +183,7 @@ export const api = {
   violations: () => client.get("/license/violations").then(r => r.data),
   violationsClear: () => client.delete("/license/violations").then(r => r.data),
   violationSimulate: (payload) => client.post("/license/simulate-violation", payload).then(r => r.data),
+  simulateAlarm: (kind) => client.post("/events/simulate-alert", { kind }).then(r => r.data),
 
   // Blacklist
   blacklistProviders: () => client.get("/blacklist/providers").then(r => r.data),

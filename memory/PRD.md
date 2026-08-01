@@ -145,3 +145,45 @@ Home / Dashboard / MailScanner / Mail Sağlık / Tehdit Zekası / Güvenlik / Qu
 - Eski docs'ta yeni alanlar yoktu → `_notify_settings()` artık pydantic default'la merge ediyor
 - Test: GET /api/notifications yeni alanlar için doğru default değer döndürüyor
 
+
+## 2026-02-08 (3) · Ultra-Belirgin Tab'lar + PHP Multi-page + Alarm Sim + Deploy Kılavuzu
+
+### 🌈 Tab'lar artık ULTRA-belirgin (kullanıcı isteği)
+- `index.css` global tab enhancement v2:
+  - Tab bar container: `[data-testid="dashboard-tabs" | "smart-pos-subtabs" | "lic-tabbar"]` → renkli gradient border-image + 2px border + shadow
+  - Aktif tab (pill-style, `bg-indigo-500/20` içeren): gradient 30% opacity + ring-2 inset + shadow + text-shadow + %2 scale
+  - Aktif tab (border-b-2 style): rgb(99,102,241) 3px alt çizgi + gradient bg + shadow
+  - Üst kenarda parlayan shimmer bar (`::before`, 2.4s animation)
+  - Sağ üst köşede nabız gibi atan pulse dot (`::after`, 1.6s animation)
+  - Renk varyasyonları: emerald, rose, amber için ayrı stiller
+  - Hover shimmer efekti pill-style sub-tab'lara
+
+### 🔔 Alarm Test Butonları
+- Backend: `POST /api/events/simulate-alert { kind: 'attack'|'bulk_mail' }`
+  - Cool-down bypass + 100+ sahte event ekleme + gerçek alarm zinciri tetikleme
+  - Test edildi: 3 alarm inbox'a düştü ✓
+- Frontend: `Notifications.js` → yeni "Saldırı & Toplu Mail Alarm Testi" kartı, 2 buton
+
+### 📄 PHP Bridge Multi-page Site (cyber-security-18'e yüklenecek)
+- `inc/layout.php` — Ortak header/nav/footer (Manrope + JetBrains Mono)
+- `index.php` — Ana satış (mevcut + yeni nav)
+- `ozellikler.php` — 14 modül showcase (3-col grid, feature listeleri)
+- `fiyatlar.php` — 3 paket + PayTR + Havale checkout
+- `arac-rbl.php` — Ücretsiz RBL kontrol aracı (backend'e cURL)
+- `arac-mailhealth.php` — SPF/DKIM/DMARC/MX health test + 0-100 skor
+- `musteri.php` — Lisans sorgulama portalı (verify-license backend)
+- `iletisim.php` — İletişim formu + dosya loglama
+- Tüm sayfaları PHP `-l` syntax check ile doğrulandı
+- Test: PHP built-in server ile 7/7 sayfa render ediliyor
+
+### 📘 Deploy Kılavuzu
+- `/app/DEPLOY-KILAVUZU.md` (10 adım)
+- Dual-source mimari açıklaması (preview=dev, gokyuzuhosting=prod)
+- DNS/SSL/Nginx/Docker Compose/Certbot adımları
+- PHP Bridge kurulumu (cyber-security-18 projesine)
+- Sorun giderme + kontrol listesi
+
+### Backend Fix: NotificationSettings backward-compat
+- `_notify_settings()` artık eski docs'a pydantic default'ları merge ediyor
+- Test: yeni alanlar (alert_on_attack, thresholds) default değerlerle döner
+

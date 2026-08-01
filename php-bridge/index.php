@@ -41,22 +41,11 @@ $plans = [
 ];
 
 $nfmt = fn($n) => number_format($n ?? 0, 0, ',', '.');
-?><!DOCTYPE html>
-<html lang="tr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GökyüzüWebSpam · Kurumsal Mail Güvenliği · gokyuzubilgisayar.com</title>
-<meta name="description" content="WHM/cPanel için kurumsal mail güvenliği. AI + 14 RBL + Exploit tarama. TR PayTR + Havale ödeme.">
+require_once __DIR__ . '/inc/layout.php';
+gws_head('Kurumsal Mail Güvenliği', 'WHM/cPanel için kurumsal mail güvenliği. AI + 14 RBL + Exploit tarama. TR PayTR + Havale ödeme.');
+gws_nav('anasayfa');
+?>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    background: #0f172a; color: #e2e8f0; line-height: 1.6;
-    background-image: radial-gradient(circle at 20% 20%, rgba(99,102,241,0.1), transparent 50%),
-                      radial-gradient(circle at 80% 60%, rgba(244,63,94,0.08), transparent 50%);
-    min-height: 100vh;
-  }
   .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
   .hero { padding: 60px 20px; text-align: center; }
   .badge {
@@ -305,5 +294,4 @@ $nfmt = fn($n) => number_format($n ?? 0, 0, ',', '.');
       } catch(e) {}
     }, 5000);
   </script>
-</body>
-</html>
+<?php gws_footer(); ?>

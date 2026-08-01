@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Bell, Send, MessageSquare, Zap, Mail, Server } from "lucide-react";
+import { Save, Bell, Send, MessageSquare, Zap, Mail, Server, ShieldAlert, Mails } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -59,6 +59,13 @@ export default function Notifications() {
       }
       else toast.info(t("notifications.no_channel"));
     },
+  });
+  const sim = useMutation({
+    mutationFn: (kind) => api.simulateAlarm(kind),
+    onSuccess: (data) => {
+      toast.success(`${data.message} · ${data.hint || ""}`, { duration: 6000 });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Simülasyon başarısız"),
   });
 
   if (!state) return <div className="p-6 text-slate-500">{t("common.loading")}</div>;
@@ -255,6 +262,35 @@ export default function Notifications() {
             >
               <Bell className="w-3.5 h-3.5" /> {t("notifications.sim_btn")}
             </button>
+          </CardBody>
+        </Card>
+
+        {/* Yeni: Saldırı + Toplu Mail alarm simülasyonu */}
+        <Card data-testid="alarm-sim-card">
+          <CardHeader title={<span className="flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400"/> Saldırı & Toplu Mail Alarm Testi</span>}
+                      subtitle="Alarm zincirini uçtan uca doğrulayın · Bildirim kutusu + e-posta + Slack" />
+          <CardBody className="space-y-2">
+            <p className="text-[11px] text-slate-500">
+              Test sırasında sistem gerçek bir alarm gibi davranır; yüzlerce sahte event ekler, eşik değeri aşar ve bildirimleri gönderir.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                data-testid="sim-attack-btn"
+                onClick={() => sim.mutate("attack")}
+                disabled={sim.isPending}
+                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm border border-rose-500/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20 disabled:opacity-40"
+              >
+                <ShieldAlert className="w-3.5 h-3.5"/> Saldırı Simüle
+              </button>
+              <button
+                data-testid="sim-bulk-btn"
+                onClick={() => sim.mutate("bulk_mail")}
+                disabled={sim.isPending}
+                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm border border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
+              >
+                <Mails className="w-3.5 h-3.5"/> Toplu Mail Simüle
+              </button>
+            </div>
           </CardBody>
         </Card>
       </div>

@@ -203,6 +203,78 @@ async def _check_attack_bulk_alerts(license_key: str, evt_doc: dict) -> None:
                 )
 
 
+@router.post("/simulate-alert")
+async def simulate_attack_bulk_alert(payload: dict):
+    """Test endpoint: simulate attack or bulk mail alert.
+    payload: { kind: 'attack'|'bulk_mail', license_key?: str }
+    Alarm zincirini (inbox + e-posta + Slack) gerçek verilerle tetikler."""
+    kind = payload.get("kind", "attack")
+    license_key = payload.get("license_key") or "TEST-LICENSE"
+    if kind == "attack":
+        fake_doc = {
+            "sender_ip": "185.220.101.44",
+            "client_ip": "185.220.101.44",
+            "from_addr": "attacker@malicious.example",
+            "license_key": license_key,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+    else:
+        fake_doc = {
+            "sender_ip": "10.20.30.40",
+            "from_addr": "compromised@yourdomain.com",
+            "license_key": license_key,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+    # Cool-down atlatmak için önce eski kayıtları sil
+    from server import _notify_settings
+    ns = await _notify_settings()
+    now = datetime.now(timezone.utc)
+    if kind == "attack":
+        cool_key = fake_doc["sender_ip"]
+        await db.settings.delete_one({"_key": f"alarm_last_attack_alert_{cool_key}"})
+        # Test için 100+ event ekleyelim ki threshold aşılsın
+        threshold = int(ns.get("attack_threshold_5min", 100) or 100)
+        docs = []
+        for i in range(threshold + 5):
+            docs.append({
+                "id": str(uuid.uuid4()),
+                "license_key": license_key,
+                "sender_ip": cool_key,
+                "from_addr": fake_doc["from_addr"],
+                "ingested_at": now.isoformat(),
+                "ts": now.isoformat(),
+                "simulated": True,
+            })
+        if docs:
+            await db.mail_events.insert_many(docs)
+    else:
+        cool_key = fake_doc["from_addr"]
+        await db.settings.delete_one({"_key": f"alarm_last_bulk_mail_alert_{cool_key}"})
+        threshold = int(ns.get("bulk_mail_threshold_1h", 500) or 500)
+        docs = []
+        for i in range(threshold + 5):
+            docs.append({
+                "id": str(uuid.uuid4()),
+                "license_key": license_key,
+                "sender_ip": fake_doc["sender_ip"],
+                "from_addr": cool_key,
+                "ingested_at": now.isoformat(),
+                "ts": now.isoformat(),
+                "simulated": True,
+            })
+        if docs:
+            await db.mail_events.insert_many(docs)
+    # Şimdi alarm kontrolünü tetikle
+    await _check_attack_bulk_alerts(license_key, fake_doc)
+    return {
+        "ok": True,
+        "kind": kind,
+        "message": f"{'Saldırı' if kind == 'attack' else 'Toplu mail'} alarmı simüle edildi",
+        "hint": "Bildirim kutusuna, admin e-postasına ve Slack'e gönderildi (aktifse)",
+    }
+
+
+
 async def _ai_predict_bg(doc: dict) -> None:
     """Hizli AI predict — heuristic sonucu event uzerine yazilir.
     Config'de ai_auto_quarantine aktifse threshold uzeri predicted skorlar otomatik override eder."""
