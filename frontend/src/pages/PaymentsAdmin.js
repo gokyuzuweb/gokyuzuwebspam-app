@@ -294,6 +294,7 @@ function Field({ icon: Icon, label, value, mono = false }) {
 }
 
 function SmartPosPanel() {
+  const [configProvider, setConfigProvider] = useState(null);
   const providers = useQuery({ queryKey: ["smart-pos-providers"], queryFn: api.smartPosProviders, refetchInterval: 30000 });
   const stats = useQuery({ queryKey: ["smart-pos-stats"], queryFn: api.smartPosStats, refetchInterval: 30000 });
   const items = providers.data?.providers || [];
@@ -384,12 +385,28 @@ function SmartPosPanel() {
                       ⚠️ .env: <span className="mono">{p.configured_env[0]}...</span>
                     </div>
                   )}
+                  <button
+                    onClick={() => setConfigProvider(p.key)}
+                    data-testid={`pos-config-btn-${p.key}`}
+                    className="w-full mt-2 text-[10px] px-2 py-1.5 rounded bg-indigo-500/15 text-indigo-200 border border-indigo-500/30 hover:bg-indigo-500/25 inline-flex items-center justify-center gap-1"
+                  >
+                    ⚙️ API Anahtarlarını Ayarla
+                  </button>
                 </div>
               );
             })}
           </div>
         </div>
       ))}
+
+      {/* Havale Ekstre Yükle */}
+      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+        <div className="text-sm font-semibold text-emerald-200 mb-2">📄 Banka Ekstresi Yükle · Otomatik Havale Eşleştirme</div>
+        <p className="text-xs text-slate-400 mb-3">
+          Banka ekstrenizin metnini yapıştırın. Sistem TRF... referanslarını otomatik yakalar ve bekleyen havalelerle eşleştirir.
+        </p>
+        <StatementMatchForm/>
+      </div>
 
       <ModuleFooter
         title="Akıllı POS Router — Nasıl Çalışır?"
