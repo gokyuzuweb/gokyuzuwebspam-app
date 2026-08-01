@@ -416,4 +416,11 @@ export const api = {
   setAutoCleanup: (cfg) => client.post("/maintenance/auto-cleanup", cfg).then(r => r.data),
   runAutoCleanupNow: () => client.post("/maintenance/auto-cleanup/run-now").then(r => r.data),
   geoBlockedHeatmap: () => client.get("/maintenance/geo/blocked-heatmap").then(r => r.data),
+  geoCountryDetail: (cc, limit = 50) =>
+    client.get("/maintenance/geo/country-detail", { params: { cc, limit } }).then(r => r.data),
+  trustSnapshot: (score, findings, rblListed) =>
+    client.post("/maintenance/trust-score/snapshot", null,
+                { params: { score, findings, rbl_listed: rblListed } }).then(r => r.data),
+  trustHistory: (days = 30) =>
+    client.get("/maintenance/trust-score/history", { params: { days } }).then(r => r.data),
 };

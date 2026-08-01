@@ -72,6 +72,13 @@ function Sidebar() {
   const mode = useQuery({ queryKey: ["system-mode"], queryFn: api.systemMode });
   const isSeller = mode.data?.mode === "seller";
   const { isMaster, clientIp, masterIp } = useIsMaster();
+  const pendingPayments = useQuery({
+    queryKey: ["sidebar-pending-havale"],
+    queryFn: api.adminPendingHavale,
+    refetchInterval: 15000,
+    staleTime: 10000,
+  });
+  const pendingCount = pendingPayments.data?.notified_count || 0;
   const items = NAV.filter((n) => {
     if (n.sellerOnly && !isSeller) return false;
     if (n.masterOnly && !isMaster) return false;
@@ -98,24 +105,36 @@ function Sidebar() {
           <span>Home</span>
         </NavLink>
         <div className="h-px bg-slate-800/60 my-1.5" />
-        {items.map((n) => (
-          <NavLink
-            key={n.to}
-            to={n.to}
-            end={n.end}
-            data-testid={n.testid}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors duration-150 ${
-                isActive
-                  ? "bg-indigo-500/10 text-indigo-300 border border-indigo-500/30"
-                  : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 border border-transparent"
-              }`
-            }
-          >
-            <n.icon className="w-4 h-4" strokeWidth={1.75} />
-            <span>{n.label || t(`nav.${n.key}`)}</span>
-          </NavLink>
-        ))}
+        {items.map((n) => {
+          const showBadge = n.key === "payments_admin" && pendingCount > 0;
+          return (
+            <NavLink
+              key={n.to}
+              to={n.to}
+              end={n.end}
+              data-testid={n.testid}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors duration-150 ${
+                  isActive
+                    ? "bg-indigo-500/10 text-indigo-300 border border-indigo-500/30"
+                    : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 border border-transparent"
+                }`
+              }
+            >
+              <n.icon className="w-4 h-4" strokeWidth={1.75} />
+              <span className="flex-1">{n.label || t(`nav.${n.key}`)}</span>
+              {showBadge && (
+                <span
+                  data-testid={`nav-badge-${n.key}`}
+                  className="ml-auto shrink-0 mono text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500 text-white leading-none min-w-[18px] text-center animate-pulse"
+                  title={`${pendingCount} bekleyen havale bildirimi`}
+                >
+                  {pendingCount}
+                </span>
+              )}
+            </NavLink>
+          );
+        })}
       </nav>
       <div className="px-4 py-3 border-t border-slate-800 text-[11px] text-slate-500 mono flex items-center gap-2" data-testid="sidebar-role-strip">
         <GaugeCircle className="w-3.5 h-3.5" />

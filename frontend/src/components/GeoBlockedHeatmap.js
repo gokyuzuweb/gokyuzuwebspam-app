@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { Globe2, Shield, TrendingUp } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Globe2, Shield, TrendingUp, X, Ban } from "lucide-react";
 import { api } from "@/lib/api";
 
 /**
@@ -9,6 +8,7 @@ import { api } from "@/lib/api";
  * Ülkelere göre bloklanan IP sayısı; TopoJSON offline harita üstüne bubble marker.
  */
 export default function GeoBlockedHeatmap({ compact = false }) {
+  const [selectedCountry, setSelectedCountry] = useState(null);
   const q = useQuery({
     queryKey: ["geo-blocked-heatmap"],
     queryFn: api.geoBlockedHeatmap,
@@ -39,6 +39,7 @@ export default function GeoBlockedHeatmap({ compact = false }) {
           </h2>
           <p className="text-slate-400">
             Şu ana kadar {total.toLocaleString("tr-TR")} kötü niyetli IP {items.length} farklı ülkeden bloklandı.
+            <span className="text-slate-500"> · Ülkeye tıklayın, detayları görün.</span>
           </p>
         </div>
 
@@ -50,7 +51,6 @@ export default function GeoBlockedHeatmap({ compact = false }) {
               <rect width="1000" height="500" fill="#0f172a"/>
               {/* Very simple continent outline (5 latitude bands) */}
               <g fill="#1e293b" stroke="#334155" strokeWidth="0.5" opacity="0.6">
-                {/* Approximate world land */}
                 <path d="M 150 100 L 350 100 L 400 200 L 350 280 L 200 300 L 150 250 Z"/>
                 <path d="M 450 80 L 700 80 L 750 200 L 700 240 L 500 250 L 450 200 Z"/>
                 <path d="M 750 180 L 900 180 L 920 300 L 850 350 L 750 340 Z"/>
@@ -72,12 +72,15 @@ export default function GeoBlockedHeatmap({ compact = false }) {
                 const p = proj(it.lat, it.lon);
                 const r = 4 + Math.sqrt(it.count / maxCount) * 22;
                 return (
-                  <g key={it.country}>
+                  <g key={it.country} style={{ cursor: "pointer" }}
+                     onClick={() => setSelectedCountry(it)}
+                     data-testid={`geo-bubble-${it.country}`}>
                     <circle cx={p.x} cy={p.y} r={r + 4} fill="#f43f5e" opacity="0.15">
                       <animate attributeName="r" values={`${r};${r + 6};${r}`} dur="2s" repeatCount="indefinite"/>
                     </circle>
-                    <circle cx={p.x} cy={p.y} r={r} fill="#f43f5e" opacity="0.8">
-                      <title>{it.name}: {it.count} IP bloklu</title>
+                    <circle cx={p.x} cy={p.y} r={r} fill="#f43f5e" opacity="0.8"
+                            className="hover:opacity-100 transition-opacity">
+                      <title>{it.name}: {it.count} IP bloklu · tıklayın</title>
                     </circle>
                     <text x={p.x} y={p.y + 3} textAnchor="middle" fill="white" fontSize="10" fontWeight="bold"
                           pointerEvents="none">
@@ -89,7 +92,7 @@ export default function GeoBlockedHeatmap({ compact = false }) {
             </svg>
             <div className="text-[10px] text-slate-500 mt-2 flex items-center justify-between">
               <span>Otomatik yenileme: 30sn</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 bg-rose-500 rounded-full inline-block"/> bloklanan IP</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 bg-rose-500 rounded-full inline-block"/> bloklanan IP · tıklanabilir</span>
             </div>
           </div>
 
@@ -106,7 +109,10 @@ export default function GeoBlockedHeatmap({ compact = false }) {
             ) : (
               <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
                 {items.slice(0, 15).map((it, idx) => (
-                  <div key={it.country} className="flex items-center gap-2 text-xs">
+                  <button key={it.country}
+                          onClick={() => setSelectedCountry(it)}
+                          data-testid={`geo-row-${it.country}`}
+                          className="w-full flex items-center gap-2 text-xs hover:bg-slate-800/40 rounded px-1 py-0.5 transition-colors text-left">
                     <span className="text-slate-600 w-5 text-right">#{idx + 1}</span>
                     <span className="text-lg leading-none">{flag(it.country)}</span>
                     <span className="text-slate-200 flex-1 min-w-0 truncate">{it.name}</span>
@@ -115,14 +121,77 @@ export default function GeoBlockedHeatmap({ compact = false }) {
                            style={{ width: `${(it.count / maxCount) * 100}%` }}/>
                     </div>
                     <span className="mono text-slate-300 w-10 text-right">{it.count}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {selectedCountry && (
+        <CountryDetailModal country={selectedCountry} onClose={() => setSelectedCountry(null)}/>
+      )}
     </section>
+  );
+}
+
+function CountryDetailModal({ country, onClose }) {
+  const detail = useQuery({
+    queryKey: ["geo-country-detail", country.country],
+    queryFn: () => api.geoCountryDetail(country.country, 100),
+  });
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+         onClick={onClose} data-testid="country-detail-modal">
+      <div className="bg-slate-900 border border-slate-700 rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-3xl leading-none">{flag(country.country)}</span>
+            <div>
+              <div className="text-lg font-semibold text-slate-100">{country.name}</div>
+              <div className="text-xs text-slate-400">
+                {country.count} IP bloklu · Detaylı liste
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} data-testid="country-modal-close"
+                  className="text-slate-400 hover:text-slate-100">
+            <X className="w-5 h-5"/>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {detail.isLoading && <div className="text-center text-slate-500 py-8">Yükleniyor...</div>}
+          {detail.data && (detail.data.items || []).length === 0 && (
+            <div className="text-center text-slate-500 py-8">Detay bulunamadı</div>
+          )}
+          {detail.data && (
+            <div className="space-y-1.5">
+              {(detail.data.items || []).map((it) => (
+                <div key={it.ip} className="flex items-center justify-between gap-2 text-xs bg-slate-950 border border-slate-800 rounded px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="mono text-rose-200 flex items-center gap-1.5">
+                      <Ban className="w-3 h-3"/> {it.ip}
+                    </div>
+                    <div className="text-[10px] text-slate-500 truncate">{it.reason || "Blok gerekçesi yok"}</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-[10px] mono text-slate-400">
+                      {(it.created_at || "").slice(0, 19).replace("T", " ")}
+                    </div>
+                    <div className="text-[9px] text-slate-600 uppercase">
+                      {it.source || "-"}
+                      {it.confidence != null && ` · ${it.confidence}%`}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import {
   Bug, ShieldAlert, MailX, Beaker, KeyRound, UserX, Inbox, ArrowUpRight,
-  Link, Brain, Server, ShieldCheck, Play, XCircle, AlertTriangle,
+  Link, Brain, Server, ShieldCheck, Play, XCircle, AlertTriangle, TrendingUp, TrendingDown,
 } from "lucide-react";
 import CountryBlockCard from "@/components/CountryBlockCard";
 import GeoBlockedHeatmap from "@/components/GeoBlockedHeatmap";
@@ -503,6 +503,20 @@ function TrustDashboard({ modules, findings, latest, reputation }) {
   const scoreLabel = finalScore >= 85 ? "Mükemmel"
     : finalScore >= 60 ? "İyi" : finalScore >= 30 ? "Dikkat" : "Kritik";
 
+  // Snapshot: her dashboard yüklemesinde günlük skor bırak
+  useEffect(() => {
+    if (modules.length > 0) {
+      api.trustSnapshot(finalScore, criticalFindings + highFindings, rblListed).catch(() => {});
+    }
+  }, [finalScore, criticalFindings, highFindings, rblListed, modules.length]);
+
+  // Trend
+  const history = useQuery({
+    queryKey: ["trust-history-30"],
+    queryFn: () => api.trustHistory(30),
+    refetchInterval: 60000,
+  });
+
   return (
     <div className="space-y-4" data-testid="trust-dashboard">
       {/* Hero score */}
@@ -524,6 +538,9 @@ function TrustDashboard({ modules, findings, latest, reputation }) {
           </div>
         </CardBody>
       </Card>
+
+      {/* Trend chart */}
+      <TrustTrendChart history={history.data} currentScore={finalScore}/>
 
       {/* Module status strip */}
       <Card>
@@ -643,5 +660,125 @@ function TCTile({ icon: Icon, label, value, tone = "slate" }) {
       </div>
       <div className="text-2xl font-bold mono">{value}</div>
     </div>
+  );
+}
+
+function TrustTrendChart({ history, currentScore }) {
+  const series = history?.series || [];
+  // Boş serileri düşür ama x eksenini koru
+  const hasData = series.some((s) => s.score !== null);
+  const delta = history?.delta;
+  const avg = history?.avg;
+  const min = history?.min;
+  const max = history?.max;
+
+  // SVG boyutları
+  const W = 900, H = 140, PAD_L = 40, PAD_R = 10, PAD_T = 15, PAD_B = 25;
+  const chartW = W - PAD_L - PAD_R, chartH = H - PAD_T - PAD_B;
+  const scoreToY = (s) => PAD_T + chartH - (s / 100) * chartH;
+  const iToX = (i) => PAD_L + (series.length > 1 ? (i / (series.length - 1)) * chartW : chartW / 2);
+
+  // Path
+  const points = series
+    .map((s, i) => (s.score !== null ? `${iToX(i).toFixed(1)},${scoreToY(s.score).toFixed(1)}` : null))
+    .filter(Boolean);
+  const pathD = points.length > 0 ? "M " + points.join(" L ") : "";
+  const areaD = points.length > 0
+    ? `M ${points[0]} L ${points.join(" L ")} L ${iToX(series.length - 1).toFixed(1)},${PAD_T + chartH} L ${PAD_L},${PAD_T + chartH} Z`
+    : "";
+
+  const trendUp = (delta || 0) > 0;
+  const trendDown = (delta || 0) < 0;
+
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-indigo-400"/> Güven Skoru Trendi · Son 30 Gün
+        </span>}
+        subtitle="Her dashboard ziyaretinde günlük skor kaydedilir. Zaman içinde nasıl geliştiğini gözlemleyin."
+      />
+      <CardBody className="space-y-3">
+        {/* Delta strip */}
+        <div className="flex gap-4 items-center text-xs">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">Bugün</div>
+            <div className="text-lg font-bold mono text-slate-100" data-testid="trend-current">{currentScore}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">30G Ort.</div>
+            <div className="text-lg font-bold mono text-slate-300">{avg ?? "-"}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">Min · Max</div>
+            <div className="text-lg font-bold mono text-slate-300">
+              {min ?? "-"} <span className="text-slate-600">·</span> {max ?? "-"}
+            </div>
+          </div>
+          <div className="ml-auto">
+            {delta === null || delta === undefined ? (
+              <span className="text-xs text-slate-500">yeterli veri yok</span>
+            ) : delta === 0 ? (
+              <span className="text-xs text-slate-400 inline-flex items-center gap-1">→ değişiklik yok</span>
+            ) : (
+              <span className={`text-xs inline-flex items-center gap-1 font-semibold ${trendUp ? "text-emerald-400" : "text-rose-400"}`}
+                    data-testid="trend-delta">
+                {trendUp ? <TrendingUp className="w-3.5 h-3.5"/> : <TrendingDown className="w-3.5 h-3.5"/>}
+                {trendUp ? "+" : ""}{delta} puan · {trendUp ? "iyileşiyor" : "gerilledi"}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* SVG chart */}
+        <div className="bg-slate-950 rounded-lg border border-slate-800 p-2">
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" data-testid="trend-chart">
+            {/* Grid lines */}
+            {[0, 25, 50, 75, 100].map((v) => (
+              <g key={v}>
+                <line x1={PAD_L} x2={W - PAD_R} y1={scoreToY(v)} y2={scoreToY(v)}
+                      stroke={v === 60 ? "#f59e0b40" : v === 85 ? "#10b98140" : "#1e293b"} strokeWidth="0.5"
+                      strokeDasharray={v === 60 || v === 85 ? "3 3" : "0"}/>
+                <text x={PAD_L - 6} y={scoreToY(v) + 3} textAnchor="end" fill="#64748b" fontSize="9">{v}</text>
+              </g>
+            ))}
+            {/* Threshold bands (subtle) */}
+            <rect x={PAD_L} y={scoreToY(100)} width={chartW} height={scoreToY(85) - scoreToY(100)}
+                  fill="#10b981" opacity="0.03"/>
+            <rect x={PAD_L} y={scoreToY(60)} width={chartW} height={scoreToY(0) - scoreToY(60)}
+                  fill="#f43f5e" opacity="0.03"/>
+            {/* Area + line */}
+            {hasData && (
+              <>
+                <defs>
+                  <linearGradient id="trustGrad" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stopColor="#6366f1" stopOpacity="0.6"/>
+                    <stop offset="100%" stopColor="#6366f1" stopOpacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d={areaD} fill="url(#trustGrad)"/>
+                <path d={pathD} fill="none" stroke="#818cf8" strokeWidth="2"/>
+                {series.map((s, i) => s.score !== null && (
+                  <circle key={i} cx={iToX(i)} cy={scoreToY(s.score)} r="2.5" fill="#818cf8">
+                    <title>{s.date}: {s.score}</title>
+                  </circle>
+                ))}
+              </>
+            )}
+            {!hasData && (
+              <text x={W / 2} y={H / 2} textAnchor="middle" fill="#475569" fontSize="12">
+                Henüz veri yok — dashboard'ı birkaç gün ziyaret edin
+              </text>
+            )}
+            {/* X-axis labels (start, mid, end) */}
+            {series.length > 0 && [0, Math.floor(series.length / 2), series.length - 1].map((i) => (
+              <text key={i} x={iToX(i)} y={H - 8} textAnchor="middle" fill="#64748b" fontSize="9">
+                {series[i]?.date.slice(5)}
+              </text>
+            ))}
+          </svg>
+        </div>
+      </CardBody>
+    </Card>
   );
 }

@@ -233,15 +233,59 @@ async def _run_auto_cleanup_once():
         try:
             from server import _send_email
             action_tr = "arşivlendi" if action == "archive" else "silindi"
+            # Top 10 spam kaynağı ülke (mail_events'den son 30 gün)
+            top_countries: list[tuple[str, int]] = []
+            try:
+                from datetime import timedelta as _td
+                from routes.security_adv import _ip_to_country
+                since = (datetime.now(timezone.utc) - _td(days=30)).isoformat()
+                cc_counts: dict[str, int] = {}
+                async for e in db.mail_events.find(
+                    {"verdict": {"$in": ["spam", "high_spam", "virus"]},
+                     "$or": [{"ts": {"$gte": since}}, {"ingested_at": {"$gte": since}}]},
+                    {"sender_ip": 1, "client_ip": 1, "_id": 0},
+                ).limit(20000):
+                    ip = e.get("sender_ip") or e.get("client_ip")
+                    if not ip: continue
+                    cc = _ip_to_country(ip)
+                    if cc and cc != "LOCAL":
+                        cc_counts[cc] = cc_counts.get(cc, 0) + 1
+                top_countries = sorted(cc_counts.items(), key=lambda x: -x[1])[:10]
+            except Exception:
+                pass
+            # 30 gün trend özeti
+            trend_line = ""
+            try:
+                from datetime import timedelta as _td
+                since = (datetime.now(timezone.utc) - _td(days=30)).isoformat()
+                total_spam = await db.mail_events.count_documents(
+                    {"verdict": {"$in": ["spam", "high_spam", "virus"]},
+                     "$or": [{"ts": {"$gte": since}}, {"ingested_at": {"$gte": since}}]},
+                )
+                total_all = await db.mail_events.count_documents(
+                    {"$or": [{"ts": {"$gte": since}}, {"ingested_at": {"$gte": since}}]},
+                )
+                rate = round(total_spam * 100 / max(1, total_all), 2)
+                trend_line = f"Son 30 gün: {total_all} mail · {total_spam} spam (%{rate})"
+            except Exception:
+                pass
             body = (
                 f"GökyüzüWebSpam · Otomatik Veri Bakımı Raporu\n"
+                f"════════════════════════════════════════\n"
                 f"Tarih: {_iso()}\nEşik: {days} günden eski\nAksiyon: {action_tr}\n"
-                f"Toplam kayıt: {total}\n\nKoleksiyonlar:\n"
-                + "\n".join(f"  · {r['collection']}: "
-                            + str(r.get('deleted') or r.get('archived') or r.get('error') or 0)
-                            for r in results)
-                + "\n\n(Ayarlar ve lisanslar KORUNDU.)"
+                f"Toplam kayıt: {total}\n"
             )
+            if trend_line:
+                body += f"\n📊 TREND\n{trend_line}\n"
+            if top_countries:
+                body += "\n🌍 TOP 10 SPAM KAYNAĞI ÜLKE (son 30 gün)\n"
+                for i, (cc, n) in enumerate(top_countries, 1):
+                    body += f"  {i:2d}. {cc}: {n} spam mail\n"
+            body += "\n📁 KOLEKSİYONLAR\n" + "\n".join(
+                f"  · {r['collection']}: "
+                + str(r.get('deleted') or r.get('archived') or r.get('error') or 0)
+                for r in results)
+            body += "\n\n(Ayarlar, lisanslar ve kullanıcı hesapları KORUNDU.)"
             await _send_email(email_to, "🧹 Otomatik Veri Bakımı Raporu — GökyüzüWebSpam", body)
         except Exception as ex:
             _ = ex  # sessizce yut, cron başarısız gitmez
@@ -284,6 +328,87 @@ async def geo_heatmap():
         })
     items.sort(key=lambda x: x["count"], reverse=True)
     return {"items": items, "total": sum(counts.values())}
+
+
+@router.get("/geo/country-detail")
+async def geo_country_detail(cc: str, limit: int = 50):
+    """Bir ülkeden bloklanan tüm IP'lerin listesi + zaman damgaları."""
+    try:
+        from routes.security_adv import _ip_to_country
+    except Exception:
+        return {"items": [], "country": cc}
+    cc = (cc or "").upper()
+    items: list[dict] = []
+    seen: set[str] = set()
+    async for it in db.lists.find({"kind": "blacklist", "type": "ip"}, {"_id": 0}):
+        ip = it.get("value", "")
+        if _ip_to_country(ip) == cc and ip not in seen:
+            seen.add(ip)
+            items.append({
+                "ip": ip, "reason": it.get("reason", ""),
+                "created_at": it.get("created_at", ""), "source": "list",
+            })
+    async for it in db.threat_iocs.find({"type": "ip"}, {"_id": 0}):
+        ip = it.get("value", "")
+        if _ip_to_country(ip) == cc and ip not in seen:
+            seen.add(ip)
+            items.append({
+                "ip": ip, "reason": it.get("note", ""),
+                "created_at": it.get("created_at", ""),
+                "source": it.get("source", "ioc"),
+                "confidence": it.get("confidence"),
+            })
+    items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"country": cc, "total": len(items), "items": items[:limit]}
+
+
+# ============================================================================
+# TRUST SCORE HISTORY: son 30 günün skor trendi
+# ============================================================================
+@router.post("/trust-score/snapshot")
+async def trust_score_snapshot(score: int, findings: int = 0, rbl_listed: int = 0):
+    """Frontend her Dashboard yüklemesinde günlük skor bırakır. Aynı gün için upsert."""
+    from datetime import date
+    today = date.today().isoformat()
+    await db.trust_score_history.update_one(
+        {"date": today},
+        {"$set": {
+            "date": today, "score": int(score),
+            "findings": int(findings), "rbl_listed": int(rbl_listed),
+            "ts": _iso(),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "date": today, "score": score}
+
+
+@router.get("/trust-score/history")
+async def trust_score_history(days: int = 30):
+    """Son N günün skor trendi. Boş günleri interpolate etmez (gap = null)."""
+    from datetime import date, timedelta
+    end = date.today()
+    start = end - timedelta(days=days - 1)
+    rows = await db.trust_score_history.find(
+        {"date": {"$gte": start.isoformat(), "$lte": end.isoformat()}},
+        {"_id": 0},
+    ).sort("date", 1).to_list(days + 5)
+    by_date = {r["date"]: r for r in rows}
+    series: list[dict] = []
+    for i in range(days):
+        d = (start + timedelta(days=i)).isoformat()
+        r = by_date.get(d)
+        series.append({"date": d, "score": r["score"] if r else None,
+                       "findings": r.get("findings") if r else None})
+    scores = [s["score"] for s in series if s["score"] is not None]
+    return {
+        "days": days, "series": series,
+        "min": min(scores) if scores else None,
+        "max": max(scores) if scores else None,
+        "avg": round(sum(scores) / len(scores), 1) if scores else None,
+        "delta": (series[-1]["score"] - series[0]["score"])
+                 if series[-1]["score"] is not None and series[0]["score"] is not None else None,
+    }
+
 
 
 
