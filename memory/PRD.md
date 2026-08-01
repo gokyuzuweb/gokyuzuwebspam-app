@@ -24,6 +24,8 @@ Multi-module WHM/cPanel mail-security SaaS with a React/FastAPI panel, WHM plugi
 - **v20 (Feb 2026)**: Payments Admin panel (approve/reject havale + inbox), Monthly auto-cleanup cron with email report (archive/delete), Geo Blocked-IP heatmap on Landing + Trust Dashboard, "Havale Yaptım" user notify flow, Trust Center Dashboard tab in Security
 - **v21 (Feb 2026)**: Sidebar live badge (pending havale count · animate-pulse), 30-day Trust Score trend line chart with delta/avg/min/max, Country detail modal on Landing map (click bubble/row → IP list + timestamps), Enhanced auto-cleanup email with 30-day trend + top 10 spam source countries
 - **v22 (Feb 2026)**: Live block counter (Landing hero 5s refresh), 30-day blocked-mail bar chart trend widget, per-IP Whitelist button (false-positive recovery), Trust Score <60 alert email + inbox, **SELF-HOST DEPLOYMENT PACKAGE** (Docker + Nginx + install.sh + backup/restore scripts) + **Master Mode Router** (/master/check /status /relay/update-check /relay/threat-feed /relay/heartbeat for resellers/plugins)
+- **v23 (Feb 2026)**: Bayi Panosu (/panel/resellers-admin) with live heartbeat + online badge, 'Yeni Versiyon Yayınla' modal (release_history), Landing bar chart region filter (TR/Dış/Tümü), Whitelist History page (/panel/whitelist-history) with search + remove
+- **v24 (Feb 2026)**: **Akıllı POS Router** (/api/smart-pos/*) — 5 sağlayıcı (paytr, iyzico, param, ipara, havale) health-based auto-routing + fallback chain; Bayi heartbeat tablosuna lisans **bitiş tarihi** kolonu + Bitişe Yakın stat kartı; SMTP **Otomatik Mod** toggle (WHM/cPanel sendmail + license domain'inden otomatik FROM adresi)
 
 ## Self-Host Architecture
 - Location: `/app/deployment/` — Docker Compose (backend + frontend + Mongo + Nginx)
