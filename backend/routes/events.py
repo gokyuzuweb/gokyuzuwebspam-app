@@ -9,6 +9,7 @@ from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 from deps import db
+import re
 import uuid
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -103,7 +104,103 @@ async def ingest_event(evt: MailEvent, request: Request):
         asyncio.create_task(_ai_predict_bg(doc))
     except Exception:
         pass
+    # Saldırı ve Toplu Mail alarmları (background)
+    try:
+        import asyncio
+        asyncio.create_task(_check_attack_bulk_alerts(evt.license_key, doc))
+    except Exception:
+        pass
     return {"ok": True, "id": doc["id"]}
+
+
+async def _check_attack_bulk_alerts(license_key: str, evt_doc: dict) -> None:
+    """Panelden aç/kapa yapılabilen alarmları değerlendir:
+    - Saldırı: 5 dakikada aynı sender_ip'den >= threshold olay
+    - Toplu Mail: 1 saatte aynı from_addr'den >= threshold outbound mail
+    Alarm halinde admin_email + slack + notifications_inbox'a düşer."""
+    try:
+        from server import _notify_settings, _send_email, _smart_from, _send_slack
+    except Exception:
+        return
+    ns = await _notify_settings()
+    now = datetime.now(timezone.utc)
+    from datetime import timedelta as _td
+
+    async def _record_alarm(kind: str, subj: str, body: str, meta: dict):
+        # Cool-down: aynı kind + key son 30 dk içinde tetiklendiyse tekrarlama
+        last = await db.settings.find_one({"_key": f"alarm_last_{kind}_{meta.get('cool_key','all')}"}, {"_id": 0})
+        cool = 30 * 60
+        if last and last.get("at"):
+            try:
+                last_at = datetime.fromisoformat(last["at"].replace("Z", "+00:00"))
+                if (now - last_at).total_seconds() < cool:
+                    return
+            except Exception:
+                pass
+        await db.settings.update_one(
+            {"_key": f"alarm_last_{kind}_{meta.get('cool_key','all')}"},
+            {"$set": {"at": now.isoformat()}}, upsert=True,
+        )
+        await db.notifications_inbox.insert_one({
+            "id": str(uuid.uuid4()),
+            "kind": kind, "subject": subj, "body": body, "meta": meta,
+            "license_key": license_key,
+            "read": False, "created_at": now.isoformat(),
+        })
+        # E-posta
+        if ns.get("email_enabled") and ns.get("admin_email"):
+            try:
+                await _send_email(ns["admin_email"], subj, body, _smart_from(ns))
+            except Exception:
+                pass
+        # Slack
+        if ns.get("slack_enabled") and ns.get("slack_webhook_url"):
+            try:
+                await _send_slack(ns["slack_webhook_url"], f"*{subj}*\n{body}")
+            except Exception:
+                pass
+
+    # Saldırı kontrolü
+    if ns.get("alert_on_attack", True):
+        threshold = int(ns.get("attack_threshold_5min", 100) or 100)
+        sender_ip = evt_doc.get("sender_ip") or evt_doc.get("client_ip")
+        if sender_ip and sender_ip not in ("127.0.0.1", "::1"):
+            since = (now - _td(minutes=5)).isoformat()
+            count = await db.mail_events.count_documents({
+                "license_key": license_key,
+                "sender_ip": sender_ip,
+                "ingested_at": {"$gte": since},
+            })
+            if count >= threshold:
+                await _record_alarm(
+                    "attack_alert",
+                    f"🛡️ Saldırı Tespit Edildi · {sender_ip}",
+                    f"Son 5 dakika içinde {sender_ip} IP'sinden {count} mail olayı tespit edildi (eşik: {threshold}).\n"
+                    f"Lisans: {license_key}\n"
+                    f"Aksiyon: IP'yi geo-block veya firewall'a ekleyin.",
+                    {"sender_ip": sender_ip, "count": count, "threshold": threshold, "cool_key": sender_ip},
+                )
+
+    # Toplu mail kontrolü
+    if ns.get("alert_on_bulk_mail", True):
+        threshold = int(ns.get("bulk_mail_threshold_1h", 500) or 500)
+        from_addr = (evt_doc.get("from_addr") or "").lower()
+        if from_addr and "@" in from_addr:
+            since = (now - _td(hours=1)).isoformat()
+            count = await db.mail_events.count_documents({
+                "license_key": license_key,
+                "from_addr": {"$regex": f"^{re.escape(from_addr)}$", "$options": "i"},
+                "ingested_at": {"$gte": since},
+            })
+            if count >= threshold:
+                await _record_alarm(
+                    "bulk_mail_alert",
+                    f"📤 Toplu Mail Tespit Edildi · {from_addr}",
+                    f"Son 1 saatte {from_addr} adresinden {count} giden mail tespit edildi (eşik: {threshold}).\n"
+                    f"Lisans: {license_key}\n"
+                    f"Muhtemel neden: hesap ele geçirildi veya bilinçli toplu gönderim.",
+                    {"from_addr": from_addr, "count": count, "threshold": threshold, "cool_key": from_addr},
+                )
 
 
 async def _ai_predict_bg(doc: dict) -> None:

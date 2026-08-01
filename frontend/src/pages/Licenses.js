@@ -324,227 +324,321 @@ export default function Licenses() {
                   value={nfmt(violRows.length)} hint="son 100 kayıt" />
       </div>
 
-      <div className="grid grid-cols-12 gap-6">
-        <div className="col-span-12 lg:col-span-8 space-y-4">
-          <Card>
-            <CardHeader
-              title={<span className="flex items-center gap-2"><Key className="w-4 h-4 text-indigo-400" /> Yeni Lisans</span>}
-              subtitle="Bir müşteri için lisans anahtarı oluşturun. Anahtar sadece belirtilen IP'lerden çalışır."
-            />
-            <CardBody className="border-b border-slate-800 bg-slate-950/40">
-              <AddLicenseForm onAdded={() => qc.invalidateQueries({ queryKey: ["licenses"] })} />
-            </CardBody>
+      <LicenseTabs
+        rows={rows} allRows={allRows}
+        violRows={violRows}
+        search={search} setSearch={setSearch}
+        planFilter={planFilter} setPlanFilter={setPlanFilter}
+        statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+        onEdit={setEditing}
+        onCopy={copyKey}
+        onToggle={toggleActive}
+        onDelete={del}
+        onSimulate={simulate}
+        onClearViol={clearViol}
+        onAdded={() => qc.invalidateQueries({ queryKey: ["licenses"] })}
+      />
 
-            {/* Search + Filter bar */}
-            <div className="px-4 py-3 border-b border-slate-800 bg-slate-950/20 flex flex-wrap items-center gap-2" data-testid="lic-filters">
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Ara: ad / e-posta / anahtar / IP"
-                className="flex-1 min-w-[220px] bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                data-testid="lic-search-input"
-              />
-              <select value={planFilter} onChange={(e) => setPlanFilter(e.target.value)}
-                      className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-100"
-                      data-testid="lic-plan-filter">
-                <option value="all">Tüm Planlar</option>
-                <option value="starter">Starter</option>
-                <option value="pro">Pro</option>
-                <option value="enterprise">Enterprise</option>
-              </select>
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-                      className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-100"
-                      data-testid="lic-status-filter">
-                <option value="all">Aktif + Pasif</option>
-                <option value="active">Sadece Aktif</option>
-                <option value="inactive">Sadece Pasif</option>
-              </select>
-              {(search || planFilter !== "all" || statusFilter !== "all") && (
-                <button onClick={() => { setSearch(""); setPlanFilter("all"); setStatusFilter("all"); }}
-                        className="text-xs px-2 py-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800"
-                        data-testid="lic-filters-reset">Temizle</button>
-              )}
-              <span className="text-xs text-slate-500" data-testid="lic-filter-count">
-                <span className="mono text-slate-300">{rows.length}</span> / {allRows.length}
-              </span>
-            </div>
+      {editing && (
+        <EditLicenseModal license={editing} onClose={() => setEditing(null)} />
+      )}
+    </div>
+  );
+}
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-[11px] uppercase tracking-widest text-slate-500">
-                    <th className="text-left px-4 py-3 font-semibold">Müşteri</th>
-                    <th className="text-left px-4 py-3 font-semibold">Durum</th>
-                    <th className="text-left px-4 py-3 font-semibold">Anahtar</th>
-                    <th className="text-left px-4 py-3 font-semibold">Plan</th>
-                    <th className="text-left px-4 py-3 font-semibold">IP'ler</th>
-                    <th className="text-left px-4 py-3 font-semibold">Bitiş</th>
-                    <th className="text-left px-4 py-3 font-semibold">Son heartbeat</th>
-                    <th className="text-right px-4 py-3 font-semibold w-24"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const expired = isExpired(r.valid_until);
-                    const status = !r.active ? "inactive" : expired ? "expired" : "active";
-                    return (
-                      <tr key={r.id} data-row data-testid={`lic-row-${r.id}`} className="border-t border-slate-800">
-                        <td className="px-4 py-2.5">
-                          <div className="text-slate-200">{r.customer_name}</div>
-                          <div className="text-[11px] text-slate-500 mono">{r.customer_email || "—"}</div>
-                        </td>
-                        <td className="px-4 py-2.5" data-testid={`lic-status-${r.id}`}>
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            status === "active"   ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" :
-                            status === "expired"  ? "bg-rose-500/15 text-rose-300 border border-rose-500/30" :
-                                                    "bg-slate-700/40 text-slate-400 border border-slate-700"
-                          }`} data-testid={`lic-status-pill-${status}-${r.id}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${
-                              status === "active" ? "bg-emerald-400 animate-pulse" :
-                              status === "expired" ? "bg-rose-400" : "bg-slate-500"
-                            }`}></span>
-                            {status === "active" ? "AKTİF" : status === "expired" ? "SÜRESİ DOLDU" : "PASİF"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <button onClick={() => copyKey(r.license_key)} className="mono text-[11px] text-indigo-300 hover:text-indigo-200 inline-flex items-center gap-1">
-                            {r.license_key.slice(0, 20)}… <Copy className="w-3 h-3" />
-                          </button>
-                        </td>
-                        <td className="px-4 py-2.5"><Badge tone={PLAN_TONE[r.plan]}>{r.plan.toUpperCase()}</Badge></td>
-                        <td className="px-4 py-2.5">
-                          <div className="flex flex-wrap gap-1">
-                            {(r.ip_addresses || []).map(ip => (
-                              <span key={ip} className="mono text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-300">{ip}</span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <div className={`mono text-xs ${expired ? "text-rose-400" : "text-slate-300"}`}>{isoDate(r.valid_until)}</div>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          {r.last_heartbeat_at ? (
-                            <div>
-                              <div className="mono text-[11px] text-slate-300">{isoDateTime(r.last_heartbeat_at)}</div>
-                              <div className="mono text-[10px] text-slate-500">{r.last_heartbeat_ip} · v{r.last_heartbeat_version}</div>
-                            </div>
-                          ) : <span className="text-slate-600 text-xs">hiç bağlanmadı</span>}
-                        </td>
-                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                          <button onClick={() => setEditing(r)} title="Düzenle · IP ekle / plan değiştir"
-                            data-testid={`lic-edit-${r.id}`}
-                            className="mr-1.5 inline-flex items-center gap-1 px-2 py-1 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/25 hover:border-indigo-400 transition text-xs font-medium">
-                            <Pencil className="w-3.5 h-3.5" />
-                            <span className="hidden xl:inline">Düzenle</span>
-                          </button>
-                          <button onClick={() => toggleActive.mutate({ lic: r, active: !r.active })} title={r.active ? "Devre dışı bırak" : "Aktifleştir"}
-                            data-testid={`lic-toggle-${r.id}`}
-                            className={`mr-1.5 inline-flex items-center px-1.5 py-1 rounded border transition ${
-                              r.active
-                                ? "border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/25"
-                                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/25"
-                            }`}>
-                            <Radio className="w-3.5 h-3.5" />
-                          </button>
-                          <button data-testid={`lic-del-${r.id}`} onClick={() => { if (confirm(`${r.customer_name} lisansı silinsin mi?`)) del.mutate(r.id); }}
-                            className="inline-flex items-center px-1.5 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/25 transition" title="Sil">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {rows.length === 0 && (
-                    <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Henüz lisans yok</td></tr>
+// ============================================================================
+// LicenseTabs — 4 renkli tab: Lisanslar · Yeni · İhlaller · Yönetim
+// ============================================================================
+const LIC_TABS = [
+  { key: "list",       label: "Lisanslar",     icon: Key,          tone: "indigo",  desc: "Tüm müşteri lisansları" },
+  { key: "new",        label: "Yeni Lisans",   icon: CheckCircle2, tone: "emerald", desc: "Yeni müşteri ekle" },
+  { key: "violations", label: "İhlaller",      icon: ShieldAlert,  tone: "rose",    desc: "Yetkisiz erişim kayıtları" },
+  { key: "admin",      label: "Yönetim",       icon: Users2,       tone: "amber",   desc: "Sürüm · Bayiler · Yardım" },
+];
+
+const TAB_TONE_MAP = {
+  indigo:  { active: "bg-indigo-500/15 border-indigo-500/60 text-indigo-100 shadow-indigo-500/30",
+             dot: "bg-indigo-400", count: "bg-indigo-500/25 text-indigo-100" },
+  emerald: { active: "bg-emerald-500/15 border-emerald-500/60 text-emerald-100 shadow-emerald-500/30",
+             dot: "bg-emerald-400", count: "bg-emerald-500/25 text-emerald-100" },
+  rose:    { active: "bg-rose-500/15 border-rose-500/60 text-rose-100 shadow-rose-500/30",
+             dot: "bg-rose-400", count: "bg-rose-500/25 text-rose-100" },
+  amber:   { active: "bg-amber-500/15 border-amber-500/60 text-amber-100 shadow-amber-500/30",
+             dot: "bg-amber-400", count: "bg-amber-500/25 text-amber-100" },
+};
+
+function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, setPlanFilter,
+                       statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onDelete,
+                       onSimulate, onClearViol, onAdded }) {
+  const [tab, setTab] = useState("list");
+  const counts = { list: rows.length, new: null, violations: violRows.length, admin: null };
+
+  return (
+    <div className="space-y-4" data-testid="lic-tabs">
+      {/* Renkli tab bar */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 p-1.5 rounded-xl bg-slate-900/50 border border-slate-800"
+           data-testid="lic-tabbar">
+        {LIC_TABS.map((t) => {
+          const T = TAB_TONE_MAP[t.tone];
+          const active = tab === t.key;
+          const Icon = t.icon;
+          return (
+            <button key={t.key}
+                    onClick={() => setTab(t.key)}
+                    data-testid={`lictab-${t.key}`}
+                    className={`relative flex items-center gap-2 px-3 py-2.5 rounded-lg border transition-all ${
+                      active
+                        ? `${T.active} shadow-lg font-semibold`
+                        : "border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                    }`}>
+              <div className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${
+                active ? `bg-${t.tone}-500/20` : "bg-slate-800/60"
+              }`}>
+                <Icon className={`w-4 h-4 ${active ? "" : "text-slate-500"}`}/>
+              </div>
+              <div className="min-w-0 flex-1 text-left">
+                <div className="text-sm truncate flex items-center gap-1.5">
+                  {t.label}
+                  {counts[t.key] != null && counts[t.key] > 0 && (
+                    <span className={`text-[9px] mono px-1.5 py-0.5 rounded-full ${T.count}`}>
+                      {counts[t.key]}
+                    </span>
                   )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader
-              title={<span className="flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-rose-400" /> Lisans İhlalleri</span>}
-              subtitle="İzinsiz IP'lerden gelen istekler burada listelenir · Slack/Telegram'a otomatik bildirim gider"
-              right={
-                <div className="flex items-center gap-2">
-                  <button data-testid="lic-simulate" onClick={() => simulate.mutate()}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
-                    <AlertTriangle className="w-3 h-3" /> Simüle Et
-                  </button>
-                  <button data-testid="lic-clear-viol" onClick={() => clearViol.mutate()}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700">
-                    <Trash2 className="w-3 h-3" /> Temizle
-                  </button>
                 </div>
-              }
-            />
-            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-slate-900">
-                  <tr className="text-[11px] uppercase tracking-widest text-slate-500">
-                    <th className="text-left px-4 py-3 font-semibold">Zaman</th>
-                    <th className="text-left px-4 py-3 font-semibold">IP</th>
-                    <th className="text-left px-4 py-3 font-semibold">Sunucu</th>
-                    <th className="text-left px-4 py-3 font-semibold">Anahtar</th>
-                    <th className="text-left px-4 py-3 font-semibold">Sebep</th>
-                    <th className="text-left px-4 py-3 font-semibold">Sürüm</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {violRows.map((v) => (
-                    <tr key={v.id} data-row className="border-t border-slate-800">
-                      <td className="px-4 py-2.5 mono text-[11px] text-slate-400">{isoDateTime(v.at)}</td>
-                      <td className="px-4 py-2.5 mono text-slate-200">{v.ip}</td>
-                      <td className="px-4 py-2.5 mono text-slate-300 text-xs">{v.hostname || "—"}</td>
-                      <td className="px-4 py-2.5 mono text-[11px] text-slate-400">{v.license_key || "—"}</td>
-                      <td className="px-4 py-2.5"><Badge tone="danger">{REASON_LABEL[v.reason] || v.reason}</Badge></td>
-                      <td className="px-4 py-2.5 mono text-xs text-slate-400">v{v.version || "?"}</td>
-                    </tr>
-                  ))}
-                  {violRows.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-10 text-center text-emerald-400">🎉 İhlal yok</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
+                <div className={`text-[10px] truncate ${active ? "opacity-80" : "text-slate-600"}`}>
+                  {t.desc}
+                </div>
+              </div>
+              {active && (
+                <span className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${T.dot} animate-pulse`}/>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
-        <div className="col-span-12 lg:col-span-4 space-y-4">
+      {/* Tab içerikleri */}
+      {tab === "list" && (
+        <LicensesListPanel rows={rows} allRows={allRows} search={search} setSearch={setSearch}
+                           planFilter={planFilter} setPlanFilter={setPlanFilter}
+                           statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+                           onEdit={onEdit} onCopy={onCopy} onToggle={onToggle} onDelete={onDelete}/>
+      )}
+      {tab === "new" && (
+        <Card>
+          <CardHeader
+            title={<span className="flex items-center gap-2"><Key className="w-4 h-4 text-emerald-400" /> Yeni Lisans Oluştur</span>}
+            subtitle="Bir müşteri için lisans anahtarı oluşturun. Anahtar sadece belirtilen IP'lerden çalışır."/>
+          <CardBody>
+            <AddLicenseForm onAdded={onAdded}/>
+          </CardBody>
+        </Card>
+      )}
+      {tab === "violations" && (
+        <ViolationsPanel violRows={violRows} onSimulate={onSimulate} onClearViol={onClearViol}/>
+      )}
+      {tab === "admin" && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="lic-admin-panel">
           <VersionPublishCard />
           <ResellerAdminPanel />
           <AdminOperationsCard />
-
           <Card>
-            <CardHeader title={<span className="flex items-center gap-2"><Users2 className="w-4 h-4 text-indigo-400" /> Nasıl çalışır?</span>} />
+            <CardHeader title={<span className="flex items-center gap-2"><Users2 className="w-4 h-4 text-amber-400" /> Nasıl çalışır?</span>} />
             <CardBody className="text-xs text-slate-400 space-y-2">
-              <div>
-                <span className="text-slate-200 font-medium">1. Lisans oluştur</span> — Müşteriye
-                <span className="mono text-indigo-300"> MS-XXXX…</span> anahtarını verin.
-              </div>
-              <div>
-                <span className="text-slate-200 font-medium">2. IP'leri gir</span> — Müşterinin
-                cPanel sunucularının public IP'lerini ekleyin.
-              </div>
-              <div>
-                <span className="text-slate-200 font-medium">3. Plugin heartbeat</span> — Kurulan
-                plugin her 15dk merkeze anahtar+IP gönderir.
-              </div>
-              <div>
-                <span className="text-slate-200 font-medium">4. İhlal olursa</span> — Slack/Telegram'a
-                anında bildirim gelir, plugin çalışmayı durdurur (403).
-              </div>
+              <div><span className="text-slate-200 font-medium">1. Lisans oluştur</span> — Müşteriye <span className="mono text-indigo-300">MS-XXXX…</span> anahtarını verin.</div>
+              <div><span className="text-slate-200 font-medium">2. IP'leri gir</span> — Müşterinin cPanel sunucularının public IP'lerini ekleyin.</div>
+              <div><span className="text-slate-200 font-medium">3. Plugin heartbeat</span> — Kurulan plugin her 15dk merkeze anahtar+IP gönderir.</div>
+              <div><span className="text-slate-200 font-medium">4. İhlal olursa</span> — Slack/e-posta'ya anında bildirim gelir, plugin 403 döner.</div>
               <div className="mt-3 p-2 rounded border border-amber-500/20 bg-amber-500/5 text-amber-300 text-[11px]">
                 <b>Not:</b> Bildirimler → "Lisans İhlali" toggle'ının açık olduğundan emin olun.
               </div>
             </CardBody>
           </Card>
         </div>
-      </div>
-      {editing && (
-        <EditLicenseModal license={editing} onClose={() => setEditing(null)} />
       )}
     </div>
+  );
+}
+
+function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPlanFilter,
+                              statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onDelete }) {
+  return (
+    <Card>
+      {/* Search + Filter bar */}
+      <div className="px-4 py-3 border-b border-slate-800 bg-slate-950/40 flex flex-wrap items-center gap-2" data-testid="lic-filters">
+        <input value={search} onChange={(e) => setSearch(e.target.value)}
+               placeholder="Ara: ad / e-posta / anahtar / IP"
+               className="flex-1 min-w-[220px] bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+               data-testid="lic-search-input"/>
+        <select value={planFilter} onChange={(e) => setPlanFilter(e.target.value)}
+                className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-100"
+                data-testid="lic-plan-filter">
+          <option value="all">Tüm Planlar</option>
+          <option value="starter">Starter</option>
+          <option value="pro">Pro</option>
+          <option value="enterprise">Enterprise</option>
+        </select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+                className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-100"
+                data-testid="lic-status-filter">
+          <option value="all">Aktif + Pasif</option>
+          <option value="active">Sadece Aktif</option>
+          <option value="inactive">Sadece Pasif</option>
+        </select>
+        {(search || planFilter !== "all" || statusFilter !== "all") && (
+          <button onClick={() => { setSearch(""); setPlanFilter("all"); setStatusFilter("all"); }}
+                  className="text-xs px-2 py-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                  data-testid="lic-filters-reset">Temizle</button>
+        )}
+        <span className="text-xs text-slate-500" data-testid="lic-filter-count">
+          <span className="mono text-slate-300">{rows.length}</span> / {allRows.length}
+        </span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-widest text-slate-500">
+              <th className="text-left px-4 py-3 font-semibold">Müşteri</th>
+              <th className="text-left px-4 py-3 font-semibold">Durum</th>
+              <th className="text-left px-4 py-3 font-semibold">Anahtar</th>
+              <th className="text-left px-4 py-3 font-semibold">Plan</th>
+              <th className="text-left px-4 py-3 font-semibold">IP'ler</th>
+              <th className="text-left px-4 py-3 font-semibold">Bitiş</th>
+              <th className="text-left px-4 py-3 font-semibold">Son heartbeat</th>
+              <th className="text-right px-4 py-3 font-semibold w-24"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const expired = isExpired(r.valid_until);
+              const status = !r.active ? "inactive" : expired ? "expired" : "active";
+              return (
+                <tr key={r.id} data-row data-testid={`lic-row-${r.id}`} className="border-t border-slate-800">
+                  <td className="px-4 py-2.5">
+                    <div className="text-slate-200">{r.customer_name}</div>
+                    <div className="text-[11px] text-slate-500 mono">{r.customer_email || "—"}</div>
+                  </td>
+                  <td className="px-4 py-2.5" data-testid={`lic-status-${r.id}`}>
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                      status === "active"   ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" :
+                      status === "expired"  ? "bg-rose-500/15 text-rose-300 border border-rose-500/30" :
+                                              "bg-slate-700/40 text-slate-400 border border-slate-700"
+                    }`} data-testid={`lic-status-pill-${status}-${r.id}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        status === "active" ? "bg-emerald-400 animate-pulse" :
+                        status === "expired" ? "bg-rose-400" : "bg-slate-500"
+                      }`}></span>
+                      {status === "active" ? "AKTİF" : status === "expired" ? "SÜRESİ DOLDU" : "PASİF"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <button onClick={() => onCopy(r.license_key)} className="mono text-[11px] text-indigo-300 hover:text-indigo-200 inline-flex items-center gap-1">
+                      {r.license_key.slice(0, 20)}… <Copy className="w-3 h-3" />
+                    </button>
+                  </td>
+                  <td className="px-4 py-2.5"><Badge tone={PLAN_TONE[r.plan]}>{r.plan.toUpperCase()}</Badge></td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex flex-wrap gap-1">
+                      {(r.ip_addresses || []).map(ip => (
+                        <span key={ip} className="mono text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-300">{ip}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className={`mono text-xs ${expired ? "text-rose-400" : "text-slate-300"}`}>{isoDate(r.valid_until)}</div>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {r.last_heartbeat_at ? (
+                      <div>
+                        <div className="mono text-[11px] text-slate-300">{isoDateTime(r.last_heartbeat_at)}</div>
+                        <div className="mono text-[10px] text-slate-500">{r.last_heartbeat_ip} · v{r.last_heartbeat_version}</div>
+                      </div>
+                    ) : <span className="text-slate-600 text-xs">hiç bağlanmadı</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                    <button onClick={() => onEdit(r)} title="Düzenle"
+                            data-testid={`lic-edit-${r.id}`}
+                            className="mr-1.5 inline-flex items-center gap-1 px-2 py-1 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/25 hover:border-indigo-400 transition text-xs font-medium">
+                      <Pencil className="w-3.5 h-3.5" />
+                      <span className="hidden xl:inline">Düzenle</span>
+                    </button>
+                    <button onClick={() => onToggle.mutate({ lic: r, active: !r.active })}
+                            title={r.active ? "Devre dışı bırak" : "Aktifleştir"}
+                            data-testid={`lic-toggle-${r.id}`}
+                            className={`mr-1.5 inline-flex items-center px-1.5 py-1 rounded border transition ${
+                              r.active
+                                ? "border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/25"
+                                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/25"
+                            }`}>
+                      <Radio className="w-3.5 h-3.5" />
+                    </button>
+                    <button data-testid={`lic-del-${r.id}`}
+                            onClick={() => { if (confirm(`${r.customer_name} lisansı silinsin mi?`)) onDelete.mutate(r.id); }}
+                            className="inline-flex items-center px-1.5 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/25 transition" title="Sil">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 && (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Henüz lisans yok</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function ViolationsPanel({ violRows, onSimulate, onClearViol }) {
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-rose-400" /> Lisans İhlalleri</span>}
+        subtitle="İzinsiz IP'lerden gelen istekler burada listelenir · Slack/E-posta'ya otomatik bildirim gider"
+        right={
+          <div className="flex items-center gap-2">
+            <button data-testid="lic-simulate" onClick={() => onSimulate.mutate()}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
+              <AlertTriangle className="w-3 h-3" /> Simüle Et
+            </button>
+            <button data-testid="lic-clear-viol" onClick={() => onClearViol.mutate()}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700">
+              <Trash2 className="w-3 h-3" /> Temizle
+            </button>
+          </div>
+        }/>
+      <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-slate-900">
+            <tr className="text-[11px] uppercase tracking-widest text-slate-500">
+              <th className="text-left px-4 py-3 font-semibold">Zaman</th>
+              <th className="text-left px-4 py-3 font-semibold">IP</th>
+              <th className="text-left px-4 py-3 font-semibold">Sunucu</th>
+              <th className="text-left px-4 py-3 font-semibold">Anahtar</th>
+              <th className="text-left px-4 py-3 font-semibold">Sebep</th>
+              <th className="text-left px-4 py-3 font-semibold">Sürüm</th>
+            </tr>
+          </thead>
+          <tbody>
+            {violRows.map((v) => (
+              <tr key={v.id} data-row className="border-t border-slate-800">
+                <td className="px-4 py-2.5 mono text-[11px] text-slate-400">{isoDateTime(v.at)}</td>
+                <td className="px-4 py-2.5 mono text-slate-200">{v.ip}</td>
+                <td className="px-4 py-2.5 mono text-slate-300 text-xs">{v.hostname || "—"}</td>
+                <td className="px-4 py-2.5 mono text-[11px] text-slate-400">{v.license_key || "—"}</td>
+                <td className="px-4 py-2.5"><Badge tone="danger">{REASON_LABEL[v.reason] || v.reason}</Badge></td>
+                <td className="px-4 py-2.5 mono text-xs text-slate-400">v{v.version || "?"}</td>
+              </tr>
+            ))}
+            {violRows.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-10 text-center text-emerald-400">🎉 İhlal yok</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }

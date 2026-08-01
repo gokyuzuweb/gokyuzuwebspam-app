@@ -185,6 +185,52 @@ export default function Notifications() {
               </div>
               <Toggle checked={state.alert_on_license_violation} onChange={(v) => patch("alert_on_license_violation", v)} testid="alert-license" />
             </div>
+
+            {/* Saldırı Alarmı */}
+            <div className="flex items-center justify-between py-2 border-t border-slate-800">
+              <div>
+                <div className="text-sm text-slate-200 inline-flex items-center gap-1.5">
+                  <span>🛡️</span> Saldırı Uyarısı
+                  <span className="text-[10px] text-rose-300 mono px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/30">DDoS · Brute-force</span>
+                </div>
+                <div className="text-xs text-slate-500">5 dakikada eşik değeri aşan şüpheli olayda alarm gönderir</div>
+              </div>
+              <Toggle checked={state.alert_on_attack ?? true} onChange={(v) => patch("alert_on_attack", v)} testid="alert-attack" />
+            </div>
+            {(state.alert_on_attack ?? true) && (
+              <div className="pl-4 -mt-1 flex items-center gap-2 text-xs text-slate-400">
+                <span>Eşik (5dk):</span>
+                <input type="number" min="10" max="10000" step="10"
+                       value={state.attack_threshold_5min ?? 100}
+                       onChange={(e) => patch("attack_threshold_5min", parseInt(e.target.value) || 100)}
+                       className="w-24 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs mono focus:outline-none focus:border-rose-500/40"
+                       data-testid="attack-threshold"/>
+                <span className="text-[10px] text-slate-500">olay</span>
+              </div>
+            )}
+
+            {/* Toplu Mail Alarmı */}
+            <div className="flex items-center justify-between py-2 border-t border-slate-800">
+              <div>
+                <div className="text-sm text-slate-200 inline-flex items-center gap-1.5">
+                  <span>📤</span> Toplu Mail Uyarısı
+                  <span className="text-[10px] text-amber-300 mono px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30">Anormal outbound</span>
+                </div>
+                <div className="text-xs text-slate-500">Bir hesaptan 1 saatte eşiği aşan giden mail sayısında alarm</div>
+              </div>
+              <Toggle checked={state.alert_on_bulk_mail ?? true} onChange={(v) => patch("alert_on_bulk_mail", v)} testid="alert-bulk-mail" />
+            </div>
+            {(state.alert_on_bulk_mail ?? true) && (
+              <div className="pl-4 -mt-1 flex items-center gap-2 text-xs text-slate-400">
+                <span>Eşik (1sa):</span>
+                <input type="number" min="50" max="100000" step="50"
+                       value={state.bulk_mail_threshold_1h ?? 500}
+                       onChange={(e) => patch("bulk_mail_threshold_1h", parseInt(e.target.value) || 500)}
+                       className="w-24 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs mono focus:outline-none focus:border-amber-500/40"
+                       data-testid="bulk-mail-threshold"/>
+                <span className="text-[10px] text-slate-500">mail</span>
+              </div>
+            )}
           </CardBody>
         </Card>
 

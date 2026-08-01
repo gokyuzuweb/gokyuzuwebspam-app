@@ -110,3 +110,38 @@ Home / Dashboard / MailScanner / Mail Sağlık / Tehdit Zekası / Güvenlik / Qu
 - `OrdersKanban` — 4 sütun drag-drop (Bekleyen/Bildirim/Onaylandı/Reddedildi)
 - `ProviderCard`, `InstallmentOverview`, `InstallmentConfigModal`, `SmartPosMiniStat`
 
+
+## 2026-02-08 (2) · UX + Alarm Sistemi + Renkli Tab'lar
+
+### Landing → Panel dönüş
+- Header'daki "Live Demo" butonu → belirgin yeşil "Panele Dön" oldu
+- Sabit sağ-alt köşe floating buton: `FloatingPanelButton` (gradient emerald, animasyonlu)
+
+### Saldırı & Toplu Mail Alarm sistemi
+- `NotificationSettings` şemasına 4 yeni alan: `alert_on_attack`, `alert_on_bulk_mail`, `attack_threshold_5min`, `bulk_mail_threshold_1h`
+- Backend: `_check_attack_bulk_alerts()` her ingest event sonrası çalışıyor
+- Saldırı algılama: 5dk'da aynı sender_ip'den >= threshold olay
+- Toplu mail algılama: 1sa'da aynı from_addr'den >= threshold outbound
+- Cool-down: aynı kaynak + kind için 30dk cool-down (spam alarm koruma)
+- Alarm kanalları: `notifications_inbox` + admin e-postası + Slack webhook
+- Frontend: `Notifications.js` panelinde toggle + eşik input'ları
+
+### Lisans Yönetimi 4 Renkli Tab'a Bölündü
+- Karmaşık tek sayfa → `LicenseTabs` component'i ile 4 sekmeye ayrıldı
+- 🔵 **Lisanslar** (indigo) — filtreli tablo
+- 🟢 **Yeni Lisans** (emerald) — ekleme formu
+- 🔴 **İhlaller** (rose) — canlı sayaç badge'i ile
+- 🟡 **Yönetim** (amber) — VersionPublish + ResellerAdmin + AdminOperations + yardım
+- Aktif tab: gradient shadow, pulse dot, renkli border, hover elevation
+
+### Global Tab Enhancement CSS
+- `index.css` içine tüm site tab'larını renklendiren global CSS eklendi
+- `border-b-2 border-indigo-500` pattern'ini gradient/pulse/glow ile canlandırıyor
+- `data-testid^="tab-|pa-tab-|sptab-|lictab-"` seçicileri global efekt uyguluyor
+- Renkli alt-tab bar container: indigo→emerald→rose gradient border-bottom
+- Pill-style sub-tab'larda shimmer efekti
+
+### Bug Fix: NotificationSettings backward-compat
+- Eski docs'ta yeni alanlar yoktu → `_notify_settings()` artık pydantic default'la merge ediyor
+- Test: GET /api/notifications yeni alanlar için doğru default değer döndürüyor
+

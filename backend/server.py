@@ -136,6 +136,11 @@ class NotificationSettings(BaseModel):
     alert_on_virus: bool = True
     alert_on_phish: bool = True
     alert_on_license_violation: bool = True
+    # Yeni: saldırı ve toplu mail alarmları
+    alert_on_attack: bool = True         # DDoS / brute-force / port scan
+    alert_on_bulk_mail: bool = True      # Kısa sürede yüksek hacim outbound
+    attack_threshold_5min: int = 100     # 5 dakikada >=N şüpheli olay
+    bulk_mail_threshold_1h: int = 500    # 1 saatte >=N giden mail
 
 
 class License(BaseModel):
@@ -1204,7 +1209,11 @@ async def outbound_get():
 # ----- Notifications (Slack + Telegram) -----
 async def _notify_settings() -> dict:
     doc = await db.settings.find_one({"_key": "notifications"}, {"_id": 0, "_key": 0})
-    return doc or NotificationSettings().model_dump()
+    # Merge with model defaults so newly added fields don't return None on old docs
+    base = NotificationSettings().model_dump()
+    if doc:
+        base.update({k: v for k, v in doc.items() if v is not None})
+    return base
 
 
 async def _send_slack(webhook: str, text: str) -> bool:

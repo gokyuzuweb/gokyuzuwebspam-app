@@ -106,3 +106,101 @@ input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin
   100% { background-color: transparent; box-shadow: none; }
 }
 .gws-row-glow { animation: gws-row-flash 2.5s ease-out; }
+
+/* =========================================================================
+   Global Tab Enhancement — makes all border-b-2 style tabs across the app
+   more prominent, colorful, and eye-catching. Auto-applies to existing tabs.
+   ========================================================================= */
+
+/* Any element with data-testid starting with "tab-" or containing "-tab-" */
+button[data-testid^="pa-tab-"],
+button[data-testid^="sptab-"],
+button[data-testid^="qtab-"],
+button[data-testid^="dashtab-"],
+button[data-testid^="lictab-"],
+button[data-testid^="tab-"],
+button[role="tab"] {
+    position: relative;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Inactive tabs: subtle glow on hover */
+button[data-testid^="pa-tab-"]:not(.active):hover,
+button[data-testid^="sptab-"]:not(.active):hover,
+button[data-testid^="qtab-"]:not(.active):hover,
+button[role="tab"]:not([aria-selected="true"]):hover {
+    color: #e0e7ff !important;
+    background: linear-gradient(180deg, rgba(99,102,241,0.06), rgba(99,102,241,0.02)) !important;
+    transform: translateY(-1px);
+}
+
+/* Active tab detection via inline classes containing "border-indigo-500" or "text-slate-100" */
+/* Give border-b-2 style tabs a colorful bottom bar with glow */
+button.border-indigo-500,
+button[class*="border-indigo-500"][class*="border-b-2"],
+button[class*="border-emerald-500"][class*="border-b-2"] {
+    color: #ffffff !important;
+    text-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.12), rgba(99, 102, 241, 0.02));
+    box-shadow: 0 4px 20px -6px rgba(99, 102, 241, 0.5), inset 0 -3px 0 0 #6366f1;
+}
+
+/* Active tab pulse indicator */
+button[class*="border-b-2"][class*="border-indigo-500"]::before {
+    content: "";
+    position: absolute;
+    left: 50%; bottom: -2px;
+    width: 6px; height: 6px;
+    background: #6366f1;
+    border-radius: 50%;
+    transform: translateX(-50%);
+    box-shadow: 0 0 8px 2px rgba(99, 102, 241, 0.7);
+    animation: gws-tab-pulse 2s ease-in-out infinite;
+}
+
+@keyframes gws-tab-pulse {
+    0%, 100% { transform: translateX(-50%) scale(1);   opacity: 1; }
+    50%      { transform: translateX(-50%) scale(1.6); opacity: 0.6; }
+}
+
+/* Colorize tab bar container — background stripe with gradient fade */
+.flex.border-b.border-slate-800:has(button[data-testid^="pa-tab-"]),
+.flex.border-b.border-slate-800:has(button[data-testid^="qtab-"]),
+.flex.gap-2.border-b.border-slate-800 {
+    background: linear-gradient(90deg,
+        rgba(99, 102, 241, 0.04) 0%,
+        rgba(16, 185, 129, 0.03) 50%,
+        rgba(244, 63, 94, 0.04) 100%);
+    padding-inline: 0.5rem;
+    padding-block: 0.25rem;
+    border-radius: 8px 8px 0 0;
+    border-image: linear-gradient(90deg, #6366f1 0%, #10b981 50%, #f43f5e 100%) 1;
+    border-bottom-width: 2px !important;
+}
+
+/* Pill-style sub-tabs (Smart POS categories) — more vibrancy */
+[data-testid="smart-pos-subtabs"] button {
+    position: relative;
+    overflow: hidden;
+}
+[data-testid="smart-pos-subtabs"] button::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(120deg,
+        transparent 0%, rgba(99, 102, 241, 0.2) 50%, transparent 100%);
+    transform: translateX(-100%);
+    transition: transform 0.5s;
+}
+[data-testid="smart-pos-subtabs"] button:hover::after {
+    transform: translateX(100%);
+}
+
+/* Numeric badge chips inside tabs — make them pop */
+button[class*="border-b-2"] span[class*="mono"],
+[data-testid="smart-pos-subtabs"] button span[class*="mono"] {
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+

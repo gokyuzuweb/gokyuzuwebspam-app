@@ -422,8 +422,8 @@ function NavBar() {
           <Link to="/reseller" data-testid="landing-reseller-cta" className="hidden lg:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md border border-slate-700 bg-slate-900 text-slate-300 text-sm hover:border-slate-600 transition-colors">
             Reseller Portal
           </Link>
-          <Link to="/panel" data-testid="landing-demo-cta" className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md border border-slate-700 bg-slate-900 text-slate-200 text-sm hover:border-slate-600 transition-colors">
-            Live Demo
+          <Link to="/panel" data-testid="landing-panel-cta" className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-sm hover:bg-emerald-500/20 transition-colors">
+            <ShieldAlert className="w-3.5 h-3.5"/> Panele Dön
           </Link>
           <Link to="/shop" data-testid="landing-buy-cta" className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-gradient-to-br from-indigo-500 to-indigo-600 text-white text-sm font-medium shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 transition-shadow">
             Buy <ArrowRight className="w-3.5 h-3.5" />
@@ -1397,6 +1397,21 @@ export default function Landing() {
       <Testimonials />
       <CTABottom />
       <Footer />
+      <FloatingPanelButton />
     </div>
+  );
+}
+
+function FloatingPanelButton() {
+  return (
+    <Link
+      to="/panel"
+      data-testid="floating-panel-btn"
+      className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 px-4 py-3 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 text-white text-sm font-semibold shadow-2xl shadow-emerald-500/40 hover:shadow-emerald-500/60 hover:-translate-y-0.5 transition-all group"
+    >
+      <ShieldAlert className="w-4 h-4"/>
+      <span className="hidden md:inline">Panele Dön</span>
+      <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform"/>
+    </Link>
   );
 }
