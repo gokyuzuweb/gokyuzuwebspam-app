@@ -1,15 +1,39 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
 import { Globe2, Shield, TrendingUp, X, Ban, ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
 
-/**
- * GeoBlockedHeatmap — Landing için mini dünya haritası.
- * Ülkelere göre bloklanan IP sayısı; TopoJSON offline harita üstüne bubble marker.
- */
+// TopoJSON world atlas
+const GEO_URL = "/geo/countries-110m.json";
+
+// Türkiye = hedef (89.19.15.58 sunucusu — İstanbul yaklaşık)
+const TARGET = { name: "Türkiye · gokyuzuhosting.com", lat: 41.0, lon: 29.0 };
+
+// TopoJSON'daki numeric ISO code → 2-letter mapping (kritik ülkeler için)
+const ISO_NUM_TO_ALPHA2 = {
+  "004": "AF", "008": "AL", "012": "DZ", "032": "AR", "036": "AU", "040": "AT",
+  "056": "BE", "076": "BR", "100": "BG", "124": "CA", "152": "CL", "156": "CN",
+  "170": "CO", "191": "HR", "196": "CY", "203": "CZ", "208": "DK", "233": "EE",
+  "246": "FI", "250": "FR", "268": "GE", "276": "DE", "300": "GR", "348": "HU",
+  "352": "IS", "356": "IN", "360": "ID", "364": "IR", "368": "IQ", "372": "IE",
+  "376": "IL", "380": "IT", "392": "JP", "398": "KZ", "400": "JO", "404": "KE",
+  "410": "KR", "414": "KW", "428": "LV", "440": "LT", "442": "LU", "504": "MA",
+  "528": "NL", "554": "NZ", "578": "NO", "586": "PK", "608": "PH", "616": "PL",
+  "620": "PT", "630": "PR", "634": "QA", "642": "RO", "643": "RU", "682": "SA",
+  "688": "RS", "702": "SG", "703": "SK", "705": "SI", "710": "ZA", "724": "ES",
+  "752": "SE", "756": "CH", "760": "SY", "764": "TH", "784": "AE", "788": "TN",
+  "792": "TR", "804": "UA", "818": "EG", "826": "GB", "834": "TZ", "840": "US",
+  "854": "BF", "858": "UY", "860": "UZ", "862": "VE", "704": "VN",
+};
+
+const CC_FLAG = (cc) => cc && cc.length === 2
+  ? String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 127397 + c.charCodeAt(0))) : "🌐";
+
 export default function GeoBlockedHeatmap({ compact = false }) {
   const [selectedCountry, setSelectedCountry] = useState(null);
+  const [hoverCC, setHoverCC] = useState(null);
   const q = useQuery({
     queryKey: ["geo-blocked-heatmap"],
     queryFn: api.geoBlockedHeatmap,
@@ -20,16 +44,20 @@ export default function GeoBlockedHeatmap({ compact = false }) {
   const total = q.data?.total || 0;
   const maxCount = Math.max(1, ...items.map((i) => i.count));
 
-  // Basit equirectangular projeksiyon: lat/lon → SVG x/y
-  const proj = (lat, lon) => ({
-    x: ((lon + 180) / 360) * 1000,
-    y: ((90 - lat) / 180) * 500,
-  });
+  // CC → count/name/coord lookup
+  const byCC = useMemo(() => {
+    const m = {};
+    for (const it of items) m[it.country] = it;
+    return m;
+  }, [items]);
+
+  // Top 8 saldırı hattı — hedefimize doğru animasyonlu çizgi
+  const topAttackers = items.filter((i) => i.lat != null && i.lon != null && i.country !== "TR").slice(0, 8);
 
   return (
     <section id="geo-heatmap" className={`${compact ? "" : "py-24"} relative overflow-hidden`}
              data-testid="landing-geo-heatmap">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(244,63,94,0.08),transparent_60%)]"/>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(244,63,94,0.06),transparent_60%)]"/>
       <div className="max-w-7xl mx-auto px-6 relative">
         <div className="text-center max-w-2xl mx-auto mb-8">
           <div className="text-xs uppercase tracking-widest text-rose-400 mono mb-2 flex items-center justify-center gap-2">
@@ -39,65 +67,142 @@ export default function GeoBlockedHeatmap({ compact = false }) {
             Bloklanan IP'lerin <span className="text-transparent bg-clip-text bg-gradient-to-r from-rose-400 to-orange-400">coğrafi dağılımı</span>
           </h2>
           <p className="text-slate-400">
-            Şu ana kadar {total.toLocaleString("tr-TR")} kötü niyetli IP {items.length} farklı ülkeden bloklandı.
-            <span className="text-slate-500"> · Ülkeye tıklayın, detayları görün.</span>
+            {total.toLocaleString("tr-TR")} kötü niyetli IP · {items.length} farklı ülke
+            <span className="text-slate-500"> · Bir ülkeye tıklayın</span>
           </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Map */}
-          <div className="lg:col-span-2 rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-            <svg viewBox="0 0 1000 500" className="w-full h-auto" data-testid="geo-heatmap-svg">
-              {/* Ocean */}
-              <rect width="1000" height="500" fill="#0f172a"/>
-              {/* Very simple continent outline (5 latitude bands) */}
-              <g fill="#1e293b" stroke="#334155" strokeWidth="0.5" opacity="0.6">
-                <path d="M 150 100 L 350 100 L 400 200 L 350 280 L 200 300 L 150 250 Z"/>
-                <path d="M 450 80 L 700 80 L 750 200 L 700 240 L 500 250 L 450 200 Z"/>
-                <path d="M 750 180 L 900 180 L 920 300 L 850 350 L 750 340 Z"/>
-                <path d="M 250 320 L 350 320 L 330 420 L 260 420 Z"/>
-                <path d="M 500 300 L 620 300 L 640 420 L 520 420 Z"/>
-                <path d="M 800 380 L 900 380 L 920 460 L 810 460 Z"/>
-              </g>
-              {/* Grid */}
-              <g stroke="#1e293b" strokeWidth="0.3" opacity="0.4">
-                {[0, 100, 200, 300, 400, 500].map((y) => (
-                  <line key={y} x1="0" x2="1000" y1={y} y2={y}/>
+          {/* MAP */}
+          <div className="lg:col-span-2 rounded-xl border border-slate-800 bg-gradient-to-br from-slate-950 to-slate-900 p-1 overflow-hidden">
+            <div className="relative">
+              <ComposableMap
+                projection="geoMercator"
+                projectionConfig={{ scale: 130, center: [15, 30] }}
+                width={900} height={500}
+                style={{ width: "100%", height: "auto" }}
+                data-testid="geo-heatmap-svg"
+              >
+                <defs>
+                  <linearGradient id="attackGradient" x1="0" x2="1" y1="0" y2="0">
+                    <stop offset="0%" stopColor="#f43f5e" stopOpacity="0"/>
+                    <stop offset="100%" stopColor="#f43f5e" stopOpacity="0.9"/>
+                  </linearGradient>
+                  <radialGradient id="targetPulse">
+                    <stop offset="0%" stopColor="#10b981" stopOpacity="0.9"/>
+                    <stop offset="100%" stopColor="#10b981" stopOpacity="0"/>
+                  </radialGradient>
+                </defs>
+
+                {/* Ülkeler */}
+                <Geographies geography={GEO_URL}>
+                  {({ geographies }) =>
+                    geographies.map((geo) => {
+                      const cc = ISO_NUM_TO_ALPHA2[geo.id] || null;
+                      const data = cc ? byCC[cc] : null;
+                      const isTarget = cc === "TR";
+                      const intensity = data ? Math.min(1, data.count / maxCount) : 0;
+                      const fillColor = isTarget
+                        ? "#10b981"
+                        : data
+                        ? `rgba(244, 63, 94, ${0.2 + intensity * 0.7})`
+                        : "#1e293b";
+                      return (
+                        <Geography
+                          key={geo.rsmKey}
+                          geography={geo}
+                          fill={fillColor}
+                          stroke="#334155"
+                          strokeWidth={0.4}
+                          onClick={() => data && setSelectedCountry(data)}
+                          onMouseEnter={() => setHoverCC(cc)}
+                          onMouseLeave={() => setHoverCC(null)}
+                          style={{
+                            default: { outline: "none", cursor: data ? "pointer" : "default",
+                                       transition: "fill 0.2s" },
+                            hover:   { outline: "none", fill: isTarget ? "#059669"
+                                                             : data ? "#fb7185" : "#334155" },
+                            pressed: { outline: "none" },
+                          }}
+                        />
+                      );
+                    })
+                  }
+                </Geographies>
+
+                {/* Saldırı çizgileri — animasyonlu, top attackers → hedef */}
+                {topAttackers.map((atk, idx) => (
+                  <Line
+                    key={atk.country}
+                    from={[atk.lon, atk.lat]}
+                    to={[TARGET.lon, TARGET.lat]}
+                    stroke="url(#attackGradient)"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeDasharray="4 6"
+                  >
+                    <animate attributeName="stroke-dashoffset"
+                             from="0" to="-20" dur={`${1.2 + idx * 0.2}s`}
+                             repeatCount="indefinite"/>
+                  </Line>
                 ))}
-                {[0, 200, 400, 600, 800, 1000].map((x) => (
-                  <line key={x} x1={x} x2={x} y1="0" y2="500"/>
-                ))}
-              </g>
-              {/* Bubbles */}
-              {items.filter((i) => i.lat != null && i.lon != null).map((it) => {
-                const p = proj(it.lat, it.lon);
-                const r = 4 + Math.sqrt(it.count / maxCount) * 22;
-                return (
-                  <g key={it.country} style={{ cursor: "pointer" }}
-                     onClick={() => setSelectedCountry(it)}
-                     data-testid={`geo-bubble-${it.country}`}>
-                    <circle cx={p.x} cy={p.y} r={r + 4} fill="#f43f5e" opacity="0.15">
-                      <animate attributeName="r" values={`${r};${r + 6};${r}`} dur="2s" repeatCount="indefinite"/>
-                    </circle>
-                    <circle cx={p.x} cy={p.y} r={r} fill="#f43f5e" opacity="0.8"
-                            className="hover:opacity-100 transition-opacity">
-                      <title>{it.name}: {it.count} IP bloklu · tıklayın</title>
-                    </circle>
-                    <text x={p.x} y={p.y + 3} textAnchor="middle" fill="white" fontSize="10" fontWeight="bold"
-                          pointerEvents="none">
-                      {it.count}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-            <div className="text-[10px] text-slate-500 mt-2 flex items-center justify-between">
-              <span>Otomatik yenileme: 30sn</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 bg-rose-500 rounded-full inline-block"/> bloklanan IP · tıklanabilir</span>
+
+                {/* Saldıran ülke bubble'ları */}
+                {topAttackers.map((atk) => {
+                  const r = 3 + Math.sqrt(atk.count / maxCount) * 10;
+                  return (
+                    <Marker key={atk.country} coordinates={[atk.lon, atk.lat]}
+                            onClick={() => setSelectedCountry(atk)}
+                            style={{ default: { cursor: "pointer" } }}>
+                      <circle r={r + 3} fill="#f43f5e" opacity="0.2">
+                        <animate attributeName="r" values={`${r};${r + 5};${r}`}
+                                 dur="1.8s" repeatCount="indefinite"/>
+                        <animate attributeName="opacity" values="0.3;0;0.3"
+                                 dur="1.8s" repeatCount="indefinite"/>
+                      </circle>
+                      <circle r={r} fill="#f43f5e" stroke="#fff" strokeWidth="0.5" opacity="0.9"/>
+                      <text textAnchor="middle" y={r + 8} fill="#fecdd3" fontSize="7"
+                            fontWeight="bold" style={{ pointerEvents: "none" }}>
+                        {atk.count}
+                      </text>
+                    </Marker>
+                  );
+                })}
+
+                {/* Hedef (Türkiye) — büyük yeşil pulse */}
+                <Marker coordinates={[TARGET.lon, TARGET.lat]}>
+                  <circle r="18" fill="url(#targetPulse)">
+                    <animate attributeName="r" values="16;24;16" dur="2s" repeatCount="indefinite"/>
+                  </circle>
+                  <circle r="5" fill="#10b981" stroke="#fff" strokeWidth="1"/>
+                  <text textAnchor="middle" y={-10} fill="#a7f3d0" fontSize="8"
+                        fontWeight="bold" style={{ pointerEvents: "none" }}>
+                    HEDEF
+                  </text>
+                </Marker>
+              </ComposableMap>
+
+              {/* Hover tooltip */}
+              {hoverCC && byCC[hoverCC] && (
+                <div className="absolute top-3 right-3 bg-slate-950/90 border border-slate-700 rounded-md px-3 py-2 text-xs pointer-events-none">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-lg leading-none">{CC_FLAG(hoverCC)}</span>
+                    <span className="text-slate-100 font-semibold">{byCC[hoverCC].name}</span>
+                  </div>
+                  <div className="text-rose-300 mono mt-0.5">{byCC[hoverCC].count} IP bloklu</div>
+                </div>
+              )}
+            </div>
+            <div className="text-[10px] text-slate-500 flex items-center justify-between px-3 py-2 border-t border-slate-800">
+              <span>Otomatik yenileme · 30sn</span>
+              <span className="flex items-center gap-3">
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 bg-rose-500 rounded-full inline-block"/> saldırgan</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 bg-emerald-500 rounded-full inline-block"/> hedef sunucu</span>
+              </span>
             </div>
           </div>
 
-          {/* Top countries */}
+          {/* Top countries side panel */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
             <div className="text-sm font-semibold text-slate-100 mb-3 flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-rose-400"/> Top Ülkeler
@@ -108,16 +213,16 @@ export default function GeoBlockedHeatmap({ compact = false }) {
                 Henüz bloklanmış IP yok
               </div>
             ) : (
-              <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-                {items.slice(0, 15).map((it, idx) => (
+              <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
+                {items.slice(0, 20).map((it, idx) => (
                   <button key={it.country}
                           onClick={() => setSelectedCountry(it)}
                           data-testid={`geo-row-${it.country}`}
-                          className="w-full flex items-center gap-2 text-xs hover:bg-slate-800/40 rounded px-1 py-0.5 transition-colors text-left">
+                          className="w-full flex items-center gap-2 text-xs hover:bg-slate-800/40 rounded px-1.5 py-1 transition-colors text-left">
                     <span className="text-slate-600 w-5 text-right">#{idx + 1}</span>
-                    <span className="text-lg leading-none">{flag(it.country)}</span>
+                    <span className="text-lg leading-none">{CC_FLAG(it.country)}</span>
                     <span className="text-slate-200 flex-1 min-w-0 truncate">{it.name}</span>
-                    <div className="w-24 bg-slate-800 rounded overflow-hidden h-1.5">
+                    <div className="w-20 bg-slate-800 rounded overflow-hidden h-1.5">
                       <div className="bg-gradient-to-r from-rose-500 to-orange-500 h-full"
                            style={{ width: `${(it.count / maxCount) * 100}%` }}/>
                     </div>
@@ -145,7 +250,7 @@ function CountryDetailModal({ country, onClose }) {
   });
   const [whitelisted, setWhitelisted] = useState(new Set());
   const whitelist = useMutation({
-    mutationFn: (ip) => api.ipWhitelist({ ip, reason: "Yanlış pozitif — Landing modaldan" }),
+    mutationFn: (ip) => api.ipWhitelist({ ip, reason: "Yanlış pozitif — Harita modaldan" }),
     onSuccess: (_, ip) => {
       toast.success(`✓ ${ip} kalıcı whitelist'e eklendi`);
       setWhitelisted((s) => new Set([...s, ip]));
@@ -161,7 +266,7 @@ function CountryDetailModal({ country, onClose }) {
            onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <span className="text-3xl leading-none">{flag(country.country)}</span>
+            <span className="text-3xl leading-none">{CC_FLAG(country.country)}</span>
             <div>
               <div className="text-lg font-semibold text-slate-100">{country.name}</div>
               <div className="text-xs text-slate-400">
@@ -207,7 +312,6 @@ function CountryDetailModal({ country, onClose }) {
                         onClick={() => whitelist.mutate(it.ip)}
                         disabled={whitelist.isPending}
                         data-testid={`whitelist-btn-${it.ip}`}
-                        title="Yanlış pozitifse buradan kalıcı whitelist'e ekle"
                         className="text-[10px] px-2 py-1 rounded bg-emerald-500/15 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/25 disabled:opacity-40 inline-flex items-center gap-1 shrink-0"
                       >
                         <ShieldCheck className="w-3 h-3"/> Whitelist
@@ -224,9 +328,4 @@ function CountryDetailModal({ country, onClose }) {
       </div>
     </div>
   );
-}
-
-function flag(cc) {
-  if (!cc || cc.length !== 2) return "🌐";
-  return String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 127397 + c.charCodeAt(0)));
 }

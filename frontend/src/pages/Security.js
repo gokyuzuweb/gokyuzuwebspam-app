@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
@@ -31,6 +32,14 @@ const STATUS_TONE = {
 export default function Security() {
   const qc = useQueryClient();
   const [tab, setTab] = useState("dashboard");
+  const [searchParams] = useSearchParams();
+  // URL ?tab=xxx varsa uygula
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t && ["dashboard", "overview", "exploit", "bec", "sandbox", "reputation", "geo"].includes(t)) {
+      setTab(t);
+    }
+  }, [searchParams]);
   const [activeModule, setActiveModule] = useState(null);   // detail drawer for overview cards
   const [expandedFinding, setExpandedFinding] = useState(null);
   const modules = useQuery({ queryKey: ["ms-modules"], queryFn: () => api.msModules(LICKEY()) });
@@ -544,18 +553,49 @@ function TrustDashboard({ modules, findings, latest, reputation }) {
 
       {/* Module status strip */}
       <Card>
-        <CardHeader title="Modül Durumları" subtitle="Renk kodlu canlı sağlık göstergesi"/>
+        <CardHeader title="Modül Durumları" subtitle="Renk kodlu canlı sağlık göstergesi · tıklayın, ilgili modüle gidin"/>
         <CardBody>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
             {modules.map((m) => {
               const tone = STATUS_TONE[m.status] || STATUS_TONE.off;
               const Icon = ICONS[m.icon] || ShieldCheck;
+              // Modül key → panel route eşleme
+              const ROUTE_MAP = {
+                exploit: "/panel/security?tab=exploit",
+                bec: "/panel/security?tab=bec",
+                sandbox: "/panel/security?tab=sandbox",
+                reputation: "/panel/security?tab=reputation",
+                geo: "/panel/security?tab=geo",
+                mailscanner: "/panel/mailscanner",
+                threat_intel: "/panel/threat-intel",
+                mail_health: "/panel/mail-health",
+                dmarc: "/panel/threat-intel",
+                spf: "/panel/mail-health",
+                dkim: "/panel/mail-health",
+                dnsbl: "/panel/security?tab=reputation",
+                rbl: "/panel/blacklist",
+                whitelist: "/panel/whitelist-history",
+                blacklist: "/panel/blacklist",
+                rules: "/panel/rules",
+                engines: "/panel/engines",
+                ai: "/panel/mailscanner",
+                quarantine: "/panel/quarantine",
+                queue: "/panel/dashboard",
+                country_block: "/panel/security?tab=geo",
+                honeypot: "/panel/security?tab=exploit",
+                milter: "/panel/dashboard",
+                brute_force: "/panel/security?tab=geo",
+              };
+              const to = ROUTE_MAP[m.key] || "/panel/security";
               return (
-                <div key={m.key} className={`p-3 rounded border ${tone} text-center`}>
+                <a key={m.key} href={to}
+                   data-testid={`module-tile-${m.key}`}
+                   title={`${m.label} → detaylar`}
+                   className={`p-3 rounded border ${tone} text-center block hover:scale-105 hover:brightness-125 transition-all cursor-pointer no-underline`}>
                   <Icon className="w-4 h-4 mx-auto mb-1 opacity-80"/>
                   <div className="text-[11px] font-medium text-slate-100 truncate">{m.label}</div>
                   <div className="text-[9px] mono uppercase opacity-75">{m.status}</div>
-                </div>
+                </a>
               );
             })}
           </div>

@@ -345,3 +345,94 @@ async def smart_pos_stats():
     total_revenue = sum(s["revenue"] for s in stats.values())
     return {"stats": stats, "total_revenue_30d": round(total_revenue, 2),
             "period_days": 30}
+
+
+# ============================================================================
+# CONFIG UI — her sağlayıcı için API anahtarlarını panelden ayarla
+# ============================================================================
+def _mask(v: str) -> str:
+    if not v: return ""
+    if len(v) <= 6: return "*" * len(v)
+    return v[:2] + "*" * (len(v) - 6) + v[-4:]
+
+
+@router.get("/provider/{key}/config")
+async def get_provider_config(key: str):
+    """Sağlayıcı .env veya DB config'ini oku (maskeli)."""
+    p = next((x for x in PROVIDERS if x["key"] == key), None)
+    if not p:
+        raise HTTPException(404, "Sağlayıcı bulunamadı")
+    doc = await db.settings.find_one({"_key": f"pos_config_{key}"}, {"_id": 0}) or {}
+    fields = []
+    for env_name in p["configured_env"]:
+        # Öncelik: DB config > env
+        db_val = doc.get(env_name, "")
+        env_val = os.environ.get(env_name, "")
+        cur = db_val or env_val
+        fields.append({
+            "env_name": env_name,
+            "label": env_name.replace("_", " ").title(),
+            "value_masked": _mask(cur),
+            "has_value": bool(cur),
+            "source": "db" if db_val else ("env" if env_val else "none"),
+            "sensitive": any(k in env_name.upper() for k in ["KEY", "SECRET", "PASS", "PASSWORD", "SALT", "PWD"]),
+        })
+    return {
+        "provider": p["key"], "name": p["name"], "logo": p["logo"],
+        "category": p["category"], "commission": p.get("commission", ""),
+        "test_mode": bool(doc.get("test_mode", True)),
+        "enabled": bool(doc.get("enabled", True)),
+        "fields": fields,
+    }
+
+
+class ProviderConfigIn(BaseModel):
+    values: dict          # {env_name: value}
+    test_mode: bool = True
+    enabled: bool = True
+
+
+@router.post("/provider/{key}/config")
+async def set_provider_config(key: str, payload: ProviderConfigIn):
+    """Sağlayıcı API anahtarlarını panel üzerinden kaydet."""
+    p = next((x for x in PROVIDERS if x["key"] == key), None)
+    if not p:
+        raise HTTPException(404, "Sağlayıcı bulunamadı")
+    doc = await db.settings.find_one({"_key": f"pos_config_{key}"}, {"_id": 0}) or {}
+    # Mevcut değerleri koru (kullanıcı ****** gönderirse dokunma)
+    new_values = dict(doc)
+    for env_name in p["configured_env"]:
+        v = payload.values.get(env_name, "")
+        if v and not v.startswith("**"):
+            new_values[env_name] = v
+        # env override — runtime'da geçerli olsun
+        if new_values.get(env_name):
+            os.environ[env_name] = new_values[env_name]
+    new_values["_key"] = f"pos_config_{key}"
+    new_values["test_mode"] = payload.test_mode
+    new_values["enabled"] = payload.enabled
+    new_values["updated_at"] = _iso()
+    await db.settings.update_one(
+        {"_key": f"pos_config_{key}"},
+        {"$set": new_values},
+        upsert=True,
+    )
+    return {"ok": True, "provider": key,
+            "configured_fields": sum(1 for k in p["configured_env"] if new_values.get(k)),
+            "total_fields": len(p["configured_env"])}
+
+
+@router.post("/provider/{key}/test")
+async def test_provider_connection(key: str):
+    """Sağlayıcı config'ini test et — kredensiyeller doğru mu?"""
+    p = next((x for x in PROVIDERS if x["key"] == key), None)
+    if not p:
+        raise HTTPException(404, "Sağlayıcı bulunamadı")
+    doc = await db.settings.find_one({"_key": f"pos_config_{key}"}, {"_id": 0}) or {}
+    missing = [e for e in p["configured_env"] if not (doc.get(e) or os.environ.get(e))]
+    if missing:
+        return {"ok": False, "message": f"Eksik alanlar: {', '.join(missing)}",
+                "missing": missing}
+    return {"ok": True, "message": f"{p['name']} yapılandırması hazır · gerçek test ödemesi için 1 TL deneyin",
+            "note": "Bu bir statik kontrol. Gerçek bağlantı testi için sağlayıcının test endpoint'ini çağırın."}
+

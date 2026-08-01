@@ -27,6 +27,7 @@ Multi-module WHM/cPanel mail-security SaaS with a React/FastAPI panel, WHM plugi
 - **v23 (Feb 2026)**: Bayi Panosu (/panel/resellers-admin) with live heartbeat + online badge, 'Yeni Versiyon Yayınla' modal (release_history), Landing bar chart region filter (TR/Dış/Tümü), Whitelist History page (/panel/whitelist-history) with search + remove
 - **v24 (Feb 2026)**: **Akıllı POS Router** (/api/smart-pos/*) — 5 sağlayıcı (paytr, iyzico, param, ipara, havale) health-based auto-routing + fallback chain; Bayi heartbeat tablosuna lisans **bitiş tarihi** kolonu + Bitişe Yakın stat kartı; SMTP **Otomatik Mod** toggle (WHM/cPanel sendmail + license domain'inden otomatik FROM adresi)
 - **v25 (Feb 2026)**: Havale ekstre yükle + otomatik referans eşleştirme (`POST /payments/havale/statement-match`), lisans bitiş uyarı cron'u (14g + 3g mail — bayi domain'inden), POS health monitor cron (%40 altı → inbox alert + Telegram), Akıllı POS listesi 20 sağlayıcıya genişletildi (7 gateway + 12 banka VPOS + 1 manuel)
+- **v26 (Feb 2026)**: **Sanal POS API Config UI** (`/api/smart-pos/provider/{key}/config` GET/POST + `/test`) — panel üzerinden her sağlayıcı için MERCHANT ID / KEY / SALT gir; **Bloklanan IP Coğrafi Haritası** react-simple-maps + TopoJSON ile gerçek dünya haritası + saldırı çizgileri (animasyonlu dashed line) + hedef sunucu pulse marker + tıklanabilir ülke poligonları; **Modül Durumları tile'ları tıklanabilir** — ilgili tab veya sayfaya query param ile navigasyon
 
 ## Sanal POS Sağlayıcı Listesi (20)
 ### Ödeme Ağ Geçitleri (7)
