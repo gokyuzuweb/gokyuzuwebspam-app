@@ -453,6 +453,7 @@ async def _startup() -> None:
     asyncio.create_task(_auto_suspend_daily_task())
     asyncio.create_task(_weekly_ai_report_task())
     asyncio.create_task(_hourly_self_training_task())
+    asyncio.create_task(_monthly_auto_cleanup_task())
 
 
 async def _auto_suspend_daily_task():
@@ -512,6 +513,38 @@ async def _hourly_self_training_task():
         except Exception as ex:
             log.warning("self-training loop error: %s", ex)
         await asyncio.sleep(3600)  # her saatte bir
+
+
+async def _monthly_auto_cleanup_task():
+    """Her ayın 1'inde 03:00 UTC'de 90 günden eski verileri arşivle (settings korunur).
+    E-posta raporunu configure edilmiş adrese gönder."""
+    await asyncio.sleep(600)  # startup'tan 10 dk sonra kontrol başlar
+    while True:
+        try:
+            cfg = await db.settings.find_one({"_key": "auto_cleanup"}, {"_id": 0}) or {}
+            if cfg.get("enabled", True):  # default enabled
+                now = datetime.now(timezone.utc)
+                dom = int(cfg.get("day_of_month", 1))
+                hr  = int(cfg.get("hour_utc", 3))
+                # Bugün doğru gün + saat mi?
+                last = cfg.get("last_run_at")
+                if now.day == dom and now.hour == hr:
+                    already_today = False
+                    if last:
+                        try:
+                            last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                            if last_dt.date() == now.date():
+                                already_today = True
+                        except Exception:
+                            pass
+                    if not already_today:
+                        from routes.maintenance import _run_auto_cleanup_once
+                        r = await _run_auto_cleanup_once()
+                        log.info("auto-cleanup cron run: %s", r)
+        except Exception as ex:
+            log.warning("auto-cleanup cron error: %s", ex)
+        # Her saat kontrol et — doğru saat gelince tetikle
+        await asyncio.sleep(3600)
 
 
 async def _weekly_ai_report_task():

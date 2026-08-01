@@ -8,6 +8,7 @@ import {
   Globe, Database, Filter, FileText, MailCheck,
 } from "lucide-react";
 import { Badge } from "@/components/ui-primitives";
+import GeoBlockedHeatmap from "@/components/GeoBlockedHeatmap";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { useI18n, useT } from "@/i18n";
@@ -1056,22 +1057,7 @@ function PaymentOptions() {
               </div>
             )}
             {method === "havale" && havaleData && (
-              <div className="space-y-3" data-testid="havale-result">
-                <div className="text-sm font-semibold text-emerald-300 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4"/> Havale Bilgileri Hazır
-                </div>
-                <div className="space-y-1.5 text-xs">
-                  <BankRow label="Banka" value={havaleData.bank}/>
-                  <BankRow label="Alıcı" value={havaleData.beneficiary}/>
-                  <BankRow label="IBAN" value={havaleData.iban} copy={() => copy(havaleData.iban)}/>
-                  <BankRow label="Tutar" value={`${havaleData.amount} TL`}/>
-                  <BankRow label="Referans" value={havaleData.reference} copy={() => copy(havaleData.reference)}/>
-                </div>
-                <div className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded p-2.5 leading-relaxed">
-                  ⚠️ Açıklama alanına <b className="mono">{havaleData.reference}</b> yazmayı unutmayın!
-                  Ödemeniz doğrulandıktan sonra lisansınız 24 saat içinde e-postanıza gelir.
-                </div>
-              </div>
+              <HavaleResult havaleData={havaleData} onDone={() => setHavaleData({ ...havaleData, _notified: true })}/>
             )}
           </div>
         </div>
@@ -1094,6 +1080,84 @@ function BankRow({ label, value, copy }) {
   );
 }
 
+function HavaleResult({ havaleData, onDone }) {
+  const [showNotify, setShowNotify] = useState(false);
+  const [txRef, setTxRef] = useState("");
+  const [sender, setSender] = useState("");
+  const [note, setNote] = useState("");
+  const notify = useMutation({
+    mutationFn: () => api.havaleNotify({
+      merchant_oid: havaleData.reference,
+      transaction_ref: txRef, sender_name: sender, note,
+    }),
+    onSuccess: () => {
+      toast.success("✓ Bildiriminiz admin'e iletildi. En geç 2 saat içinde onaylanacak.", { duration: 8000 });
+      onDone?.();
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Bildirim gönderilemedi"),
+  });
+  const copy = (t) => { navigator.clipboard.writeText(t); toast.success("Kopyalandı"); };
+
+  if (havaleData._notified) {
+    return (
+      <div className="text-center py-10" data-testid="havale-notified">
+        <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+          <CheckCircle2 className="w-8 h-8 text-emerald-400"/>
+        </div>
+        <div className="text-lg font-semibold text-emerald-300">Bildirim Gönderildi</div>
+        <div className="text-xs text-slate-400 mt-2">Ödemeniz doğrulanınca lisansınız otomatik e-postanıza gelecek.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3" data-testid="havale-result">
+      <div className="text-sm font-semibold text-emerald-300 flex items-center gap-1.5">
+        <CheckCircle2 className="w-4 h-4"/> Havale Bilgileri Hazır
+      </div>
+      <div className="space-y-1.5 text-xs">
+        <BankRow label="Banka" value={havaleData.bank}/>
+        <BankRow label="Alıcı" value={havaleData.beneficiary}/>
+        <BankRow label="IBAN" value={havaleData.iban} copy={() => copy(havaleData.iban)}/>
+        <BankRow label="Tutar" value={`${havaleData.amount} TL`}/>
+        <BankRow label="Referans" value={havaleData.reference} copy={() => copy(havaleData.reference)}/>
+      </div>
+      <div className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded p-2.5 leading-relaxed">
+        ⚠️ Açıklama alanına <b className="mono">{havaleData.reference}</b> yazmayı unutmayın!
+      </div>
+
+      {!showNotify ? (
+        <button onClick={() => setShowNotify(true)}
+                data-testid="havale-notify-open"
+                className="w-full mt-2 px-4 py-3 rounded-md bg-gradient-to-br from-emerald-500 to-emerald-600 text-white font-medium shadow-lg hover:from-emerald-400 hover:to-emerald-500 inline-flex items-center justify-center gap-2">
+          <BadgeCheck className="w-4 h-4"/> Havale Yaptım · Bildir
+        </button>
+      ) : (
+        <div className="space-y-2 mt-2 p-3 bg-slate-950 border border-emerald-500/30 rounded" data-testid="havale-notify-form">
+          <div className="text-xs text-slate-300 mb-1">Aşağıdaki bilgileri doldurup admin'e bildirin:</div>
+          <input value={txRef} onChange={(e) => setTxRef(e.target.value)}
+                 placeholder="Banka referansı / dekont no"
+                 data-testid="havale-notify-ref"
+                 className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-100 mono focus:outline-none focus:border-emerald-500"/>
+          <input value={sender} onChange={(e) => setSender(e.target.value)}
+                 placeholder="Gönderen ad soyad (banka hesabındaki)"
+                 data-testid="havale-notify-sender"
+                 className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-100 focus:outline-none focus:border-emerald-500"/>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)}
+                    placeholder="İsteğe bağlı not"
+                    rows="2"
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-100 focus:outline-none focus:border-emerald-500"/>
+          <button onClick={() => notify.mutate()} disabled={notify.isPending}
+                  data-testid="havale-notify-submit"
+                  className="w-full px-4 py-2 rounded bg-emerald-500 text-white font-medium disabled:opacity-40 text-sm inline-flex items-center justify-center gap-2">
+            <BadgeCheck className="w-4 h-4"/>
+            {notify.isPending ? "Gönderiliyor..." : "Admin'e Bildir"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Landing() {
   const { effective } = useI18n();
   return (
@@ -1102,6 +1166,7 @@ export default function Landing() {
       <Hero />
       <Features />
       <ModulesShowcase />
+      <GeoBlockedHeatmap />
       <Stats />
       <HowItWorks />
       <Pricing />

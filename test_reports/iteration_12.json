@@ -1,0 +1,38 @@
+{
+  "summary": "v20 verification of GökyüzüWebSpam — 5 new features across payments, maintenance, geo, and security. Backend pytest: 6/6 PASS (Havale notify→pending→inbox→approve chain, reject flow with reason recording, auto-cleanup default cfg enabled/90d/archive/day_of_month=1, POST persist + GET readback, run-now archive execution with total counter, geo/blocked-heatmap items with country/name/count/lat/lon). Frontend playwright e2e: all 5 flows working — Landing GeoBlockedHeatmap SVG renders, Havale flow create→IBAN card→'Havale Yaptım · Bildir' opens form→submit→'Bildirim Gönderildi' success card visible, /panel/payments-admin loads with 4 tabs (pending/inbox/all/refresh) and pending-list container, /panel/maintenance shows 'Otomatik Aylık Temizlik' card with 'Ayarları Kaydet' + 'Şimdi Çalıştır' buttons, /panel/security default tab='dashboard' with TrustDashboard rendering trust-score value + Modül Durumları grid (9/11 active) + Kritik Bulgu tile + Reputation Snapshot + embedded modules.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Security /panel/security Dashboard", "issues": ["Trust Score renders as 0 (Kritik) because 8 exploit findings deduct heavily from finalScore. Numerically correct given data, but for a fresh install/demo the score may feel harsh. Consider softer weight or clamp/floor when findings are seeded test data."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v20_havale_autocleanup_geo.py",
+    "/app/test_reports/pytest/v20_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/payments.py — havale/notify correctly persists user_transaction_ref/user_sender_name/user_note, inserts inbox notification with read=false. approve() and reject() both bulk-clear related inbox notifications via update_many — good cross-collection consistency.",
+    "routes/payments.py admin/pending groups awaiting_transfer + notified_by_user and returns notified_count separately so UI can badge the tab count. Clean contract.",
+    "routes/maintenance.py — _run_auto_cleanup_once uses idempotent update with {archived: {$ne: True}} guard so re-runs don't double-count. Archive is a soft flag ($set archived:true, archived_at) not a delete — matches user request.",
+    "routes/maintenance.py auto-cleanup email report is wrapped in try/except so mail failure doesn't crash the cron. Good defensive design. However last_run_at/last_archived is updated via db.settings but the _key filter uses {_key:auto_cleanup} while the read side uses same key — consistent, ok.",
+    "routes/maintenance.py geo/blocked-heatmap aggregates BOTH db.lists (blacklist ip) AND db.threat_iocs — same IP counted twice if it exists in both. Depending on intent this is either double-count or double-weight; consider dedup by IP if concerned. Currently returns 3 countries US/CN/GB per agent notes.",
+    "Landing.js Havale notify UX is clean: success card replaces form (havale-notified testid), 8s toast, error path handled. Bank IBAN + TRF reference shown before notify.",
+    "PaymentsAdmin.js has good testids (pa-refresh, pa-tab-{k}, pa-pending-list, pa-approve-{oid}, pa-reject-{oid}, pa-all-table). Solid for future regression.",
+    "Security.js TrustDashboard is set as default tab and computes finalScore from modules + findings. finalScore formula could dip to 0 with only a handful of critical findings — see design_issues.",
+    "server.py _monthly_auto_cleanup_task background loop runs every hour and only fires on exact day_of_month+hour_utc match — acceptable, but if server restarts within that hour AFTER the trigger already ran, an idempotency guard on last_run_at date would prevent double-run. Currently relies on process staying up for the hour."
+  ],
+  "updated_files": ["/app/backend/tests/test_v20_havale_autocleanup_geo.py"],
+  "success_rate": {
+    "backend": "100% (6/6 pytest — havale full flow + reject, auto-cleanup default/set/run-now archive, geo heatmap)",
+    "frontend": "100% (5/5 v20 flows — Landing Heatmap render, Havale notify→success card, Payments-Admin 4 tabs+refresh+pending list, Maintenance AutoCleanup card+buttons, Security Dashboard default with trust-score+modules grid)"
+  },
+  "test_credentials": "Master license MS-C02AB012652A4FE692D69676 from /app/memory/test_credentials.md (set in localStorage as gws.event_license).",
+  "seed_data_creation": "Created 3 TEST_ Havale orders (2 via pytest — 1 approved 1 rejected, 1 via frontend — notified). Wrote/overwrote auto_cleanup settings doc with older_than_days=60/90 during tests. Executed one run-now archive pass (safe — archive flag only, no deletion).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "v20 batch is fully green. Backend tests: /app/backend/tests/test_v20_havale_autocleanup_geo.py (use REACT_APP_BACKEND_URL env + -o addopts=\"\" to bypass xdist). Full notify→pending→inbox→read→approve chain verified with data assertions. Reject path records reject_reason. Auto-cleanup archives via 'archived:true' soft-flag (not delete). Geo heatmap aggregates db.lists+db.threat_iocs (potential double-count same IP — flagged in code review). Frontend testids added for PaymentsAdmin (pa-*), Havale notify (havale-notify-*), Trust Dashboard (trust-dashboard, trust-score). No blockers open.",
+  "rca_of_the_issue": "N/A — no bugs found."
+}

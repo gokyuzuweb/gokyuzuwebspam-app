@@ -37,6 +37,7 @@ import Docs from "@/pages/Docs";
 import ThreatIntel from "@/pages/ThreatIntel";
 import MailHealth from "@/pages/MailHealth";
 import Maintenance from "@/pages/Maintenance";
+import PaymentsAdmin from "@/pages/PaymentsAdmin";
 import Header from "@/components/Header";
 
 const NAV = [
@@ -60,6 +61,7 @@ const NAV = [
   { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs" },
   { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings" },
   { to: "/panel/maintenance", key: "maintenance", icon: HardDrive, testid: "nav-maintenance", label: "DB Bakım" },
+  { to: "/panel/payments-admin", key: "payments_admin", icon: DollarSign, testid: "nav-payments-admin", label: "Ödeme Panosu" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
 ];
@@ -154,6 +156,7 @@ function Shell() {
             <Route path="/threat-intel" element={<ThreatIntel />} />
             <Route path="/mail-health" element={<MailHealth />} />
             <Route path="/maintenance" element={<Maintenance />} />
+            <Route path="/payments-admin" element={<PaymentsAdmin />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/quarantine" element={<Quarantine />} />
             <Route path="/lists" element={<Lists />} />

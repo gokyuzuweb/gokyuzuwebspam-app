@@ -61,6 +61,18 @@ class HavaleApprove(BaseModel):
     admin_note: Optional[str] = ""
 
 
+class HavaleReject(BaseModel):
+    merchant_oid: str
+    reason: Optional[str] = ""
+
+
+class HavaleNotify(BaseModel):
+    merchant_oid: str
+    transaction_ref: Optional[str] = ""    # kullanıcının verdiği banka referansı
+    sender_name: Optional[str] = ""
+    note: Optional[str] = ""
+
+
 def _get_ip(req: Request) -> str:
     xff = req.headers.get("x-forwarded-for", "")
     if xff:
@@ -220,7 +232,85 @@ async def havale_approve(payload: HavaleApprove):
         {"$set": {"status": "paid", "paid_at": _iso(),
                   "admin_note": payload.admin_note, "approved_by": "master"}},
     )
+    # Bildirimi kapat
+    await db.notifications_inbox.update_many(
+        {"kind": "havale_notified", "merchant_oid": payload.merchant_oid, "read": False},
+        {"$set": {"read": True, "read_at": _iso()}},
+    )
     return {"ok": True, "merchant_oid": payload.merchant_oid, "status": "paid"}
+
+
+@router.post("/havale/reject")
+async def havale_reject(payload: HavaleReject):
+    """Admin havaleyi reddeder."""
+    r = await db.payments.find_one({"merchant_oid": payload.merchant_oid}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Sipariş bulunamadı")
+    await db.payments.update_one(
+        {"merchant_oid": payload.merchant_oid},
+        {"$set": {"status": "rejected", "rejected_at": _iso(),
+                  "reject_reason": payload.reason}},
+    )
+    await db.notifications_inbox.update_many(
+        {"kind": "havale_notified", "merchant_oid": payload.merchant_oid, "read": False},
+        {"$set": {"read": True, "read_at": _iso()}},
+    )
+    return {"ok": True, "merchant_oid": payload.merchant_oid, "status": "rejected"}
+
+
+@router.post("/havale/notify")
+async def havale_notify(payload: HavaleNotify):
+    """Kullanıcı 'havale yaptım' der. Admin panelinde bekleyen listesine geçer + inbox notification üretilir."""
+    r = await db.payments.find_one({"merchant_oid": payload.merchant_oid}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Sipariş bulunamadı")
+    if r.get("status") == "paid":
+        return {"ok": True, "already": "paid"}
+    await db.payments.update_one(
+        {"merchant_oid": payload.merchant_oid},
+        {"$set": {"status": "notified_by_user", "notified_at": _iso(),
+                  "user_transaction_ref": payload.transaction_ref,
+                  "user_sender_name": payload.sender_name,
+                  "user_note": payload.note}},
+    )
+    # Admin inbox
+    await db.notifications_inbox.insert_one({
+        "id": str(uuid.uuid4()), "kind": "havale_notified",
+        "merchant_oid": payload.merchant_oid,
+        "amount": r.get("amount"), "email": r.get("email"),
+        "user_name": r.get("user_name"),
+        "sender_name": payload.sender_name,
+        "transaction_ref": payload.transaction_ref,
+        "note": payload.note, "created_at": _iso(),
+        "read": False,
+    })
+    return {"ok": True, "merchant_oid": payload.merchant_oid, "status": "notified_by_user"}
+
+
+@router.get("/admin/pending")
+async def admin_pending():
+    """Admin: onay bekleyen havaleler (notified_by_user + awaiting_transfer)."""
+    rows = await db.payments.find(
+        {"provider": "havale", "status": {"$in": ["notified_by_user", "awaiting_transfer"]}},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(200)
+    return {"items": rows, "count": len(rows),
+            "notified_count": sum(1 for r in rows if r.get("status") == "notified_by_user")}
+
+
+@router.get("/admin/inbox")
+async def admin_inbox(limit: int = 50, only_unread: bool = False):
+    q: dict = {}
+    if only_unread: q["read"] = False
+    rows = await db.notifications_inbox.find(q, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
+    unread = await db.notifications_inbox.count_documents({"read": False})
+    return {"items": rows, "unread": unread, "count": len(rows)}
+
+
+@router.post("/admin/inbox/{nid}/read")
+async def admin_inbox_read(nid: str):
+    await db.notifications_inbox.update_one({"id": nid}, {"$set": {"read": True, "read_at": _iso()}})
+    return {"ok": True}
 
 
 @router.get("/orders")

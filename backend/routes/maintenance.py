@@ -144,6 +144,150 @@ async def cleanup_log(limit: int = 20):
 
 
 # ============================================================================
+# AUTO-CLEANUP CRON: her ayın 1'inde 90 günden eski data'yı "askıya al"
+# (silmez — status=archived, archived_at ekler; sonra manuel silinebilir)
+# ============================================================================
+class AutoCleanupCfg(BaseModel):
+    enabled: bool = True
+    older_than_days: int = 90
+    day_of_month: int = 1        # her ayın X'i
+    hour_utc: int = 3            # UTC 03:00
+    action: str = "archive"      # "archive" | "delete"
+    email_to: Optional[str] = None
+    last_run_at: Optional[str] = None
+    last_archived: Optional[int] = None
+
+
+@router.get("/auto-cleanup")
+async def get_auto_cleanup():
+    doc = await db.settings.find_one({"_key": "auto_cleanup"}, {"_id": 0}) or {}
+    doc.pop("_key", None)
+    if not doc:
+        doc = AutoCleanupCfg().model_dump()
+    return doc
+
+
+@router.post("/auto-cleanup")
+async def set_auto_cleanup(cfg: AutoCleanupCfg):
+    await db.settings.update_one(
+        {"_key": "auto_cleanup"},
+        {"$set": {"_key": "auto_cleanup", **cfg.model_dump()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@router.post("/auto-cleanup/run-now")
+async def auto_cleanup_run_now():
+    """Cron'u beklemeden hemen çalıştır (test/manual)."""
+    from datetime import timedelta
+    r = await _run_auto_cleanup_once()
+    return r
+
+
+async def _run_auto_cleanup_once():
+    """Actual cron job body — 90 günden eski verileri arşivle veya sil, sonra e-posta gönder."""
+    from datetime import timedelta
+    cfg_doc = await db.settings.find_one({"_key": "auto_cleanup"}, {"_id": 0}) or {}
+    days = int(cfg_doc.get("older_than_days") or 90)
+    action = cfg_doc.get("action") or "archive"
+    email_to = cfg_doc.get("email_to")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    filter_query = {"$or": [
+        {"created_at": {"$lt": cutoff}},
+        {"ingested_at": {"$lt": cutoff}},
+        {"ts": {"$lt": cutoff}},
+    ]}
+    results = []
+    total = 0
+    for name in DATA_COLS:
+        try:
+            if action == "delete":
+                r = await db[name].delete_many(filter_query)
+                results.append({"collection": name, "deleted": r.deleted_count})
+                total += r.deleted_count
+            else:
+                r = await db[name].update_many(
+                    {**filter_query, "archived": {"$ne": True}},
+                    {"$set": {"archived": True, "archived_at": _iso()}},
+                )
+                results.append({"collection": name, "archived": r.modified_count})
+                total += r.modified_count
+        except Exception as ex:
+            results.append({"collection": name, "error": str(ex)[:100]})
+    log_doc = {
+        "id": str(uuid.uuid4()), "action": f"auto_cleanup_{action}",
+        "older_than_days": days, "collections": DATA_COLS,
+        "deleted": total if action == "delete" else 0,
+        "archived": total if action == "archive" else 0,
+        "results": results, "created_at": _iso(),
+    }
+    await db.maintenance_log.insert_one(log_doc)
+    await db.settings.update_one({"_key": "auto_cleanup"}, {"$set": {
+        "last_run_at": _iso(),
+        "last_archived": total if action == "archive" else 0,
+        "last_deleted": total if action == "delete" else 0,
+    }})
+    # E-mail rapor
+    if email_to:
+        try:
+            from server import _send_email
+            action_tr = "arşivlendi" if action == "archive" else "silindi"
+            body = (
+                f"GökyüzüWebSpam · Otomatik Veri Bakımı Raporu\n"
+                f"Tarih: {_iso()}\nEşik: {days} günden eski\nAksiyon: {action_tr}\n"
+                f"Toplam kayıt: {total}\n\nKoleksiyonlar:\n"
+                + "\n".join(f"  · {r['collection']}: "
+                            + str(r.get('deleted') or r.get('archived') or r.get('error') or 0)
+                            for r in results)
+                + "\n\n(Ayarlar ve lisanslar KORUNDU.)"
+            )
+            await _send_email(email_to, "🧹 Otomatik Veri Bakımı Raporu — GökyüzüWebSpam", body)
+        except Exception as ex:
+            _ = ex  # sessizce yut, cron başarısız gitmez
+    return {"ok": True, "total": total, "action": action, "collections": len(results)}
+
+
+# ============================================================================
+# GEO HEATMAP: bloklanan IP'lerin ülkelere göre yoğunluğu (Landing için)
+# ============================================================================
+@router.get("/geo/blocked-heatmap")
+async def geo_heatmap():
+    """Bloklanan IP'leri ülkeye göre grupla. Landing world-map için."""
+    try:
+        from routes.security_adv import _ip_to_country, COUNTRY_COORDS
+    except Exception:
+        return {"items": [], "total": 0}
+    counts: dict[str, int] = {}
+    async for it in db.lists.find({"kind": "blacklist", "type": "ip"}, {"value": 1, "_id": 0}):
+        cc = _ip_to_country(it.get("value", ""))
+        if cc and cc != "LOCAL":
+            counts[cc] = counts.get(cc, 0) + 1
+    async for it in db.threat_iocs.find({"type": "ip"}, {"value": 1, "_id": 0}):
+        cc = _ip_to_country(it.get("value", ""))
+        if cc and cc != "LOCAL":
+            counts[cc] = counts.get(cc, 0) + 1
+    CC_NAME = {
+        "US": "ABD", "CN": "Çin", "RU": "Rusya", "DE": "Almanya", "TR": "Türkiye",
+        "GB": "Birleşik Krallık", "IN": "Hindistan", "BR": "Brezilya", "JP": "Japonya",
+        "KR": "G. Kore", "NL": "Hollanda", "FR": "Fransa", "IT": "İtalya", "ES": "İspanya",
+        "CA": "Kanada", "AU": "Avustralya", "UA": "Ukrayna", "PL": "Polonya",
+        "VN": "Vietnam", "TH": "Tayland", "ID": "Endonezya", "IR": "İran",
+        "PK": "Pakistan", "EG": "Mısır", "SA": "S. Arabistan", "ZA": "G. Afrika",
+    }
+    items = []
+    for cc, n in counts.items():
+        coord = COUNTRY_COORDS.get(cc)
+        items.append({
+            "country": cc, "name": CC_NAME.get(cc, cc), "count": n,
+            "lat": coord[0] if coord else None, "lon": coord[1] if coord else None,
+        })
+    items.sort(key=lambda x: x["count"], reverse=True)
+    return {"items": items, "total": sum(counts.values())}
+
+
+
+# ============================================================================
 # IP BLOCK: mail detayından "IP'yi bloka al" işlemi
 # ============================================================================
 class IPBlockIn(BaseModel):

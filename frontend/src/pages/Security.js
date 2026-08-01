@@ -8,6 +8,7 @@ import {
   Link, Brain, Server, ShieldCheck, Play, XCircle, AlertTriangle,
 } from "lucide-react";
 import CountryBlockCard from "@/components/CountryBlockCard";
+import GeoBlockedHeatmap from "@/components/GeoBlockedHeatmap";
 import ModuleFooter from "@/components/ModuleFooter";
 
 const LICKEY = () => (typeof window !== "undefined"
@@ -29,7 +30,7 @@ const STATUS_TONE = {
 
 export default function Security() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState("dashboard");
   const [activeModule, setActiveModule] = useState(null);   // detail drawer for overview cards
   const [expandedFinding, setExpandedFinding] = useState(null);
   const modules = useQuery({ queryKey: ["ms-modules"], queryFn: () => api.msModules(LICKEY()) });
@@ -62,15 +63,20 @@ export default function Security() {
           <p className="text-xs text-slate-500 mt-0.5">10 modül · Exploit tarayıcı · Sandbox · Reputation · BEC · SIEM</p>
         </div>
         <div className="flex gap-1 bg-slate-800/50 rounded p-1">
-          {["overview", "exploit", "bec", "sandbox", "reputation", "geo"].map(k => (
+          {["dashboard", "overview", "exploit", "bec", "sandbox", "reputation", "geo"].map(k => (
             <button key={k} data-testid={`sec-tab-${k}`} onClick={() => setTab(k)}
                     className={`text-xs px-3 py-1.5 rounded transition-colors
                     ${tab === k ? "bg-indigo-500/20 text-indigo-300" : "text-slate-400 hover:text-slate-100"}`}>
-              {{overview: "Genel", exploit: "Exploit", bec: "BEC", sandbox: "Sandbox", reputation: "Reputation", geo: "Coğrafi"}[k]}
+              {{dashboard: "Dashboard", overview: "Genel", exploit: "Exploit", bec: "BEC", sandbox: "Sandbox", reputation: "Reputation", geo: "Coğrafi"}[k]}
             </button>
           ))}
         </div>
       </div>
+
+      {tab === "dashboard" && <TrustDashboard modules={modules.data?.modules || []}
+                                              findings={findings.data?.items || []}
+                                              latest={latest.data}
+                                              reputation={reputation.data}/>}
 
       {tab === "overview" && (
         <>
@@ -473,5 +479,169 @@ function ReputationTab({ defaultIp }) {
                     "PTR reverse DNS'i MX ile eşleştir (yoksa +1 listelenme riski)",
                     "SPF hard fail + DKIM + DMARC reject → yeniden listelenme minimize"]}/>
     </>
+  );
+}
+
+/* ---------------- TRUST CENTER DASHBOARD ---------------- */
+function TrustDashboard({ modules, findings, latest, reputation }) {
+  const activeMods = modules.filter((m) => m.status === "active").length;
+  const totalMods = modules.length;
+  const criticalFindings = findings.filter((f) => f.severity === "critical").length;
+  const highFindings = findings.filter((f) => f.severity === "high").length;
+  const rblListed = (reputation?.results || []).filter((r) => r.listed).length;
+  const rblTotal = (reputation?.results || []).length;
+
+  const trustScore = Math.round(
+    100
+    - (criticalFindings * 20 + highFindings * 10)
+    - (rblListed * 5)
+    - Math.max(0, totalMods - activeMods) * 3
+  );
+  const finalScore = Math.max(0, Math.min(100, trustScore));
+  const scoreTone = finalScore >= 85 ? "text-emerald-400"
+    : finalScore >= 60 ? "text-amber-400" : "text-rose-400";
+  const scoreLabel = finalScore >= 85 ? "Mükemmel"
+    : finalScore >= 60 ? "İyi" : finalScore >= 30 ? "Dikkat" : "Kritik";
+
+  return (
+    <div className="space-y-4" data-testid="trust-dashboard">
+      {/* Hero score */}
+      <Card>
+        <CardBody className="py-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+            <div className="text-center md:border-r md:border-slate-800 md:pr-6">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">Güven Skoru</div>
+              <div className={`text-7xl font-bold mono ${scoreTone}`} data-testid="trust-score">{finalScore}</div>
+              <div className={`text-sm font-semibold ${scoreTone}`}>{scoreLabel}</div>
+              <div className="text-[10px] text-slate-500 mt-1">0-100 arası · gerçek-zamanlı</div>
+            </div>
+            <div className="md:col-span-2 grid grid-cols-2 gap-3">
+              <TCTile icon={ShieldCheck} label="Aktif Modül" value={`${activeMods}/${totalMods}`} tone="emerald"/>
+              <TCTile icon={Bug} label="Kritik Bulgu" value={criticalFindings + highFindings} tone={(criticalFindings + highFindings) ? "rose" : "emerald"}/>
+              <TCTile icon={ShieldAlert} label="RBL Listeleme" value={`${rblListed}/${rblTotal || "-"}`} tone={rblListed ? "amber" : "emerald"}/>
+              <TCTile icon={Play} label="Son Tarama" value={latest ? (latest.finished_at || "-").slice(11, 16) : "yok"} tone="indigo"/>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Module status strip */}
+      <Card>
+        <CardHeader title="Modül Durumları" subtitle="Renk kodlu canlı sağlık göstergesi"/>
+        <CardBody>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            {modules.map((m) => {
+              const tone = STATUS_TONE[m.status] || STATUS_TONE.off;
+              const Icon = ICONS[m.icon] || ShieldCheck;
+              return (
+                <div key={m.key} className={`p-3 rounded border ${tone} text-center`}>
+                  <Icon className="w-4 h-4 mx-auto mb-1 opacity-80"/>
+                  <div className="text-[11px] font-medium text-slate-100 truncate">{m.label}</div>
+                  <div className="text-[9px] mono uppercase opacity-75">{m.status}</div>
+                </div>
+              );
+            })}
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Recent findings */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader title="Son Bulgular" subtitle="Exploit / Webshell tarayıcı"/>
+          <CardBody>
+            {findings.length === 0 ? (
+              <div className="text-center text-xs text-slate-500 py-6">
+                <ShieldCheck className="w-10 h-10 text-emerald-500 mx-auto mb-2"/>
+                Tespit yok · sisteminiz temiz
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {findings.slice(0, 5).map((f) => (
+                  <div key={f.id} className="flex items-center gap-2 text-xs bg-slate-900/40 border border-slate-800 rounded px-3 py-2">
+                    <span className={`w-2 h-2 rounded-full ${
+                      f.severity === "critical" ? "bg-rose-500" :
+                      f.severity === "high" ? "bg-orange-500" :
+                      f.severity === "medium" ? "bg-amber-500" : "bg-slate-500"}`}/>
+                    <span className="mono text-slate-400 shrink-0">{(f.detected_at || "").slice(11, 16)}</span>
+                    <span className="text-slate-200 flex-1 truncate">{f.pattern || f.type || "Kural"}</span>
+                    <span className="text-slate-500 text-[10px] mono truncate max-w-[40%]">{f.path || "-"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardBody>
+        </Card>
+
+        {/* Reputation snapshot */}
+        <Card>
+          <CardHeader title="Reputation Snapshot" subtitle={reputation ? `${rblTotal} RBL provider tarandı` : "Reputation tarama yapılmadı"}/>
+          <CardBody>
+            {!reputation ? (
+              <div className="text-center text-xs text-slate-500 py-6">
+                Reputation sekmesinden bir IP tarayın
+              </div>
+            ) : rblListed === 0 ? (
+              <div className="text-center py-6">
+                <ShieldCheck className="w-10 h-10 text-emerald-500 mx-auto mb-2"/>
+                <div className="text-sm text-emerald-300 font-semibold">Temiz · {rblTotal} RBL kontrol edildi</div>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {(reputation.results || []).filter((r) => r.listed).slice(0, 6).map((r) => (
+                  <div key={r.name} className="flex items-center justify-between text-xs bg-rose-500/5 border border-rose-500/20 rounded px-3 py-2">
+                    <span className="text-rose-200">{r.name}</span>
+                    <a href={r.delist_url} target="_blank" rel="noreferrer"
+                       className="text-[10px] text-rose-400 hover:text-rose-300">Delisting →</a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+
+      {/* Compact geo heatmap */}
+      <Card>
+        <CardHeader title="Bloklanan IP'lerin Coğrafi Dağılımı" subtitle="Otomatik 30sn yenileme"/>
+        <CardBody className="p-0">
+          <GeoBlockedHeatmap compact/>
+        </CardBody>
+      </Card>
+
+      <ModuleFooter
+        title="Güven Merkezi Dashboard — Nasıl Hesaplanır?"
+        howItWorks="Trust Score = 100 - (kritik bulgu × 20) - (high bulgu × 10) - (RBL listed × 5) - (kapalı modül × 3). Tüm veriler gerçek-zamanlı Güvenlik modülleri, Exploit findings ve Reputation sonuçlarından beslenir."
+        technical={[
+          "Trust Score: 0-100 arası (85+ mükemmel, 60-84 iyi, 30-59 dikkat, <30 kritik)",
+          "Auto-refresh: 15-30sn tüm alt bileşenlerde",
+          "GeoHeatmap: /api/maintenance/geo/blocked-heatmap (lists + threat_iocs birleşimi)",
+        ]}
+        recommendations={[
+          "Skor <60 ise önce kritik bulguları kapatın (Exploit tab)",
+          "RBL listed varsa Reputation tab'ından toplu delisting başlatın",
+          "Kapalı modülleri Genel tab'dan aktive edin",
+        ]}
+      />
+    </div>
+  );
+}
+
+function TCTile({ icon: Icon, label, value, tone = "slate" }) {
+  const toneMap = {
+    emerald: "border-emerald-500/40 text-emerald-300 bg-emerald-500/5",
+    rose: "border-rose-500/40 text-rose-300 bg-rose-500/5",
+    amber: "border-amber-500/40 text-amber-300 bg-amber-500/5",
+    indigo: "border-indigo-500/40 text-indigo-300 bg-indigo-500/5",
+    slate: "border-slate-700 text-slate-300 bg-slate-800/40",
+  };
+  return (
+    <div className={`p-3 rounded-lg border ${toneMap[tone]}`}>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] uppercase tracking-widest opacity-70">{label}</span>
+        <Icon className="w-4 h-4 opacity-70"/>
+      </div>
+      <div className="text-2xl font-bold mono">{value}</div>
+    </div>
   );
 }

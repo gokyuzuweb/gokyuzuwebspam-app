@@ -403,6 +403,17 @@ export const api = {
   paytrCreate: (payload) => client.post("/payments/paytr/create", payload).then(r => r.data),
   havaleCreate: (payload) => client.post("/payments/havale/create", payload).then(r => r.data),
   havaleApprove: (payload) => client.post("/payments/havale/approve", payload).then(r => r.data),
+  havaleReject: (payload) => client.post("/payments/havale/reject", payload).then(r => r.data),
+  havaleNotify: (payload) => client.post("/payments/havale/notify", payload).then(r => r.data),
   paymentOrders: (params = {}) => client.get("/payments/orders", { params }).then(r => r.data),
   paymentOrder: (mid) => client.get(`/payments/order/${mid}`).then(r => r.data),
+  adminPendingHavale: () => client.get("/payments/admin/pending").then(r => r.data),
+  adminInbox: (params = {}) => client.get("/payments/admin/inbox", { params }).then(r => r.data),
+  adminInboxRead: (nid) => client.post(`/payments/admin/inbox/${nid}/read`).then(r => r.data),
+
+  // Auto-cleanup cron config + geo heatmap
+  getAutoCleanup: () => client.get("/maintenance/auto-cleanup").then(r => r.data),
+  setAutoCleanup: (cfg) => client.post("/maintenance/auto-cleanup", cfg).then(r => r.data),
+  runAutoCleanupNow: () => client.post("/maintenance/auto-cleanup/run-now").then(r => r.data),
+  geoBlockedHeatmap: () => client.get("/maintenance/geo/blocked-heatmap").then(r => r.data),
 };

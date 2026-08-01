@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Database, Trash2, AlertTriangle, ShieldCheck, HardDrive, RefreshCw } from "lucide-react";
+import { Database, Trash2, AlertTriangle, ShieldCheck, HardDrive, RefreshCw, Clock, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -119,6 +119,9 @@ export default function Maintenance() {
           </div>
         </CardBody>
       </Card>
+
+      {/* Auto-cleanup cron config */}
+      <AutoCleanupCard/>
 
       {/* Collections table */}
       <Card>
@@ -263,3 +266,104 @@ function Stat({ label, value, hint, tone = "text-slate-100", icon }) {
     </div>
   );
 }
+
+function AutoCleanupCard() {
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["auto-cleanup-cfg"], queryFn: api.getAutoCleanup });
+  const [local, setLocal] = useState(null);
+  const cur = local || cfg.data || {};
+  const set = (k, v) => setLocal({ ...(local || cfg.data || {}), [k]: v });
+  const save = useMutation({
+    mutationFn: (payload) => api.setAutoCleanup(payload),
+    onSuccess: () => {
+      toast.success("Otomatik temizlik ayarı kaydedildi");
+      qc.invalidateQueries({ queryKey: ["auto-cleanup-cfg"] });
+      setLocal(null);
+    },
+  });
+  const runNow = useMutation({
+    mutationFn: () => api.runAutoCleanupNow(),
+    onSuccess: (r) => {
+      toast.success(`Şimdi çalıştırıldı: ${r.total} kayıt ${r.action === "archive" ? "arşivlendi" : "silindi"}`);
+      qc.invalidateQueries({ queryKey: ["db-usage"] });
+      qc.invalidateQueries({ queryKey: ["cleanup-log"] });
+    },
+  });
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><Clock className="w-4 h-4 text-indigo-400"/> Otomatik Aylık Temizlik</span>}
+        subtitle="Her ayın 1'inde belirli günden eski veriler otomatik askıya alınır ve rapor e-posta ile gönderilir."
+      />
+      <CardBody className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <label className="text-xs">
+            <div className="text-slate-500 mb-1">Aksiyon</div>
+            <select value={cur.action || "archive"} onChange={(e) => set("action", e.target.value)}
+                    data-testid="ac-action"
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-slate-200">
+              <option value="archive">Askıya Al (arşiv işareti)</option>
+              <option value="delete">Sil (kalıcı)</option>
+            </select>
+          </label>
+          <label className="text-xs">
+            <div className="text-slate-500 mb-1">Kaç günden eski?</div>
+            <input type="number" min="1" max="365" value={cur.older_than_days ?? 90}
+                   data-testid="ac-days"
+                   onChange={(e) => set("older_than_days", Number(e.target.value))}
+                   className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-slate-200 mono"/>
+          </label>
+          <label className="text-xs">
+            <div className="text-slate-500 mb-1">Ayın hangi günü?</div>
+            <input type="number" min="1" max="28" value={cur.day_of_month ?? 1}
+                   onChange={(e) => set("day_of_month", Number(e.target.value))}
+                   className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-slate-200 mono"/>
+          </label>
+          <label className="text-xs">
+            <div className="text-slate-500 mb-1">Saat (UTC)</div>
+            <input type="number" min="0" max="23" value={cur.hour_utc ?? 3}
+                   onChange={(e) => set("hour_utc", Number(e.target.value))}
+                   className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-slate-200 mono"/>
+          </label>
+        </div>
+        <label className="text-xs block">
+          <div className="text-slate-500 mb-1 flex items-center gap-1"><Mail className="w-3 h-3"/> Rapor e-posta adresi</div>
+          <input type="email" value={cur.email_to || ""} placeholder="admin@gokyuzuhosting.com"
+                 data-testid="ac-email"
+                 onChange={(e) => set("email_to", e.target.value)}
+                 className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-slate-200"/>
+        </label>
+        <label className="text-xs flex items-center gap-2">
+          <input type="checkbox" checked={cur.enabled ?? true}
+                 data-testid="ac-enabled"
+                 onChange={(e) => set("enabled", e.target.checked)}/>
+          <span className="text-slate-300">Otomatik temizlik aktif</span>
+        </label>
+        <div className="flex gap-2 pt-2 border-t border-slate-800">
+          <button onClick={() => save.mutate({
+                    enabled: cur.enabled ?? true, older_than_days: cur.older_than_days ?? 90,
+                    day_of_month: cur.day_of_month ?? 1, hour_utc: cur.hour_utc ?? 3,
+                    action: cur.action || "archive", email_to: cur.email_to || null,
+                  })}
+                  disabled={save.isPending || !local}
+                  data-testid="ac-save"
+                  className="text-sm px-4 py-2 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-40">
+            Ayarları Kaydet
+          </button>
+          <button onClick={() => runNow.mutate()} disabled={runNow.isPending}
+                  data-testid="ac-run-now"
+                  className="text-sm px-4 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-40 inline-flex items-center gap-2">
+            <RefreshCw className="w-3 h-3"/> Şimdi Çalıştır (test)
+          </button>
+          {cur.last_run_at && (
+            <div className="text-[11px] text-slate-500 ml-auto self-center">
+              Son çalıştırma: <span className="mono">{cur.last_run_at.slice(0, 19).replace("T", " ")}</span>
+              {cur.last_archived != null && <> · {cur.last_archived} kayıt</>}
+            </div>
+          )}
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
