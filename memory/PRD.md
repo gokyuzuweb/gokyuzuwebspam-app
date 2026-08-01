@@ -21,6 +21,7 @@ Multi-module WHM/cPanel mail-security SaaS with a React/FastAPI panel, WHM plugi
 - Country blocking + time-based rules + brute-force auto-block
 - Offline TopoJSON attack map
 - **v19 (Feb 2026)**: 14 RBLs + delisting, Mail Health (MX/SPF/DKIM/DMARC/PTR), Update Server, PayTR + Havale/EFT, Landing ModulesShowcase, DB usage + selective cleanup, IP block from mail detail, Turkish char fixes, PHP bridge for gokyuzubilgisayar.com
+- **v20 (Feb 2026)**: Payments Admin panel (approve/reject havale + inbox), Monthly auto-cleanup cron with email report (archive/delete), Geo Blocked-IP heatmap on Landing + Trust Dashboard, "Havale Yaptım" user notify flow, Trust Center Dashboard tab in Security
 
 ## Payment Integration
 - **PayTR iFrame API** — kartla ödeme (mock mode when merchant keys unset)

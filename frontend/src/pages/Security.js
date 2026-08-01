@@ -493,9 +493,9 @@ function TrustDashboard({ modules, findings, latest, reputation }) {
 
   const trustScore = Math.round(
     100
-    - (criticalFindings * 20 + highFindings * 10)
-    - (rblListed * 5)
-    - Math.max(0, totalMods - activeMods) * 3
+    - (criticalFindings * 12 + highFindings * 6)
+    - (rblListed * 4)
+    - Math.max(0, totalMods - activeMods) * 2
   );
   const finalScore = Math.max(0, Math.min(100, trustScore));
   const scoreTone = finalScore >= 85 ? "text-emerald-400"
