@@ -119,10 +119,16 @@ export default function SmtpSettings() {
                 gönderilir. FROM adresi otomatik olarak lisans domain'inden çözülür (örn: <span className="mono">noreply@gokyuzuhosting.com</span>).
                 Bayilere gönderilen mailler onların kendi domain'lerinden çıkar.
               </div>
-              <div className="text-[11px] text-slate-500 mt-2 flex items-center gap-3">
+              <div className="text-[11px] text-slate-500 mt-2 flex items-center gap-3 flex-wrap">
                 <span>✓ Ayar gerekmez</span>
                 <span>✓ Lisansa göre FROM otomatik</span>
                 <span>✓ WHM Exim ile uyumlu</span>
+              </div>
+              <div className="mt-2 p-2 rounded bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200">
+                <b>⚠️ Preview / Test Ortamı Kısıtlaması:</b> Şu an bulunduğumuz Emergent preview sunucusu <b>sadece local mail</b> gönderebilir
+                (dış domain'lere Exim relay yok). Bu yüzden <span className="mono">info@gokyuzuweb.com</span> gibi adreslere test maili
+                gitmiyor. <b>Kendi WHM sunucunuza kurduğunuzda</b> Otomatik Mod tam çalışacaktır.
+                <br/>Şu an test için: aşağıya <b>Gmail SMTP</b> veya <b>Sendgrid/Resend</b> bilgilerini girip Otomatik Modu kapatın.
               </div>
             </div>
           </label>

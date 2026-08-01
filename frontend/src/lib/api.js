@@ -442,5 +442,7 @@ export const api = {
     client.get("/master/relay/heartbeats", { params: { limit } }).then(r => r.data),
   masterPublishVersion: (payload) =>
     client.post("/master/publish-version", payload).then(r => r.data),
+  masterNotifyResellers: (payload) =>
+    client.post("/master/notify-resellers", payload).then(r => r.data),
   masterReleases: () => client.get("/master/releases").then(r => r.data),
 };

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Users, RefreshCw, Rocket, CheckCircle2, XCircle, AlertTriangle, Zap,
-  Package, Radio, TrendingUp, Server, ChevronRight,
+  Package, Radio, TrendingUp, Server, ChevronRight, Bell, Send,
 } from "lucide-react";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -12,6 +12,7 @@ import ModuleFooter from "@/components/ModuleFooter";
 export default function ResellersAdmin() {
   const qc = useQueryClient();
   const [publishOpen, setPublishOpen] = useState(false);
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
   const heartbeats = useQuery({
     queryKey: ["reseller-heartbeats"],
     queryFn: () => api.masterHeartbeats(100),
@@ -37,11 +38,16 @@ export default function ResellersAdmin() {
             Canlı heartbeat · Master versiyon yönetimi · Yayın geçmişi
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button onClick={() => setPublishOpen(true)}
                   data-testid="publish-version-btn"
                   className="text-sm px-4 py-2 rounded bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 inline-flex items-center gap-2">
             <Rocket className="w-4 h-4"/> Yeni Versiyon Yayınla
+          </button>
+          <button onClick={() => setBroadcastOpen(true)}
+                  data-testid="broadcast-btn"
+                  className="text-sm px-4 py-2 rounded bg-gradient-to-br from-indigo-500 to-fuchsia-600 text-white shadow-lg hover:brightness-110 inline-flex items-center gap-2">
+            <Bell className="w-4 h-4"/> Bayilere Duyuru Gönder
           </button>
           <button onClick={() => heartbeats.refetch()}
                   data-testid="refresh-heartbeats"
@@ -241,6 +247,69 @@ export default function ResellersAdmin() {
           }}
         />
       )}
+
+      {broadcastOpen && (
+        <BroadcastModal
+          onClose={() => setBroadcastOpen(false)}
+          totalResellers={d.total || 0}
+        />
+      )}
+    </div>
+  );
+}
+
+function BroadcastModal({ onClose, totalResellers }) {
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [urgent, setUrgent] = useState(false);
+  const send = useMutation({
+    mutationFn: () => api.masterNotifyResellers({ subject, message, urgent }),
+    onSuccess: (d) => {
+      toast.success(`✓ ${d.sent} bayiye mail gönderildi`, { duration: 6000 });
+      onClose();
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Gönderim başarısız"),
+  });
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+         onClick={onClose} data-testid="broadcast-modal">
+      <div className="bg-slate-900 border border-indigo-500/40 rounded-lg max-w-lg w-full p-6 space-y-4"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 text-indigo-300">
+          <Bell className="w-6 h-6"/>
+          <h2 className="text-lg font-bold">Bayilere Duyuru</h2>
+        </div>
+        <div className="text-xs text-slate-400">
+          <b>{totalResellers}</b> aktif bayiye e-posta gönderilecek. Her bayi kendi domain'inden alacak (Otomatik Mod).
+        </div>
+        <input value={subject} onChange={(e) => setSubject(e.target.value)}
+               placeholder="Konu (örn: Bakım duyurusu)"
+               data-testid="broadcast-subject"
+               className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded text-sm text-slate-100 focus:outline-none focus:border-indigo-500"/>
+        <textarea value={message} onChange={(e) => setMessage(e.target.value)}
+                  placeholder="Duyuru içeriği..."
+                  rows="6"
+                  data-testid="broadcast-message"
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded text-sm text-slate-100 focus:outline-none focus:border-indigo-500"/>
+        <label className="text-xs flex items-center gap-2">
+          <input type="checkbox" checked={urgent} onChange={(e) => setUrgent(e.target.checked)}
+                 data-testid="broadcast-urgent"/>
+          <span className="text-rose-300">🚨 Acil olarak işaretle (konu başında ACİL:)</span>
+        </label>
+        <div className="flex gap-2 pt-2 border-t border-slate-800">
+          <button onClick={onClose}
+                  className="flex-1 px-4 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 text-sm">
+            İptal
+          </button>
+          <button onClick={() => send.mutate()}
+                  disabled={!subject || !message || send.isPending}
+                  data-testid="broadcast-send"
+                  className="flex-1 px-4 py-2 rounded bg-gradient-to-br from-indigo-500 to-fuchsia-600 text-white shadow disabled:opacity-40 inline-flex items-center justify-center gap-2">
+            <Send className="w-4 h-4"/>
+            {send.isPending ? "Gönderiliyor..." : `Gönder (${totalResellers})`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

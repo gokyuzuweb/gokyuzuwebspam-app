@@ -1338,6 +1338,21 @@ async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "g
         if from_addr == "gokyuzuwebspam@localhost":
             from_addr = await _smart_from()
         msg["From"] = from_addr
+        # Preview ortamı tespit: local Exim relay dış domain'e izin vermiyorsa
+        is_remote_target = "@" in to_addr and not to_addr.endswith("localhost")
+        if is_remote_target and os.path.exists("/var/log/exim4/mainlog"):
+            try:
+                with open("/var/log/exim4/mainlog", "r") as _f:
+                    _f.seek(0, 2)
+                    _sz = _f.tell()
+                    _f.seek(max(0, _sz - 2000))
+                    _tail = _f.read()
+                if "Mailing to remote domains not supported" in _tail:
+                    return False, ("Bu ortam yerel test için — dış domain'lere mail göndermez. "
+                                   "Gerçek WHM/cPanel sunucunuzda Otomatik Mod düzgün çalışacaktır. "
+                                   "Preview'da test için: SMTP relay ayarları (Gmail/Sendgrid) girin.")
+            except Exception:
+                pass
         import subprocess
         proc = subprocess.run(
             ["/usr/sbin/sendmail", "-t", "-oi", "-f", from_addr],

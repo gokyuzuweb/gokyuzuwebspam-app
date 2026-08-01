@@ -6,9 +6,9 @@ Master server (gokyuzuhosting.com) — bayiler ve pluginler bu uçları çağır
 - /master/status: sistem sağlığı (bayilere gösterilir)
 """
 from __future__ import annotations
-import os
+import os, uuid
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from deps import db
 
 router = APIRouter(prefix="/master", tags=["master"])
@@ -224,12 +224,13 @@ async def relay_heartbeats_admin(limit: int = 100):
 @router.post("/publish-version")
 async def publish_version(payload: dict):
     """Master admin: yeni versiyon yayınla. Cache'i temizler + settings'e yazar.
-    payload: {version, changelog, download_url, sha256}"""
+    payload: {version, changelog, download_url, sha256, notify_resellers}"""
     global CURRENT_VERSION
     ver = payload.get("version") or CURRENT_VERSION
     changelog = payload.get("changelog", "")
     download_url = payload.get("download_url") or f"https://{MASTER_DOMAIN}/downloads/gws-{ver}.tar.gz"
     sha256 = payload.get("sha256", "")
+    notify = payload.get("notify_resellers", True)
     now = _iso()
     # 1) Cache temizle
     await db.settings.delete_many({"_key": {"$in": ["master_update_cache", "master_threat_feed_cache"]}})
@@ -253,14 +254,78 @@ async def publish_version(payload: dict):
     })
     # 4) Global değişkeni güncelle
     CURRENT_VERSION = ver
-    # 5) Kaç bayi outdated kalıyor?
+    # 5) Bayilere e-posta bildirimi
+    notified_emails = 0
+    if notify:
+        try:
+            from server import _send_email, _smart_from
+            seen_emails = set()
+            async for lic in db.licenses.find({"status": "active"}, {"_id": 0}):
+                email = lic.get("email") or lic.get("customer_email")
+                if not email or "@" not in email or email in seen_emails:
+                    continue
+                seen_emails.add(email)
+                name = lic.get("reseller_name") or lic.get("customer_name") or "Değerli Bayimiz"
+                subj = f"🚀 GökyüzüWebSpam v{ver} yayınlandı!"
+                body = (
+                    f"Sayın {name},\n\n"
+                    f"GökyüzüWebSpam v{ver} yayınlandı. Sistem güvenliğinizi artırmak için lütfen güncelleyin.\n\n"
+                    f"📝 DEĞİŞİKLİKLER\n{changelog or '(değişiklik notu eklenmedi)'}\n\n"
+                    f"📦 İndirme: {download_url}\n"
+                    f"🔐 SHA256: {sha256 or '(hesaplanmadı)'}\n\n"
+                    f"WHM pluginleriniz otomatik olarak yeni sürümü heartbeat üzerinden algılayacak.\n\n"
+                    f"Sorularınız için: destek@gokyuzuhosting.com"
+                )
+                from_addr = await _smart_from(lic.get("license_key"))
+                ok, _ = await _send_email(email, subj, body, from_addr=from_addr)
+                if ok:
+                    notified_emails += 1
+        except Exception:
+            pass
     outdated = await db.reseller_heartbeats.count_documents({"plugin_version": {"$ne": ver}})
     return {
         "ok": True, "version": ver, "published_at": now,
         "cache_cleared": True,
-        "resellers_notified": await db.reseller_heartbeats.estimated_document_count(),
+        "resellers_notified_via_heartbeat": await db.reseller_heartbeats.estimated_document_count(),
+        "resellers_notified_email": notified_emails,
         "resellers_outdated": outdated,
     }
+
+
+@router.post("/notify-resellers")
+async def notify_resellers(payload: dict):
+    """Bayilere manuel bildirim mail'i gönder.
+    payload: {subject, message, urgent}"""
+    subject = payload.get("subject") or "GökyüzüWebSpam bildirimi"
+    message = payload.get("message", "")
+    urgent = payload.get("urgent", False)
+    if not message.strip():
+        raise HTTPException(400, "message alanı zorunlu")
+    prefix = "🚨 ACİL: " if urgent else "📢 "
+    sent = 0
+    try:
+        from server import _send_email, _smart_from
+        seen = set()
+        async for lic in db.licenses.find({"status": "active"}, {"_id": 0}):
+            email = lic.get("email") or lic.get("customer_email")
+            if not email or "@" not in email or email in seen:
+                continue
+            seen.add(email)
+            name = lic.get("reseller_name") or lic.get("customer_name") or "Bayimiz"
+            body = f"Sayın {name},\n\n{message}\n\n--\nGökyüzüWebSpam · gokyuzuhosting.com"
+            from_addr = await _smart_from(lic.get("license_key"))
+            ok, _ = await _send_email(email, prefix + subject, body, from_addr=from_addr)
+            if ok: sent += 1
+    except Exception:
+        pass
+    # Log
+    await db.notifications_history.insert_one({
+        "id": str(uuid.uuid4()), "kind": "reseller_broadcast",
+        "subject": subject, "message": message[:500],
+        "urgent": urgent, "sent_count": sent,
+        "created_at": _iso(),
+    })
+    return {"ok": True, "sent": sent, "urgent": urgent}
 
 
 @router.get("/releases")

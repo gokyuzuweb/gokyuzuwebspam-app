@@ -545,6 +545,18 @@ async def public_blocked_stats(region: str = "all"):
         "peak_30d": peak,
         "avg_30d": avg,
         "region": region,
+        # Ek metrikler
+        "exploits_caught": await db.exploit_findings.count_documents({}),
+        "exploits_critical": await db.exploit_findings.count_documents({"severity": "critical"}),
+        "ips_blocked": await db.lists.count_documents({"kind": "blacklist", "type": "ip"}),
+        "quarantined_today": await db.mail_events.count_documents({
+            "action": "quarantine",
+            "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
+        }),
+        "virus_caught_all_time": await db.mail_events.count_documents({"verdict": "virus"}),
+        "phishing_caught_all_time": await db.mail_events.count_documents({"verdict": "high_spam"}),
+        "iocs_tracked": await db.threat_iocs.count_documents({}),
+        "active_licenses": await db.licenses.count_documents({"status": "active"}),
         "last_updated": _iso(),
     }
 
