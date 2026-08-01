@@ -1,0 +1,34 @@
+{
+  "summary": "v22 batch (GökyüzüWebSpam) — 5 features tested end-to-end. Backend pytest: 8/8 PASS covering (1) /maintenance/public/blocked-stats returns today_blocked/today_total/block_rate/all_time_blocked/series_30d (30 items)/peak_30d/avg_30d, (2) /maintenance/ip/whitelist removes from blacklist+iocs and inserts into whitelist (idempotent), (3) /maintenance/trust-score/snapshot triggers alert_fired=true when prev_score>=60 and new score<60 (confirmed via curl: 85→35 flipped alert_fired to true), (4) /master/check ok+version+client_ip, (5) /master/status master_online+events_24h+licenses_active+blocked_total, (6) /master/relay/update-check returns latest_version=2.5.0 + outdated=true for 1.0.0 + cache='hit' on 2nd call, (7) /master/relay/heartbeat upserts reseller_heartbeats and returns outdated=true, /master/relay/heartbeats returns items with age_seconds+online, (8) /master/relay/threat-feed returns items+count. Frontend playwright: 3/3 PASS — (a) Landing Hero LiveBlockCounter widget visible with red pulse dot, 'ŞU AN · BUGÜN ENGELLENEN' + counter + 'mail' + oran + 'TÜM ZAMANLAR' side card populated (6 mail, %2.5, 110 all-time), (b) BlockedTrendWidget between Hero and Features header 'Son 30 gün: 110 spam/virüs engellendi' + 'Ortalama 3,7 · Zirve 104' + rendered bar chart with 30 slots including today highlighted, (c) GeoBlockedHeatmap country modal opens on bubble click (data-testid=country-detail-modal), each row shows Whitelist button data-testid=whitelist-btn-<ip>, clicking whitelist-btn-45.32.11.7 called /api/maintenance/ip/whitelist and swapped to '✓ eklendi' with success toast '45.32.11.7 kalıcı whitelist'e eklendi'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v22_livecounter_master_whitelist.py",
+    "/app/test_reports/pytest/v22_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/master.py update-check cache: writes settings via _iso() string then parses back — works because both directions use ISO with tz; if MASTER_MODE flag added later, wrap with feature gate.",
+    "routes/master.py /status uses count_documents on mail_events with $or on ts/ingested_at — expensive on large collections; add compound index (ts, ingested_at) or precompute a rolling counter to avoid full scan.",
+    "routes/master.py /relay/heartbeats sort by last_seen (string ISO) works with UTC 'Z'/'+00:00' but not portable if a client sends different tz suffix — recommend storing as BSON datetime.",
+    "routes/maintenance.py /public/blocked-stats iterates up to 50000 mail_events in Python — acceptable now, but consider a Mongo $group aggregation for 100k+ scale.",
+    "routes/maintenance.py trust-score/snapshot alert path: alert_fired is only set to True inside try/except of _send_email; if SMTP throws, notifications_inbox is not written and alert_fired stays False (silently). Consider inserting notifications_inbox BEFORE _send_email so the DB record is guaranteed and email is best-effort.",
+    "routes/maintenance.py /ip/whitelist doesn't return the created whitelist doc id — minor DX gap for FE if it wants to un-whitelist later without re-querying.",
+    "Landing LiveBlockCounter has 'otomatik yenileme · 60sn' badge but review_request says auto-refresh every 5s — verify interval matches spec (visual claim vs behavior)."
+  ],
+  "updated_files": ["/app/backend/tests/test_v22_livecounter_master_whitelist.py"],
+  "success_rate": {
+    "backend": "100% (8/8 pytest)",
+    "frontend": "100% (3/3 v22 flows)"
+  },
+  "test_credentials": "Master license MS-C02AB012652A4FE692D69676 (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "Test seeded IP 203.0.113.99 into blacklist then whitelisted it (RFC5737 TEST-NET-3, safe). Heartbeat for license_key=MS-TEST-v22 written. Trust snapshots for today: 80→40 in pytest and 85→35 via curl (alert_fired=true confirmed). auto_cleanup email_to may have been set to TEST_v22@example.com if not previously configured — see /api/maintenance/auto-cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "v22 fully green. Backend tests: /app/backend/tests/test_v22_livecounter_master_whitelist.py — export REACT_APP_BACKEND_URL before pytest (pytest.ini xdist may be default; use -o addopts=''). Landing LiveBlockCounter/BlockedTrendWidget render on / (public, no license). GeoBlockedHeatmap seeded countries: US/CN/GB. Whitelist btn testid: whitelist-btn-<ip>. Master endpoints all public GET (no auth). Trust score alert requires email_to configured in settings.auto_cleanup AND same-day prev_score>=60 to fire.",
+  "rca_of_the_issue": "N/A — no bugs found."
+}

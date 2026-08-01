@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Globe2, Shield, TrendingUp, X, Ban } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Globe2, Shield, TrendingUp, X, Ban, ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
 
 /**
@@ -137,9 +138,21 @@ export default function GeoBlockedHeatmap({ compact = false }) {
 }
 
 function CountryDetailModal({ country, onClose }) {
+  const qc = useQueryClient();
   const detail = useQuery({
     queryKey: ["geo-country-detail", country.country],
     queryFn: () => api.geoCountryDetail(country.country, 100),
+  });
+  const [whitelisted, setWhitelisted] = useState(new Set());
+  const whitelist = useMutation({
+    mutationFn: (ip) => api.ipWhitelist({ ip, reason: "Yanlış pozitif — Landing modaldan" }),
+    onSuccess: (_, ip) => {
+      toast.success(`✓ ${ip} kalıcı whitelist'e eklendi`);
+      setWhitelisted((s) => new Set([...s, ip]));
+      qc.invalidateQueries({ queryKey: ["geo-blocked-heatmap"] });
+      qc.invalidateQueries({ queryKey: ["landing-blocked-stats"] });
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Whitelist başarısız"),
   });
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
@@ -152,7 +165,7 @@ function CountryDetailModal({ country, onClose }) {
             <div>
               <div className="text-lg font-semibold text-slate-100">{country.name}</div>
               <div className="text-xs text-slate-400">
-                {country.count} IP bloklu · Detaylı liste
+                {country.count} IP bloklu · Detaylı liste · Yanlış blok mu? "Whitelist" tuşuna basın
               </div>
             </div>
           </div>
@@ -168,25 +181,43 @@ function CountryDetailModal({ country, onClose }) {
           )}
           {detail.data && (
             <div className="space-y-1.5">
-              {(detail.data.items || []).map((it) => (
-                <div key={it.ip} className="flex items-center justify-between gap-2 text-xs bg-slate-950 border border-slate-800 rounded px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="mono text-rose-200 flex items-center gap-1.5">
-                      <Ban className="w-3 h-3"/> {it.ip}
+              {(detail.data.items || []).map((it) => {
+                const wl = whitelisted.has(it.ip);
+                return (
+                  <div key={it.ip} className={`flex items-center justify-between gap-2 text-xs rounded px-3 py-2 border ${
+                    wl ? "bg-emerald-500/10 border-emerald-500/30 opacity-70" : "bg-slate-950 border-slate-800"
+                  }`}>
+                    <div className="min-w-0 flex-1">
+                      <div className={`mono flex items-center gap-1.5 ${wl ? "text-emerald-200" : "text-rose-200"}`}>
+                        {wl ? <ShieldCheck className="w-3 h-3"/> : <Ban className="w-3 h-3"/>} {it.ip}
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">{it.reason || "Blok gerekçesi yok"}</div>
                     </div>
-                    <div className="text-[10px] text-slate-500 truncate">{it.reason || "Blok gerekçesi yok"}</div>
+                    <div className="text-right shrink-0">
+                      <div className="text-[10px] mono text-slate-400">
+                        {(it.created_at || "").slice(0, 19).replace("T", " ")}
+                      </div>
+                      <div className="text-[9px] text-slate-600 uppercase">
+                        {it.source || "-"}
+                        {it.confidence != null && ` · ${it.confidence}%`}
+                      </div>
+                    </div>
+                    {!wl ? (
+                      <button
+                        onClick={() => whitelist.mutate(it.ip)}
+                        disabled={whitelist.isPending}
+                        data-testid={`whitelist-btn-${it.ip}`}
+                        title="Yanlış pozitifse buradan kalıcı whitelist'e ekle"
+                        className="text-[10px] px-2 py-1 rounded bg-emerald-500/15 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/25 disabled:opacity-40 inline-flex items-center gap-1 shrink-0"
+                      >
+                        <ShieldCheck className="w-3 h-3"/> Whitelist
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-emerald-300 font-semibold shrink-0">✓ eklendi</span>
+                    )}
                   </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-[10px] mono text-slate-400">
-                      {(it.created_at || "").slice(0, 19).replace("T", " ")}
-                    </div>
-                    <div className="text-[9px] text-slate-600 uppercase">
-                      {it.source || "-"}
-                      {it.confidence != null && ` · ${it.confidence}%`}
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

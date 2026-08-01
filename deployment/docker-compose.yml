@@ -1,0 +1,72 @@
+# GökyüzüWebSpam · Self-Host Deployment
+# Kendi sunucunda çalıştırmak için: docker-compose up -d
+# Sunucu: gokyuzuhosting.com / 89.19.15.58
+version: '3.9'
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: gws-mongo
+    restart: unless-stopped
+    volumes:
+      - ./data/mongo:/data/db
+      - ./data/mongo-config:/data/configdb
+    environment:
+      - MONGO_INITDB_DATABASE=gws_master
+    networks: [gws]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../deployment/Dockerfile.backend
+    container_name: gws-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    env_file:
+      - ./backend.env
+    environment:
+      - MONGO_URL=mongodb://mongo:27017
+      - DB_NAME=gws_master
+    volumes:
+      - ../backend:/app/backend
+      - ./data/uploads:/app/backend/uploads
+    ports:
+      - "127.0.0.1:8001:8001"
+    networks: [gws]
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../deployment/Dockerfile.frontend
+    container_name: gws-frontend
+    restart: unless-stopped
+    depends_on: [backend]
+    env_file:
+      - ./frontend.env
+    ports:
+      - "127.0.0.1:3000:80"
+    networks: [gws]
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: gws-nginx
+    restart: unless-stopped
+    depends_on: [backend, frontend]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./data/certs:/etc/nginx/certs:ro
+    networks: [gws]
+
+networks:
+  gws:
+    driver: bridge

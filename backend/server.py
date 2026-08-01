@@ -3716,6 +3716,7 @@ from routes.mailscanner import router as _mailscanner_router  # noqa: E402
 from routes.threat_intel import router as _threat_intel_router  # noqa: E402
 from routes.payments import router as _payments_router  # noqa: E402
 from routes.maintenance import router as _maintenance_router  # noqa: E402
+from routes.master import router as _master_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -3730,6 +3731,7 @@ app.include_router(_mailscanner_router, prefix="/api")
 app.include_router(_threat_intel_router, prefix="/api")
 app.include_router(_payments_router, prefix="/api")
 app.include_router(_maintenance_router, prefix="/api")
+app.include_router(_master_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   ShieldAlert, ShieldCheck, Zap, Brain, Globe2, Radar, ArrowRight,
@@ -449,7 +449,7 @@ function Hero() {
             <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse ml-1"/>
             <span className="text-emerald-300 normal-case">canlı</span>
           </div>
-          <LiveBlockCounter/>
+          <div><LiveBlockCounter/></div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-100 mb-6 leading-[1.05]">
             {s.hero_title_a} <span className="bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-rose-400 bg-clip-text text-transparent">{s.hero_title_b}</span>
           </h1>
@@ -858,6 +858,122 @@ function Footer() {
         {s.footer_copyright}
       </div>
     </footer>
+  );
+}
+
+function LiveBlockCounter() {
+  const q = useQuery({
+    queryKey: ["landing-blocked-stats"],
+    queryFn: api.publicBlockedStats,
+    refetchInterval: 5000,   // 5sn'de bir güncelle
+    staleTime: 3000,
+  });
+  const d = q.data || {};
+  const target = d.today_blocked || 0;
+  const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
+  const [pulse, setPulse] = useState(false);
+  const [displayed, setDisplayed] = useState(target);
+  useEffect(() => {
+    if (target !== displayed) {
+      setDisplayed(target);
+      setPulse(true);
+      const t = setTimeout(() => setPulse(false), 800);
+      return () => clearTimeout(t);
+    }
+  }, [target, displayed]);
+  return (
+    <div className={`inline-flex items-center gap-3 mb-6 px-4 py-2.5 rounded-lg border border-rose-500/30 bg-rose-500/5 transition-all ${pulse ? "shadow-lg shadow-rose-500/30 scale-[1.02]" : ""}`}
+         data-testid="landing-live-block-counter">
+      <span className="relative flex w-3 h-3">
+        <span className="absolute inline-flex w-full h-full rounded-full bg-rose-400 opacity-60 animate-ping"/>
+        <span className="relative inline-flex w-3 h-3 rounded-full bg-rose-500"/>
+      </span>
+      <div className="min-w-0">
+        <div className="text-[10px] uppercase tracking-widest text-rose-300/80 mono">Şu An · Bugün Engellenen</div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-2xl font-bold mono text-rose-100">{nfmt(displayed)}</span>
+          <span className="text-xs text-rose-300/70">mail</span>
+          {d.block_rate > 0 && <span className="text-[10px] text-rose-300/50 mono">· %{d.block_rate} oran</span>}
+        </div>
+      </div>
+      <div className="border-l border-rose-500/20 pl-3 hidden sm:block">
+        <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">Tüm Zamanlar</div>
+        <div className="text-sm font-bold mono text-slate-200">{nfmt(d.all_time_blocked || 0)}</div>
+      </div>
+    </div>
+  );
+}
+
+function BlockedTrendWidget() {
+  const q = useQuery({
+    queryKey: ["landing-blocked-stats-trend"],
+    queryFn: api.publicBlockedStats,
+    refetchInterval: 60000,
+  });
+  const d = q.data || {};
+  const series = d.series_30d || [];
+  const peak = d.peak_30d || 1;
+  const avg = d.avg_30d || 0;
+  const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
+
+  return (
+    <section className="py-16 border-t border-slate-800/60 relative overflow-hidden" data-testid="landing-blocked-trend">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_50%,rgba(99,102,241,0.06),transparent_60%)]"/>
+      <div className="max-w-7xl mx-auto px-6 relative">
+        <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-widest text-indigo-400 mono mb-2 flex items-center gap-2">
+              <Activity className="w-3.5 h-3.5"/> Kanıtlanmış Etki
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-bold text-slate-100 tracking-tight">
+              Son 30 gün: <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-fuchsia-400">{nfmt(series.reduce((a, b) => a + b.count, 0))}</span> spam/virüs engellendi
+            </h2>
+            <p className="text-slate-400 text-sm mt-2">
+              Ortalama: {nfmt(avg)} mail/gün · Zirve: {nfmt(peak)}
+            </p>
+          </div>
+        </div>
+
+        {/* Bar chart */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-6" data-testid="trend-bar-chart">
+          <div className="flex items-end gap-1 h-40">
+            {series.map((s, idx) => {
+              const h = peak > 0 ? Math.max(3, (s.count / peak) * 100) : 3;
+              const isToday = idx === series.length - 1;
+              const dayLabel = s.date.slice(5); // MM-DD
+              return (
+                <div key={s.date} className="flex-1 flex flex-col items-center gap-1 group relative">
+                  <div className="w-full h-full flex items-end">
+                    <div
+                      className={`w-full rounded-t transition-all ${
+                        isToday
+                          ? "bg-gradient-to-t from-rose-500 to-rose-400 shadow-lg shadow-rose-500/30"
+                          : "bg-gradient-to-t from-indigo-500/60 to-indigo-400/80 group-hover:from-indigo-400 group-hover:to-indigo-300"
+                      }`}
+                      style={{ height: `${h}%` }}
+                    >
+                      <div className="opacity-0 group-hover:opacity-100 -mt-8 text-[10px] mono text-slate-100 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 whitespace-nowrap transition-opacity">
+                        {nfmt(s.count)}
+                      </div>
+                    </div>
+                  </div>
+                  {idx % 3 === 0 && (
+                    <div className="text-[9px] mono text-slate-500">{dayLabel}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-800 text-xs">
+            <div className="flex items-center gap-3 text-slate-500">
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-indigo-400 inline-block"/> geçmiş günler</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-rose-500 inline-block"/> bugün</span>
+            </div>
+            <div className="text-slate-500 text-[10px]">otomatik yenileme · 60sn</div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
