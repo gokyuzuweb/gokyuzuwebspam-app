@@ -67,7 +67,26 @@ async def master_status():
 @router.get("/relay/update-check")
 async def relay_update_check(version: str = "1.0.0"):
     """Bayiler ve pluginler burayı çağırır. 24 saat cache'li update feed."""
-    # 24 saat cache — settings'den son fetch zamanını kontrol et
+    # Master admin bir versiyon yayınladıysa onu göster (published_at'den itibaren)
+    pub = await db.settings.find_one({"_key": "master_current_version"}, {"_id": 0})
+    if pub:
+        latest = pub.get("version") or CURRENT_VERSION
+        fresh = {
+            "latest_version": latest,
+            "download_url": pub.get("download_url") or f"https://{MASTER_DOMAIN}/downloads/gws-{latest}.tar.gz",
+            "changelog_url": f"https://{MASTER_DOMAIN}/changelog",
+            "changelog": pub.get("changelog", ""),
+            "min_supported_version": "1.0.0",
+            "release_date": (pub.get("published_at") or "")[:10],
+            "sha256": pub.get("sha256") or "",
+            "master_domain": MASTER_DOMAIN,
+            "cache": "publish",
+            "client_version": version,
+            "outdated": version != latest,
+        }
+        return fresh
+
+    # 24 saat cache
     doc = await db.settings.find_one({"_key": "master_update_cache"}, {"_id": 0})
     now = datetime.now(timezone.utc)
     cached_data = None
@@ -157,6 +176,10 @@ async def relay_heartbeats_admin(limit: int = 100):
     """Admin: son heartbeat gönderen bayiler/pluginler."""
     rows = await db.reseller_heartbeats.find({}, {"_id": 0}).sort("last_seen", -1).limit(limit).to_list(limit)
     now = datetime.now(timezone.utc)
+    # Lisans bilgisi ile zenginleştir
+    lic_map: dict[str, dict] = {}
+    async for lic in db.licenses.find({}, {"_id": 0}):
+        lic_map[lic.get("license_key", "")] = lic
     for r in rows:
         try:
             last = datetime.fromisoformat(r["last_seen"].replace("Z", "+00:00"))
@@ -165,5 +188,61 @@ async def relay_heartbeats_admin(limit: int = 100):
         except Exception:
             r["age_seconds"] = -1
             r["online"] = False
+        # Lisans info
+        lic = lic_map.get(r.get("license_key", ""), {})
+        r["reseller_name"] = lic.get("reseller_name") or lic.get("customer_name") or lic.get("domain") or "-"
+        r["email"] = lic.get("email") or "-"
+        r["plan"] = lic.get("plan") or "starter"
+        r["status"] = lic.get("status") or "unknown"
     return {"items": rows, "total": len(rows),
-            "online_count": sum(1 for r in rows if r["online"])}
+            "online_count": sum(1 for r in rows if r["online"]),
+            "outdated_count": sum(1 for r in rows if r.get("plugin_version") != CURRENT_VERSION)}
+
+
+@router.post("/publish-version")
+async def publish_version(payload: dict):
+    """Master admin: yeni versiyon yayınla. Cache'i temizler + settings'e yazar.
+    payload: {version, changelog, download_url, sha256}"""
+    global CURRENT_VERSION
+    ver = payload.get("version") or CURRENT_VERSION
+    changelog = payload.get("changelog", "")
+    download_url = payload.get("download_url") or f"https://{MASTER_DOMAIN}/downloads/gws-{ver}.tar.gz"
+    sha256 = payload.get("sha256", "")
+    now = _iso()
+    # 1) Cache temizle
+    await db.settings.delete_many({"_key": {"$in": ["master_update_cache", "master_threat_feed_cache"]}})
+    # 2) Yeni versiyon kaydet
+    doc = {
+        "_key": "master_current_version",
+        "version": ver, "changelog": changelog,
+        "download_url": download_url, "sha256": sha256,
+        "published_at": now,
+    }
+    await db.settings.update_one(
+        {"_key": "master_current_version"},
+        {"$set": doc},
+        upsert=True,
+    )
+    # 3) Yayın log
+    await db.release_history.insert_one({
+        "id": now, "version": ver,
+        "changelog": changelog, "download_url": download_url,
+        "sha256": sha256, "published_at": now,
+    })
+    # 4) Global değişkeni güncelle
+    CURRENT_VERSION = ver
+    # 5) Kaç bayi outdated kalıyor?
+    outdated = await db.reseller_heartbeats.count_documents({"plugin_version": {"$ne": ver}})
+    return {
+        "ok": True, "version": ver, "published_at": now,
+        "cache_cleared": True,
+        "resellers_notified": await db.reseller_heartbeats.estimated_document_count(),
+        "resellers_outdated": outdated,
+    }
+
+
+@router.get("/releases")
+async def release_history(limit: int = 20):
+    """Yayın geçmişi."""
+    rows = await db.release_history.find({}, {"_id": 0}).sort("published_at", -1).limit(limit).to_list(limit)
+    return {"items": rows, "current": CURRENT_VERSION}

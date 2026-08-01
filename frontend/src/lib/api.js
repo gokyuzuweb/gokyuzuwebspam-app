@@ -424,6 +424,19 @@ export const api = {
                 { params: { score, findings, rbl_listed: rblListed } }).then(r => r.data),
   trustHistory: (days = 30) =>
     client.get("/maintenance/trust-score/history", { params: { days } }).then(r => r.data),
-  publicBlockedStats: () =>
-    client.get("/maintenance/public/blocked-stats").then(r => r.data),
+  publicBlockedStats: (region = "all") =>
+    client.get("/maintenance/public/blocked-stats", { params: { region } }).then(r => r.data),
+
+  // Whitelist management
+  whitelistList: () => client.get("/maintenance/whitelist/list").then(r => r.data),
+  whitelistRemove: (ip) => client.post("/maintenance/whitelist/remove", { ip }).then(r => r.data),
+
+  // Master / reseller admin
+  masterCheck: () => client.get("/master/check").then(r => r.data),
+  masterStatus: () => client.get("/master/status").then(r => r.data),
+  masterHeartbeats: (limit = 100) =>
+    client.get("/master/relay/heartbeats", { params: { limit } }).then(r => r.data),
+  masterPublishVersion: (payload) =>
+    client.post("/master/publish-version", payload).then(r => r.data),
+  masterReleases: () => client.get("/master/releases").then(r => r.data),
 };

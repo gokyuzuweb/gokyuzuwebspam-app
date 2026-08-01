@@ -449,39 +449,85 @@ async def trust_score_history(days: int = 30):
 # PUBLIC LANDING STATS: bugünkü + 30 gün bloklanan mail sayısı
 # ============================================================================
 @router.get("/public/blocked-stats")
-async def public_blocked_stats():
+async def public_blocked_stats(region: str = "all"):
     """Landing için: bugün bloklanan sayı + son 30 gün bar chart verisi.
-    Cache dostu, license gerektirmez."""
+    Cache dostu, license gerektirmez.
+    region: 'all' (default) | 'tr' (Türkiye) | 'external' (dış)."""
     from datetime import date, timedelta, datetime as _dt
+    try:
+        from routes.security_adv import _ip_to_country
+    except Exception:
+        _ip_to_country = lambda x: None  # noqa: E731
+
     today = date.today()
     today_iso = today.isoformat()
     start = today - timedelta(days=29)
 
     verdict_filter = {"verdict": {"$in": ["spam", "high_spam", "virus"]}}
 
-    # Bugünkü sayaç
-    today_count = await db.mail_events.count_documents({
-        **verdict_filter,
-        "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
-    })
-    total_events_today = await db.mail_events.count_documents({
-        "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
-    })
-    # Toplam (yaklaşık)
-    total_blocked_all_time = await db.mail_events.count_documents(verdict_filter)
+    def _match_region(ip: str | None) -> bool:
+        if region == "all":
+            return True
+        cc = _ip_to_country(ip or "")
+        if region == "tr":
+            return cc == "TR"
+        if region == "external":
+            return cc is not None and cc != "TR" and cc != "LOCAL"
+        return True
 
-    # 30 gün aggregation (Mongo yerine Python — küçük veri seti)
+    # Toplam ve bugünü tek geçişte topla
     since_iso = start.isoformat()
+    today_count = 0
+    total_events_today = 0
+    all_time_blocked = 0
     by_day: dict[str, int] = {}
-    async for e in db.mail_events.find(
-        {**verdict_filter,
-         "$or": [{"ts": {"$gte": since_iso}}, {"ingested_at": {"$gte": since_iso}}]},
-        {"ts": 1, "ingested_at": 1, "_id": 0},
-    ).limit(50000):
-        raw = e.get("ts") or e.get("ingested_at") or ""
-        day_key = raw[:10] if raw else None
-        if day_key:
-            by_day[day_key] = by_day.get(day_key, 0) + 1
+    # all-time: sadece region=all için hızlı; region filtreli ise event-scan zorunlu
+    if region == "all":
+        all_time_blocked = await db.mail_events.count_documents(verdict_filter)
+        total_events_today = await db.mail_events.count_documents({
+            "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
+        })
+        today_count = await db.mail_events.count_documents({
+            **verdict_filter,
+            "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
+        })
+        # 30 gün
+        async for e in db.mail_events.find(
+            {**verdict_filter,
+             "$or": [{"ts": {"$gte": since_iso}}, {"ingested_at": {"$gte": since_iso}}]},
+            {"ts": 1, "ingested_at": 1, "_id": 0},
+        ).limit(50000):
+            raw = e.get("ts") or e.get("ingested_at") or ""
+            day_key = raw[:10] if raw else None
+            if day_key:
+                by_day[day_key] = by_day.get(day_key, 0) + 1
+    else:
+        # Region filter — IP'yi al, ülke bak
+        async for e in db.mail_events.find(
+            {**verdict_filter},
+            {"ts": 1, "ingested_at": 1, "sender_ip": 1, "client_ip": 1, "_id": 0},
+        ).limit(100000):
+            ip = e.get("sender_ip") or e.get("client_ip")
+            if not _match_region(ip):
+                continue
+            all_time_blocked += 1
+            raw = e.get("ts") or e.get("ingested_at") or ""
+            if not raw:
+                continue
+            if raw >= today_iso:
+                today_count += 1
+            if raw >= since_iso:
+                day_key = raw[:10]
+                by_day[day_key] = by_day.get(day_key, 0) + 1
+        # today total (region-filtered)
+        async for e in db.mail_events.find(
+            {"$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}]},
+            {"sender_ip": 1, "client_ip": 1, "_id": 0},
+        ).limit(50000):
+            ip = e.get("sender_ip") or e.get("client_ip")
+            if _match_region(ip):
+                total_events_today += 1
+
     # 30 slot doldur
     series: list[dict] = []
     for i in range(30):
@@ -494,10 +540,11 @@ async def public_blocked_stats():
         "today_blocked": today_count,
         "today_total": total_events_today,
         "block_rate": round(today_count * 100 / max(1, total_events_today), 1),
-        "all_time_blocked": total_blocked_all_time,
+        "all_time_blocked": all_time_blocked,
         "series_30d": series,
         "peak_30d": peak,
         "avg_30d": avg,
+        "region": region,
         "last_updated": _iso(),
     }
 
@@ -572,6 +619,36 @@ async def ip_whitelist(payload: IPBlockIn):
         upsert=True,
     )
     return {"ok": True, "ip": payload.ip, "whitelisted": True}
+
+
+@router.get("/whitelist/list")
+async def whitelist_list(limit: int = 200):
+    """Whitelist'teki tüm IP'leri listele."""
+    rows = await db.lists.find(
+        {"kind": "whitelist", "type": "ip"}, {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    # Ülke ve event sayısı ile zenginleştir
+    try:
+        from routes.security_adv import _ip_to_country
+    except Exception:
+        _ip_to_country = lambda x: None  # noqa: E731
+    for r in rows:
+        ip = r.get("value", "")
+        r["country"] = _ip_to_country(ip)
+        try:
+            r["event_count"] = await db.mail_events.count_documents({
+                "$or": [{"client_ip": ip}, {"sender_ip": ip}],
+            })
+        except Exception:
+            r["event_count"] = 0
+    return {"items": rows, "count": len(rows)}
+
+
+@router.post("/whitelist/remove")
+async def whitelist_remove(payload: IPBlockIn):
+    """Whitelist'ten çıkar."""
+    r = await db.lists.delete_many({"kind": "whitelist", "type": "ip", "value": payload.ip})
+    return {"ok": True, "removed": r.deleted_count}
 
 
 @router.get("/ip/status")

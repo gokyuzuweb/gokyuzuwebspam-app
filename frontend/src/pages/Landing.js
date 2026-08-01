@@ -905,9 +905,10 @@ function LiveBlockCounter() {
 }
 
 function BlockedTrendWidget() {
+  const [region, setRegion] = useState("all");
   const q = useQuery({
-    queryKey: ["landing-blocked-stats-trend"],
-    queryFn: api.publicBlockedStats,
+    queryKey: ["landing-blocked-stats-trend", region],
+    queryFn: () => api.publicBlockedStats(region),
     refetchInterval: 60000,
   });
   const d = q.data || {};
@@ -915,6 +916,12 @@ function BlockedTrendWidget() {
   const peak = d.peak_30d || 1;
   const avg = d.avg_30d || 0;
   const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
+
+  const REGIONS = [
+    { k: "all", label: "🌍 Tümü", tone: "indigo" },
+    { k: "tr", label: "🇹🇷 Türkiye", tone: "rose" },
+    { k: "external", label: "🌐 Dış", tone: "amber" },
+  ];
 
   return (
     <section className="py-16 border-t border-slate-800/60 relative overflow-hidden" data-testid="landing-blocked-trend">
@@ -930,7 +937,26 @@ function BlockedTrendWidget() {
             </h2>
             <p className="text-slate-400 text-sm mt-2">
               Ortalama: {nfmt(avg)} mail/gün · Zirve: {nfmt(peak)}
+              {region !== "all" && <span className="text-slate-500"> · filtre: {REGIONS.find((r) => r.k === region)?.label}</span>}
             </p>
+          </div>
+
+          {/* Region filter */}
+          <div className="flex gap-1 bg-slate-900 border border-slate-800 rounded-lg p-1">
+            {REGIONS.map((r) => (
+              <button key={r.k}
+                      onClick={() => setRegion(r.k)}
+                      data-testid={`region-filter-${r.k}`}
+                      className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                        region === r.k
+                          ? r.tone === "rose" ? "bg-rose-500/20 text-rose-200"
+                            : r.tone === "amber" ? "bg-amber-500/20 text-amber-200"
+                            : "bg-indigo-500/20 text-indigo-200"
+                          : "text-slate-500 hover:text-slate-100"
+                      }`}>
+                {r.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -941,14 +967,17 @@ function BlockedTrendWidget() {
               const h = peak > 0 ? Math.max(3, (s.count / peak) * 100) : 3;
               const isToday = idx === series.length - 1;
               const dayLabel = s.date.slice(5); // MM-DD
+              const barColor = region === "tr"
+                ? (isToday ? "from-rose-500 to-rose-400" : "from-rose-500/60 to-rose-400/70")
+                : region === "external"
+                ? (isToday ? "from-amber-500 to-amber-400" : "from-amber-500/60 to-amber-400/70")
+                : (isToday ? "from-rose-500 to-rose-400" : "from-indigo-500/60 to-indigo-400/80");
               return (
                 <div key={s.date} className="flex-1 flex flex-col items-center gap-1 group relative">
                   <div className="w-full h-full flex items-end">
                     <div
-                      className={`w-full rounded-t transition-all ${
-                        isToday
-                          ? "bg-gradient-to-t from-rose-500 to-rose-400 shadow-lg shadow-rose-500/30"
-                          : "bg-gradient-to-t from-indigo-500/60 to-indigo-400/80 group-hover:from-indigo-400 group-hover:to-indigo-300"
+                      className={`w-full rounded-t transition-all bg-gradient-to-t ${barColor} ${
+                        isToday ? "shadow-lg" : "group-hover:brightness-125"
                       }`}
                       style={{ height: `${h}%` }}
                     >
@@ -966,7 +995,11 @@ function BlockedTrendWidget() {
           </div>
           <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-800 text-xs">
             <div className="flex items-center gap-3 text-slate-500">
-              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-indigo-400 inline-block"/> geçmiş günler</span>
+              <span className="inline-flex items-center gap-1">
+                <span className={`w-2 h-2 rounded-sm inline-block ${
+                  region === "tr" ? "bg-rose-400" : region === "external" ? "bg-amber-400" : "bg-indigo-400"
+                }`}/> geçmiş günler
+              </span>
               <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-rose-500 inline-block"/> bugün</span>
             </div>
             <div className="text-slate-500 text-[10px]">otomatik yenileme · 60sn</div>

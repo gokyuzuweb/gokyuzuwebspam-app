@@ -5,7 +5,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home,
-  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive,
+  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -38,6 +38,8 @@ import ThreatIntel from "@/pages/ThreatIntel";
 import MailHealth from "@/pages/MailHealth";
 import Maintenance from "@/pages/Maintenance";
 import PaymentsAdmin from "@/pages/PaymentsAdmin";
+import ResellersAdmin from "@/pages/ResellersAdmin";
+import WhitelistHistory from "@/pages/WhitelistHistory";
 import Header from "@/components/Header";
 
 const NAV = [
@@ -62,6 +64,8 @@ const NAV = [
   { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings" },
   { to: "/panel/maintenance", key: "maintenance", icon: HardDrive, testid: "nav-maintenance", label: "DB Bakım" },
   { to: "/panel/payments-admin", key: "payments_admin", icon: DollarSign, testid: "nav-payments-admin", label: "Ödeme Panosu" },
+  { to: "/panel/resellers-admin", key: "resellers_admin", icon: Users, testid: "nav-resellers-admin", label: "Bayi Panosu" },
+  { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
 ];
@@ -176,6 +180,8 @@ function Shell() {
             <Route path="/mail-health" element={<MailHealth />} />
             <Route path="/maintenance" element={<Maintenance />} />
             <Route path="/payments-admin" element={<PaymentsAdmin />} />
+            <Route path="/resellers-admin" element={<ResellersAdmin />} />
+            <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/quarantine" element={<Quarantine />} />
             <Route path="/lists" element={<Lists />} />

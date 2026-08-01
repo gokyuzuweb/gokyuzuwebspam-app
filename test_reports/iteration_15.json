@@ -1,0 +1,25 @@
+{
+  "summary": "v23 batch — 4 features tested end-to-end. Backend pytest 8/8 PASS: (1) /master/relay/heartbeats returns items with reseller_name/email/plan/plugin_version/online/age_seconds + outdated_count; (2) POST /master/publish-version with {version:'2.6.0'} clears cache, upserts settings.master_current_version, inserts release_history record, returns resellers_outdated; (3) /master/relay/update-check?version=1.0.0 AFTER publish returns latest_version=2.6.0, cache='publish', outdated=true; (4) /master/releases returns items with published_at + current='2.6.0'; (5) /maintenance/whitelist/list returns items with value/reason/source/country/event_count; (6) POST /maintenance/whitelist/remove removes IP and disappears from list; (7-9) /maintenance/public/blocked-stats with region=all|tr|external all return echoed region + 30-slot series. Frontend Playwright PASS: /panel/resellers-admin loads 6 heartbeat rows with data-testid=heartbeat-row-<lic>, 4 stat cards (Toplam=6, Şu An Online=4, Güncel Sürüm=0/v2.6.0, Yükseltme Bekleyen=6), 'Yeni Versiyon Yayınla' button opens publish-modal with version/changelog/download inputs and publish-confirm button, Yayın Geçmişi listing shows v2.6.0 AKTİF badge. /panel/whitelist-history loads with 3 stat cards (Toplam=4, YP düzeltmesi=4, Farklı Ülke=3), search input, table with 4 rows each having Çıkar button data-testid=whitelist-remove-<ip>. Landing / BlockedTrendWidget shows 3 region tabs (region-filter-all/tr/external), clicking each refetches with region param, label updates to 'filtre: Dış' etc. and bars re-render.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v23_reseller_panel_whitelist_history.py",
+    "/app/test_reports/pytest/v23_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/master.py CURRENT_VERSION is a module-level mutable global updated by publish_version — works in single-worker uvicorn but will drift across gunicorn workers. Read from settings.master_current_version on every read path (already done in update-check, but /status and /check still return the stale global 2.5.0). Recommend deriving CURRENT_VERSION dynamically from settings each request.",
+    "routes/master.py /relay/heartbeats iterates all licenses into an in-memory dict per request — for 1000+ licenses this becomes O(N) per hit. Add an index on licenses.license_key and do targeted find({'license_key': {'$in': [...]}} using the row set instead.",
+    "routes/master.py outdated_count in /relay/heartbeats compares plugin_version != CURRENT_VERSION (module global). After publish this global is updated in-process, but if request hits different worker before publish propagates, count is wrong. Same root cause as above — read from settings.",
+    "routes/maintenance.py /public/blocked-stats region='external' path does two full mail_events scans (up to 100k + 50k docs) with Python-side _ip_to_country — expensive. Precompute a country field at ingest-time and do a Mongo $match on country/verdict, or aggregate.",
+    "routes/master.py publish_version does not validate semver format of payload.version — a caller sending version='hax\\n' would be stored verbatim and shown in changelog UI. Add regex validation ^\\d+\\.\\d+\\.\\d+$."
+  ],
+  "updated_files": ["/app/backend/tests/test_v23_reseller_panel_whitelist_history.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (4/4 flows)"},
+  "test_credentials": "License MS-C02AB012652A4FE692D69676 (public endpoints — no auth needed for this batch).",
+  "seed_data_creation": "Test seeded whitelist IPs 203.0.113.201 and 203.0.113.202 (RFC5737 TEST-NET-3) plus heartbeat for license_key=MS-TEST-v23; v2.6.0 re-published via /master/publish-version.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "v23 fully green. Test file: /app/backend/tests/test_v23_reseller_panel_whitelist_history.py. Region filter param on /maintenance/public/blocked-stats: all|tr|external. Publish flow persists in settings.master_current_version. Heartbeats testids: heartbeat-row-<license_key>. Whitelist remove testids: whitelist-remove-<ip>. Region filter testids: region-filter-all/tr/external. Publish modal testid: publish-modal + publish-confirm. Note CURRENT_VERSION module global drift issue if scaling to multi-worker.",
+  "rca_of_the_issue": "N/A — no bugs found."
+}
