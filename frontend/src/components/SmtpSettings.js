@@ -97,6 +97,37 @@ export default function SmtpSettings() {
       />
       {expanded && (
       <CardBody className="space-y-4">
+        {/* AUTO MODE — WHM/cPanel sendmail */}
+        <div className={`p-3 rounded-lg border ${
+          form.auto_mode !== false ? "border-emerald-500/40 bg-emerald-500/10" : "border-slate-800 bg-slate-900/40"
+        }`}>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.auto_mode !== false}
+              onChange={(e) => setForm((s) => ({ ...s, auto_mode: e.target.checked }))}
+              data-testid="smtp-auto-mode"
+              className="mt-1 w-4 h-4 accent-emerald-500"
+            />
+            <div>
+              <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                🎯 Otomatik Mod (WHM/cPanel sendmail)
+                {form.auto_mode !== false && <Badge tone="success">aktif</Badge>}
+              </div>
+              <div className="text-xs text-slate-400 mt-1">
+                Bu mod açıkken hiçbir SMTP ayarı yapmanıza gerek yok. E-postalar sunucudaki <span className="mono text-emerald-300">/usr/sbin/sendmail</span> ile
+                gönderilir. FROM adresi otomatik olarak lisans domain'inden çözülür (örn: <span className="mono">noreply@gokyuzuhosting.com</span>).
+                Bayilere gönderilen mailler onların kendi domain'lerinden çıkar.
+              </div>
+              <div className="text-[11px] text-slate-500 mt-2 flex items-center gap-3">
+                <span>✓ Ayar gerekmez</span>
+                <span>✓ Lisansa göre FROM otomatik</span>
+                <span>✓ WHM Exim ile uyumlu</span>
+              </div>
+            </div>
+          </label>
+        </div>
+
         {/* Test mail (always visible) */}
         <div className="p-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5">
           <div className="flex items-center gap-2 mb-2">

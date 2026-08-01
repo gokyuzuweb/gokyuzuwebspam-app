@@ -432,6 +432,10 @@ export const api = {
   whitelistRemove: (ip) => client.post("/maintenance/whitelist/remove", { ip }).then(r => r.data),
 
   // Master / reseller admin
+  smartPosProviders: () => client.get("/smart-pos/providers").then(r => r.data),
+  smartPosRoute: (payload) => client.post("/smart-pos/route", payload).then(r => r.data),
+  smartPosStats: () => client.get("/smart-pos/stats").then(r => r.data),
+
   masterCheck: () => client.get("/master/check").then(r => r.data),
   masterStatus: () => client.get("/master/status").then(r => r.data),
   masterHeartbeats: (limit = 100) =>

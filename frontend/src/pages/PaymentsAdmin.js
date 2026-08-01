@@ -85,6 +85,7 @@ export default function PaymentsAdmin() {
           { k: "pending", label: `Bekleyen (${p.notified_count || 0})` },
           { k: "inbox", label: `Bildirimler${unread ? ` · ${unread}` : ""}` },
           { k: "all", label: "Tüm Siparişler" },
+          { k: "smart_pos", label: "🎯 Akıllı POS" },
         ].map((t) => (
           <button key={t.k} onClick={() => setTab(t.k)}
                   data-testid={`pa-tab-${t.k}`}
@@ -248,6 +249,8 @@ export default function PaymentsAdmin() {
         </Card>
       )}
 
+      {tab === "smart_pos" && <SmartPosPanel/>}
+
       <ModuleFooter
         title="Ödeme Panosu — Nasıl Çalışır?"
         howItWorks="Kullanıcı Landing'de 'Havale Talebi Oluştur' derse status=awaiting_transfer olur. IBAN alır, havale yapar ve 'Havale Yaptım' butonuna basar → status=notified_by_user olur ve buraya bildirim düşer. Admin 'Onayla' der → status=paid + lisans e-posta ile gönderilir."
@@ -286,6 +289,103 @@ function Field({ icon: Icon, label, value, mono = false }) {
         <Icon className="w-2.5 h-2.5"/> {label}
       </div>
       <div className={`text-slate-200 truncate ${mono ? "mono" : ""}`}>{value || "-"}</div>
+    </div>
+  );
+}
+
+function SmartPosPanel() {
+  const providers = useQuery({ queryKey: ["smart-pos-providers"], queryFn: api.smartPosProviders, refetchInterval: 30000 });
+  const stats = useQuery({ queryKey: ["smart-pos-stats"], queryFn: api.smartPosStats, refetchInterval: 30000 });
+  const items = providers.data?.providers || [];
+  const stObj = stats.data?.stats || {};
+  const totalRev = stats.data?.total_revenue_30d || 0;
+  const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Total revenue */}
+      <div className="bg-gradient-to-br from-emerald-500/10 to-indigo-500/10 border border-emerald-500/30 rounded-lg p-6">
+        <div className="text-[10px] uppercase tracking-widest text-emerald-300 mb-1">Son 30 Gün Toplam Gelir</div>
+        <div className="text-4xl font-bold mono text-emerald-100">{nfmt(totalRev)} TL</div>
+        <div className="text-xs text-slate-400 mt-1">
+          {items.length} sağlayıcı · {items.filter((p) => p.recommended).length} aktif · {items.filter((p) => p.configured).length} configured
+        </div>
+      </div>
+
+      {/* Provider list */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="smart-pos-providers">
+        {items.map((p) => {
+          const st = stObj[p.key] || {};
+          return (
+            <div key={p.key} className={`rounded-lg border p-4 ${
+              p.recommended ? "bg-emerald-500/5 border-emerald-500/40"
+              : p.configured ? "bg-slate-900/40 border-slate-800"
+              : "bg-slate-900/20 border-slate-800 opacity-70"
+            }`}>
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-2xl leading-none">{p.logo}</span>
+                  <div>
+                    <div className="text-slate-100 font-semibold">{p.name}</div>
+                    <div className="text-[10px] text-slate-500 mono uppercase">
+                      #{p.priority} · {p.type} · {p.mode}
+                    </div>
+                  </div>
+                </div>
+                {p.recommended ? <Badge tone="success">✓ önerilen</Badge>
+                : p.configured ? <Badge tone="info">yapılandırılmış</Badge>
+                : <Badge>test/mock</Badge>}
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs mb-3">
+                <div>
+                  <div className="text-[9px] text-slate-500 uppercase">30G Toplam</div>
+                  <div className="mono text-slate-200">{st.total || 0}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] text-slate-500 uppercase">Başarılı</div>
+                  <div className="mono text-emerald-300">{st.paid || 0} <span className="text-slate-500">({st.success_rate || 0}%)</span></div>
+                </div>
+                <div>
+                  <div className="text-[9px] text-slate-500 uppercase">Gelir</div>
+                  <div className="mono text-emerald-200">{nfmt(st.revenue || 0)} TL</div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1 mb-2">
+                {(p.supports || []).map((s) => (
+                  <span key={s} className="text-[9px] mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 uppercase">{s}</span>
+                ))}
+              </div>
+              {p.health.total > 0 && (
+                <div className="text-[10px] text-slate-500 flex items-center justify-between border-t border-slate-800 pt-2">
+                  <span>Son 1sa başarı: <span className={p.health.healthy ? "text-emerald-400" : "text-rose-400"}>%{p.health.success_rate}</span></span>
+                  <span>{p.health.total} işlem</span>
+                </div>
+              )}
+              {!p.configured && p.key !== "havale" && (
+                <div className="text-[10px] text-amber-400 border-t border-slate-800 pt-2 mt-2">
+                  ⚠️ .env'e ekleyin: <span className="mono">{p.configured_env.join(", ")}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <ModuleFooter
+        title="Akıllı POS Router — Nasıl Çalışır?"
+        howItWorks="Bir ödeme talebi geldiğinde /smart-pos/route endpoint'i şu sırayla değerlendirir: 1) 'prefer' parametresi varsa öncelikle o denenir. 2) Configured olmayanlar sona atılır. 3) Son 1 saatte başarı oranı %40'ın altındaysa 'unhealthy' sayılır. 4) Priority düşük olan seçilir. Failover chain (fallback_chain) response'da döner — başarısız olursa client bir sonrakini deneyebilir."
+        technical={[
+          "5 sağlayıcı: paytr(#1), iyzico(#2), param(#3), ipara(#4), havale(#5)",
+          "Health scoring: son 1sa başarı_oranı × priority × configured_flag",
+          "Havale her zaman 'ready' — configured_env boş olsa da fallback",
+          "Endpoint: POST /smart-pos/route {amount, email, user_name, prefer?, exclude?}",
+        ]}
+        recommendations={[
+          "En az 2 sağlayıcıyı configured yapın — biri kesildiğinde diğeri devreye girer",
+          "Havale'yi son fallback olarak bırakın (manuel onay gerekiyor)",
+          "Aylık success_rate < %90 ise sağlayıcı ile iletişime geçin",
+        ]}
+      />
     </div>
   );
 }

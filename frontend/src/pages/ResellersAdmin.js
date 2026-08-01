@@ -52,7 +52,7 @@ export default function ResellersAdmin() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Stat label="Toplam Bayi" value={d.total || 0} icon={<Users className="w-4 h-4 text-slate-400"/>}/>
         <Stat label="Şu An Online" value={online} tone="text-emerald-300"
               icon={<Radio className="w-4 h-4 text-emerald-400"/>} hint="son 10 dk"/>
@@ -60,6 +60,10 @@ export default function ResellersAdmin() {
               icon={<CheckCircle2 className="w-4 h-4 text-indigo-400"/>} hint={`v${currentVersion}`}/>
         <Stat label="Yükseltme Bekleyen" value={outdated} tone={outdated ? "text-amber-300" : "text-slate-300"}
               icon={<AlertTriangle className="w-4 h-4 text-amber-400"/>}/>
+        <Stat label="Bitişe Yakın (14g)" value={d.expiring_soon || 0}
+              tone={(d.expiring_soon || 0) ? "text-rose-300" : "text-slate-300"}
+              icon={<AlertTriangle className="w-4 h-4 text-rose-400"/>}
+              hint={d.expired ? `${d.expired} süresi bitti` : ""}/>
       </div>
 
       {/* Heartbeat table */}
@@ -78,13 +82,14 @@ export default function ResellersAdmin() {
                   <th className="px-3 py-2">Lisans</th>
                   <th className="px-3 py-2">Plan</th>
                   <th className="px-3 py-2">Sürüm</th>
+                  <th className="px-3 py-2">Bitiş</th>
                   <th className="px-3 py-2">Son Görülme</th>
                 </tr>
               </thead>
               <tbody>
                 {items.length === 0 && (
                   <tr>
-                    <td colSpan="6" className="text-center text-slate-500 py-10">
+                    <td colSpan="7" className="text-center text-slate-500 py-10">
                       Henüz heartbeat gönderilmedi
                     </td>
                   </tr>
@@ -122,6 +127,30 @@ export default function ResellersAdmin() {
                       {r.plugin_version || "-"}
                       {r.plugin_version && r.plugin_version !== currentVersion && (
                         <Badge tone="warning" className="ml-1">güncel değil</Badge>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.expires_at ? (
+                        <div>
+                          <div className={`text-[11px] mono ${
+                            r.expired ? "text-rose-400 font-semibold"
+                            : r.expiring_soon ? "text-amber-300 font-semibold"
+                            : "text-slate-300"
+                          }`}>
+                            {r.expires_at.slice(0, 10)}
+                          </div>
+                          <div className={`text-[10px] ${
+                            r.expired ? "text-rose-400"
+                            : r.expiring_soon ? "text-amber-400"
+                            : "text-slate-500"
+                          }`}>
+                            {r.expired ? `${Math.abs(r.days_left)}g önce bitti`
+                            : r.days_left != null ? `${r.days_left} gün kaldı`
+                            : "-"}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-500 text-[11px]">süresiz</span>
                       )}
                     </td>
                     <td className="px-3 py-2 mono text-slate-400 text-[11px]">

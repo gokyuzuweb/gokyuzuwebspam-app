@@ -1,0 +1,25 @@
+{
+  "summary": "v24 batch — Smart POS Router + License-expiry aware Bayi Heartbeats + SMTP Auto Mode toggle. Backend pytest 7/7 PASS: (1) GET /smart-pos/providers returns 5 providers [paytr,iyzico,param,ipara,havale] with configured/mode/health/recommended fields — havale is auto-configured (mode=manual); (2) GET /smart-pos/stats returns per-provider stats + total_revenue_30d (havale=840.5 TL); (3) POST /smart-pos/route prefer=havale selects havale + fallback_chain [paytr,iyzico,param] + inserts payments row with smart_routed=true and IBAN/reference in result; (4) POST /smart-pos/route without prefer selects a valid provider from the 5; (5) GET /master/relay/heartbeats returns items with expires_at, days_left, expired, expiring_soon + top-level expiring_soon/expired counters; (6) GET /settings/smtp returns auto_mode (bool, default true); (7) PUT /settings/smtp with auto_mode=false persists correctly (verified via GET roundtrip). Frontend Playwright PASS: /panel/payments-admin has 4 tabs (Bekleyen/Bildirimler/Tüm Siparişler/🎯 Akıllı POS via data-testid=pa-tab-smart_pos), clicking Akıllı POS reveals SmartPosPanel with total_revenue_30d card (840,5 TL) and 5 provider cards under data-testid=smart-pos-providers showing logo/name/priority/mode/stats/supports badges/health rate. /panel/resellers-admin shows 5 stat cards including 'Bitişe Yakın (14g)' = 1, new 'Bitiş' column with dates + '4g önce bitti' (rose), '7 gün kaldı' (amber), '44 gün kaldı' (slate) coloring — 6 heartbeat rows visible with data-testid=heartbeat-row-*. /panel/notifications SMTP block expands to reveal 'Otomatik Mod (WHM/cPanel sendmail)' toggle at top with data-testid=smtp-auto-mode, emerald border + AKTIF badge, description mentions /usr/sbin/sendmail + FROM auto-resolved from license domain.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v24_smartpos_heartbeats_smtp.py",
+    "/app/test_reports/pytest/v24_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/smart_pos.py _provider_health uses count_documents twice per provider per request (paired with a full-scan for stats revenue). For 5 providers → 10-15 Mongo round trips on every /providers + /stats hit. Recommend a single aggregation pipeline grouping by provider with $facet for last-1h vs last-30d buckets, plus a compound index on payments.(provider, created_at, status).",
+    "routes/smart_pos.py health threshold is set to rate>=40% (comment says >80%). This mismatch means providers with 40-79% success are still 'healthy'. Either update comment or tighten to 80.",
+    "routes/smart_pos.py stats revenue calc iterates async cursor summing floats in Python — replace with $group $sum aggregation for O(1) network calls.",
+    "server.py SmtpSettingsIn accepts arbitrary from_addr on PUT but _smart_from helper is only used when auto_mode=true; document this behavior in the UI so admins know from_addr is ignored when auto_mode is on (currently the field is still editable when Otomatik Mod is AKTIF).",
+    "routes/master.py heartbeats now performs per-item license lookup — for large fleets prefetch all license docs in a single find({'license_key': {'$in': [...]}}) and hydrate in memory (same recommendation as v23 review, still open)."
+  ],
+  "updated_files": ["/app/backend/tests/test_v24_smartpos_heartbeats_smtp.py"],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (3/3 flows)"},
+  "test_credentials": "License MS-C02AB012652A4FE692D69676 (localStorage gws.event_license).",
+  "seed_data_creation": "SMTP settings temporarily modified in test_put_smtp_auto_mode_false but restored to original at end of test. Payments collection accumulated 2 smart-routed test rows (TEST_v24@example.com) via /route tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "v24 fully green. Test file: /app/backend/tests/test_v24_smartpos_heartbeats_smtp.py. Smart POS endpoints (all under /api/smart-pos): /providers /route /stats. SmartPosPanel testids: pa-tab-smart_pos, smart-pos-providers. Havale is always configured (special case in _provider_configured). Heartbeats now expose expires_at/days_left/expired/expiring_soon; top-level counters expiring_soon (7-14d) and expired. SmtpSettings auto_mode defaults true; testid=smtp-auto-mode inside expanded 'SMTP Relay & Test Mail' block on /panel/notifications. Bitişe Yakın stat card visible on /panel/resellers-admin — text uses CSS uppercase so JS text-match with mixed case may fail; use exact-uppercase or check testids instead.",
+  "rca_of_the_issue": "N/A — no bugs found."
+}

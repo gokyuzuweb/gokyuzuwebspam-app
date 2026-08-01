@@ -194,9 +194,31 @@ async def relay_heartbeats_admin(limit: int = 100):
         r["email"] = lic.get("email") or "-"
         r["plan"] = lic.get("plan") or "starter"
         r["status"] = lic.get("status") or "unknown"
+        # Bitiş tarihi
+        exp = lic.get("expires_at") or lic.get("end_date") or lic.get("valid_until")
+        r["expires_at"] = exp
+        if exp:
+            try:
+                exp_dt = datetime.fromisoformat(str(exp).replace("Z", "+00:00"))
+                days_left = int((exp_dt - now).total_seconds() // 86400)
+                r["days_left"] = days_left
+                r["expired"] = days_left < 0
+                r["expiring_soon"] = 0 <= days_left <= 14
+            except Exception:
+                r["days_left"] = None
+                r["expired"] = False
+                r["expiring_soon"] = False
+        else:
+            r["days_left"] = None
+            r["expired"] = False
+            r["expiring_soon"] = False
+    expiring_count = sum(1 for r in rows if r.get("expiring_soon"))
+    expired_count = sum(1 for r in rows if r.get("expired"))
     return {"items": rows, "total": len(rows),
             "online_count": sum(1 for r in rows if r["online"]),
-            "outdated_count": sum(1 for r in rows if r.get("plugin_version") != CURRENT_VERSION)}
+            "outdated_count": sum(1 for r in rows if r.get("plugin_version") != CURRENT_VERSION),
+            "expiring_soon": expiring_count,
+            "expired": expired_count}
 
 
 @router.post("/publish-version")

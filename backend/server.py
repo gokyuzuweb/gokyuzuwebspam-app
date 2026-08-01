@@ -1107,12 +1107,13 @@ async def _smtp_settings() -> dict:
     doc = await db.settings.find_one({"_key": "smtp"}, {"_id": 0, "_key": 0}) or {}
     return {
         "enabled":   bool(doc.get("enabled", False)),
+        "auto_mode": bool(doc.get("auto_mode", True)),   # WHM/cPanel sendmail otomatik kullan
         "host":      doc.get("host", ""),
         "port":      int(doc.get("port", 587)),
         "username":  doc.get("username", ""),
         "password":  doc.get("password", ""),
         "from_addr": doc.get("from_addr", ""),
-        "use_tls":   doc.get("use_tls", "starttls"),  # 'starttls' | 'ssl' | 'none'
+        "use_tls":   doc.get("use_tls", "starttls"),
     }
 
 
@@ -1140,6 +1141,27 @@ def _send_via_smtp(cfg: dict, to_addr: str, msg_bytes: bytes, from_addr: str) ->
         return True, f"smtp:{host}:{port}"
     except Exception as e:
         return False, f"smtp_error:{type(e).__name__}:{str(e)[:120]}"
+
+
+async def _smart_from(license_key: Optional[str] = None) -> str:
+    """Otomatik FROM adresi: 
+    - license_key verilirse → licenses koleksiyonundan domain al → noreply@<domain>
+    - Yoksa → MASTER_DOMAIN (env) → noreply@gokyuzuhosting.com
+    - En son: gokyuzuwebspam@localhost
+    """
+    master = os.environ.get("MASTER_DOMAIN") or "gokyuzuhosting.com"
+    if license_key:
+        lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0})
+        if lic:
+            # Öncelik: reseller/customer domain → license'daki email domain'i
+            dom = lic.get("domain") or lic.get("reseller_domain")
+            if not dom:
+                em = lic.get("email") or lic.get("customer_email") or ""
+                if "@" in em:
+                    dom = em.split("@", 1)[1]
+            if dom:
+                return f"noreply@{dom}"
+    return f"noreply@{master}"
 
 
 async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "gokyuzuwebspam@localhost") -> tuple[bool, str]:
@@ -1172,9 +1194,10 @@ async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "g
         msg.attach(MIMEText(text_part, "plain", "utf-8"))
         msg.attach(MIMEText(html_part, "html", "utf-8"))
 
-        # 1) Try configured SMTP relay
+        # 1) Try configured SMTP relay (only if manuel mode + host set)
         cfg = await _smtp_settings()
-        if cfg["enabled"] and cfg["host"]:
+        use_smtp = cfg["enabled"] and cfg["host"] and not cfg.get("auto_mode", True)
+        if use_smtp:
             eff_from = cfg["from_addr"] or from_addr
             msg["From"] = eff_from
             ok, info = await asyncio.to_thread(_send_via_smtp, cfg, to_addr, msg.as_bytes(), eff_from)
@@ -1185,7 +1208,10 @@ async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "g
             # Rebuild without SMTP From for local delivery
             del msg["From"]
 
-        # 2) Local sendmail (WHM/Exim)
+        # 2) Local sendmail (WHM/Exim) — otomatik mod veya SMTP başarısızsa
+        # from_addr default'sa akıllı FROM çöz
+        if from_addr == "gokyuzuwebspam@localhost":
+            from_addr = await _smart_from()
         msg["From"] = from_addr
         import subprocess
         proc = subprocess.run(
@@ -1292,6 +1318,7 @@ async def notifications_simulate_threat():
 # ---- SMTP relay settings + test send ----
 class SmtpSettingsIn(BaseModel):
     enabled: bool = False
+    auto_mode: bool = True   # WHM/cPanel sendmail otomatik
     host: str = ""
     port: int = 587
     username: str = ""
@@ -1311,6 +1338,7 @@ async def get_smtp_settings():
     doc = await db.settings.find_one({"_key": "smtp"}, {"_id": 0, "_key": 0}) or {}
     return {
         "enabled":   bool(doc.get("enabled", False)),
+        "auto_mode": bool(doc.get("auto_mode", True)),
         "host":      doc.get("host", ""),
         "port":      int(doc.get("port", 587)),
         "username":  doc.get("username", ""),
@@ -3717,6 +3745,7 @@ from routes.threat_intel import router as _threat_intel_router  # noqa: E402
 from routes.payments import router as _payments_router  # noqa: E402
 from routes.maintenance import router as _maintenance_router  # noqa: E402
 from routes.master import router as _master_router  # noqa: E402
+from routes.smart_pos import router as _smart_pos_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -3732,6 +3761,7 @@ app.include_router(_threat_intel_router, prefix="/api")
 app.include_router(_payments_router, prefix="/api")
 app.include_router(_maintenance_router, prefix="/api")
 app.include_router(_master_router, prefix="/api")
+app.include_router(_smart_pos_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
