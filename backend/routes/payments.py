@@ -328,3 +328,96 @@ async def get_order(merchant_oid: str):
     if not r:
         raise HTTPException(404, "Sipariş bulunamadı")
     return r
+
+
+# ============================================================================
+# HAVALE OTOMATİK EŞLEŞTIRME — banka ekstresi yükle, referans eşleştir
+# ============================================================================
+class StatementIn(BaseModel):
+    raw_text: str = Field(..., min_length=10, description="Banka ekstresi metni (kopyala-yapıştır)")
+    auto_approve: bool = False   # true ise eşleşenler direkt paid'e alınır
+
+
+@router.post("/havale/statement-match")
+async def havale_statement_match(payload: StatementIn):
+    """Banka ekstresini text olarak alır, içindeki TRF... referanslarını yakalar,
+    bekleyen havale siparişleriyle eşleştirir, öneri listesi döner.
+    auto_approve=true ise eşleşenler direkt paid yapılır."""
+    import re
+    text = payload.raw_text
+    # TRF + 20 hex = merchant_oid formatı
+    refs = set(re.findall(r"TRF[A-F0-9]{20}", text.upper()))
+    if not refs:
+        return {"ok": False, "message": "Ekstre içinde referans (TRFxxx...) bulunamadı",
+                "matches": [], "unmatched_refs": []}
+
+    matches = []
+    matched_refs = set()
+    for ref in refs:
+        order = await db.payments.find_one(
+            {"merchant_oid": ref, "provider": "havale",
+             "status": {"$in": ["awaiting_transfer", "notified_by_user"]}},
+            {"_id": 0},
+        )
+        if order:
+            matched_refs.add(ref)
+            # Ekstre satırından tutar tespiti (basit): ref ile aynı satırda TL/decimal ara
+            amount_found = None
+            for line in text.split("\n"):
+                if ref in line.upper():
+                    m = re.search(r"([\d.]+[.,]\d{2})\s*(TL|TRY)?", line)
+                    if m:
+                        try:
+                            amount_found = float(m.group(1).replace(".", "").replace(",", "."))
+                        except Exception:
+                            pass
+                    break
+            expected = order.get("amount")
+            amount_ok = amount_found is None or abs(amount_found - expected) < 0.05
+            matches.append({
+                "merchant_oid": ref, "user_name": order.get("user_name"),
+                "email": order.get("email"), "expected_amount": expected,
+                "detected_amount": amount_found, "amount_match": amount_ok,
+                "current_status": order.get("status"),
+                "confidence": 100 if amount_ok else 70,
+            })
+
+    unmatched_refs = list(refs - matched_refs)
+
+    auto_approved: list[str] = []
+    if payload.auto_approve:
+        for m in matches:
+            if m["confidence"] >= 100:  # sadece tam eşleşme
+                await db.payments.update_one(
+                    {"merchant_oid": m["merchant_oid"]},
+                    {"$set": {"status": "paid", "paid_at": _iso(),
+                              "approved_by": "auto_statement_match",
+                              "admin_note": "Banka ekstresi otomatik eşleştirme"}},
+                )
+                await db.notifications_inbox.update_many(
+                    {"kind": "havale_notified", "merchant_oid": m["merchant_oid"], "read": False},
+                    {"$set": {"read": True, "read_at": _iso()}},
+                )
+                auto_approved.append(m["merchant_oid"])
+
+    # Log
+    await db.statement_uploads.insert_one({
+        "id": str(uuid.uuid4()),
+        "refs_found": list(refs),
+        "matched_count": len(matches),
+        "unmatched_count": len(unmatched_refs),
+        "auto_approve": payload.auto_approve,
+        "auto_approved": auto_approved,
+        "created_at": _iso(),
+    })
+
+    return {
+        "ok": True,
+        "refs_found": len(refs),
+        "matches": matches,
+        "unmatched_refs": unmatched_refs,
+        "auto_approved": auto_approved,
+        "message": (f"{len(matches)} eşleşme bulundu · {len(auto_approved)} otomatik onaylandı"
+                    if payload.auto_approve else
+                    f"{len(matches)} eşleşme bulundu — inceleyip onaylayın"),
+    }

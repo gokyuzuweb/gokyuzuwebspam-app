@@ -454,6 +454,8 @@ async def _startup() -> None:
     asyncio.create_task(_weekly_ai_report_task())
     asyncio.create_task(_hourly_self_training_task())
     asyncio.create_task(_monthly_auto_cleanup_task())
+    asyncio.create_task(_license_expiry_alerts_task())
+    asyncio.create_task(_pos_health_monitor_task())
 
 
 async def _auto_suspend_daily_task():
@@ -545,6 +547,129 @@ async def _monthly_auto_cleanup_task():
             log.warning("auto-cleanup cron error: %s", ex)
         # Her saat kontrol et — doğru saat gelince tetikle
         await asyncio.sleep(3600)
+
+
+async def _license_expiry_alerts_task():
+    """Her sabah 09:00 UTC'de lisans bitiş kontrolü.
+    14 gün kala uyarı, 3 gün kala kritik uyarı gönderir. Aynı uyarı 24 saatte 1 kez."""
+    await asyncio.sleep(900)  # startup'tan 15dk sonra
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.hour == 9:   # 09:00 UTC (Türkiye 12:00)
+                last = await db.settings.find_one({"_key": "expiry_alerts_last_run"}, {"_id": 0})
+                already = False
+                if last:
+                    try:
+                        last_dt = datetime.fromisoformat(last.get("ts", "").replace("Z", "+00:00"))
+                        if last_dt.date() == now.date():
+                            already = True
+                    except Exception:
+                        pass
+                if not already:
+                    sent = 0
+                    async for lic in db.licenses.find(
+                        {"status": {"$ne": "cancelled"}, "expires_at": {"$exists": True, "$ne": None}},
+                        {"_id": 0},
+                    ):
+                        try:
+                            exp = datetime.fromisoformat(str(lic["expires_at"]).replace("Z", "+00:00"))
+                            days_left = (exp - now).days
+                        except Exception:
+                            continue
+                        # 14 veya 3 gün ise mail
+                        if days_left in (14, 3):
+                            email = lic.get("email") or lic.get("customer_email")
+                            if not email or "@" not in email:
+                                continue
+                            urgent = days_left <= 3
+                            subj = (f"🚨 KRİTİK: Lisansınız {days_left} gün içinde sona eriyor!"
+                                    if urgent else
+                                    f"⚠️ Lisansınız 14 gün içinde sona eriyor · GökyüzüWebSpam")
+                            body = (
+                                f"Sayın {lic.get('reseller_name') or lic.get('customer_name') or 'Kullanıcı'},\n\n"
+                                f"GökyüzüWebSpam lisansınız {days_left} gün içinde ({exp.date()}) sona erecek.\n\n"
+                                f"Lisans Bilgileri:\n"
+                                f"  Lisans No: {lic.get('license_key')}\n"
+                                f"  Plan: {lic.get('plan', 'starter')}\n"
+                                f"  Bitiş: {exp.strftime('%d.%m.%Y')}\n\n"
+                                f"Kesintisiz hizmet için lütfen lisansınızı yenileyin:\n"
+                                f"  https://panel.gokyuzuhosting.com/checkout\n\n"
+                                f"Sorularınız için: destek@gokyuzuhosting.com"
+                            )
+                            # Bayi kendi domain'inden gönderilsin (Otomatik Mod)
+                            from_addr = await _smart_from(lic.get("license_key"))
+                            ok, via = await _send_email(email, subj, body, from_addr=from_addr)
+                            if ok:
+                                sent += 1
+                                await db.notifications_history.insert_one({
+                                    "id": str(uuid.uuid4()),
+                                    "kind": "license_expiry_alert",
+                                    "license_key": lic.get("license_key"),
+                                    "days_left": days_left, "urgent": urgent,
+                                    "to": email, "via": via,
+                                    "created_at": _iso(),
+                                })
+                    await db.settings.update_one(
+                        {"_key": "expiry_alerts_last_run"},
+                        {"$set": {"_key": "expiry_alerts_last_run", "ts": _iso(), "sent": sent}},
+                        upsert=True,
+                    )
+                    log.info("license expiry alerts sent: %d", sent)
+        except Exception as ex:
+            log.warning("license expiry task error: %s", ex)
+        await asyncio.sleep(3600)
+
+
+async def _pos_health_monitor_task():
+    """Her 15 dk POS sağlığını kontrol et. Bir sağlayıcının başarı oranı %40 altına düşerse
+    admin inbox'a uyarı düşür + Telegram bildirim gönder (varsa)."""
+    await asyncio.sleep(1200)  # startup'tan 20dk sonra
+    while True:
+        try:
+            from datetime import timedelta as _td
+            since = (datetime.now(timezone.utc) - _td(hours=1)).isoformat()
+            providers = ["paytr", "iyzico", "param", "ipara"]  # havale hariç
+            for prov in providers:
+                total = await db.payments.count_documents(
+                    {"provider": prov, "created_at": {"$gte": since}},
+                )
+                if total < 5:   # yeterli veri yoksa geç
+                    continue
+                paid = await db.payments.count_documents(
+                    {"provider": prov, "created_at": {"$gte": since}, "status": "paid"},
+                )
+                rate = round(paid * 100 / total, 1)
+                if rate < 40:
+                    # Zaten uyarı verilmiş mi? (1 saat throttle)
+                    recent = await db.notifications_inbox.find_one({
+                        "kind": "pos_health_alert", "provider": prov,
+                        "created_at": {"$gte": since},
+                    })
+                    if recent:
+                        continue
+                    doc = {
+                        "id": str(uuid.uuid4()), "kind": "pos_health_alert",
+                        "provider": prov, "success_rate": rate,
+                        "total_1h": total, "paid_1h": paid,
+                        "message": f"{prov.upper()} son 1 saatte %{rate} başarı — kritik seviye!",
+                        "created_at": _iso(), "read": False, "severity": "critical",
+                    }
+                    await db.notifications_inbox.insert_one(doc)
+                    log.warning("POS health alert: %s = %s%%", prov, rate)
+                    # Telegram bildir
+                    ns = await _notify_settings()
+                    if ns.get("telegram_token") and ns.get("telegram_chat_id"):
+                        await _send_telegram(
+                            ns["telegram_token"], ns["telegram_chat_id"],
+                            f"🚨 *POS Uyarı* — {prov.upper()}\n"
+                            f"Son 1 saat başarı oranı: *%{rate}*\n"
+                            f"Toplam: {total} · Başarılı: {paid}\n\n"
+                            f"Panele bakın: /panel/payments-admin",
+                        )
+        except Exception as ex:
+            log.warning("pos health monitor error: %s", ex)
+        await asyncio.sleep(900)   # 15 dk
 
 
 async def _weekly_ai_report_task():

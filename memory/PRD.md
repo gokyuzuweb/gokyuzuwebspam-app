@@ -26,6 +26,17 @@ Multi-module WHM/cPanel mail-security SaaS with a React/FastAPI panel, WHM plugi
 - **v22 (Feb 2026)**: Live block counter (Landing hero 5s refresh), 30-day blocked-mail bar chart trend widget, per-IP Whitelist button (false-positive recovery), Trust Score <60 alert email + inbox, **SELF-HOST DEPLOYMENT PACKAGE** (Docker + Nginx + install.sh + backup/restore scripts) + **Master Mode Router** (/master/check /status /relay/update-check /relay/threat-feed /relay/heartbeat for resellers/plugins)
 - **v23 (Feb 2026)**: Bayi Panosu (/panel/resellers-admin) with live heartbeat + online badge, 'Yeni Versiyon Yayınla' modal (release_history), Landing bar chart region filter (TR/Dış/Tümü), Whitelist History page (/panel/whitelist-history) with search + remove
 - **v24 (Feb 2026)**: **Akıllı POS Router** (/api/smart-pos/*) — 5 sağlayıcı (paytr, iyzico, param, ipara, havale) health-based auto-routing + fallback chain; Bayi heartbeat tablosuna lisans **bitiş tarihi** kolonu + Bitişe Yakın stat kartı; SMTP **Otomatik Mod** toggle (WHM/cPanel sendmail + license domain'inden otomatik FROM adresi)
+- **v25 (Feb 2026)**: Havale ekstre yükle + otomatik referans eşleştirme (`POST /payments/havale/statement-match`), lisans bitiş uyarı cron'u (14g + 3g mail — bayi domain'inden), POS health monitor cron (%40 altı → inbox alert + Telegram), Akıllı POS listesi 20 sağlayıcıya genişletildi (7 gateway + 12 banka VPOS + 1 manuel)
+
+## Sanal POS Sağlayıcı Listesi (20)
+### Ödeme Ağ Geçitleri (7)
+PayTR · iyzico · Param · ipara · Shopier · Moka United · SiPay
+
+### Banka Sanal POS'ları (12)
+Garanti BBVA · Yapı Kredi Posnet · Akbank · İş Bankası İşCep · Ziraat · Halkbank · Vakıfbank · DenizBank · TEB · QNB Finansbank · Kuveyt Türk · Albaraka Türk
+
+### Manuel (1)
+Havale / EFT / FAST
 
 ## Self-Host Architecture
 - Location: `/app/deployment/` — Docker Compose (backend + frontend + Mongo + Nginx)
