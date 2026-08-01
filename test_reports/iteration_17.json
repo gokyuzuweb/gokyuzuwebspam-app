@@ -1,0 +1,43 @@
+{
+  "summary": "v25 batch — Ödeme Panosu Kanban + 20 Smart POS provider config modal + Havale banka ekstresi (text + PDF/TXT/CSV upload). Backend pytest 12/12 PASS via /app/backend/tests/test_v25_payments_smartpos_statement.py: (1) GET /payments/config returns paytr_configured + bank_iban/name/beneficiary; (2) GET /smart-pos/providers returns 20 providers with all required keys (paytr,iyzico,param,ipara,havale + 12 bank_pos: garanti,yapikredi,akbank,isbank,ziraat,halkbank,vakifbank,denizbank,teb,qnbfinansbank,kuveytturk,albaraka) across 3 categories; (3) GET /smart-pos/provider/paytr/config returns 3 fields (PAYTR_MERCHANT_ID/KEY/SALT) with has_value+value_masked+sensitive flags — KEY/SALT correctly marked sensitive; (4) GET /smart-pos/provider/notarealprovider/config → 404; (5) POST /smart-pos/provider/garanti/config persists 4 values, verified via GET roundtrip (has_value=true); (6) POST /smart-pos/provider/garanti/test returns ok=true when all env set; (7) POST /smart-pos/provider/albaraka/test returns ok=false with missing[] list when unconfigured; (8) POST /payments/havale/statement-match with no TRF refs returns ok=false; (9) full statement-match e2e: create havale order → embed TRFxxx + Turkish amount format '1.499,00 TL' in fake ekstre → refs_found=2, correct order matched with confidence=100, unmatched_refs contains bogus ref, auto_approve=true persists status=paid + approved_by=auto_statement_match; (10-12) statement-upload: TXT/plain works, CSV with iso-8859-9 Turkish encoding decodes correctly, PDF via pypdf extracts text (reportlab-generated PDF, 1 page), empty file → 400. Frontend Playwright PASS on /panel/payments-admin: 5 tabs found (pending/kanban/inbox/all/smart_pos via data-testid=pa-tab-*). Kanban tab: 4 columns (kanban-col-awaiting/notified/paid/failed) with 14 draggable cards rendered. Smart POS tab: 20 provider cards (data-testid=smart-pos-provider-{key}) grouped by category with 20 'API Anahtarlarını Ayarla' buttons (pos-config-btn-{key}) + StatementMatchForm visible below with textarea + upload + match button. PosConfigModal opens for PayTR showing 3 config fields, test-mode + enabled toggles, Save/Test/Cancel/Close buttons — closes cleanly. StatementMatchForm produced result panel after submitting sample text. NOTE: Frontend URL is https://mailscanner-pro.preview.emergentagent.com (from frontend/.env), NOT the URL shown in prev iterations — the other hostname returns 'Preview Unavailable' 404.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/smart-pos/providers", "issue": "Spec/UI claims 22 providers (7 gateway + 14 bank + 1 manual), but backend + ModuleFooter's own list only has 20 (7+12+1). Bank list in code and UI both enumerate 12 banks (Garanti/YKB/Akbank/İş/Ziraat/Halk/Vakıf/Deniz/TEB/QNB/Kuveyt/Albaraka). The '22' and '14 banka VPOS' copy in PaymentsAdmin.js ModuleFooter (lines 427,429) is inaccurate."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PaymentsAdmin SmartPosPanel footer", "issues": ["ModuleFooter copy claims '22 sağlayıcı: 7 gateway + 14 banka VPOS + 1 manuel (havale)' but actual rendered count is 20 (7+12+1). Either add 2 missing banks (e.g. Anadolubank + ING/Fibabank) or fix the footer copy to match."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v25_payments_smartpos_statement.py",
+    "/app/test_reports/pytest/v25_results.xml"
+  ],
+  "action_items": [
+    "Consider aligning provider count between code (20) and UI copy that claims 22 — either add 2 more bank_pos entries or update ModuleFooter text in PaymentsAdmin.js:427,429.",
+    "(Optional) statement-match amount parser assumes Turkish '1.234,56' format; plain '1499.00' is misparsed as 149900. Document expected format or auto-detect."
+  ],
+  "critical_code_review_comments": [
+    "routes/smart_pos.py POST /provider/{key}/config directly mutates os.environ[env_name] on save (line 410) — this leaks per-request user input into the process env of the FastAPI worker. Under multi-worker/uvicorn setups only the receiving worker sees the change, causing inconsistent behavior across workers until restart. Prefer reading from db.settings on demand (which the GET already does) instead of mirroring to os.environ.",
+    "routes/smart_pos.py POST /provider/{key}/config accepts arbitrary keys in payload.values but only whitelist iterates configured_env — this is safe, but the DB doc stores extra fields silently (upsert of new_values=dict(doc)). Consider strict filtering to only configured_env keys before persist.",
+    "routes/payments.py /havale/statement-upload has no auth check — anyone can upload up to 15MB PDF; recommend admin auth (X-Master-License header) same as other admin endpoints.",
+    "routes/payments.py /havale/statement-match auto_approve path also has no auth — malicious caller could push arbitrary TRFxxx text and trigger paid status on their own pending orders. This is CRITICAL for production. Add master-license header check.",
+    "routes/payments.py amount regex ([\\d.]+[.,]\\d{2}) is ambiguous for '.' — with '1499.00' it produces 149900 kuruş instead of 1499 TL (test confirmed). Add TR-specific parsing or require thousands separator to be '.'.",
+    "PaymentsAdmin.js PosConfigModal (line 598-602) sets state during render (setTestMode/setEnabled/setInitialized inside the render body). This works but is a React anti-pattern; should use useEffect on cfg.data change.",
+    "PaymentsAdmin.js file is now 835 lines with 4 major components — recommend splitting SmartPosPanel, PosConfigModal, StatementMatchForm, OrdersKanban into separate files under /components/payments/.",
+    "OrdersKanban drag-drop only supports awaiting/notified → paid/failed; a user dragging a paid card triggers 'geçiş desteklenmiyor' toast but no visual indicator that source column is un-draggable — consider disabling draggable={false} for terminal statuses.",
+    "PaymentsAdmin.js ModuleFooter footer (line 427-431) claims 22 providers / 14 bank POS — mismatch with real count (20/12)."
+  ],
+  "updated_files": ["/app/backend/tests/test_v25_payments_smartpos_statement.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (all flows: 5 tabs + Kanban + Smart POS + Modal + Statement)"},
+  "test_credentials": "License MS-C02AB012652A4FE692D69676 (localStorage gws.event_license). Frontend URL: https://mailscanner-pro.preview.emergentagent.com (from /app/frontend/.env REACT_APP_BACKEND_URL — same host used for API too).",
+  "seed_data_creation": "Test flow creates 1 havale order per full-flow run (email TEST_v25_<uuid>@example.com, amount 1499 TL) and marks it paid via auto_statement_match. Also writes db.settings pos_config_garanti with TEST_MID_v25/TEST_TID_v25/... — these mutate os.environ for GARANTI_* during the pytest run (see critical code review comment #1). Not cleaned up automatically.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All v25 batch tests green. Key testids: pa-tab-{pending|kanban|inbox|all|smart_pos}, kanban-col-{awaiting|notified|paid|failed}, kanban-card-{oid}, smart-pos-provider-{key}, pos-config-btn-{key}, pos-config-modal, pos-config-field-{ENV_NAME}, pos-config-{save|test-btn|cancel|close|test-mode|enabled}, statement-match-form, statement-textarea, statement-file-input, statement-upload-btn, statement-auto-approve, statement-match-btn, statement-result. Provider count is 20 (not 22 as spec says). Frontend host is mailscanner-pro.preview.emergentagent.com — spamguard-suite-1 returns Preview Unavailable. Statement-match auto_approve endpoint has NO auth — potential abuse vector, flagged as critical code review item. Test file at /app/backend/tests/test_v25_payments_smartpos_statement.py serves as regression suite.",
+  "rca_of_the_issue": "N/A — no functional bugs. Two documentation/copy inconsistencies flagged: (a) UI claims 22 providers, actual is 20; (b) statement-match amount parser only handles TR format '1.234,56' not en-US '1234.00' — test had to switch to TR format to reach confidence=100."
+}

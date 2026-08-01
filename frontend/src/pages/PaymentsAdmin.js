@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   CreditCard, Building2, CheckCircle2, XCircle, Bell, Clock, RefreshCw, User, Mail, Hash,
+  X, Upload, FileText, Wand2, Settings2, Eye, EyeOff, LayoutGrid,
 } from "lucide-react";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -83,6 +84,7 @@ export default function PaymentsAdmin() {
       <div className="flex gap-2 border-b border-slate-800">
         {[
           { k: "pending", label: `Bekleyen (${p.notified_count || 0})` },
+          { k: "kanban", label: "📋 Kanban" },
           { k: "inbox", label: `Bildirimler${unread ? ` · ${unread}` : ""}` },
           { k: "all", label: "Tüm Siparişler" },
           { k: "smart_pos", label: "🎯 Akıllı POS" },
@@ -250,6 +252,7 @@ export default function PaymentsAdmin() {
       )}
 
       {tab === "smart_pos" && <SmartPosPanel/>}
+      {tab === "kanban" && <OrdersKanban orders={allOrders.data?.items || []} onApprove={(mid) => approve.mutate(mid)} onReject={(mid) => reject.mutate(mid)} onRefetch={() => allOrders.refetch()}/>}
 
       <ModuleFooter
         title="Ödeme Panosu — Nasıl Çalışır?"
@@ -408,6 +411,15 @@ function SmartPosPanel() {
         <StatementMatchForm/>
       </div>
 
+      {/* Config Modal */}
+      {configProvider && (
+        <PosConfigModal
+          providerKey={configProvider}
+          onClose={() => setConfigProvider(null)}
+          onSaved={() => { providers.refetch(); stats.refetch(); }}
+        />
+      )}
+
       <ModuleFooter
         title="Akıllı POS Router — Nasıl Çalışır?"
         howItWorks="Ödeme talebi geldiğinde /smart-pos/route endpoint'i sırayla değerlendirir: 1) 'prefer' varsa öncelik. 2) Configured olmayanlar sona atılır. 3) Son 1 saatte başarı oranı %40 altında ise 'unhealthy'. 4) Priority düşük olan seçilir. Failover chain (fallback_chain) client'a döner."
@@ -427,3 +439,396 @@ function SmartPosPanel() {
     </div>
   );
 }
+
+// ============================================================================
+// StatementMatchForm — Banka ekstresi yapıştır + otomatik havale eşleştir
+// ============================================================================
+function StatementMatchForm() {
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [result, setResult] = useState(null);
+  const fileRef = useRef(null);
+
+  const match = useMutation({
+    mutationFn: (payload) => api.havaleStatementMatch(payload),
+    onSuccess: (data) => {
+      setResult(data);
+      if (data?.auto_approved?.length) {
+        toast.success(`✓ ${data.auto_approved.length} sipariş otomatik onaylandı`);
+        qc.invalidateQueries({ queryKey: ["admin-pending-havale"] });
+        qc.invalidateQueries({ queryKey: ["all-orders"] });
+      } else if (data?.matches?.length) {
+        toast.info(`${data.matches.length} eşleşme bulundu`);
+      } else {
+        toast.warning(data?.message || "Eşleşme yok");
+      }
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Eşleştirme başarısız"),
+  });
+
+  const onFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.name.toLowerCase().endsWith(".pdf")) {
+      const fd = new FormData();
+      fd.append("file", f);
+      try {
+        const res = await fetch(
+          `${process.env.REACT_APP_BACKEND_URL}/api/payments/havale/statement-upload`,
+          { method: "POST", body: fd },
+        );
+        const data = await res.json();
+        if (data.extracted_text) {
+          setText(data.extracted_text);
+          toast.success(`PDF okundu · ${data.pages} sayfa · ${data.extracted_text.length} karakter`);
+        } else {
+          toast.error(data.detail || "PDF okunamadı");
+        }
+      } catch (err) {
+        toast.error("PDF yükleme hatası");
+      }
+    } else {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setText(ev.target.result || "");
+        toast.success(`Dosya yüklendi · ${f.name}`);
+      };
+      reader.readAsText(f);
+    }
+    e.target.value = "";
+  };
+
+  return (
+    <div className="space-y-3" data-testid="statement-match-form">
+      <div className="flex items-center gap-2 flex-wrap">
+        <input type="file" accept=".pdf,.txt,.csv" ref={fileRef} onChange={onFile}
+               className="hidden" data-testid="statement-file-input"/>
+        <button type="button" onClick={() => fileRef.current?.click()}
+                className="text-xs px-3 py-1.5 rounded bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700 inline-flex items-center gap-1.5"
+                data-testid="statement-upload-btn">
+          <Upload className="w-3 h-3"/> PDF / TXT / CSV Yükle
+        </button>
+        <label className="text-xs text-slate-400 inline-flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)}
+                 data-testid="statement-auto-approve"/>
+          Tam eşleşenleri otomatik onayla
+        </label>
+      </div>
+      <textarea value={text} onChange={(e) => setText(e.target.value)}
+                placeholder="Banka ekstresi metnini buraya yapıştırın veya PDF yükleyin&#10;Örn: 15/03/2026  TRF3A5B7C9D1E2F3A5B7C9D1E  1.499,00 TL  GELEN HAVALE"
+                rows={6}
+                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-xs mono text-slate-200 focus:border-emerald-500/50 outline-none"
+                data-testid="statement-textarea"/>
+      <div className="flex items-center gap-2">
+        <button type="button" disabled={!text.trim() || match.isPending}
+                onClick={() => match.mutate({ raw_text: text, auto_approve: autoApprove })}
+                className="text-xs px-3 py-1.5 rounded bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-40 inline-flex items-center gap-1.5"
+                data-testid="statement-match-btn">
+          <Wand2 className="w-3 h-3"/> {match.isPending ? "Eşleştiriliyor..." : "Otomatik Eşleştir"}
+        </button>
+        {text && (
+          <button type="button" onClick={() => { setText(""); setResult(null); }}
+                  className="text-[10px] text-slate-500 hover:text-slate-300">temizle</button>
+        )}
+      </div>
+
+      {result && (
+        <div className="mt-2 space-y-2" data-testid="statement-result">
+          <div className="flex items-center gap-3 text-xs flex-wrap">
+            <span className="text-slate-400"><span className="mono text-slate-200">{result.refs_found || 0}</span> referans</span>
+            <span className="text-emerald-300"><span className="mono">{result.matches?.length || 0}</span> eşleşme</span>
+            {!!result.auto_approved?.length && <Badge tone="success">{result.auto_approved.length} auto-onay</Badge>}
+            {!!result.unmatched_refs?.length && (
+              <span className="text-amber-300"><span className="mono">{result.unmatched_refs.length}</span> eşleşmeyen</span>
+            )}
+          </div>
+          {result.matches?.length > 0 && (
+            <div className="space-y-1">
+              {result.matches.map((m) => (
+                <div key={m.merchant_oid}
+                     className={`p-2 rounded border text-xs ${
+                       m.confidence >= 100
+                         ? "bg-emerald-500/5 border-emerald-500/30"
+                         : "bg-amber-500/5 border-amber-500/30"
+                     }`}
+                     data-testid={`statement-match-${m.merchant_oid}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="mono text-slate-200 truncate">{m.merchant_oid}</div>
+                      <div className="text-[10px] text-slate-500">{m.user_name} · {m.email}</div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="mono text-emerald-200">{m.expected_amount} TL</div>
+                      <div className="text-[10px] text-slate-500">
+                        %{m.confidence} güven
+                        {m.detected_amount != null && ` · ekstre: ${m.detected_amount}`}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {result.unmatched_refs?.length > 0 && (
+            <div className="text-[10px] text-amber-300/80 mono">
+              Eşleşmeyen: {result.unmatched_refs.join(", ")}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// PosConfigModal — Sağlayıcı API anahtarları için modal form
+// ============================================================================
+function PosConfigModal({ providerKey, onClose, onSaved }) {
+  const cfg = useQuery({
+    queryKey: ["pos-config", providerKey],
+    queryFn: () => api.smartPosGetConfig(providerKey),
+  });
+  const [values, setValues] = useState({});
+  const [testMode, setTestMode] = useState(true);
+  const [enabled, setEnabled] = useState(true);
+  const [showSecrets, setShowSecrets] = useState({});
+  const [initialized, setInitialized] = useState(false);
+
+  if (cfg.data && !initialized) {
+    setTestMode(!!cfg.data.test_mode);
+    setEnabled(cfg.data.enabled !== false);
+    setInitialized(true);
+  }
+
+  const save = useMutation({
+    mutationFn: (payload) => api.smartPosSetConfig(providerKey, payload),
+    onSuccess: (data) => {
+      toast.success(`${cfg.data?.name || providerKey} kaydedildi · ${data.configured_fields}/${data.total_fields} alan dolu`);
+      onSaved?.();
+      onClose();
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Kaydetme başarısız"),
+  });
+
+  const test = useMutation({
+    mutationFn: () => api.smartPosTestConfig(providerKey),
+    onSuccess: (data) => {
+      if (data.ok) toast.success(data.message);
+      else toast.warning(data.message);
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Test başarısız"),
+  });
+
+  const submit = (e) => {
+    e?.preventDefault?.();
+    save.mutate({ values, test_mode: testMode, enabled });
+  };
+
+  const d = cfg.data;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+         data-testid="pos-config-modal">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="text-2xl leading-none">{d?.logo || "⚙️"}</span>
+            <div className="min-w-0">
+              <div className="text-slate-100 font-semibold text-sm truncate">{d?.name || providerKey}</div>
+              <div className="text-[10px] text-slate-500 mono uppercase">
+                {d?.category || "..."} · komisyon: {d?.commission || "-"}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200 p-1"
+                  data-testid="pos-config-close">
+            <X className="w-4 h-4"/>
+          </button>
+        </div>
+
+        <form onSubmit={submit} className="overflow-y-auto flex-1 px-5 py-4 space-y-3">
+          {cfg.isLoading ? (
+            <div className="text-center text-sm text-slate-500 py-8">Yükleniyor...</div>
+          ) : !d?.fields?.length ? (
+            <div className="text-center text-sm text-slate-500 py-8">
+              Bu sağlayıcı için config alanı yok (manuel).
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2 pb-3 border-b border-slate-800">
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                  <input type="checkbox" checked={testMode}
+                         onChange={(e) => setTestMode(e.target.checked)}
+                         data-testid="pos-config-test-mode"/>
+                  🧪 Test Modu
+                </label>
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                  <input type="checkbox" checked={enabled}
+                         onChange={(e) => setEnabled(e.target.checked)}
+                         data-testid="pos-config-enabled"/>
+                  ✅ Aktif (yönlendirmeye dahil)
+                </label>
+              </div>
+
+              {d.fields.map((f) => (
+                <div key={f.env_name}>
+                  <label className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 flex items-center justify-between">
+                    <span>{f.label}</span>
+                    <span className="text-[9px] mono normal-case text-slate-600">
+                      {f.env_name} · {f.source}
+                    </span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={(f.sensitive && !showSecrets[f.env_name]) ? "password" : "text"}
+                      value={values[f.env_name] ?? ""}
+                      onChange={(e) => setValues({ ...values, [f.env_name]: e.target.value })}
+                      placeholder={f.has_value ? f.value_masked : `${f.env_name} girin`}
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs mono text-slate-200 focus:border-indigo-500/50 outline-none pr-8"
+                      data-testid={`pos-config-field-${f.env_name}`}
+                    />
+                    {f.sensitive && (
+                      <button type="button"
+                              onClick={() => setShowSecrets({ ...showSecrets, [f.env_name]: !showSecrets[f.env_name] })}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                        {showSecrets[f.env_name] ? <EyeOff className="w-3.5 h-3.5"/> : <Eye className="w-3.5 h-3.5"/>}
+                      </button>
+                    )}
+                  </div>
+                  {f.has_value && (
+                    <div className="text-[9px] text-slate-500 mt-0.5">
+                      Mevcut (maskeli): <span className="mono">{f.value_masked}</span>
+                      {" · "}boş bırakırsanız dokunulmaz
+                    </div>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+        </form>
+
+        <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-slate-800 bg-slate-950/50">
+          <button type="button" onClick={() => test.mutate()} disabled={test.isPending}
+                  className="text-xs px-3 py-1.5 rounded bg-sky-500/15 text-sky-200 border border-sky-500/30 hover:bg-sky-500/25 inline-flex items-center gap-1.5"
+                  data-testid="pos-config-test-btn">
+            <Settings2 className="w-3 h-3"/> {test.isPending ? "Test..." : "Bağlantıyı Test Et"}
+          </button>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose}
+                    className="text-xs px-3 py-1.5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
+                    data-testid="pos-config-cancel">
+              İptal
+            </button>
+            <button type="button" onClick={submit} disabled={save.isPending}
+                    className="text-xs px-4 py-1.5 rounded bg-indigo-500/20 text-indigo-100 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-40 inline-flex items-center gap-1.5"
+                    data-testid="pos-config-save">
+              <CheckCircle2 className="w-3 h-3"/> {save.isPending ? "Kaydediliyor..." : "Kaydet"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// OrdersKanban — Sürükle-bırak sipariş yönetimi
+// ============================================================================
+const KANBAN_COLUMNS = [
+  { key: "awaiting", title: "⏳ Bekleyen", statuses: ["awaiting_transfer", "pending"],
+    color: "border-slate-700 bg-slate-900/40" },
+  { key: "notified", title: "🔔 Kullanıcı Bildirim", statuses: ["notified_by_user"],
+    color: "border-amber-500/40 bg-amber-500/5" },
+  { key: "paid", title: "✅ Onaylandı", statuses: ["paid"],
+    color: "border-emerald-500/40 bg-emerald-500/5" },
+  { key: "failed", title: "❌ Başarısız / Reddedildi", statuses: ["failed", "rejected"],
+    color: "border-rose-500/30 bg-rose-500/5" },
+];
+
+function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
+  const [dragOid, setDragOid] = useState(null);
+  const columns = KANBAN_COLUMNS.map((col) => ({
+    ...col,
+    items: orders.filter((o) => col.statuses.includes(o.status)),
+  }));
+
+  const handleDrop = (targetKey, e) => {
+    e.preventDefault();
+    if (!dragOid) return;
+    const order = orders.find((o) => o.merchant_oid === dragOid);
+    setDragOid(null);
+    if (!order) return;
+    const movable = ["notified_by_user", "awaiting_transfer", "pending"];
+    if (targetKey === "paid" && movable.includes(order.status)) {
+      onApprove(order.merchant_oid);
+    } else if (targetKey === "failed" && movable.includes(order.status)) {
+      onReject(order.merchant_oid);
+    } else {
+      toast.info("Bu geçiş desteklenmiyor");
+    }
+  };
+
+  return (
+    <div className="space-y-3" data-testid="orders-kanban">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <LayoutGrid className="w-4 h-4 text-indigo-400"/>
+          <span>Sürükle-bırak: kartı 'Onaylandı' veya 'Başarısız' sütununa taşı</span>
+        </div>
+        <button onClick={onRefetch}
+                className="text-[10px] text-slate-500 hover:text-slate-300 inline-flex items-center gap-1"
+                data-testid="kanban-refresh">
+          <RefreshCw className="w-3 h-3"/> yenile
+        </button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        {columns.map((col) => (
+          <div key={col.key}
+               onDragOver={(e) => e.preventDefault()}
+               onDrop={(e) => handleDrop(col.key, e)}
+               className={`rounded-lg border p-2 min-h-[60vh] ${col.color}`}
+               data-testid={`kanban-col-${col.key}`}>
+            <div className="flex items-center justify-between mb-2 px-1">
+              <div className="text-xs font-semibold text-slate-200">{col.title}</div>
+              <span className="text-[10px] mono text-slate-500">{col.items.length}</span>
+            </div>
+            <div className="space-y-1.5">
+              {col.items.length === 0 ? (
+                <div className="text-center text-[10px] text-slate-600 py-4">boş</div>
+              ) : col.items.slice(0, 40).map((o) => (
+                <div key={o.merchant_oid}
+                     draggable
+                     onDragStart={() => setDragOid(o.merchant_oid)}
+                     onDragEnd={() => setDragOid(null)}
+                     className={`p-2 rounded border bg-slate-900/80 border-slate-800 text-[10px] cursor-move transition-opacity ${
+                       dragOid === o.merchant_oid ? "opacity-50" : "hover:border-indigo-500/40"
+                     }`}
+                     data-testid={`kanban-card-${o.merchant_oid}`}>
+                  <div className="flex items-center gap-1 mb-0.5">
+                    {o.provider === "havale"
+                      ? <Badge tone="success">HAV</Badge>
+                      : <Badge tone="info">{(o.provider || "?").toUpperCase().slice(0, 4)}</Badge>}
+                    <span className="mono text-emerald-300 ml-auto">{o.amount} TL</span>
+                  </div>
+                  <div className="text-slate-200 truncate">{o.user_name || "—"}</div>
+                  <div className="text-slate-500 truncate">{o.email}</div>
+                  <div className="mono text-slate-600 truncate mt-0.5">{o.merchant_oid}</div>
+                  <div className="text-slate-600 text-[9px] mt-0.5">
+                    {(o.created_at || "").slice(0, 16).replace("T", " ")}
+                  </div>
+                </div>
+              ))}
+              {col.items.length > 40 && (
+                <div className="text-center text-[9px] text-slate-600 py-1">
+                  +{col.items.length - 40} daha...
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+

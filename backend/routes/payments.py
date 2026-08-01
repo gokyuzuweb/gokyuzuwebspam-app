@@ -9,7 +9,7 @@ import os, uuid, base64, hmac, hashlib, json
 from datetime import datetime, timezone
 from typing import Optional
 from decimal import Decimal
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel, Field, EmailStr
 from deps import db
 
@@ -420,4 +420,56 @@ async def havale_statement_match(payload: StatementIn):
         "message": (f"{len(matches)} eşleşme bulundu · {len(auto_approved)} otomatik onaylandı"
                     if payload.auto_approve else
                     f"{len(matches)} eşleşme bulundu — inceleyip onaylayın"),
+    }
+
+
+
+@router.post("/havale/statement-upload")
+async def havale_statement_upload(file: UploadFile = File(...)):
+    """PDF/CSV/TXT banka ekstresini yükle → metin çıkart → istemci /statement-match'a gönderir.
+    pypdf ile PDF sayfalarından text çekilir; encoding fallback ile txt/csv okunur."""
+    fname = (file.filename or "").lower()
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Boş dosya")
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(413, "Dosya çok büyük (max 15MB)")
+
+    extracted = ""
+    pages = 0
+    if fname.endswith(".pdf") or data[:4] == b"%PDF":
+        try:
+            from pypdf import PdfReader
+            import io
+            reader = PdfReader(io.BytesIO(data))
+            pages = len(reader.pages)
+            chunks = []
+            for i, pg in enumerate(reader.pages):
+                try:
+                    chunks.append(pg.extract_text() or "")
+                except Exception:
+                    chunks.append("")
+                if i >= 50:  # güvenlik: max 50 sayfa
+                    break
+            extracted = "\n".join(chunks)
+        except Exception as e:
+            raise HTTPException(400, f"PDF okunamadı: {e}")
+    else:
+        for enc in ("utf-8", "utf-8-sig", "iso-8859-9", "cp1254", "latin-1"):
+            try:
+                extracted = data.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        pages = 1
+    if not extracted.strip():
+        raise HTTPException(400, "Dosyadan metin çıkarılamadı (taranmış PDF olabilir - OCR gerekli)")
+
+    return {
+        "ok": True,
+        "filename": file.filename,
+        "pages": pages,
+        "size_bytes": len(data),
+        "extracted_text": extracted,
+        "hint": "Bu metni /statement-match endpoint'ine yollayarak referansları eşleştirin",
     }
