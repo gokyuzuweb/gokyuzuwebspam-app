@@ -17,7 +17,7 @@
 # Config (/etc/mailshield/mailshield.conf):
 #   [license]
 #   key         = MS-XXXXXXXX
-#   server_url  = https://mailscanner-pro.preview.emergentagent.com
+#   server_url  = https://panel.gokyuzuhosting.com
 #   [logtail]
 #   exim_log    = /var/log/exim_mainlog          (default)
 #   spool_dir   = /var/spool/exim/input          (default)
@@ -34,7 +34,7 @@ my %cfg = _load_ini($CFG_PATH);
 
 my $license = $cfg{license}{key}
     or die "[GWS-logtail] license.key yok in $CFG_PATH\n";
-my $server  = $cfg{license}{server_url} // 'https://mailscanner-pro.preview.emergentagent.com';
+my $server  = $cfg{license}{server_url} // 'https://panel.gokyuzuhosting.com';
 my $eximlog = $cfg{logtail}{exim_log}   // '/var/log/exim_mainlog';
 my $spool   = $cfg{logtail}{spool_dir}  // '/var/spool/exim/input';
 my $posfile = $cfg{logtail}{position}   // '/var/lib/mailshield/exim-tail.pos';

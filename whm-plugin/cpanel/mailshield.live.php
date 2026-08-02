@@ -11,7 +11,7 @@ $cpanel = new CPANEL();
 print $cpanel->header("GokyuzuWebSpam MailControl");
 
 $user      = getenv('REMOTE_USER') ?: 'unknown';
-$publicUrl = getenv('MAILSHIELD_PUBLIC') ?: 'https://mailscanner-pro.preview.emergentagent.com';
+$publicUrl = getenv('MAILSHIELD_PUBLIC') ?: 'https://panel.gokyuzuhosting.com';
 $panelUrl  = $publicUrl . '/panel?scope=user&user=' . urlencode($user);
 ?>
 

@@ -20,7 +20,7 @@ unless (Whostmgr::ACLS::hasroot()) {
 }
 
 my $api    = $ENV{MAILSHIELD_API} // 'http://127.0.0.1:8001';
-my $public = $ENV{MAILSHIELD_PUBLIC} // 'https://mailscanner-pro.preview.emergentagent.com';
+my $public = $ENV{MAILSHIELD_PUBLIC} // 'https://panel.gokyuzuhosting.com';
 my $pinfo  = $ENV{PATH_INFO} // '';
 my $qs     = $ENV{QUERY_STRING} // '';
 

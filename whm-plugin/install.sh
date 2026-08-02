@@ -203,7 +203,7 @@ if [[ -n "$LICENSE_KEY" && $DRY_RUN -eq 0 ]]; then
     printf "\n[license]\nkey = %s\n" "$LICENSE_KEY" >> "$CONF_FILE"
   fi
   # License server URL — verilmediyse varsayılan preview URL
-  DEFAULT_LS="${LICENSE_SERVER:-https://mailscanner-pro.preview.emergentagent.com}"
+  DEFAULT_LS="${LICENSE_SERVER:-https://panel.gokyuzuhosting.com}"
   if grep -q "^server_url\s*=" "$CONF_FILE"; then
     sed -i "s|^server_url\s*=.*|server_url = $DEFAULT_LS|" "$CONF_FILE"
   else

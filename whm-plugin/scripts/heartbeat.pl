@@ -149,7 +149,7 @@ sub _sync_cpanel_accounts {
     # Panel URL — /etc/mailshield/mailshield.conf'ta panel.url ile override
     my $panel_url = $conf{panel}{url}
                  || $ENV{MAILSHIELD_PANEL_URL}
-                 || 'https://mailscanner-pro.preview.emergentagent.com';
+                 || 'https://panel.gokyuzuhosting.com';
     my $listaccts = '/usr/local/cpanel/bin/whmapi1';
     return unless -x $listaccts;
 
@@ -212,7 +212,7 @@ sub _sync_cpanel_accounts {
 sub _sync_cpanel_quarantine {
     my $panel_url = $conf{panel}{url}
                  || $ENV{MAILSHIELD_PANEL_URL}
-                 || 'https://mailscanner-pro.preview.emergentagent.com';
+                 || 'https://panel.gokyuzuhosting.com';
 
     my @dirs = (
         '/var/spool/MailScanner/quarantine',

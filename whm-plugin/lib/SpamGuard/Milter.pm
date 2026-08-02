@@ -6,7 +6,7 @@ package SpamGuard::Milter;
 # Config (from /etc/mailshield/mailshield.conf):
 #   [license]
 #   key         = MS-XXXXXXXX
-#   server_url  = https://mailscanner-pro.preview.emergentagent.com
+#   server_url  = https://panel.gokyuzuhosting.com
 #
 
 use strict;
@@ -27,7 +27,7 @@ sub new {
         api         => LWP::UserAgent->new(timeout => 6, ssl_opts => { verify_hostname => 0 }),
         json        => JSON::XS->new->utf8,
         license_key => $cfg->get('license', 'key') // '',
-        server_url  => $cfg->get('license', 'server_url') // 'https://mailscanner-pro.preview.emergentagent.com',
+        server_url  => $cfg->get('license', 'server_url') // 'https://panel.gokyuzuhosting.com',
         hostname    => Sys::Hostname::hostname(),
     };
     bless $self, $class;
