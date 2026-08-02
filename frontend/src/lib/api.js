@@ -8,6 +8,20 @@ const client = axios.create({ baseURL: API, timeout: 20000 });
 // LLM-backed endpoints can take 30-60s (Claude / GPT / Gemini reasoning)
 const llmClient = axios.create({ baseURL: API, timeout: 90000 });
 
+// Master anahtarını her istekle X-Master-Key header'ında gönder (localStorage'dan)
+const _attachMasterKey = (config) => {
+  try {
+    const mk = localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license") || "";
+    if (mk && mk.startsWith("MS-")) {
+      config.headers = config.headers || {};
+      config.headers["X-Master-Key"] = mk;
+    }
+  } catch (_) {}
+  return config;
+};
+client.interceptors.request.use(_attachMasterKey);
+llmClient.interceptors.request.use(_attachMasterKey);
+
 // Demo modu: 423 Locked cevabında kullanıcıyı bilgilendir ve akışı durdur
 const _demoInterceptor = (err) => {
   if (err?.response?.status === 423 && err.response?.data?.code === "DEMO_READ_ONLY") {

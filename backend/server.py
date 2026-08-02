@@ -3977,6 +3977,31 @@ async def demo_write_guard(request: Request, call_next):
         status = await _plugin_status_payload()
     except Exception:
         return await call_next(request)
+
+    # Seller/master modu: master anahtarı istekle geldiyse yazma serbest,
+    # gelmediyse (ziyaretçi) demo yazma kilidi çalışır.
+    if status.get("mode") == "seller":
+        master_key_env = os.environ.get("MASTER_LICENSE_KEY", "")
+        provided_key = (
+            request.headers.get("x-master-key")
+            or request.query_params.get("master_key")
+            or request.query_params.get("license_key")
+            or ""
+        )
+        if master_key_env and provided_key and provided_key == master_key_env:
+            return await call_next(request)
+        # Ziyaretçi: yazma kilitle
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=423,
+            content={
+                "detail": "Demo modundasınız. Yazma işlemleri için lisans girin.",
+                "code": "DEMO_READ_ONLY",
+                "demo_days_remaining": status.get("demo_days_remaining", 7),
+                "demo_over": False,
+            },
+        )
+
     if status.get("mode") == "customer" and not status.get("licensed"):
         from fastapi.responses import JSONResponse
         return JSONResponse(

@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { useIsMaster } from "@/hooks/useIsMaster";
 
 /**
  * Bileşen setleri:
@@ -17,6 +18,7 @@ import { api } from "@/lib/api";
 export function PluginStatusStripe() {
   const q = useQuery({ queryKey: ["plugin-status"], queryFn: api.pluginStatus, refetchInterval: 30000 });
   const upd = useQuery({ queryKey: ["version-check"], queryFn: api.versionCheckUpdate, refetchInterval: 3600000 });
+  const { isMaster } = useIsMaster();
   const qc = useQueryClient();
   const [upgrading, setUpgrading] = useState(false);
 
@@ -59,41 +61,33 @@ export function PluginStatusStripe() {
           </button>
         </div>
       )}
-      {/* Demo / license status */}
-      {s.mode !== "seller" && !s.gated && (
-        <>
-          {s.licensed ? (
-            <div data-testid="plugin-status-licensed" className="bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-300 text-xs px-6 py-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Lisanslı · <span className="mono">{s.license_key.slice(0, 20)}…</span></span>
-              </div>
-              <div className="mono">Bitiş: {s.license_expires ? new Date(s.license_expires).toLocaleDateString("tr-TR") : "—"}</div>
-            </div>
-          ) : s.is_demo && !s.demo_over ? (
-            <div data-testid="plugin-status-demo" className="relative bg-gradient-to-r from-amber-500/20 via-amber-400/15 to-rose-500/15 border-b-2 border-amber-500/50 text-amber-100 text-xs px-6 py-2.5 flex items-center justify-between shadow-inner shadow-amber-500/20">
-              <div className="flex items-center gap-3">
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-100 text-[10px] font-black uppercase tracking-widest animate-pulse">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-300"/>
-                  Salt Okunur
-                </span>
-                <Clock className="w-3.5 h-3.5 text-amber-300" />
-                <span>
-                  <b className="text-amber-50">DEMO MODU</b> · <span className="mono text-amber-200">{s.demo_days_remaining}</span> gün kaldı · Yazma işlemleri kilitli, sadece inceleme
-                </span>
-              </div>
-              <a
-                href="#"
-                onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("gws:open-license-modal")); } catch (_) {} }}
-                data-testid="demo-unlock-link"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border border-amber-400/60 bg-amber-400/20 text-amber-50 hover:bg-amber-400/30 hover:border-amber-300 transition"
-              >
-                <KeyRound className="w-3 h-3" />
-                Lisansla Kilidi Aç
-              </a>
-            </div>
-          ) : null}
-        </>
+      {/* Demo / license status
+       * Master anahtarı olan kullanıcılar için hiçbir şey gösterme (tam erişim).
+       * Master anahtarı olmayan tüm ziyaretçilere DEMO bandını göster (server
+       * mode ne olursa olsun).
+       */}
+      {!isMaster && !s.gated && (
+        <div data-testid="plugin-status-demo" className="relative bg-gradient-to-r from-amber-500/20 via-amber-400/15 to-rose-500/15 border-b-2 border-amber-500/50 text-amber-100 text-xs px-6 py-2.5 flex items-center justify-between shadow-inner shadow-amber-500/20">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-100 text-[10px] font-black uppercase tracking-widest animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-300"/>
+              Salt Okunur
+            </span>
+            <Clock className="w-3.5 h-3.5 text-amber-300" />
+            <span>
+              <b className="text-amber-50">DEMO MODU</b> · <span className="mono text-amber-200">{s.demo_days_remaining ?? 7}</span> gün · Örnek verilerle inceleme · Yazma kilitli
+            </span>
+          </div>
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("gws:open-license-modal")); } catch (_) {} }}
+            data-testid="demo-unlock-link"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border border-amber-400/60 bg-amber-400/20 text-amber-50 hover:bg-amber-400/30 hover:border-amber-300 transition"
+          >
+            <KeyRound className="w-3 h-3" />
+            Lisansla Kilidi Aç
+          </a>
+        </div>
       )}
     </>
   );
