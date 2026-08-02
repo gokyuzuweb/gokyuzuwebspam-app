@@ -21,6 +21,25 @@ unless (Whostmgr::ACLS::hasroot()) {
 
 my $api    = $ENV{MAILSHIELD_API} // 'http://127.0.0.1:8001';
 my $public = $ENV{MAILSHIELD_PUBLIC} // 'https://panel.gokyuzuhosting.com';
+
+# Master license key — WHM'e sadece root erişebilir, iframe'e query parametre
+# olarak geçilerek tarayıcı localStorage'ına yazılır (master otomatik tanıma).
+my $master_key = $ENV{MAILSHIELD_MASTER_KEY} // '';
+if (!$master_key) {
+    # backend.env'den otomatik oku (fallback)
+    my $env_file = '/opt/gokyuzuwebspam-app/deployment/backend.env';
+    if (open my $fh, '<', $env_file) {
+        while (my $line = <$fh>) {
+            chomp $line;
+            if ($line =~ /^MASTER_LICENSE_KEY\s*=\s*(.+?)\s*$/) {
+                $master_key = $1;
+                $master_key =~ s/^["']|["']$//g;
+                last;
+            }
+        }
+        close $fh;
+    }
+}
 my $pinfo  = $ENV{PATH_INFO} // '';
 my $qs     = $ENV{QUERY_STRING} // '';
 
@@ -143,6 +162,10 @@ print "Content-type: text/html; charset=utf-8\r\n\r\n";
 Whostmgr::HTMLInterface::defheader('GokyuzuWebSpam', '', '/cgi/mailshield');
 
 my $panel_url = "$public/panel";
+if ($master_key) {
+    # WHM'e giren = root, master anahtarı iframe query parametresi olarak geçilir
+    $panel_url .= "?master_key=$master_key";
+}
 
 print <<"HTML";
 <style>

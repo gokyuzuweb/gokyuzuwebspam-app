@@ -75,7 +75,38 @@ def _mask_replica(url: str, payload: dict) -> dict:
 
 @router.get("/health")
 async def upstream_health():
-    """Health of each replica, masked with friendly region labels."""
+    """Health of each replica, masked with friendly region labels.
+
+    Self-hosted master modu için: eğer harici License Server replica'ları
+    yapılandırılmamışsa veya `MAILSHIELD_MODE=seller` ise, master'ın
+    kendisi license server olarak sağlıklı sayılır.
+    """
+    # Self-hosted master fast-path
+    is_self_master = os.environ.get("MAILSHIELD_MODE", "").lower() == "seller"
+    if is_self_master and (not REPLICA_URLS or all(u.startswith("http://localhost") for u in REPLICA_URLS)):
+        from datetime import datetime, timezone
+        master_host = os.environ.get("MASTER_HOST", "master")
+        region = REGION_LABELS[0] if REGION_LABELS else f"Self-Hosted ({master_host})"
+        return {
+            "reachable": True,
+            "region": region,
+            "version": "self-hosted",
+            "last_seen": datetime.now(timezone.utc).isoformat(),
+            "error": None,
+            "regions": [{
+                "region": region,
+                "reachable": True,
+                "version": "self-hosted",
+                "redis_connected": None,
+                "last_seen": datetime.now(timezone.utc).isoformat(),
+                "error": None,
+            }],
+            "healthy_count": 1,
+            "total_regions": 1,
+            "cluster_size": 1,
+            "mode": "self-master",
+        }
+
     raw = []
     async with httpx.AsyncClient(timeout=3) as c:
         for url in REPLICA_URLS:

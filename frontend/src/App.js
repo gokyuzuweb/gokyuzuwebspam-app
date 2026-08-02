@@ -1,4 +1,5 @@
 import "@/App.css";
+import React from "react";
 import { BrowserRouter, Routes, Route, NavLink, useLocation, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import {
@@ -207,6 +208,22 @@ function Shell() {
 }
 
 export default function App() {
+  // WHM CGI iframe'inden gelen ?master_key=... parametresini yakalayıp localStorage'a yaz
+  // Bu sayede WHM'e root erişimi olan kullanıcı otomatik olarak master modunda görünür
+  React.useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const mk = params.get("master_key");
+      if (mk && mk.startsWith("MS-")) {
+        localStorage.setItem("gws.event_license", mk);
+        localStorage.setItem("gws.master_license", mk);
+        // URL'den anahtarı temizle (tarayıcı adres çubuğunda görünmesin)
+        params.delete("master_key");
+        const cleanUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "") + window.location.hash;
+        window.history.replaceState({}, "", cleanUrl);
+      }
+    } catch (_) {}
+  }, []);
   return (
     <div className="App">
       <I18nProvider>
