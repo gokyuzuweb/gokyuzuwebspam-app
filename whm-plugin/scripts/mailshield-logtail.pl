@@ -38,7 +38,15 @@ my %cfg = _load_ini($CFG_PATH);
 
 my $license = $cfg{license}{key}
     or die "[GWS-logtail] license.key yok in $CFG_PATH\n";
-my $server  = $cfg{license}{server_url} // 'https://panel.gokyuzuhosting.com';
+# server_url önceliği: (1) env var MAILSHIELD_SERVER_URL (systemd override için),
+# (2) config dosyası, (3) hardcoded fallback.
+my $server  = $ENV{MAILSHIELD_SERVER_URL}
+           || $cfg{license}{server_url}
+           || 'https://panel.gokyuzuhosting.com';
+# license key de env override kabul et
+if ($ENV{MAILSHIELD_LICENSE_KEY}) { $license = $ENV{MAILSHIELD_LICENSE_KEY}; }
+warn "[GWS-logtail] server_url = $server\n";
+warn "[GWS-logtail] license_key = " . substr($license, 0, 12) . "…\n";
 my $eximlog = $cfg{logtail}{exim_log}   // '/var/log/exim_mainlog';
 my $spool   = $cfg{logtail}{spool_dir}  // '/var/spool/exim/input';
 my $posfile = $cfg{logtail}{position}   // '/var/lib/mailshield/exim-tail.pos';
