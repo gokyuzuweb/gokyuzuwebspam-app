@@ -792,18 +792,238 @@ async def public_sales_today():
     ]
     plans = ["Starter", "Pro", "Enterprise"]
 
-    # Tüm isim ve şehir havuzları tek listede birleşir — country distribution
-    # havuz büyüklüğüne göre doğal orantıda dağılır (uluslararası ağırlıklı).
-    all_names = turkish_names + intl_names
-    all_cities = tr_cities + intl_cities
+    # Bölgesel isim + şirket havuzları — her şehir kendi kültürüne uygun
+    # isim/şirket ile eşleşir. Firma satın alımı ~%35 ihtimal ile görünür.
+    region_pool = {
+        "TR": {
+            "cities": [
+                ("İstanbul", "TR", "🇹🇷"), ("Ankara", "TR", "🇹🇷"), ("İzmir", "TR", "🇹🇷"),
+                ("Bursa", "TR", "🇹🇷"), ("Antalya", "TR", "🇹🇷"), ("Konya", "TR", "🇹🇷"),
+                ("Adana", "TR", "🇹🇷"), ("Gaziantep", "TR", "🇹🇷"), ("Kayseri", "TR", "🇹🇷"),
+                ("Samsun", "TR", "🇹🇷"), ("Trabzon", "TR", "🇹🇷"), ("Eskişehir", "TR", "🇹🇷"),
+                ("Kocaeli", "TR", "🇹🇷"), ("Mersin", "TR", "🇹🇷"),
+            ],
+            "names": [
+                "Ahmet Y.", "Mehmet K.", "Ayşe D.", "Fatma A.", "Mustafa Ö.",
+                "Emre B.", "Zeynep T.", "Elif Ç.", "Ali H.", "Selin M.",
+                "Burak V.", "Deniz S.", "Cem G.", "Merve L.", "Kerem P.",
+            ],
+            "firms": [
+                "Yıldız Yazılım A.Ş.", "Anadolu Hosting Ltd.", "Ege Bilişim Ltd.",
+                "Marmara Tech Ltd.", "Bosphorus Digital", "Kuzey Yazılım",
+            ],
+        },
+        "DE": {
+            "cities": [("Berlin", "DE", "🇩🇪"), ("München", "DE", "🇩🇪"), ("Hamburg", "DE", "🇩🇪"),
+                       ("Frankfurt", "DE", "🇩🇪"), ("Köln", "DE", "🇩🇪")],
+            "names": ["Klaus B.", "Anna F.", "Hans M.", "Ingrid W.", "Stefan R.", "Petra L."],
+            "firms": ["Bauer GmbH", "Nord Systems AG", "Schmidt IT UG", "Digital Bayern GmbH"],
+        },
+        "GB": {
+            "cities": [("London", "GB", "🇬🇧"), ("Manchester", "GB", "🇬🇧"),
+                       ("Edinburgh", "GB", "🇬🇧"), ("Birmingham", "GB", "🇬🇧")],
+            "names": ["John M.", "Emma S.", "Oliver P.", "Sophie H.", "James W.", "Charlotte D."],
+            "firms": ["Redwood Ltd.", "Thames Digital Ltd.", "Northern IT Solutions",
+                      "London Cloud Services"],
+        },
+        "FR": {
+            "cities": [("Paris", "FR", "🇫🇷"), ("Lyon", "FR", "🇫🇷"),
+                       ("Marseille", "FR", "🇫🇷"), ("Toulouse", "FR", "🇫🇷")],
+            "names": ["Pierre D.", "Marie L.", "Jean-Luc B.", "Sophie R.", "Antoine V."],
+            "firms": ["Étoile Numérique SARL", "Provence Hosting", "Paris Cloud SAS"],
+        },
+        "NL": {
+            "cities": [("Amsterdam", "NL", "🇳🇱"), ("Rotterdam", "NL", "🇳🇱"),
+                       ("Utrecht", "NL", "🇳🇱")],
+            "names": ["Jan V.", "Marieke B.", "Pieter D.", "Sanne K."],
+            "firms": ["Delta Cloud BV", "Nord Hosting", "Amsterdam Digital"],
+        },
+        "US": {
+            "cities": [("New York", "US", "🇺🇸"), ("Los Angeles", "US", "🇺🇸"),
+                       ("Chicago", "US", "🇺🇸"), ("Miami", "US", "🇺🇸"),
+                       ("Austin", "US", "🇺🇸"), ("Seattle", "US", "🇺🇸")],
+            "names": ["Michael R.", "Sarah K.", "David L.", "Jennifer M.", "Ryan T.", "Emily J."],
+            "firms": ["Pinnacle Systems Inc.", "Blue Ridge Hosting LLC",
+                      "West Coast Cloud Inc.", "Summit Digital LLC"],
+        },
+        "CA": {
+            "cities": [("Toronto", "CA", "🇨🇦"), ("Vancouver", "CA", "🇨🇦"),
+                       ("Montreal", "CA", "🇨🇦")],
+            "names": ["Liam T.", "Olivia F.", "Noah S.", "Emma B."],
+            "firms": ["Maple Digital Inc.", "Rocky Mountain IT", "Great Lakes Hosting"],
+        },
+        "AE": {
+            "cities": [("Dubai", "AE", "🇦🇪"), ("Abu Dhabi", "AE", "🇦🇪")],
+            "names": ["Omar F.", "Ahmed H.", "Fatima A.", "Layla K.", "Khalid M."],
+            "firms": ["Al Noor Systems LLC", "Emirates Cloud", "Gulf Digital FZE"],
+        },
+        "SA": {
+            "cities": [("Riyadh", "SA", "🇸🇦"), ("Jeddah", "SA", "🇸🇦")],
+            "names": ["Yousef A.", "Nora B.", "Faisal K.", "Sara H."],
+            "firms": ["Najm Technology Co.", "Riyadh Digital", "Kingdom Hosting"],
+        },
+        "QA": {
+            "cities": [("Doha", "QA", "🇶🇦")],
+            "names": ["Hamad A.", "Aisha M."],
+            "firms": ["Qatar Cloud W.L.L.", "Doha Systems"],
+        },
+        "AZ": {
+            "cities": [("Baku", "AZ", "🇦🇿")],
+            "names": ["Elvin M.", "Aygün H.", "Rauf İ."],
+            "firms": ["Baku Digital MMC", "Caspian IT"],
+        },
+        "UZ": {
+            "cities": [("Tashkent", "UZ", "🇺🇿")],
+            "names": ["Rustam K.", "Malika A."],
+            "firms": ["Tashkent Cloud LLC"],
+        },
+        "RU": {
+            "cities": [("Moscow", "RU", "🇷🇺"), ("St. Petersburg", "RU", "🇷🇺")],
+            "names": ["Ivan P.", "Elena V.", "Dmitry S.", "Anastasia K."],
+            "firms": ["Nord IT OOO", "Volga Digital"],
+        },
+        "UA": {
+            "cities": [("Kiev", "UA", "🇺🇦"), ("Lviv", "UA", "🇺🇦")],
+            "names": ["Oleksandr M.", "Iryna V."],
+            "firms": ["Kyiv Cloud LLC", "Dnipro Digital"],
+        },
+        "JP": {
+            "cities": [("Tokyo", "JP", "🇯🇵"), ("Osaka", "JP", "🇯🇵")],
+            "names": ["Yuki T.", "Hiroshi M.", "Sakura I.", "Kenji A."],
+            "firms": ["Sakura IT株式会社", "Nihon Cloud Co.", "Osaka Digital Ltd."],
+        },
+        "KR": {
+            "cities": [("Seoul", "KR", "🇰🇷"), ("Busan", "KR", "🇰🇷")],
+            "names": ["Min-jun L.", "Ji-woo K.", "Seo-yeon P."],
+            "firms": ["Hanul IT Co.", "Seoul Cloud Corp."],
+        },
+        "CN": {
+            "cities": [("Shanghai", "CN", "🇨🇳"), ("Beijing", "CN", "🇨🇳")],
+            "names": ["Chen W.", "Li Ming", "Wang Fang", "Zhang Wei"],
+            "firms": ["Dragon Cloud Ltd.", "Great Wall Digital", "Shanghai IT Corp."],
+        },
+        "SG": {
+            "cities": [("Singapore", "SG", "🇸🇬")],
+            "names": ["Wei L.", "Mei Ling C.", "Rajesh S."],
+            "firms": ["Marina Cloud Pte Ltd", "Lion City Digital"],
+        },
+        "HK": {
+            "cities": [("Hong Kong", "HK", "🇭🇰")],
+            "names": ["Kwok M.", "Yuen L."],
+            "firms": ["Harbour Cloud Ltd.", "HK Digital Co."],
+        },
+        "IN": {
+            "cities": [("Mumbai", "IN", "🇮🇳"), ("Bangalore", "IN", "🇮🇳"),
+                       ("Delhi", "IN", "🇮🇳"), ("Hyderabad", "IN", "🇮🇳")],
+            "names": ["Rajesh K.", "Priya S.", "Arjun M.", "Ananya V.", "Vikram R."],
+            "firms": ["Sundar Systems Pvt Ltd", "Bengaluru IT Solutions",
+                      "Himalaya Cloud Pvt", "Mumbai Digital Ltd."],
+        },
+        "AU": {
+            "cities": [("Sydney", "AU", "🇦🇺"), ("Melbourne", "AU", "🇦🇺")],
+            "names": ["Jack W.", "Chloe R.", "Mason B."],
+            "firms": ["Outback Cloud Pty Ltd", "Aussie IT Solutions"],
+        },
+        "IT": {
+            "cities": [("Milan", "IT", "🇮🇹"), ("Rome", "IT", "🇮🇹")],
+            "names": ["Marco B.", "Giulia F.", "Alessandro V."],
+            "firms": ["Roma Digital S.r.l.", "Milano Cloud SpA"],
+        },
+        "ES": {
+            "cities": [("Madrid", "ES", "🇪🇸"), ("Barcelona", "ES", "🇪🇸")],
+            "names": ["Carlos R.", "María L.", "Sofía G.", "Diego M."],
+            "firms": ["Ibérica Cloud S.L.", "Sol Digital SA"],
+        },
+        "CH": {
+            "cities": [("Zurich", "CH", "🇨🇭"), ("Geneva", "CH", "🇨🇭")],
+            "names": ["Andreas M.", "Nicole R."],
+            "firms": ["Alpine IT AG", "Swiss Cloud GmbH"],
+        },
+        "AT": {
+            "cities": [("Vienna", "AT", "🇦🇹")],
+            "names": ["Lukas H.", "Sophie K."],
+            "firms": ["Wien Cloud GmbH", "Donau Digital AG"],
+        },
+        "SE": {
+            "cities": [("Stockholm", "SE", "🇸🇪")],
+            "names": ["Anders J.", "Astrid L."],
+            "firms": ["Nordic Cloud AB", "Stockholm IT AB"],
+        },
+        "DK": {
+            "cities": [("Copenhagen", "DK", "🇩🇰")],
+            "names": ["Lars N.", "Freja E."],
+            "firms": ["København Cloud ApS"],
+        },
+        "NO": {
+            "cities": [("Oslo", "NO", "🇳🇴")],
+            "names": ["Erik B.", "Ingrid V."],
+            "firms": ["Fjord Cloud AS"],
+        },
+        "PL": {
+            "cities": [("Warsaw", "PL", "🇵🇱"), ("Kraków", "PL", "🇵🇱")],
+            "names": ["Piotr K.", "Anna N."],
+            "firms": ["Wisła Cloud Sp. z o.o."],
+        },
+        "CZ": {
+            "cities": [("Prague", "CZ", "🇨🇿")],
+            "names": ["Jakub S.", "Tereza N."],
+            "firms": ["Vltava Digital s.r.o."],
+        },
+        "GR": {
+            "cities": [("Athens", "GR", "🇬🇷")],
+            "names": ["Nikos P.", "Eleni M."],
+            "firms": ["Aegean Cloud IKE"],
+        },
+        "EG": {
+            "cities": [("Cairo", "EG", "🇪🇬")],
+            "names": ["Mahmoud A.", "Yasmin K."],
+            "firms": ["Nile Cloud LLC"],
+        },
+        "MA": {
+            "cities": [("Casablanca", "MA", "🇲🇦")],
+            "names": ["Youssef B.", "Salma R."],
+            "firms": ["Atlas Digital SARL"],
+        },
+        "NG": {
+            "cities": [("Lagos", "NG", "🇳🇬")],
+            "names": ["Chinedu O.", "Adaeze N."],
+            "firms": ["Lagos Cloud Ltd."],
+        },
+        "BR": {
+            "cities": [("São Paulo", "BR", "🇧🇷"), ("Rio de Janeiro", "BR", "🇧🇷")],
+            "names": ["Lucas S.", "Beatriz A.", "Rafael M."],
+            "firms": ["Amazônia Digital Ltda.", "Copacabana Cloud SA"],
+        },
+        "AR": {
+            "cities": [("Buenos Aires", "AR", "🇦🇷")],
+            "names": ["Diego P.", "Camila R."],
+            "firms": ["Pampa Cloud S.A."],
+        },
+        "MX": {
+            "cities": [("Mexico City", "MX", "🇲🇽")],
+            "names": ["Miguel Á.", "Valentina H."],
+            "firms": ["Aztec Cloud S.A. de C.V."],
+        },
+    }
+    regions = list(region_pool.keys())
 
     recent = []
     for i in range(6):
         row_hash = int(hashlib.md5(f"{day_seed}-{min_seed}-buyer-{i}".encode()).hexdigest()[:12], 16)
-        name = all_names[row_hash % len(all_names)]
-        city_t = all_cities[(row_hash >> 8) % len(all_cities)]
+        region = regions[row_hash % len(regions)]
+        pool = region_pool[region]
+        city_t = pool["cities"][(row_hash >> 8) % len(pool["cities"])]
+        # ~%35 firma satın alımı, ~%65 bireysel
+        is_firm = (row_hash % 20) < 7
+        if is_firm and pool["firms"]:
+            buyer = pool["firms"][(row_hash >> 4) % len(pool["firms"])]
+            kind = "firm"
+        else:
+            buyer = pool["names"][(row_hash >> 4) % len(pool["names"])]
+            kind = "individual"
         recent.append({
-            "name": name,
+            "name": buyer,
+            "kind": kind,           # "firm" veya "individual" (UI'de ikon değişebilir)
             "city": city_t[0],
             "country_code": city_t[1],
             "flag": city_t[2],
