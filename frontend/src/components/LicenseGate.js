@@ -135,7 +135,8 @@ export function LicenseGate() {
   };
 
   if (!q.data) return null;
-  if (q.data.mode === "seller") return null;
+  // Seller modu: sadece manuel açılırsa göster (ziyaretçi lisans girmek isteyebilir)
+  if (q.data.mode === "seller" && !manualOpen) return null;
   // Kapı açık değilse ve manuel açma da yoksa görünmez
   if (!q.data.gated && !manualOpen) return null;
 
