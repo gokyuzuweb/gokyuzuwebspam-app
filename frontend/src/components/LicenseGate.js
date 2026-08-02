@@ -110,6 +110,7 @@ export function PluginStatusStripe() {
 export function LicenseGate() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["plugin-status"], queryFn: api.pluginStatus, refetchInterval: 30000 });
+  const { isMaster } = useIsMaster();
   const [licenseKey, setLicenseKey] = useState("");
   const [detectedIP, setDetectedIP] = useState("");
   const [showManual, setShowManual] = useState(false);
@@ -153,10 +154,13 @@ export function LicenseGate() {
   }, []);
 
   // Ziyaretçi ilk kez /panel'e girdiyse (master anahtarı yoksa ve daha önce
-  // "demo devam et" dememişse) 2 saniye sonra otomatik olarak lisans modal'ını aç
+  // "demo devam et" dememişse) 2 saniye sonra otomatik olarak lisans modal'ını aç.
+  // ÖNEMLİ: Panel zaten lisanslıysa VEYA master modda ise modal ASLA açılmaz.
   useEffect(() => {
     if (!q.data) return;
-    if (q.data.gated) return; // zaten force açık
+    if (q.data.licensed) return;   // ← Panel lisanslıysa modal açma (kritik fix)
+    if (isMaster) return;          // ← Master ise zaten yetkili
+    if (q.data.gated) return;      // zaten force açık — auto-popup ile çelişmesin
     try {
       const mk = localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license");
       const dismissed = localStorage.getItem("gws.panel_demo_ack");
@@ -165,7 +169,7 @@ export function LicenseGate() {
       const t = setTimeout(() => setManualOpen(true), 1800);
       return () => clearTimeout(t);
     } catch (_) {}
-  }, [q.data]);
+  }, [q.data, isMaster]);
 
   const verify = useMutation({
     mutationFn: (payload) => api.pluginVerifyLicense(payload),
@@ -232,6 +236,9 @@ export function LicenseGate() {
   };
 
   if (!q.data) return null;
+  // Panel zaten lisanslıysa gate hiçbir koşulda görünmez (master modu bile
+  // sadece manuel `gws:open-license-modal` event'ini bu koşuldan sonra tetikler).
+  if (q.data.licensed && !manualOpen) return null;
   // Seller modu: sadece manuel açılırsa göster (ziyaretçi lisans girmek isteyebilir)
   if (q.data.mode === "seller" && !manualOpen) return null;
   // Kapı açık değilse ve manuel açma da yoksa görünmez
