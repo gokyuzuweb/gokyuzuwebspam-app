@@ -48,8 +48,14 @@ $pos = 0 unless defined $pos && $pos =~ /^\d+$/;
 open my $fh, '<', $eximlog or die "cannot open $eximlog: $!";
 my $size = -s $eximlog;
 # First run: seek to end so we don't flood backend with historical logs
+# ama MAILSHIELD_BACKFILL=N env varsa son N bayt'tan başla (test için)
 if (!$pos) {
-    $pos = $size;
+    my $backfill = $ENV{MAILSHIELD_BACKFILL} || 0;
+    if ($backfill > 0 && $backfill < $size) {
+        $pos = $size - $backfill;
+    } else {
+        $pos = $size;
+    }
 }
 if ($pos > $size) { $pos = 0; }   # log rotated
 seek $fh, $pos, 0;
