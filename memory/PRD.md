@@ -216,3 +216,36 @@ Etkilenen sayfalar (otomatik):
 - `POST /api/events/simulate-alert { kind: bulk_mail }` → inbox'a `bulk_mail_alert` düştü ✓
 - Test sonucu inbox'ta 7 okunmamış bildirim biriktiği doğrulandı
 
+
+## 2026-02-08 (5) · WHM/cPanel Sunucu Deployment Sürecinde
+
+### Kurulum Adımları — Kullanıcının Sunucusu (`ns1`, CloudLinux 8.10)
+Kullanıcı VPS'e SSH ile bağlandı ve şu adımları başarıyla tamamladı:
+
+1. ✅ **Docker + Compose kuruldu** (CentOS/CloudLinux uyumlu repo ile)
+2. ✅ **Kod GitHub'dan çekildi**: `git clone https://github.com/gokyuzuweb/gokyuzuwebspam-app.git`
+3. ✅ **.env dosyaları oluşturuldu**: `backend.env` + `frontend.env` (deployment/ altında)
+4. ✅ **Docker override eklendi**: `docker-compose.override.yml` ile nginx servisi devre dışı (Apache ile çakışmasın)
+5. ✅ **litellm çakışması çözüldü**: requirements.txt'den doğrudan URL satırı silindi (`sed '/^litellm[[:space:]]/d'`)
+6. ✅ **yarn.lock preview'dan indirildi**: `curl -L -o frontend/yarn.lock https://mailscanner-pro.preview.emergentagent.com/yarn.lock`
+7. ✅ **MongoDB 7 → 4.4 downgrade**: CPU AVX desteği yok, MongoDB 7 restart döngüsünde. `sed 's|mongo:7|mongo:4.4|'` ile düzeltildi
+8. ✅ **3 container çalışıyor**: `gws-mongo (healthy)`, `gws-backend (Up)`, `gws-frontend (Up)`. `curl :8001/api/version/current` → JSON döndü ✓
+9. ✅ **mod_proxy + mod_proxy_http Apache modülleri aktif**
+10. ⏳ **Kalan**: WHM'de subdomain (`panel.gokyuzuhosting.com`) oluşturma + `.htaccess` yerleştirme + SSL
+
+### Preview'da yapılan düzeltmeler (auto-update uyumluluğu için)
+- `/app/backend/requirements.txt` → litellm doğrudan URL satırı silindi
+- `/app/deployment/docker-compose.yml` → MongoDB 7 → 4.4, healthcheck `mongosh` → `mongo`
+- `/app/frontend/public/yarn.lock` → preview URL üzerinden indirilebilir
+- `/app/frontend/public/gokyuzuwebspam-source.tar.gz` → tam kaynak tarball
+
+### Deployment Dokümantasyonu
+- `/app/DEPLOY-KILAVUZU.md` — Tam teknik rehber (Docker + Nginx + Certbot)
+- `/app/SUNUCU-KURULUM-ADIM-ADIM.md` — Copy-paste Türkçe kurulum
+- `/app/deployment/install.sh` — Otomatik sıfır sunucu kurulum
+- `/app/deployment/auto-update.sh` — GitHub sync + Docker rebuild
+- `/app/deployment/whm-cpanel-htaccess.txt` — Apache reverse proxy config
+
+### Son Adım — WHM Subdomain + .htaccess
+Kullanıcıya "boş sayfa" sorunu için tek blok teşhis + otomatik fix scripti verildi (subdomain doc root'u bulur, .htaccess yazar, AllowOverride açar, Apache restart, SSL çeker).
+
