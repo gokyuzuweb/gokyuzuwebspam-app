@@ -913,7 +913,11 @@ function SalesTodayBanner() {
               <div className="text-[11px] text-slate-300 truncate animate-in fade-in duration-500">
                 <b className="text-slate-100">{current.name}</b>
                 <span className="text-slate-500"> · </span>
+                <span className="mr-1">{current.flag || "🌍"}</span>
                 <span className="text-slate-400">{current.city}</span>
+                {current.country_code && (
+                  <span className="text-slate-500 mono">, {current.country_code}</span>
+                )}
                 <span className="text-slate-500"> aldı: </span>
                 <span className={`mono font-bold ${current.plan === "Enterprise" ? "text-fuchsia-300" : current.plan === "Pro" ? "text-indigo-300" : "text-emerald-300"}`}>{current.plan}</span>
               </div>

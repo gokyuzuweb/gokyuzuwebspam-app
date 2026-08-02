@@ -743,16 +743,52 @@ async def public_sales_today():
     sales_month = sales_today * (24 + (day_seed >> 12) % 6)  # ~24-29 gün
 
     # Son satın alanlar (fake, sosyal kanıt için)
+    # Türkçe + uluslararası isim ve şehir karışımı — global bir SaaS gibi görünsün.
     turkish_names = [
         "Ahmet Y.", "Mehmet K.", "Ayşe D.", "Fatma A.", "Mustafa Ö.",
         "Emre B.", "Zeynep T.", "Elif Ç.", "Ali H.", "Selin M.",
         "Burak V.", "Deniz S.", "Cem G.", "Merve L.", "Kerem P.",
         "Hakan U.", "İpek R.", "Onur E.", "Sude N.", "Furkan İ.",
     ]
-    cities = [
-        "İstanbul", "Ankara", "İzmir", "Bursa", "Antalya",
-        "Konya", "Adana", "Gaziantep", "Kayseri", "Samsun",
-        "Trabzon", "Diyarbakır", "Eskişehir", "Kocaeli", "Mersin",
+    intl_names = [
+        "John M.", "Emma S.", "Michael R.", "Sarah K.", "David L.",
+        "Maria G.", "Ahmed H.", "Fatima A.", "Chen W.", "Yuki T.",
+        "Ivan P.", "Klaus B.", "Sofia V.", "Anders J.", "Rajesh K.",
+        "Anna F.", "Lars N.", "Priya S.", "Omar F.", "Elena R.",
+    ]
+    # (şehir, ülke, bayrak_emoji) tuple'ları — kart üzerinde "İstanbul, TR 🇹🇷" gibi görünür.
+    tr_cities = [
+        ("İstanbul", "TR", "🇹🇷"), ("Ankara", "TR", "🇹🇷"), ("İzmir", "TR", "🇹🇷"),
+        ("Bursa", "TR", "🇹🇷"), ("Antalya", "TR", "🇹🇷"), ("Konya", "TR", "🇹🇷"),
+        ("Adana", "TR", "🇹🇷"), ("Gaziantep", "TR", "🇹🇷"), ("Kayseri", "TR", "🇹🇷"),
+        ("Samsun", "TR", "🇹🇷"), ("Trabzon", "TR", "🇹🇷"), ("Eskişehir", "TR", "🇹🇷"),
+        ("Kocaeli", "TR", "🇹🇷"), ("Mersin", "TR", "🇹🇷"),
+    ]
+    intl_cities = [
+        ("Berlin", "DE", "🇩🇪"), ("München", "DE", "🇩🇪"), ("Hamburg", "DE", "🇩🇪"),
+        ("London", "GB", "🇬🇧"), ("Manchester", "GB", "🇬🇧"),
+        ("Paris", "FR", "🇫🇷"), ("Lyon", "FR", "🇫🇷"),
+        ("Amsterdam", "NL", "🇳🇱"), ("Rotterdam", "NL", "🇳🇱"),
+        ("New York", "US", "🇺🇸"), ("Los Angeles", "US", "🇺🇸"), ("Chicago", "US", "🇺🇸"),
+        ("Toronto", "CA", "🇨🇦"), ("Vancouver", "CA", "🇨🇦"),
+        ("Dubai", "AE", "🇦🇪"), ("Abu Dhabi", "AE", "🇦🇪"),
+        ("Doha", "QA", "🇶🇦"), ("Riyadh", "SA", "🇸🇦"), ("Kuwait City", "KW", "🇰🇼"),
+        ("Baku", "AZ", "🇦🇿"), ("Tashkent", "UZ", "🇺🇿"),
+        ("Moscow", "RU", "🇷🇺"), ("Kiev", "UA", "🇺🇦"),
+        ("Tokyo", "JP", "🇯🇵"), ("Osaka", "JP", "🇯🇵"), ("Seoul", "KR", "🇰🇷"),
+        ("Singapore", "SG", "🇸🇬"), ("Hong Kong", "HK", "🇭🇰"),
+        ("Sydney", "AU", "🇦🇺"), ("Melbourne", "AU", "🇦🇺"),
+        ("Milan", "IT", "🇮🇹"), ("Rome", "IT", "🇮🇹"),
+        ("Madrid", "ES", "🇪🇸"), ("Barcelona", "ES", "🇪🇸"),
+        ("Zurich", "CH", "🇨🇭"), ("Vienna", "AT", "🇦🇹"),
+        ("Stockholm", "SE", "🇸🇪"), ("Copenhagen", "DK", "🇩🇰"), ("Oslo", "NO", "🇳🇴"),
+        ("Warsaw", "PL", "🇵🇱"), ("Prague", "CZ", "🇨🇿"),
+        ("Athens", "GR", "🇬🇷"), ("Bucharest", "RO", "🇷🇴"),
+        ("Sofia", "BG", "🇧🇬"), ("Skopje", "MK", "🇲🇰"),
+        ("Cairo", "EG", "🇪🇬"), ("Casablanca", "MA", "🇲🇦"),
+        ("Lagos", "NG", "🇳🇬"), ("Nairobi", "KE", "🇰🇪"),
+        ("Mumbai", "IN", "🇮🇳"), ("Bangalore", "IN", "🇮🇳"), ("Delhi", "IN", "🇮🇳"),
+        ("São Paulo", "BR", "🇧🇷"), ("Buenos Aires", "AR", "🇦🇷"), ("Mexico City", "MX", "🇲🇽"),
     ]
     plans = ["Starter", "Pro", "Enterprise"]
 
@@ -760,9 +796,19 @@ async def public_sales_today():
     for i in range(6):
         # Her satıra farklı hash (isim + şehir + plan + süre çeşitliliği için)
         row_hash = int(hashlib.md5(f"{day_seed}-{min_seed}-buyer-{i}".encode()).hexdigest()[:12], 16)
+        # ~%40 Türkiye, ~%60 uluslararası mix (global bir mail security SaaS izlenimi)
+        is_tr = (row_hash % 10) < 4
+        if is_tr:
+            name = turkish_names[row_hash % len(turkish_names)]
+            city_t = tr_cities[(row_hash >> 8) % len(tr_cities)]
+        else:
+            name = intl_names[row_hash % len(intl_names)]
+            city_t = intl_cities[(row_hash >> 8) % len(intl_cities)]
         recent.append({
-            "name": turkish_names[row_hash % len(turkish_names)],
-            "city": cities[(row_hash >> 8) % len(cities)],
+            "name": name,
+            "city": city_t[0],
+            "country_code": city_t[1],
+            "flag": city_t[2],
             "plan": plans[(row_hash >> 16) % len(plans)],
             "minutes_ago": 2 + (row_hash >> 24) % 58,  # 2-59 dk önce
         })
