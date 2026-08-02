@@ -440,25 +440,42 @@ async def list_events(
 ):
     """Panelden cagirilir. Sadece verilen license_key'e ait eventleri doner.
     scope_user verilirse to_addr veya from_addr'ta o cPanel kullanicisi olan mailleri filtreler.
-    Master anahtarı ise tüm license_key'lere ait eventleri döner.
+    Master anahtarı ise KENDİ altyapısındaki trafiği görür:
+      - Kendi lisansıyla gelen (master WHM plugin) eventler
+      - AUTO-* lisansı (ns1/ns2.gokyuzuhosting.com bazlı otomatik lisanslı) eventler
+      Bayilerin trafiği MASTER'a görünmez (kendi kapsamlarında kalır).
     """
     await _validate_license(license_key)
     master_key = os.environ.get("MASTER_LICENSE_KEY", "")
     is_master = master_key and license_key == master_key
-    q: dict[str, Any] = {} if is_master else {"license_key": license_key}
+    if is_master:
+        # Master: kendi altyapısındaki tüm license_key'ler (master + AUTO-*)
+        q: dict[str, Any] = {
+            "$or": [
+                {"license_key": master_key},
+                {"license_key": {"$regex": "^AUTO-"}},
+            ]
+        }
+    else:
+        q = {"license_key": license_key}
     if verdict:
         q["verdict"] = verdict
     if since:
         q["ts"] = {"$gte": since}
     if scope_user:
-        # cPanel end-user modu: substring match — kullanici 'user@domain' veya 'domain'
-        # verebilir. Regex.escape ile safe injection'a karsi koruma.
         import re
         safe = re.escape(scope_user)
-        q["$or"] = [
+        scope_or = [
             {"to_addr":   {"$regex": safe, "$options": "i"}},
             {"from_addr": {"$regex": safe, "$options": "i"}},
         ]
+        if "$or" in q:
+            # master modu $or ile birleşiyor — $and'e sarmalayarak koru
+            q = {"$and": [{"$or": q["$or"]}, {"$or": scope_or}]}
+            if verdict: q["$and"].append({"verdict": verdict})
+            if since:   q["$and"].append({"ts": {"$gte": since}})
+        else:
+            q["$or"] = scope_or
     cursor = db.mail_events.find(q, {"_id": 0}).sort("ingested_at", -1).limit(limit)
     items = await cursor.to_list(length=limit)
     return {"items": items, "count": len(items)}
@@ -470,28 +487,40 @@ async def events_summary(
     scope_user: Optional[str] = Query(None),
 ):
     """Ozet istatistik - toplam + verdict breakdown.
-    Master anahtarı ise tüm license_key'lere ait olayları toplar.
+    Master anahtarı ise kendi altyapısı (master + AUTO-*) — bayiler hariç.
     """
     await _validate_license(license_key)
     master_key = os.environ.get("MASTER_LICENSE_KEY", "")
     is_master = master_key and license_key == master_key
-    match: dict[str, Any] = {} if is_master else {"license_key": license_key}
+    if is_master:
+        match: dict[str, Any] = {
+            "$or": [
+                {"license_key": master_key},
+                {"license_key": {"$regex": "^AUTO-"}},
+            ]
+        }
+    else:
+        match = {"license_key": license_key}
     if scope_user:
         import re
         safe = re.escape(scope_user)
-        match["$or"] = [
+        scope_or = [
             {"to_addr":   {"$regex": safe, "$options": "i"}},
             {"from_addr": {"$regex": safe, "$options": "i"}},
         ]
+        if "$or" in match:
+            match = {"$and": [{"$or": match["$or"]}, {"$or": scope_or}]}
+        else:
+            match["$or"] = scope_or
     total = await db.mail_events.count_documents(match)
     pipeline = [{"$match": match}, {"$group": {"_id": "$verdict", "count": {"$sum": 1}}}]
     breakdown = {}
     async for row in db.mail_events.aggregate(pipeline):
         breakdown[row["_id"]] = row["count"]
-    # Master için son event zamanı DB'den bul
+    # Son event zamanı
     last_event_at = None
     if is_master:
-        last = await db.mail_events.find({}, {"_id": 0, "ingested_at": 1, "ts": 1}).sort("ingested_at", -1).limit(1).to_list(1)
+        last = await db.mail_events.find(match, {"_id": 0, "ingested_at": 1, "ts": 1}).sort("ingested_at", -1).limit(1).to_list(1)
         if last:
             last_event_at = last[0].get("ingested_at") or last[0].get("ts")
     else:
