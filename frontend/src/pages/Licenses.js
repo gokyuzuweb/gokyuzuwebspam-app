@@ -368,6 +368,9 @@ function LicensesInner() {
         onSimulate={simulate}
         onClearViol={clearViol}
         onFixIds={fixIds}
+        selectedIds={selectedIds}
+        setSelectedIds={setSelectedIds}
+        bulkAction={bulkAction}
         onAdded={() => qc.invalidateQueries({ queryKey: ["licenses"] })}
       />
 
@@ -597,16 +600,19 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-widest text-slate-500">
-              <th className="text-left px-3 py-3 font-semibold w-8">
+              <th className="text-left px-3 py-3 font-semibold w-8" onClick={(e) => e.stopPropagation()}>
                 <input
                   type="checkbox"
                   data-testid="lic-select-all"
                   checked={rows.length > 0 && rows.every(r => selectedIds.has(r.id || r.license_key))}
+                  onClick={(e) => e.stopPropagation()}
                   onChange={(e) => {
+                    console.log("[GWS] select-all →", e.target.checked, "rows:", rows.length);
                     if (e.target.checked) setSelectedIds(new Set(rows.map(r => r.id || r.license_key)));
                     else setSelectedIds(new Set());
                   }}
-                  className="w-4 h-4 accent-indigo-500 cursor-pointer"
+                  style={{ minWidth: 18, minHeight: 18, cursor: "pointer", accentColor: "#6366f1" }}
+                  className="w-[18px] h-[18px] cursor-pointer"
                 />
               </th>
               <th className="text-left px-4 py-3 font-semibold">Müşteri</th>
@@ -627,21 +633,28 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
               const isSelected = selectedIds.has(rowKey);
               return (
                 <tr key={rowKey} data-row data-testid={`lic-row-${rowKey}`} className={`border-t border-slate-800 ${isSelected ? "bg-indigo-500/10" : ""}`}>
-                  <td className="px-3 py-2.5">
+                  <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       data-testid={`lic-select-${rowKey}`}
                       checked={isSelected}
-                      onChange={() => {
+                      readOnly={false}
+                      disabled={false}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        // Debug: F12 → Console'da görün ki tıklamanın gerçekten
+                        // event tetiklediğini onaylayalım.
+                        console.log("[GWS] toggle row:", rowKey, "checked:", e.target.checked);
                         setSelectedIds((prev) => {
                           const next = new Set(prev);
                           if (next.has(rowKey)) next.delete(rowKey);
                           else next.add(rowKey);
+                          console.log("[GWS] selectedIds.size:", next.size);
                           return next;
                         });
                       }}
-                      style={{ minWidth: 16, minHeight: 16, cursor: "pointer" }}
-                      className="w-4 h-4 accent-indigo-500 cursor-pointer"
+                      style={{ minWidth: 18, minHeight: 18, cursor: "pointer", accentColor: "#6366f1" }}
+                      className="w-[18px] h-[18px] cursor-pointer"
                     />
                   </td>
                   <td className="px-4 py-2.5">

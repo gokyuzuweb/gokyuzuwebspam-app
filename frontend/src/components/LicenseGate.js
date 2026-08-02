@@ -121,6 +121,37 @@ export function LicenseGate() {
     return () => window.removeEventListener("gws:open-license-modal", handler);
   }, []);
 
+  // Panel açılışında saklı lisansı arka planda revalidate et. Master silmişse
+  // localStorage'dan otomatik temizle → "sürekli lisanslı" bug'ı bitsin.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = localStorage.getItem("gws.event_license");
+        if (!cached || !cached.startsWith("MS-") && !cached.startsWith("AUTO-")) return;
+        // Master anahtarını bu revalidation'a sokma — master her zaman geçerli.
+        if (cached === "MS-C02AB012652A4FE692D69676") return;
+        let hostname = "";
+        try { hostname = window.location.hostname.toLowerCase().replace(/^www\./, ""); } catch (_) {}
+        const resp = await api.pluginVerifyLicense({ license_key: cached, hostname: hostname || null });
+        if (cancelled) return;
+        if (resp && resp.licensed === false) {
+          // Backend revoked / not found → cache temizle
+          localStorage.removeItem("gws.event_license");
+          qc.invalidateQueries({ queryKey: ["plugin-status"] });
+          qc.invalidateQueries({ queryKey: ["is-master"] });
+          toast.error(resp.message || "Kayıtlı lisans artık geçerli değil, temizlendi.");
+        }
+      } catch (_) {
+        // network / 4xx ise güvenli tarafta kal: cache'i temizle
+        try { localStorage.removeItem("gws.event_license"); } catch (_) {}
+        qc.invalidateQueries({ queryKey: ["plugin-status"] });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Ziyaretçi ilk kez /panel'e girdiyse (master anahtarı yoksa ve daha önce
   // "demo devam et" dememişse) 2 saniye sonra otomatik olarak lisans modal'ını aç
   useEffect(() => {
