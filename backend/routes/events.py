@@ -440,9 +440,12 @@ async def list_events(
 ):
     """Panelden cagirilir. Sadece verilen license_key'e ait eventleri doner.
     scope_user verilirse to_addr veya from_addr'ta o cPanel kullanicisi olan mailleri filtreler.
+    Master anahtarı ise tüm license_key'lere ait eventleri döner.
     """
     await _validate_license(license_key)
-    q: dict[str, Any] = {"license_key": license_key}
+    master_key = os.environ.get("MASTER_LICENSE_KEY", "")
+    is_master = master_key and license_key == master_key
+    q: dict[str, Any] = {} if is_master else {"license_key": license_key}
     if verdict:
         q["verdict"] = verdict
     if since:
@@ -466,9 +469,13 @@ async def events_summary(
     license_key: str = Query(..., min_length=8),
     scope_user: Optional[str] = Query(None),
 ):
-    """Ozet istatistik - toplam + verdict breakdown."""
+    """Ozet istatistik - toplam + verdict breakdown.
+    Master anahtarı ise tüm license_key'lere ait olayları toplar.
+    """
     await _validate_license(license_key)
-    match: dict[str, Any] = {"license_key": license_key}
+    master_key = os.environ.get("MASTER_LICENSE_KEY", "")
+    is_master = master_key and license_key == master_key
+    match: dict[str, Any] = {} if is_master else {"license_key": license_key}
     if scope_user:
         import re
         safe = re.escape(scope_user)
@@ -481,11 +488,19 @@ async def events_summary(
     breakdown = {}
     async for row in db.mail_events.aggregate(pipeline):
         breakdown[row["_id"]] = row["count"]
-    lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0, "last_event_at": 1})
+    # Master için son event zamanı DB'den bul
+    last_event_at = None
+    if is_master:
+        last = await db.mail_events.find({}, {"_id": 0, "ingested_at": 1, "ts": 1}).sort("ingested_at", -1).limit(1).to_list(1)
+        if last:
+            last_event_at = last[0].get("ingested_at") or last[0].get("ts")
+    else:
+        lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0, "last_event_at": 1})
+        last_event_at = (lic or {}).get("last_event_at")
     return {
         "total": total,
         "by_verdict": breakdown,
-        "last_event_at": (lic or {}).get("last_event_at"),
+        "last_event_at": last_event_at,
     }
 
 
