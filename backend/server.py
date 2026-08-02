@@ -3483,6 +3483,56 @@ async def plugin_verify_license(payload: VerifyLicenseIn):
         elif len(candidates) > 1:
             ambiguous_ip_match = True
 
+    # 4) Nameserver bazlı otomatik lisans — sunucumuzun NS'lerini kullanan
+    #    her domain otomatik lisanslı sayılır (hosting müşterisi olduğu için)
+    if not lic and payload.hostname:
+        authorized_ns = [
+            ns.strip().lower().rstrip(".")
+            for ns in os.environ.get(
+                "AUTHORIZED_NAMESERVERS",
+                "ns1.gokyuzuhosting.com,ns2.gokyuzuhosting.com"
+            ).split(",")
+            if ns.strip()
+        ]
+        if authorized_ns:
+            try:
+                import dns.resolver
+                resolver = dns.resolver.Resolver()
+                resolver.timeout = 3
+                resolver.lifetime = 4
+                answer = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: resolver.resolve(payload.hostname, "NS")
+                )
+                domain_ns = [str(r).lower().rstrip(".") for r in answer]
+                if any(ns in domain_ns for ns in authorized_ns):
+                    # Otomatik lisans oluştur / getir
+                    auto_key = f"AUTO-{payload.hostname[:24].upper().replace('.', '-')}"
+                    lic = await db.licenses.find_one(
+                        {"license_key": auto_key, "active": True}, {"_id": 0}
+                    )
+                    if not lic:
+                        auto_valid = (now + timedelta(days=365)).isoformat()
+                        auto_lic = License(
+                            license_key=auto_key,
+                            customer_name=f"Auto: {payload.hostname}",
+                            customer_email="",
+                            plan="pro",
+                            ip_addresses=[payload.ip] if payload.ip else [],
+                            panel_domains=[payload.hostname.lower()],
+                            max_domains=50,
+                            valid_until=auto_valid,
+                            notes=f"Nameserver bazlı otomatik lisans — NS: {', '.join(domain_ns)}",
+                        ).model_dump()
+                        await db.licenses.insert_one(auto_lic)
+                        lic = auto_lic
+                        await db.logs.insert_one(ActivityLog(
+                            source="license", level="info",
+                            message=f"Otomatik NS lisansı oluşturuldu: {payload.hostname} → {auto_key}",
+                        ).model_dump())
+            except Exception as e:
+                # DNS başarısız olsa da normal akış devam eder
+                logging.info(f"NS auto-license check failed for {payload.hostname}: {e}")
+
     if not lic:
         v = LicenseViolation(
             ip=payload.ip or "unknown",

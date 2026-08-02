@@ -108,6 +108,21 @@ export function LicenseGate() {
     return () => window.removeEventListener("gws:open-license-modal", handler);
   }, []);
 
+  // Ziyaretçi ilk kez /panel'e girdiyse (master anahtarı yoksa ve daha önce
+  // "demo devam et" dememişse) 2 saniye sonra otomatik olarak lisans modal'ını aç
+  useEffect(() => {
+    if (!q.data) return;
+    if (q.data.gated) return; // zaten force açık
+    try {
+      const mk = localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license");
+      const dismissed = localStorage.getItem("gws.panel_demo_ack");
+      if (mk && mk.startsWith("MS-")) return; // master zaten giriş yapmış
+      if (dismissed) return; // ziyaretçi "demo devam et" demişti
+      const t = setTimeout(() => setManualOpen(true), 1800);
+      return () => clearTimeout(t);
+    } catch (_) {}
+  }, [q.data]);
+
   const verify = useMutation({
     mutationFn: (payload) => api.pluginVerifyLicense(payload),
     onSuccess: (data) => {
@@ -246,6 +261,25 @@ export function LicenseGate() {
               </a>
             </div>
           </div>
+
+          {/* Demo devam et - ziyaretçi lisans girmek istemezse */}
+          {!q.data.gated && (
+            <div className="pt-3 border-t border-slate-800 text-center">
+              <button
+                data-testid="gate-continue-demo"
+                onClick={() => {
+                  try { localStorage.setItem("gws.panel_demo_ack", String(Date.now())); } catch (_) {}
+                  setManualOpen(false);
+                }}
+                className="text-xs text-slate-500 hover:text-slate-300 underline decoration-dotted underline-offset-4 transition-colors"
+              >
+                Şimdilik demo ile devam et →
+              </button>
+              <div className="text-[10px] text-slate-600 mt-1">
+                Örnek verilerle inceleme yapabilirsiniz · Yazma işlemleri kilitli
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
