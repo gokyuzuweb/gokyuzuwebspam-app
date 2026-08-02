@@ -129,10 +129,6 @@ while (1) {
     }
 }
 
-our ($_processed, $_matched) = (0, 0);
-# event_id -> exim_mid map path (top-level init'den önce başka yerlerde kullanılıyor)
-my $MID_MAP = '/var/lib/mailshield/event-mid.map';
-
 sub _process_line {
     my ($line) = @_;
     $_processed++;
@@ -173,18 +169,22 @@ sub _process_line {
         my $to = $for_rcpt // '';
         $to =~ s/^\s+|\s+$//g;
 
-        # v1.7: SpamAssassin genelde ~1-3sn sonra header yazar; kısa bekle sonra parse et
-        # (blocking sleep worker daemon'da ok — trafik yoğunsa async kuyruğa alalım gelecekte)
-        my ($spam_score, $spam_status, $spam_report);
-        for my $attempt (1..3) {
-            ($spam_score, $spam_status, $spam_report) = _spam_from_spool($mid);
-            last if defined $spam_score || defined $spam_status;
-            select(undef, undef, undef, 0.8);   # 800ms uyu, retry
+        # SpamAssassin header retry: eski kod 3x800ms bekliyordu (worst 2.4sn/mail).
+        # Backfill sırasında spool zaten yazılmış — retry gereksiz. Live'da bile
+        # çoğu mail için header 1. denemede geliyor. 2 deneme x 300ms yeter.
+        my ($spam_score, $spam_status, $spam_report, $virus_found, $virus_name);
+        for my $attempt (1..2) {
+            ($spam_score, $spam_status, $spam_report, $virus_found, $virus_name) = _spam_from_spool($mid);
+            last if defined $spam_score || defined $spam_status || $virus_found;
+            select(undef, undef, undef, 0.3);   # 300ms uyu, tek retry
         }
 
-        # Verdict logic — SA header yoksa 'clean', varsa skora göre
+        # Verdict logic — MailScanner ile parite:
+        # virüs bulunduysa 'virus', yoksa SA/MSC skoruna göre spam/high_spam/clean
         my ($verdict, $action) = ('clean', 'accept');
-        if (defined $spam_status && $spam_status =~ /yes/i) {
+        if ($virus_found) {
+            ($verdict, $action) = ('virus', 'quarantine');
+        } elsif (defined $spam_status && $spam_status =~ /yes/i) {
             if    (defined $spam_score && $spam_score >= 10) { ($verdict, $action) = ('high_spam', 'quarantine'); }
             elsif (defined $spam_score && $spam_score >= 5)  { ($verdict, $action) = ('spam',      'quarantine'); }
             else                                              { ($verdict, $action) = ('spam',      'quarantine'); }
@@ -197,6 +197,7 @@ sub _process_line {
         my %scores;
         $scores{spamassassin} = $spam_score + 0 if defined $spam_score;
         $scores{sa_report}    = substr($spam_report, 0, 500) if defined $spam_report;
+        $scores{virus_name}   = $virus_name if defined $virus_name;
 
         # NEW: read body/attachments/headers from Exim spool if available
         my ($headers_full, $body_preview, $attachments) = _spool_content($mid);
@@ -240,28 +241,58 @@ sub _process_line {
 sub _spam_from_spool {
     my ($mid) = @_;
     # Exim stores headers in $spool/<split>/<id>-H
-    my ($score, $status, $report);
+    my ($score, $status, $report, $virus_found, $virus_name);
     for my $sub ('', map { "$_/" } 0..9, 'A'..'F') {
         my $path = "$spool/${sub}${mid}-H";
         if (-r $path) {
             open my $h, '<', $path or next;
             while (my $l = <$h>) {
-                # Exim header lines start with a numeric length prefix
+                # ---- SpamAssassin standart header'ları ----
                 if ($l =~ /X-Spam-Score:\s*(-?\d+(?:\.\d+)?)/i)  { $score = $1; }
                 if ($l =~ /X-Spam-Status:\s*(\w+)/i)             { $status = $1; }
                 if ($l =~ /X-Spam-Report:\s*(.+)/i)              { $report = $1; }
-                # MailScanner-specific header (varies per install)
+                # ---- MailScanner standart header'ları ----
+                # X-MailScanner-SpamCheck: spam (score=X.X, ...)
                 if ($l =~ /X-MailScanner-SpamCheck:\s*(.+?)['"]?\s*$/i) {
                     if ($1 =~ /score=(-?\d+(?:\.\d+)?)/i) { $score //= $1; }
                     if ($1 =~ /\b(spam|not\s+spam)\b/i)   { $status //= (lc($1) eq 'spam' ? 'Yes' : 'No'); }
                     $report //= substr($1, 0, 400);
+                }
+                # X-MailScanner-SpamScore: sssssss (yıldız formu, 1 yıldız = 1 puan)
+                if ($l =~ /X-MailScanner-SpamScore:\s*(s+)/i) {
+                    my $stars = length($1);
+                    $score //= "$stars.0";
+                }
+                # X-MailScanner: Found to be infected / clean / spam
+                # X-MailScanner-Information: xxxx virus xxxx
+                if ($l =~ /X-MailScanner(?:-Information)?:\s*(.+?)['"]?\s*$/i) {
+                    my $info = $1;
+                    if ($info =~ /\b(infected|virus|malware|trojan|worm|found\s+to\s+be\s+infected)\b/i) {
+                        $virus_found = 1;
+                        # Virüs adını yakalamaya çalış
+                        if ($info =~ /["'](.+?)["']/) { $virus_name //= $1; }
+                        elsif ($info =~ /\b(Sanesecurity\.\S+|Win\.\S+|Trojan\.\S+|Doc\.\S+|EICAR\S*|Worm\.\S+)\b/i) {
+                            $virus_name //= $1;
+                        }
+                    }
+                    if ($info =~ /\bspam\b/i && $info !~ /not\s+spam/i) {
+                        $status //= 'Yes';
+                    }
+                }
+                # ClamAV / ConfigServer MailScanner virüs header
+                if ($l =~ /X-ClamAV-Virus:\s*(.+)/i) {
+                    $virus_found = 1;
+                    $virus_name //= $1;
+                }
+                if ($l =~ /X-Virus-Status:\s*(?:Yes|Infected|Found)/i) {
+                    $virus_found = 1;
                 }
             }
             close $h;
             last;
         }
     }
-    return ($score, $status, $report);
+    return ($score, $status, $report, $virus_found, $virus_name);
 }
 
 # Returns (headers_full, body_preview, attachments_arrayref) for a given Exim mid
