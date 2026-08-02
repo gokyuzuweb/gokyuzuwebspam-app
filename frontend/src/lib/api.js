@@ -214,6 +214,9 @@ export const api = {
   licenseAdd: (payload) => client.post("/licenses", payload).then(r => r.data),
   licenseUpdate: (id, payload) => client.put(`/licenses/${id}`, payload).then(r => r.data),
   licenseDelete: (id) => client.delete(`/licenses/${id}`).then(r => r.data),
+  licensesBulkAction: (ids, action) =>
+    client.post(`/licenses/bulk-action`, { ids, action }).then(r => r.data),
+  licensesFixIds: () => client.post(`/licenses/fix-missing-ids`).then(r => r.data),
   violations: () => client.get("/license/violations").then(r => r.data),
   violationsClear: () => client.delete("/license/violations").then(r => r.data),
   violationSimulate: (payload) => client.post("/license/simulate-violation", payload).then(r => r.data),

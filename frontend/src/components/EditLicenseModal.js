@@ -85,7 +85,7 @@ export default function EditLicenseModal({ license, onClose }) {
       plan:           form.plan,
       ip_addresses:   form.ip_addresses,
       max_domains:    parseInt(form.max_domains) || 100,
-      valid_until:    new Date(form.valid_until + "T23:59:59Z").toISOString(),
+      valid_until:    new Date(form.valid_until + "T12:00:00Z").toISOString(),
       active:         !!form.active,
       notes:          form.notes || "",
     });

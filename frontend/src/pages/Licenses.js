@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Key, Plus, Trash2, ShieldAlert, Copy, Server, Calendar, Users2, AlertTriangle,
-  CheckCircle2, XCircle, Package, PackagePlus, RefreshCw, Radio, Pencil,
+  CheckCircle2, XCircle, Package, PackagePlus, RefreshCw, Radio, Pencil, Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
@@ -114,7 +114,7 @@ function AddLicenseForm({ onAdded }) {
       ip_addresses: ips,
       panel_domains: domains,
       max_domains: parseInt(form.max_domains) || 100,
-      valid_until: new Date(form.valid_until + "T23:59:59Z").toISOString(),
+      valid_until: new Date(form.valid_until + "T12:00:00Z").toISOString(),
     });
   };
   return (
@@ -247,10 +247,29 @@ export default function Licenses() {
   const [search, setSearch] = useState("");
   const [planFilter, setPlanFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   const del = useMutation({
     mutationFn: (id) => api.licenseDelete(id),
     onSuccess: () => { toast.success("Lisans silindi"); qc.invalidateQueries({ queryKey: ["licenses"] }); },
+  });
+  const bulkAction = useMutation({
+    mutationFn: ({ ids, action }) => api.licensesBulkAction(ids, action),
+    onSuccess: (d) => {
+      const labels = { delete: "silindi", suspend: "askıya alındı", activate: "aktifleştirildi" };
+      toast.success(`${d.affected} lisans ${labels[d.action] || "güncellendi"}`);
+      setSelectedIds(new Set());
+      qc.invalidateQueries({ queryKey: ["licenses"] });
+    },
+    onError: (e) => toast.error("Toplu aksiyon başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
+  const fixIds = useMutation({
+    mutationFn: () => api.licensesFixIds(),
+    onSuccess: (d) => {
+      if (d.fixed > 0) toast.success(`${d.fixed} eski kayda ID atandı — artık düzenlenebilir`);
+      else toast.info("Zaten tüm kayıtlarda ID var");
+      qc.invalidateQueries({ queryKey: ["licenses"] });
+    },
   });
   const toggleActive = useMutation({
     mutationFn: ({ lic, active }) => api.licenseUpdate(lic.id, { ...lic, active }),
@@ -339,6 +358,7 @@ export default function Licenses() {
         onDelete={del}
         onSimulate={simulate}
         onClearViol={clearViol}
+        onFixIds={fixIds}
         onAdded={() => qc.invalidateQueries({ queryKey: ["licenses"] })}
       />
 
@@ -372,7 +392,8 @@ const TAB_TONE_MAP = {
 
 function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, setPlanFilter,
                        statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onDelete,
-                       onSimulate, onClearViol, onAdded }) {
+                       onSimulate, onClearViol, onFixIds, selectedIds, setSelectedIds,
+                       bulkAction, onAdded }) {
   const [tab, setTab] = useState("list");
   const counts = { list: rows.length, new: null, violations: violRows.length, admin: null };
 
@@ -425,6 +446,8 @@ function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, s
         <LicensesListPanel rows={rows} allRows={allRows} search={search} setSearch={setSearch}
                            planFilter={planFilter} setPlanFilter={setPlanFilter}
                            statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+                           selectedIds={selectedIds} setSelectedIds={setSelectedIds}
+                           bulkAction={bulkAction} onFixIds={onFixIds}
                            onEdit={onEdit} onCopy={onCopy} onToggle={onToggle} onDelete={onDelete}/>
       )}
       {tab === "new" && (
@@ -446,6 +469,31 @@ function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, s
           <ResellerAdminPanel />
           <AdminOperationsCard />
           <Card>
+            <CardHeader title={<span className="flex items-center gap-2"><Wrench className="w-4 h-4 text-amber-400" /> Veritabanı Bakımı</span>}
+                        subtitle="Eski kayıtları düzelt / temizle" />
+            <CardBody className="space-y-3">
+              <div className="p-3 rounded border border-amber-500/20 bg-amber-500/5 text-xs text-amber-200">
+                <div className="font-semibold mb-1">Eksik ID'leri Düzelt</div>
+                <div className="text-amber-200/80 mb-2">
+                  Eski seed kayıtlarında (MS-BAYI-001 gibi) <span className="mono">id</span> alanı olmayabilir.
+                  Bu, "düzenle" ve "sil" işlemlerinin başarısız olmasına neden olur.
+                </div>
+                <button
+                  data-testid="lic-fix-ids"
+                  onClick={() => onFixIds.mutate()}
+                  disabled={onFixIds.isPending}
+                  className="text-xs px-3 py-1.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-100 border border-amber-500/40 disabled:opacity-50"
+                >
+                  {onFixIds.isPending ? "Düzeltiliyor…" : "Eksik ID'leri Bul & Ata"}
+                </button>
+              </div>
+              <div className="text-[11px] text-slate-500 leading-relaxed">
+                <b className="text-slate-300">İpucu:</b> Bu işlem yalnızca id'si olmayan kayıtlara yeni UUID atar,
+                mevcut kayıtları etkilemez. Bir kere çalıştırmak yeterli.
+              </div>
+            </CardBody>
+          </Card>
+          <Card>
             <CardHeader title={<span className="flex items-center gap-2"><Users2 className="w-4 h-4 text-amber-400" /> Nasıl çalışır?</span>} />
             <CardBody className="text-xs text-slate-400 space-y-2">
               <div><span className="text-slate-200 font-medium">1. Lisans oluştur</span> — Müşteriye <span className="mono text-indigo-300">MS-XXXX…</span> anahtarını verin.</div>
@@ -464,7 +512,8 @@ function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, s
 }
 
 function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPlanFilter,
-                              statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onDelete }) {
+                              statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onDelete,
+                              selectedIds, setSelectedIds, bulkAction, onFixIds }) {
   return (
     <Card>
       {/* Search + Filter bar */}
@@ -498,10 +547,59 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
         </span>
       </div>
 
+      {/* Toplu aksiyon barı — bir/daha fazla seçildiğinde açılır */}
+      {selectedIds.size > 0 && (
+        <div data-testid="bulk-action-bar" className="mb-3 px-4 py-3 rounded-lg border-2 border-indigo-500/40 bg-indigo-500/10 flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-sm text-indigo-100">
+            <b className="mono">{selectedIds.size}</b> lisans seçildi
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              data-testid="bulk-activate"
+              onClick={() => bulkAction.mutate({ ids: Array.from(selectedIds), action: "activate" })}
+              disabled={bulkAction.isPending}
+              className="text-xs px-3 py-1.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 disabled:opacity-50"
+            >✓ Aktifleştir</button>
+            <button
+              data-testid="bulk-suspend"
+              onClick={() => bulkAction.mutate({ ids: Array.from(selectedIds), action: "suspend" })}
+              disabled={bulkAction.isPending}
+              className="text-xs px-3 py-1.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 disabled:opacity-50"
+            >⏸ Askıya Al</button>
+            <button
+              data-testid="bulk-delete"
+              onClick={() => {
+                if (!window.confirm(`${selectedIds.size} lisans SİLİNECEK. Emin misiniz?`)) return;
+                bulkAction.mutate({ ids: Array.from(selectedIds), action: "delete" });
+              }}
+              disabled={bulkAction.isPending}
+              className="text-xs px-3 py-1.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/40 disabled:opacity-50"
+            >🗑 Sil</button>
+            <button
+              data-testid="bulk-clear"
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs px-3 py-1.5 rounded bg-slate-700/40 hover:bg-slate-700 text-slate-300"
+            >× Seçimi Temizle</button>
+          </div>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-widest text-slate-500">
+              <th className="text-left px-3 py-3 font-semibold w-8">
+                <input
+                  type="checkbox"
+                  data-testid="lic-select-all"
+                  checked={rows.length > 0 && rows.every(r => selectedIds.has(r.id || r.license_key))}
+                  onChange={(e) => {
+                    if (e.target.checked) setSelectedIds(new Set(rows.map(r => r.id || r.license_key)));
+                    else setSelectedIds(new Set());
+                  }}
+                  className="w-4 h-4 accent-indigo-500 cursor-pointer"
+                />
+              </th>
               <th className="text-left px-4 py-3 font-semibold">Müşteri</th>
               <th className="text-left px-4 py-3 font-semibold">Durum</th>
               <th className="text-left px-4 py-3 font-semibold">Anahtar</th>
@@ -516,8 +614,26 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
             {rows.map((r) => {
               const expired = isExpired(r.valid_until);
               const status = !r.active ? "inactive" : expired ? "expired" : "active";
+              const rowKey = r.id || r.license_key;
+              const isSelected = selectedIds.has(rowKey);
               return (
-                <tr key={r.id} data-row data-testid={`lic-row-${r.id}`} className="border-t border-slate-800">
+                <tr key={rowKey} data-row data-testid={`lic-row-${rowKey}`} className={`border-t border-slate-800 ${isSelected ? "bg-indigo-500/10" : ""}`}>
+                  <td className="px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      data-testid={`lic-select-${rowKey}`}
+                      checked={isSelected}
+                      onChange={() => {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(rowKey)) next.delete(rowKey);
+                          else next.add(rowKey);
+                          return next;
+                        });
+                      }}
+                      className="w-4 h-4 accent-indigo-500 cursor-pointer"
+                    />
+                  </td>
                   <td className="px-4 py-2.5">
                     <div className="text-slate-200">{r.customer_name}</div>
                     <div className="text-[11px] text-slate-500 mono">{r.customer_email || "—"}</div>

@@ -2916,10 +2916,54 @@ async def licenses_update(lid: str, payload: LicenseIn):
 
 @api.delete("/licenses/{lid}")
 async def licenses_delete(lid: str):
+    # id ile dene, bulamazsa license_key olarak dene (eski seed'ler id-siz olabilir)
     r = await db.licenses.delete_one({"id": lid})
+    if r.deleted_count == 0:
+        r = await db.licenses.delete_one({"license_key": lid})
     if r.deleted_count == 0:
         raise HTTPException(404, "Lisans bulunamadı")
     return {"deleted": True}
+
+
+class BulkLicenseAction(BaseModel):
+    ids: List[str]
+    action: Literal["delete", "suspend", "activate"] = "delete"
+
+
+@api.post("/licenses/bulk-action")
+async def licenses_bulk_action(payload: BulkLicenseAction):
+    """Birden fazla lisans üzerinde topluca sil / askıya al / aktifleştir."""
+    if not payload.ids:
+        return {"affected": 0, "action": payload.action}
+    # id VEYA license_key ile eşleştir (eski kayıtlarda id yoksa)
+    match = {"$or": [{"id": {"$in": payload.ids}}, {"license_key": {"$in": payload.ids}}]}
+    if payload.action == "delete":
+        r = await db.licenses.delete_many(match)
+        affected = r.deleted_count
+    elif payload.action == "suspend":
+        r = await db.licenses.update_many(match, {"$set": {"active": False}})
+        affected = r.modified_count
+    elif payload.action == "activate":
+        r = await db.licenses.update_many(match, {"$set": {"active": True}})
+        affected = r.modified_count
+    else:
+        raise HTTPException(400, "Geçersiz aksiyon")
+    await db.logs.insert_one(ActivityLog(
+        source="license", level="info",
+        message=f"Toplu aksiyon: {payload.action} → {affected} lisans etkilendi",
+    ).model_dump())
+    return {"affected": affected, "action": payload.action}
+
+
+@api.post("/licenses/fix-missing-ids")
+async def licenses_fix_missing_ids():
+    """Eski seed'lerden gelen id-siz kayıtlara yeni UUID atar (bir kere çalıştır)."""
+    fixed = 0
+    async for doc in db.licenses.find({"id": {"$exists": False}}):
+        new_id = str(uuid.uuid4())
+        await db.licenses.update_one({"_id": doc["_id"]}, {"$set": {"id": new_id}})
+        fixed += 1
+    return {"fixed": fixed}
 
 
 class HeartbeatPayload(BaseModel):
@@ -3420,6 +3464,28 @@ async def _plugin_status_payload() -> dict:
         demo_over = delta.total_seconds() <= 0
     # In seller mode we do not enforce demo/gating
     gated = PLUGIN_MODE == "customer" and demo_over and not licensed
+
+    # Aktif lisansın müşteri adı / plan bilgisini de gönder
+    license_customer_name = ""
+    license_plan = ""
+    license_active_flag = True
+    if licensed and st.get("license_key"):
+        try:
+            lic_doc = await db.licenses.find_one(
+                {"license_key": st.get("license_key")}, {"_id": 0}
+            )
+            if lic_doc:
+                license_customer_name = lic_doc.get("customer_name", "")
+                license_plan = lic_doc.get("plan", "")
+                license_active_flag = bool(lic_doc.get("active", True))
+        except Exception:
+            pass
+
+    # Lisans pasife alınmışsa modülleri kilit — licensed'i false say
+    if licensed and not license_active_flag:
+        licensed = False
+        gated = PLUGIN_MODE == "customer"
+
     return {
         "mode": PLUGIN_MODE,
         "installed_at": st.get("installed_at"),
@@ -3430,8 +3496,12 @@ async def _plugin_status_payload() -> dict:
         "licensed": licensed,
         "license_key": st.get("license_key", ""),
         "license_expires": st.get("license_expires", ""),
+        "license_customer_name": license_customer_name,
+        "license_plan": license_plan,
+        "license_active": license_active_flag,
         "gated": gated,
         "gate_reason": (
+            "license_suspended" if licensed is False and st.get("license_key") and not license_active_flag else
             "license_required" if gated else
             ("demo_active" if is_demo and not demo_over else "ok")
         ),

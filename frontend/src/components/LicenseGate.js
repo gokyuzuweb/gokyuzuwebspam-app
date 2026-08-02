@@ -69,7 +69,12 @@ export function PluginStatusStripe() {
         <div data-testid="plugin-status-licensed" className="bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-300 text-xs px-6 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Lisanslı · <span className="mono">{(s.license_key || "").slice(0, 20)}…</span></span>
+            <span>
+              Lisanslı{s.license_customer_name ? <> · <b className="text-emerald-100">{s.license_customer_name}</b></> : null}
+              {s.license_plan ? <> · <span className="uppercase mono text-emerald-200">{s.license_plan}</span></> : null}
+              <span className="text-emerald-500/60"> · </span>
+              <span className="mono">{(s.license_key || "").slice(0, 16)}…</span>
+            </span>
           </div>
           <div className="mono">Bitiş: {s.license_expires ? new Date(s.license_expires).toLocaleDateString("tr-TR") : "—"}</div>
         </div>
