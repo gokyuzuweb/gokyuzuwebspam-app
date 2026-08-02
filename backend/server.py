@@ -2906,6 +2906,26 @@ class LicenseIn(BaseModel):
 async def licenses_add(payload: LicenseIn):
     obj = License(**payload.model_dump())
     await db.licenses.insert_one(obj.model_dump())
+    # Yeni lisans oluşturulduğunda revoke listesinden ilgili tüm kayıtları temizle
+    # (aynı license_key / hostname / IP daha önce silinmiş olabilir). Aksi halde
+    # verify çağrısı hâlâ "master tarafından iptal edildi" der.
+    or_conds = [{"license_key": obj.license_key}]
+    for host in (obj.panel_domains or []):
+        or_conds.append({"hostname": host.lower()})
+    for ip in (obj.ip_addresses or []):
+        or_conds.append({"ip": ip})
+    if or_conds:
+        cleanup = await db.revoked_licenses.delete_many({"$or": or_conds})
+        if cleanup.deleted_count:
+            await db.logs.insert_one(ActivityLog(
+                source="license", level="info",
+                message=f"Yeni lisans oluşturuldu, {cleanup.deleted_count} revoke kaydı otomatik temizlendi",
+            ).model_dump())
+    # plugin_state cache'ini de sıfırla ki eski revoke bilgisi kalmasın
+    await db.settings.update_one(
+        {"_key": "plugin_state"},
+        {"$unset": {"revoked_at": ""}},
+    )
     await db.logs.insert_one(ActivityLog(
         source="license", level="info",
         message=f"Yeni lisans oluşturuldu: {obj.customer_name} → {obj.license_key} (IP: {', '.join(obj.ip_addresses) or 'yok'})",
@@ -2918,6 +2938,15 @@ async def licenses_update(lid: str, payload: LicenseIn):
     r = await db.licenses.update_one({"id": lid}, {"$set": payload.model_dump()})
     if r.matched_count == 0:
         raise HTTPException(404, "Lisans bulunamadı")
+    # Update sonrası revoke temizle — kullanıcı yeni IP eklediyse veya aktifleştirdiyse
+    # eski revoke kayıtları verify'ı bloklamasın.
+    or_conds = [{"license_key": payload.license_key}]
+    for host in (payload.panel_domains or []):
+        or_conds.append({"hostname": host.lower()})
+    for ip in (payload.ip_addresses or []):
+        or_conds.append({"ip": ip})
+    if or_conds and payload.active:
+        await db.revoked_licenses.delete_many({"$or": or_conds})
     return {"updated": True}
 
 
@@ -3035,6 +3064,16 @@ async def licenses_bulk_action(payload: BulkLicenseAction):
     elif payload.action == "activate":
         r = await db.licenses.update_many(match, {"$set": {"active": True}})
         affected = r.modified_count
+        # Aktifleştirilen lisansların revoke kayıtlarını da temizle
+        docs = await db.licenses.find(match, {"_id": 0, "license_key": 1, "panel_domains": 1, "ip_addresses": 1}).to_list(1000)
+        for d in docs:
+            or_conds = [{"license_key": d.get("license_key")}]
+            for host in (d.get("panel_domains") or []):
+                or_conds.append({"hostname": host.lower()})
+            for ip in (d.get("ip_addresses") or []):
+                or_conds.append({"ip": ip})
+            if or_conds:
+                await db.revoked_licenses.delete_many({"$or": or_conds})
     else:
         raise HTTPException(400, "Geçersiz aksiyon")
     await db.logs.insert_one(ActivityLog(
@@ -3050,6 +3089,30 @@ async def licenses_revoked_list():
     kalıcı olarak saklanır. Restore için POST /licenses/revoked/restore."""
     items = await db.revoked_licenses.find({}, {"_id": 0}).sort("revoked_at", -1).to_list(500)
     return {"items": items, "count": len(items)}
+
+
+@api.post("/licenses/revoked/clear")
+async def licenses_revoked_clear(payload: dict):
+    """Revoke listesinden bir kaydı IP / hostname / license_key ile temizle.
+    Master 'yeni lisans ekledim ama hâlâ iptal diyor' durumunda tek tıkla kullanır.
+    Payload: {ip?: str, hostname?: str, license_key?: str}"""
+    or_conds = []
+    if payload.get("license_key"):
+        or_conds.append({"license_key": payload["license_key"]})
+    if payload.get("hostname"):
+        or_conds.append({"hostname": payload["hostname"].lower()})
+    if payload.get("ip"):
+        or_conds.append({"ip": payload["ip"]})
+    if not or_conds:
+        raise HTTPException(400, "ip / hostname / license_key alanlarından en az biri gerekli")
+    r = await db.revoked_licenses.delete_many({"$or": or_conds})
+    # plugin_state cache'inde de revoked_at varsa temizle
+    await db.settings.update_one({"_key": "plugin_state"}, {"$unset": {"revoked_at": ""}})
+    await db.logs.insert_one(ActivityLog(
+        source="license", level="info",
+        message=f"Revoke kayıtları manuel temizlendi ({r.deleted_count} satır)",
+    ).model_dump())
+    return {"cleared": r.deleted_count, "ok": True}
 
 
 class RevokeRestoreIn(BaseModel):
