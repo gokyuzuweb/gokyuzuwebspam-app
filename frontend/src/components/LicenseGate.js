@@ -134,7 +134,10 @@ export function LicenseGate() {
         setDetectedIP(ip);
       } catch { ip = ""; }
     }
-    verify.mutate({ license_key: licenseKey || null, ip: ip || null });
+    // Panelin çalıştığı domain'i otomatik gönder (shared hosting için kritik)
+    let hostname = "";
+    try { hostname = window.location.hostname.toLowerCase().replace(/^www\./, ""); } catch (_) {}
+    verify.mutate({ license_key: licenseKey || null, ip: ip || null, hostname: hostname || null });
   };
 
   if (!q.data) return null;

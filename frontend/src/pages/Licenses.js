@@ -89,6 +89,7 @@ function AddLicenseForm({ onAdded }) {
     customer_email: "",
     plan: "pro",
     ip_addresses: "",
+    panel_domains: "",
     max_domains: 100,
     valid_until: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().slice(0, 10),
     notes: "",
@@ -97,7 +98,7 @@ function AddLicenseForm({ onAdded }) {
     mutationFn: (p) => api.licenseAdd(p),
     onSuccess: (data) => {
       toast.success(`Lisans oluşturuldu: ${data.license_key}`);
-      setForm({ ...form, customer_name: "", customer_email: "", ip_addresses: "", notes: "" });
+      setForm({ ...form, customer_name: "", customer_email: "", ip_addresses: "", panel_domains: "", notes: "" });
       onAdded?.();
     },
     onError: (e) => toast.error("Oluşturulamadı: " + (e?.response?.data?.detail || e.message)),
@@ -106,10 +107,12 @@ function AddLicenseForm({ onAdded }) {
     e.preventDefault();
     if (!form.customer_name.trim()) return toast.error("Müşteri adı zorunlu");
     const ips = form.ip_addresses.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
-    if (ips.length === 0) return toast.error("En az bir IP adresi girin");
+    const domains = form.panel_domains.split(/[\s,;]+/).map(s => s.trim().toLowerCase().replace(/^www\./, "")).filter(Boolean);
+    if (ips.length === 0 && domains.length === 0) return toast.error("En az bir IP veya cPanel domain girin");
     add.mutate({
       ...form,
       ip_addresses: ips,
+      panel_domains: domains,
       max_domains: parseInt(form.max_domains) || 100,
       valid_until: new Date(form.valid_until + "T23:59:59Z").toISOString(),
     });

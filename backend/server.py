@@ -151,6 +151,7 @@ class License(BaseModel):
     customer_email: str = ""
     plan: Literal["starter", "pro", "enterprise"] = "pro"
     ip_addresses: List[str] = []  # allowed IPs
+    panel_domains: List[str] = []  # allowed cPanel domains (shared-hosting için)
     max_domains: int = 100
     valid_until: str  # ISO date
     active: bool = True
@@ -159,6 +160,7 @@ class License(BaseModel):
     last_heartbeat_at: Optional[str] = None
     last_heartbeat_ip: Optional[str] = None
     last_heartbeat_version: Optional[str] = None
+    last_heartbeat_hostname: Optional[str] = None
 
 
 class LicenseViolation(BaseModel):
@@ -3444,37 +3446,64 @@ async def plugin_status():
 class VerifyLicenseIn(BaseModel):
     license_key: Optional[str] = None
     ip: Optional[str] = None  # public IP of the plugin host
+    hostname: Optional[str] = None  # cPanel primary domain (shared-hosting'de kritik)
 
 
 @api.post("/plugin/verify-license")
 async def plugin_verify_license(payload: VerifyLicenseIn):
     """
-    Bayinin 'Lisans Sorgula' butonundan çağrılır. Verilen IP (veya lisans anahtarı)
+    Bayinin 'Lisans Sorgula' butonundan çağrılır. Verilen key/IP/hostname
     lisans DB'sinde varsa ve süresi geçerliyse plugin_state güncellenir.
-    - Öncelik: license_key varsa doğrudan onunla eşleştir
-    - Yoksa: IP'ye göre aktif ve süresi dolmamış lisans ara
+
+    Eşleştirme sırası:
+      1) license_key verilmişse → onunla doğrudan eşleştir
+      2) hostname verilmişse → panel_domains içinde arayarak eşleştir (shared hosting)
+      3) IP verilmişse → ip_addresses'ta arayarak eşleştir (VPS/dedicated)
+
+    Master IP (89.19.15.58) gibi paylaşımlı IP'lerde IP tek başına yetmez;
+    hostname zorunlu olarak istenir (aksi hâlde belirsizlik hatası).
     """
     now = datetime.now(timezone.utc)
-    query: dict = {"active": True}
-    if payload.license_key:
-        query["license_key"] = payload.license_key
     lic = None
+    ambiguous_ip_match = False
+
+    # 1) license_key ile
     if payload.license_key:
-        lic = await db.licenses.find_one(query, {"_id": 0})
+        lic = await db.licenses.find_one({"active": True, "license_key": payload.license_key}, {"_id": 0})
+
+    # 2) hostname ile
+    if not lic and payload.hostname:
+        lic = await db.licenses.find_one({"active": True, "panel_domains": payload.hostname.lower()}, {"_id": 0})
+
+    # 3) IP ile — ama paylaşımlı ise (birden fazla lisans varsa) reddet
     if not lic and payload.ip:
-        lic = await db.licenses.find_one({"active": True, "ip_addresses": payload.ip}, {"_id": 0})
+        candidates = await db.licenses.find({"active": True, "ip_addresses": payload.ip}, {"_id": 0}).to_list(20)
+        if len(candidates) == 1:
+            lic = candidates[0]
+        elif len(candidates) > 1:
+            ambiguous_ip_match = True
+
     if not lic:
-        # log a violation attempt
         v = LicenseViolation(
             ip=payload.ip or "unknown",
-            hostname="",
+            hostname=payload.hostname or "",
             license_key=payload.license_key or "",
-            reason="key_not_found" if payload.license_key else "ip_not_allowed",
+            reason=(
+                "ambiguous_shared_ip" if ambiguous_ip_match
+                else ("key_not_found" if payload.license_key else "ip_or_hostname_not_allowed")
+            ),
             version="",
-            raw={"verify_attempt": True},
+            raw={"verify_attempt": True, "ambiguous": ambiguous_ip_match},
         ).model_dump()
         await db.violations.insert_one(v)
         asyncio.create_task(_fire_license_alert(v))
+        if ambiguous_ip_match:
+            raise HTTPException(
+                409,
+                "Bu IP birden fazla lisansa kayıtlı (paylaşımlı sunucu). "
+                "Lütfen lisans anahtarınızı elle girin veya sistem yöneticinize "
+                "cPanel domain'inizin lisansa eklenmesini rica edin."
+            )
         raise HTTPException(404, "Lisans bulunamadı. Lütfen satıcı ile iletişime geçin.")
     valid_until = _parse_iso(lic.get("valid_until", ""))
     if not valid_until or valid_until < now:
@@ -3496,6 +3525,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn):
         {"$set": {
             "last_heartbeat_at": now.isoformat(),
             "last_heartbeat_ip": payload.ip or "",
+            "last_heartbeat_hostname": (payload.hostname or "").lower(),
             "last_heartbeat_version": "1.1.0",
         }},
     )
