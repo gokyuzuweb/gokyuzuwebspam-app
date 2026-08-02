@@ -1894,6 +1894,11 @@ async def admin_whoami(request: Request, license_key: Optional[str] = None):
         if row and row.get("valid_until", "") > datetime.now(timezone.utc).isoformat():
             r["is_master"] = True
             r["via_cookie"] = True
+    # is_master ise master anahtarı da dön (frontend localStorage'a yazsın ki
+    # X-Master-Key header'ı her PUT/DELETE'te otomatik gitsin ve demo lock
+    # yanlışlıkla tetiklenmesin). Sadece is_master true iken güvenli.
+    if r.get("is_master"):
+        r["master_key"] = os.environ.get("MASTER_LICENSE_KEY", "")
     return r
 
 
@@ -4111,6 +4116,7 @@ async def demo_write_guard(request: Request, call_next):
     # gelmediyse (ziyaretçi) demo yazma kilidi çalışır.
     if status.get("mode") == "seller":
         master_key_env = os.environ.get("MASTER_LICENSE_KEY", "")
+        master_ip_env = os.environ.get("MASTER_IP", "")
         provided_key = (
             request.headers.get("x-master-key")
             or request.query_params.get("master_key")
@@ -4118,6 +4124,16 @@ async def demo_write_guard(request: Request, call_next):
             or ""
         )
         if master_key_env and provided_key and provided_key == master_key_env:
+            return await call_next(request)
+        # Master IP eşleşmesi: request master sunucudan geliyorsa (WHM plugin
+        # iframe içinden) X-Master-Key olmasa da yazmaya izin ver.
+        client_ip = ""
+        try:
+            xff = request.headers.get("x-forwarded-for", "")
+            client_ip = (xff.split(",")[0].strip() if xff else "") or (request.client.host if request.client else "")
+        except Exception:
+            pass
+        if master_ip_env and client_ip and client_ip == master_ip_env:
             return await call_next(request)
         # Ziyaretçi: yazma kilitle
         from fastapi.responses import JSONResponse

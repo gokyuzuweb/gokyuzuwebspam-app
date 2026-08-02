@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { api } from "@/lib/api";
 
 /**
@@ -19,6 +20,18 @@ export function useIsMaster() {
     retry: false,
     staleTime: 30000,
   });
+  // is_master + master_key backend'den geldiyse localStorage'a yaz ki
+  // sonraki tüm PUT/DELETE isteklerinde X-Master-Key header'ı otomatik gitsin.
+  useEffect(() => {
+    if (q.data?.is_master && q.data?.master_key) {
+      try {
+        const existing = localStorage.getItem("gws.master_license");
+        if (existing !== q.data.master_key) {
+          localStorage.setItem("gws.master_license", q.data.master_key);
+        }
+      } catch (_) {}
+    }
+  }, [q.data?.is_master, q.data?.master_key]);
   return {
     isMaster: !!q.data?.is_master,
     ipMatch:  !!q.data?.ip_match,

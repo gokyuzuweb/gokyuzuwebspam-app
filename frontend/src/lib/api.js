@@ -8,11 +8,16 @@ const client = axios.create({ baseURL: API, timeout: 20000 });
 // LLM-backed endpoints can take 30-60s (Claude / GPT / Gemini reasoning)
 const llmClient = axios.create({ baseURL: API, timeout: 90000 });
 
-// Master anahtarını her istekle X-Master-Key header'ında gönder (localStorage'dan)
+// Master anahtarını her istekle X-Master-Key header'ında gönder.
+// Öncelik: gws.master_license (backend whoami tarafından set edilir) →
+// gws.event_license (kullanıcının panelde girdiği anahtar).
+// AUTO-* prefix'li anahtarlar admin yetkisi vermez, o yüzden sadece MS- prefix.
 const _attachMasterKey = (config) => {
   try {
-    const mk = localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license") || "";
-    if (mk && mk.startsWith("MS-")) {
+    const ml = localStorage.getItem("gws.master_license") || "";
+    const el = localStorage.getItem("gws.event_license") || "";
+    const mk = (ml.startsWith("MS-") ? ml : "") || (el.startsWith("MS-") ? el : "");
+    if (mk) {
       config.headers = config.headers || {};
       config.headers["X-Master-Key"] = mk;
     }
