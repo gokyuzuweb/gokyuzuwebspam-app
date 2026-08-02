@@ -92,6 +92,9 @@ while (1) {
 
 sub _process_line {
     my ($line) = @_;
+    # Debug: her 100 satırda bir log yaz + eşleşme durumu
+    state $_processed = 0; state $_matched = 0;
+    $_processed++;
 
     # Match inbound line:
     if ($line =~ m{
@@ -103,6 +106,8 @@ sub _process_line {
         (?:\sfor\s(.+))?$
     }x) {
         my ($date, $time, $mid, $from, $mid_part, $for_rcpt) = ($1,$2,$3,$4,$5,$6);
+        $_matched++;
+        warn "[GWS-logtail] MATCH #$_matched mid=$mid from=$from\n";
         return if $seen_ids{$mid}++;
 
         my ($client_ip) = $mid_part =~ /\[([\d.:a-f]+)\]/i;
