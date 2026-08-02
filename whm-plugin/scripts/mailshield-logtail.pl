@@ -153,18 +153,21 @@ sub _process_line {
         # Exim octal escapes -> byte
         $subject =~ s/\\(\d{3})/chr(oct($1))/ge;
         # RFC 2047 MIME encoded-word decode: =?UTF-8?B?...?= veya =?UTF-8?Q?...?=
-        # Bu, Türkçe karakterlerin (iöçüşğ İÇÖÜĞŞ) doğru görünmesi için gerekli.
+        # Türkçe karakterlerin (iöçüşğ İÇÖÜĞŞ) doğru gelmesi için gerekli.
+        # ÖNEMLİ: _mime_decode_wordstr sonucu Perl-internal string döner (bytes değil).
         $subject = _mime_decode_wordstr($subject);
-        # Kalan raw bytes UTF-8 mi CP1254 mü tespit et
-        eval {
-            if (!Encode::is_utf8($subject) && $subject =~ /[\x80-\xff]/) {
-                my $dec = eval { Encode::decode('UTF-8', $subject, Encode::FB_CROAK()) };
-                if ($@ || !defined $dec) {
-                    $dec = eval { Encode::decode('cp1254', $subject, Encode::FB_DEFAULT()) };
-                }
-                $subject = Encode::encode('UTF-8', $dec) if defined $dec;
+        # Ham byte kaldıysa (encoded-word değil düz UTF-8 veya cp1254) yakala.
+        # Encode::decode sonrası HİÇBİR ZAMAN yeniden encode ETME — JSON::PP
+        # utf8 modunda Perl string'i doğru UTF-8 byte'a çevirir. Eğer burada
+        # tekrar encode edersek JSON \u00c3\u00a7 (double-encoded) yazar (bug).
+        if (!Encode::is_utf8($subject) && $subject =~ /[\x80-\xff]/) {
+            my $dec = eval { Encode::decode('UTF-8', $subject, Encode::FB_CROAK()) };
+            if ($@ || !defined $dec) {
+                $dec = eval { Encode::decode('cp1254', $subject, Encode::FB_DEFAULT()) };
             }
-        };
+            $subject = $dec if defined $dec;
+        }
+        # Karakter olarak kes (byte değil, Türkçe harfleri bölmesin)
         $subject = substr($subject, 0, 200);
         my $to = $for_rcpt // '';
         $to =~ s/^\s+|\s+$//g;
@@ -506,9 +509,10 @@ sub _compute_tz_offset {
 }
 
 # RFC 2047 MIME encoded-word decoder.
-# =?UTF-8?B?SGFmdGFsxLFrIGluZGlyaW0=?=  -> "Haftalık indirim"
+# =?UTF-8?B?SGFmdGFsxLFrIGluZGlyaW0=?=  -> "Haftalık indirim"  (Perl string döner, bytes DEĞİL)
 # =?ISO-8859-9?Q?G=FCnayd=FDn?=          -> "Günaydın"
 # Peş peşe gelen encoded-word'ler birleşir (RFC 2047 §5).
+# ÖNEMLİ: JSON::PP double-encoding'i önlemek için Encode::encode YAPMA.
 sub _mime_decode_wordstr {
     my ($s) = @_;
     return $s unless defined $s && length $s;
@@ -536,7 +540,10 @@ sub _mime_decode_wordstr {
         my $out = $bytes;
         eval {
             my $dec = Encode::decode($cs, $bytes, Encode::FB_DEFAULT());
-            $out = Encode::encode('UTF-8', $dec) if defined $dec;
+            # Perl-internal string döndür (Encode::encode YAPMA — JSON encoder
+            # utf8 modunda Perl string'i doğru UTF-8'e çevirir; burada tekrar
+            # encode edersek JSON çıktısı double-encoded olur).
+            $out = $dec if defined $dec;
         };
         $out;
     }gex;

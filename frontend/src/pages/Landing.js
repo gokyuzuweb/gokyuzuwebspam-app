@@ -907,7 +907,7 @@ function SalesTodayBanner() {
         {current ? (
           <>
             <div className="shrink-0 w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/30 border border-indigo-500/40 flex items-center justify-center text-sm font-bold text-indigo-100">
-              {current.name.charAt(0)}
+              {current.kind === "firm" ? "🏢" : current.name.charAt(0)}
             </div>
             <div className="flex-1 min-w-0" key={tick}>
               <div className="text-[11px] text-slate-300 truncate animate-in fade-in duration-500">

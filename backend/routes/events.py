@@ -227,6 +227,18 @@ async def ingest_event(evt: MailEvent, request: Request):
             doc["subject"] = str(make_header(decode_header(doc["subject"])))
         except Exception:
             pass
+    # Double-encoded UTF-8 fix — eski Perl versiyonunda JSON çıktısı
+    # "Ã§, Ã¼, Ã¶, Ä±" gibi geliyordu (2x UTF-8 encode). Otomatik düzelt:
+    #   subject.encode('latin-1').decode('utf-8') → gerçek UTF-8'e çevir.
+    if doc.get("subject"):
+        s = doc["subject"]
+        if any(m in s for m in ("Ã", "Å", "Ä±", "Ä°", "Ã§", "Ã¼", "Ã¶")):
+            try:
+                fixed = s.encode("latin-1").decode("utf-8")
+                doc["subject"] = fixed
+                doc["subject_double_decoded"] = True
+            except Exception:
+                pass
     # Sender IP tespit: header'da X-Originating-IP > client_ip payload > request.client
     sender_ip = None
     headers = (doc.get("headers_full") or doc.get("headers_preview") or "")

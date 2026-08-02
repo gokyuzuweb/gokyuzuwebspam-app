@@ -4107,6 +4107,18 @@ async def demo_write_guard(request: Request, call_next):
     # istisna yolları
     if any(path.startswith(p) for p in _DEMO_ALLOW_PREFIXES):
         return await call_next(request)
+    # Cookie-based master session (admin/master-unlock ile alınır, 30 gün geçerli).
+    # Bu cookie varsa localStorage/header/query karışıklığından bağımsız yazma serbest.
+    cookie_master = request.cookies.get("gws_master_session")
+    if cookie_master:
+        try:
+            row = await db.settings.find_one(
+                {"_key": f"master_session:{cookie_master}"}, {"_id": 0}
+            )
+            if row and row.get("valid_until", "") > datetime.now(timezone.utc).isoformat():
+                return await call_next(request)
+        except Exception:
+            pass
     try:
         status = await _plugin_status_payload()
     except Exception:

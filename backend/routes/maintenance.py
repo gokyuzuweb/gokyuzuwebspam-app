@@ -1006,11 +1006,14 @@ async def public_sales_today():
         },
     }
     regions = list(region_pool.keys())
+    # Ağırlıklı seçim: Türkiye baskın (~%50), gerisi uluslararası mix.
+    # TR'ye 20 slot, diğer her ülkeye 1 slot ver → hash % len(weighted) ile pick.
+    weighted_regions = ["TR"] * 20 + [r for r in regions if r != "TR"]
 
     recent = []
     for i in range(6):
         row_hash = int(hashlib.md5(f"{day_seed}-{min_seed}-buyer-{i}".encode()).hexdigest()[:12], 16)
-        region = regions[row_hash % len(regions)]
+        region = weighted_regions[row_hash % len(weighted_regions)]
         pool = region_pool[region]
         city_t = pool["cities"][(row_hash >> 8) % len(pool["cities"])]
         # ~%35 firma satın alımı, ~%65 bireysel
