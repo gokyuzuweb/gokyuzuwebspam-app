@@ -3593,6 +3593,33 @@ async def _plugin_status_payload() -> dict:
                 license_customer_name = lic_doc.get("customer_name", "")
                 license_plan = lic_doc.get("plan", "")
                 license_active_flag = bool(lic_doc.get("active", True))
+            else:
+                # license_key plugin_state'te var ama db.licenses'ta yok → silinmiş
+                license_active_flag = False
+        except Exception:
+            pass
+
+    # Revoke kontrolü — master manuel silmişse licensed=false zorla, gated=true.
+    # (plugin_state cache'ini geçersiz kılar)
+    if licensed and st.get("license_key"):
+        try:
+            rev = await db.revoked_licenses.find_one(
+                {"license_key": st.get("license_key")}, {"_id": 0}
+            )
+            if rev:
+                licensed = False
+                license_active_flag = False
+                gated = PLUGIN_MODE == "customer"
+                # plugin_state'i de temizle ki bir daha yanlış "licensed" dönmesin
+                await db.settings.update_one(
+                    {"_key": "plugin_state"},
+                    {"$set": {
+                        "licensed": False,
+                        "license_key": "",
+                        "license_expires": "",
+                        "revoked_at": rev.get("revoked_at"),
+                    }},
+                )
         except Exception:
             pass
 
