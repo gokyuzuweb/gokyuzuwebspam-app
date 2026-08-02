@@ -2931,9 +2931,12 @@ async def licenses_delete(lid: str):
         raise HTTPException(404, "Lisans bulunamadı")
     # Silinen lisansı revoke listesine ekle → NS auto-license bunu tekrar
     # oluşturmaz (kullanıcı manuel sildikten sonra kalıcı olarak silinsin diye)
+    ip_addrs = doc.get("ip_addresses") or []
     revoke_entry = {
         "license_key": doc.get("license_key"),
         "hostname": (doc.get("panel_domains") or [None])[0] if doc.get("panel_domains") else None,
+        "ip": ip_addrs[0] if ip_addrs else None,
+        "ips_all": ip_addrs,
         "customer_name": doc.get("customer_name"),
         "revoked_at": datetime.now(timezone.utc).isoformat(),
         "reason": "manual_delete",
@@ -2943,6 +2946,13 @@ async def licenses_delete(lid: str):
         {"$set": revoke_entry},
         upsert=True,
     )
+    # Ayrıca her ip için ayrı revoke kaydı — verify $or match'lesin
+    for ip in ip_addrs:
+        await db.revoked_licenses.update_one(
+            {"ip": ip, "license_key": doc.get("license_key")},
+            {"$set": {**revoke_entry, "ip": ip}},
+            upsert=True,
+        )
     r = await db.licenses.delete_one({"id": doc["id"]})
     return {"deleted": True, "revoked": True, "license_key": doc.get("license_key")}
 
@@ -2995,17 +3005,28 @@ async def licenses_bulk_action(payload: BulkLicenseAction):
         docs = await db.licenses.find(match, {"_id": 0}).to_list(1000)
         now = datetime.now(timezone.utc).isoformat()
         if docs:
-            revokes = [{
-                "license_key": d.get("license_key"),
-                "hostname": (d.get("panel_domains") or [None])[0] if d.get("panel_domains") else None,
-                "customer_name": d.get("customer_name"),
-                "revoked_at": now,
-                "reason": "bulk_delete",
-            } for d in docs if d.get("license_key")]
-            for rv in revokes:
+            for d in docs:
+                if not d.get("license_key"):
+                    continue
+                ips = d.get("ip_addresses") or []
+                base = {
+                    "license_key": d.get("license_key"),
+                    "hostname": (d.get("panel_domains") or [None])[0] if d.get("panel_domains") else None,
+                    "ip": ips[0] if ips else None,
+                    "ips_all": ips,
+                    "customer_name": d.get("customer_name"),
+                    "revoked_at": now,
+                    "reason": "bulk_delete",
+                }
                 await db.revoked_licenses.update_one(
-                    {"license_key": rv["license_key"]}, {"$set": rv}, upsert=True
+                    {"license_key": base["license_key"]}, {"$set": base}, upsert=True
                 )
+                for ip in ips:
+                    await db.revoked_licenses.update_one(
+                        {"ip": ip, "license_key": d.get("license_key")},
+                        {"$set": {**base, "ip": ip}},
+                        upsert=True,
+                    )
         r = await db.licenses.delete_many(match)
         affected = r.deleted_count
     elif payload.action == "suspend":
@@ -3669,6 +3690,36 @@ async def plugin_verify_license(payload: VerifyLicenseIn):
     now = datetime.now(timezone.utc)
     lic = None
     ambiguous_ip_match = False
+
+    # 0) REVOKE KONTROLÜ — master manuel silmişse burada dur, hiçbir yolla
+    # lisans oluşturma/geri getirme. IP/hostname/license_key üçünden herhangi
+    # birisi revoke listesindeyse verify başarısız olur.
+    revoke_conditions = []
+    if payload.license_key:
+        revoke_conditions.append({"license_key": payload.license_key})
+    if payload.hostname:
+        revoke_conditions.append({"hostname": payload.hostname.lower()})
+    if payload.ip:
+        revoke_conditions.append({"ip": payload.ip})
+    if revoke_conditions:
+        blocked = await db.revoked_licenses.find_one({"$or": revoke_conditions}, {"_id": 0})
+        if blocked:
+            logging.info(f"Verify BLOCKED — revoked: {blocked}")
+            v = LicenseViolation(
+                ip=payload.ip or "unknown",
+                hostname=payload.hostname or "",
+                license_key=payload.license_key or "",
+                reason="license_revoked",
+                version="",
+                raw={"revoked_by_master": True, "revoked_at": blocked.get("revoked_at")},
+            )
+            await db.license_violations.insert_one(v.model_dump())
+            return {
+                "licensed": False,
+                "gated": True,
+                "reason": "license_revoked",
+                "message": "Bu lisans master tarafından iptal edildi (revoked). Yeniden lisans için destek ile iletişime geçin.",
+            }
 
     # 1) license_key ile
     if payload.license_key:
