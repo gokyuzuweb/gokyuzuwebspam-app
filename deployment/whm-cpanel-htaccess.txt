@@ -1,0 +1,32 @@
+# Bu .htaccess dosyasını cPanel File Manager ile
+# public_html/panel/ klasörünüzün içine yerleştirin.
+#
+# Ne yapar? Apache/LiteSpeed'e gelen isteği Docker container'a yönlendirir.
+# - /api/* → http://127.0.0.1:8001 (FastAPI backend)
+# - /*     → http://127.0.0.1:3000 (React frontend)
+
+# mod_rewrite ve mod_proxy_http aktif olmalı (WHM → EasyApache 4 → Modules)
+
+RewriteEngine On
+
+# API istekleri backend Docker container'ına
+RewriteRule ^api/(.*)$ http://127.0.0.1:8001/api/$1 [P,L]
+
+# Diğer tüm istekler React frontend'e
+RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
+
+# WebSocket desteği (canlı bildirimler için)
+RewriteCond %{HTTP:Upgrade} websocket [NC]
+RewriteCond %{HTTP:Connection} upgrade [NC]
+RewriteRule ^(.*)$ ws://127.0.0.1:3000/$1 [P,L]
+
+# Client IP header'ları
+<IfModule mod_headers.c>
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+</IfModule>
+
+# Timeout ayarları (uzun süren API çağrıları için)
+<IfModule mod_proxy.c>
+    ProxyTimeout 300
+</IfModule>
