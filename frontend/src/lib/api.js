@@ -252,7 +252,8 @@ export const api = {
     client.post(`/licenses/bulk-action`, { ids, action }).then(r => r.data),
   licensesFixIds: () => client.post(`/licenses/fix-missing-ids`).then(r => r.data),
   violations: () => client.get("/license/violations").then(r => r.data),
-  violationsClear: () => client.delete("/license/violations").then(r => r.data),
+  // DELETE method cPanel Apache tarafından bloklu — POST alternative kullan
+  violationsClear: () => client.post("/license/violations/clear").then(r => r.data),
   violationSimulate: (payload) => client.post("/license/simulate-violation", payload).then(r => r.data),
   simulateAlarm: (kind) => client.post("/events/simulate-alert", { kind }).then(r => r.data),
 

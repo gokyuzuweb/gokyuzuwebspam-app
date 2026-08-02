@@ -3223,13 +3223,34 @@ async def license_heartbeat(payload: HeartbeatPayload):
 
 @api.get("/license/violations")
 async def license_violations(limit: int = 100):
-    return await db.violations.find({}, {"_id": 0}).sort("at", -1).to_list(limit)
+    # Eski 'violations' + yeni 'license_violations' iki collection'ı birleştir
+    # (geçmişten kalan kayıtlar da görünsün diye)
+    rows_new = await db.license_violations.find({}, {"_id": 0}).sort("at", -1).to_list(limit)
+    if len(rows_new) < limit:
+        rows_old = await db.violations.find({}, {"_id": 0}).sort("at", -1).to_list(limit - len(rows_new))
+        return rows_new + rows_old
+    return rows_new
 
 
 @api.delete("/license/violations")
 async def license_violations_clear():
-    r = await db.violations.delete_many({})
-    return {"deleted": r.deleted_count}
+    # Her iki collection'ı da temizle — legacy 'violations' + yeni 'license_violations'
+    r1 = await db.license_violations.delete_many({})
+    r2 = await db.violations.delete_many({})
+    return {"deleted": r1.deleted_count + r2.deleted_count}
+
+
+@api.post("/license/violations/clear")
+async def license_violations_clear_post():
+    """POST alternative — cPanel/Apache DELETE method'unu bloklu tutabilir."""
+    r1 = await db.license_violations.delete_many({})
+    r2 = await db.violations.delete_many({})
+    total = r1.deleted_count + r2.deleted_count
+    await db.logs.insert_one(ActivityLog(
+        source="license", level="info",
+        message=f"Lisans ihlalleri temizlendi ({total} kayıt silindi)",
+    ).model_dump())
+    return {"deleted": total, "ok": True}
 
 
 class SimulateViolation(BaseModel):
