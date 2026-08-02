@@ -56,6 +56,137 @@ async def _validate_license(license_key: str) -> dict:
     return lic
 
 
+@router.post("/admin/migrate-ts-tz")
+async def migrate_ts_timezone(payload: dict):
+    """Perl script eski versiyonda Exim log lokal saatini alıp yanlış '+00:00' ekliyordu.
+    Bu endpoint, event'lerin ts alanlarını yeniden yorumlar ve doğru UTC'ye çevirir.
+    Örn: '2026-02-15T15:51:00+00:00' → sunucu +03:00 idi → gerçek UTC '12:51:00+00:00'.
+
+    payload: {
+      license_key: str (master anahtarı gerekli),
+      from_offset: '+00:00',
+      to_offset:   '+03:00',
+      only_exim: bool (default True) — sadece exim_mid dolu olanları migrate et,
+      dry_run:   bool (default False) — sadece kaç kayıt etkilenecek göster,
+      limit:     int (default 20000)
+    }
+    """
+    master_key = os.environ.get("MASTER_LICENSE_KEY", "")
+    if payload.get("license_key") != master_key:
+        raise HTTPException(403, "Sadece master anahtarı bu migrasyonu çalıştırabilir")
+    from_off = payload.get("from_offset", "+00:00")
+    to_off   = payload.get("to_offset", "+03:00")
+    only_exim = payload.get("only_exim", True)
+    dry = bool(payload.get("dry_run", False))
+    limit = int(payload.get("limit", 20000))
+
+    # from_off ile biten ts field'ları hedef
+    q: dict[str, Any] = {"ts": {"$regex": f"{re.escape(from_off)}$"}}
+    if only_exim:
+        q["exim_mid"] = {"$exists": True, "$ne": None}
+
+    total = await db.mail_events.count_documents(q)
+    if dry:
+        sample = await db.mail_events.find(q, {"_id": 0, "id": 1, "ts": 1, "from_addr": 1, "subject": 1}).limit(5).to_list(5)
+        return {"ok": True, "dry_run": True, "would_migrate": total, "sample": sample}
+
+    # to_off'u timedelta'ya çevir
+    m = re.match(r"^([+-])(\d{2}):(\d{2})$", to_off)
+    if not m:
+        raise HTTPException(400, f"Gecersiz to_offset: {to_off}")
+    sign, hh, mm = m.group(1), int(m.group(2)), int(m.group(3))
+    delta_min = (hh * 60 + mm) * (1 if sign == "+" else -1)
+
+    cursor = db.mail_events.find(q, {"_id": 1, "ts": 1}).limit(limit)
+    migrated = 0
+    async for row in cursor:
+        old_ts = row.get("ts")
+        try:
+            # Eski: ts=15:51:00+00:00 → aslında bu, +03:00 lokal saatiydi.
+            # Gerçek UTC = 15:51:00 - 3sa = 12:51:00+00:00
+            base = old_ts[:-len(from_off)]  # "2026-02-15T15:51:00"
+            dt_naive = datetime.fromisoformat(base)
+            # dt_naive'e -delta_min uygula (server_tz idi, UTC'ye çevir)
+            from datetime import timedelta as _td
+            real_utc = dt_naive - _td(minutes=delta_min)
+            new_ts = real_utc.replace(tzinfo=timezone.utc).isoformat()
+            await db.mail_events.update_one(
+                {"_id": row["_id"]},
+                {"$set": {"ts": new_ts, "ts_migrated_from": old_ts, "ts_migration_offset": to_off}},
+            )
+            migrated += 1
+        except Exception:
+            continue
+
+    return {
+        "ok": True,
+        "matched": total,
+        "migrated": migrated,
+        "from_offset": from_off,
+        "to_offset_interpreted_as": to_off,
+        "message": f"{migrated} kayıt '+00:00' yerine {to_off} lokal olarak yeniden yorumlandı ve UTC'ye çevrildi.",
+    }
+
+
+@router.post("/logtail-heartbeat")
+async def logtail_heartbeat(payload: dict, request: Request):
+    """WHM sunucusundaki mailshield-logtail.pl script'i her 60sn bir bunu POST'lar.
+    Script gerçekten canlı mı, hangi offset'te, kaç satır işledi — panelde gösterilir."""
+    lic = payload.get("license_key")
+    if not lic:
+        raise HTTPException(400, "license_key gerekli")
+    await _validate_license(lic)
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "license_key": lic,
+        "hostname": payload.get("hostname"),
+        "last_seen": now,
+        "last_kind": payload.get("kind", "alive"),
+        "processed": int(payload.get("processed") or 0),
+        "matched": int(payload.get("matched") or 0),
+        "uptime_sec": int(payload.get("uptime_sec") or 0),
+        "offset": int(payload.get("offset") or 0),
+        "exim_log": payload.get("exim_log"),
+        "server_url": payload.get("server_url"),
+        "remote_ip": request.client.host if request.client else None,
+    }
+    await db.logtail_heartbeats.update_one(
+        {"license_key": lic, "hostname": doc["hostname"]},
+        {"$set": doc, "$setOnInsert": {"first_seen": now}},
+        upsert=True,
+    )
+    return {"ok": True, "recorded_at": now}
+
+
+@router.get("/logtail-status")
+async def logtail_status(license_key: str = Query(..., min_length=8)):
+    """Panelde 'Script canlı mı?' göstergesi için. Son heartbeat + trafik özeti."""
+    await _validate_license(license_key)
+    master_key = os.environ.get("MASTER_LICENSE_KEY", "")
+    is_master = master_key and license_key == master_key
+    q: dict[str, Any] = ({"$or": [{"license_key": master_key},
+                                    {"license_key": {"$regex": "^AUTO-"}}]}
+                          if is_master else {"license_key": license_key})
+    rows = await db.logtail_heartbeats.find(q, {"_id": 0}).sort("last_seen", -1).to_list(50)
+    now = datetime.now(timezone.utc)
+    items = []
+    for r in rows:
+        try:
+            last = datetime.fromisoformat(str(r.get("last_seen", "")).replace("Z", "+00:00"))
+            age = int((now - last).total_seconds())
+        except Exception:
+            age = -1
+        status = "alive" if 0 <= age < 180 else ("stale" if 0 <= age < 900 else "dead")
+        items.append({**r, "age_sec": age, "status": status})
+    alive_count = sum(1 for i in items if i["status"] == "alive")
+    return {
+        "items": items,
+        "total_hosts": len(items),
+        "alive_count": alive_count,
+        "healthy": alive_count > 0,
+    }
+
+
 @router.post("/ingest")
 async def ingest_event(evt: MailEvent, request: Request):
     """Milter -> backend. Tek mail rapor.
@@ -66,6 +197,14 @@ async def ingest_event(evt: MailEvent, request: Request):
     doc["id"] = str(uuid.uuid4())
     doc["ts"] = doc.get("ts") or datetime.now(timezone.utc).isoformat()
     doc["ingested_at"] = datetime.now(timezone.utc).isoformat()
+    # Subject Türkçe karakter safety-net: MIME encoded-word decode (Perl kaçırırsa).
+    # =?UTF-8?B?...?= veya =?UTF-8?Q?...?= gibi header'ları Türkçe UTF-8'e çevir.
+    if doc.get("subject") and "=?" in doc["subject"]:
+        try:
+            from email.header import decode_header, make_header
+            doc["subject"] = str(make_header(decode_header(doc["subject"])))
+        except Exception:
+            pass
     # Sender IP tespit: header'da X-Originating-IP > client_ip payload > request.client
     sender_ip = None
     headers = (doc.get("headers_full") or doc.get("headers_preview") or "")
@@ -476,7 +615,7 @@ async def list_events(
             if since:   q["$and"].append({"ts": {"$gte": since}})
         else:
             q["$or"] = scope_or
-    cursor = db.mail_events.find(q, {"_id": 0}).sort("ingested_at", -1).limit(limit)
+    cursor = db.mail_events.find(q, {"_id": 0}).sort([("ts", -1), ("ingested_at", -1)]).limit(limit)
     items = await cursor.to_list(length=limit)
     return {"items": items, "count": len(items)}
 

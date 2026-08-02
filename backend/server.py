@@ -4082,7 +4082,11 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/invoices/",          # fatura akışı
     "/api/shop",               # mağaza
     "/api/events/ingest",      # Exim milter'dan mail event ingest (license_key ile doğrulanır)
+    "/api/events/ingest-batch",# batch ingest
     "/api/events/action",      # milter/logtail action reporting
+    "/api/events/complete-action", # logtail aksiyon tamamlama callback
+    "/api/events/logtail-heartbeat", # logtail script canlılık heartbeat
+    "/api/events/admin/migrate-ts-tz", # master timezone migration
     "/api/mail/ingest",        # alternatif mail ingest
     "/api/heartbeat",          # plugin heartbeat (license_key ile doğrulanır)
     "/api/threat/report",      # threat feed report

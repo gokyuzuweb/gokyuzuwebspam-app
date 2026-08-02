@@ -28,6 +28,10 @@ use warnings;
 use IO::Handle;
 use JSON::PP ();
 use Sys::Hostname ();
+use MIME::Base64 ();
+use Encode ();
+use POSIX ();
+use Time::Local ();
 
 my $CFG_PATH = '/etc/mailshield/mailshield.conf';
 my %cfg = _load_ini($CFG_PATH);
@@ -39,6 +43,11 @@ my $eximlog = $cfg{logtail}{exim_log}   // '/var/log/exim_mainlog';
 my $spool   = $cfg{logtail}{spool_dir}  // '/var/spool/exim/input';
 my $posfile = $cfg{logtail}{position}   // '/var/lib/mailshield/exim-tail.pos';
 my $host    = Sys::Hostname::hostname();
+
+# Sunucunun gerçek TZ offset'ini hesapla (Exim log local time yazıyor).
+# Konfigde [logtail] timezone_offset = "+03:00" varsa onu kullan (override).
+my $TZ_OFFSET = $cfg{logtail}{timezone_offset} // _compute_tz_offset();
+warn "[GWS-logtail] tz_offset=$TZ_OFFSET (Exim log lokal saat kullanır, ISO timestamp bu offset ile üretilir)\n";
 
 _mkdirp('/var/lib/mailshield');
 
@@ -67,6 +76,11 @@ $SIG{TERM} = $SIG{INT} = sub { _save_pos(tell $fh); exit 0 };
 my %seen_ids;   # id => 1
 my $seen_max = 5000;
 my $poll_counter = 0;    # her N sn'de bir pending-actions poll'u
+my $hb_counter = 0;      # her N sn'de bir logtail-heartbeat
+my $script_started_at = time();
+
+# Startup heartbeat: script canlı olduğunu backend'e bildir
+_post_logtail_heartbeat('startup');
 
 while (1) {
     while (defined(my $line = <$fh>)) {
@@ -79,6 +93,11 @@ while (1) {
     if (++$poll_counter >= 5) {
         $poll_counter = 0;
         _poll_and_execute_actions();
+    }
+    # Her 60sn'de bir heartbeat POST (script canlı mı diagnostiği)
+    if (++$hb_counter >= 30) {
+        $hb_counter = 0;
+        _post_logtail_heartbeat('alive');
     }
     sleep 2;
 
@@ -123,8 +142,11 @@ sub _process_line {
         $subject //= '';
         # Exim octal escapes -> byte
         $subject =~ s/\\(\d{3})/chr(oct($1))/ge;
+        # RFC 2047 MIME encoded-word decode: =?UTF-8?B?...?= veya =?UTF-8?Q?...?=
+        # Bu, Türkçe karakterlerin (iöçüşğ İÇÖÜĞŞ) doğru görünmesi için gerekli.
+        $subject = _mime_decode_wordstr($subject);
+        # Kalan raw bytes UTF-8 mi CP1254 mü tespit et
         eval {
-            require Encode;
             if (!Encode::is_utf8($subject) && $subject =~ /[\x80-\xff]/) {
                 my $dec = eval { Encode::decode('UTF-8', $subject, Encode::FB_CROAK()) };
                 if ($@ || !defined $dec) {
@@ -180,7 +202,7 @@ sub _process_line {
             headers_full    => $headers_full,
             body_preview    => $body_preview,
             attachments     => $attachments,
-            ts              => "${date}T${time}+00:00",
+            ts              => "${date}T${time}${TZ_OFFSET}",
         });
         return;
     }
@@ -196,7 +218,7 @@ sub _process_line {
             action          => 'reject',
             total_score     => 0,
             scores          => {},
-            ts              => "${date}T${time}+00:00",
+            ts              => "${date}T${time}${TZ_OFFSET}",
         });
     }
 }
@@ -423,4 +445,75 @@ sub _load_ini {
     }
     close $fh;
     return %h;
+}
+
+# Sunucunun local timezone offset'ini "+HH:MM" formatında hesaplar.
+# Exim log lokal saat yazdığından, ISO timestamp'i doğru üretmek için gerekli.
+sub _compute_tz_offset {
+    my $now = time();
+    my @lt = localtime($now);
+    # timegm() argümanları localtime'ın gmtime gibi yorumlar => farklılık = offset
+    my $lt_as_gm = Time::Local::timegm(@lt[0..5]);
+    my $diff_sec = $lt_as_gm - $now;
+    my $sign = $diff_sec >= 0 ? '+' : '-';
+    my $abs = abs($diff_sec);
+    return sprintf("%s%02d:%02d", $sign, int($abs / 3600), int(($abs % 3600) / 60));
+}
+
+# RFC 2047 MIME encoded-word decoder.
+# =?UTF-8?B?SGFmdGFsxLFrIGluZGlyaW0=?=  -> "Haftalık indirim"
+# =?ISO-8859-9?Q?G=FCnayd=FDn?=          -> "Günaydın"
+# Peş peşe gelen encoded-word'ler birleşir (RFC 2047 §5).
+sub _mime_decode_wordstr {
+    my ($s) = @_;
+    return $s unless defined $s && length $s;
+    # ardışık encoded-word'ler arasındaki whitespace kaldır (RFC 2047)
+    $s =~ s/\?=[ \t]+=\?/?==?/g;
+    $s =~ s{
+        =\?
+        ([A-Za-z0-9\-_]+)      # charset
+        \?
+        ([BbQq])               # encoding
+        \?
+        ([^?]*)                # data
+        \?=
+    }{
+        my ($cs, $enc, $data) = ($1, $2, $3);
+        my $bytes;
+        if (uc($enc) eq 'B') {
+            $bytes = eval { MIME::Base64::decode_base64($data) };
+        } else {  # Q
+            my $q = $data;
+            $q =~ tr/_/ /;
+            $q =~ s/=([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+            $bytes = $q;
+        }
+        my $out = $bytes;
+        eval {
+            my $dec = Encode::decode($cs, $bytes, Encode::FB_DEFAULT());
+            $out = Encode::encode('UTF-8', $dec) if defined $dec;
+        };
+        $out;
+    }gex;
+    return $s;
+}
+
+# Script canlılık heartbeat'i — backend'de /api/events/logtail-heartbeat
+sub _post_logtail_heartbeat {
+    my ($kind) = @_;
+    my $payload = {
+        license_key => $license,
+        hostname    => $host,
+        kind        => $kind || 'alive',
+        processed   => $_processed // 0,
+        matched     => $_matched // 0,
+        uptime_sec  => (time() - $script_started_at),
+        offset      => (eval { tell $fh } // 0),
+        exim_log    => $eximlog,
+        server_url  => $server,
+    };
+    eval {
+        _post_json("$server/api/events/logtail-heartbeat", $payload);
+    };
+    warn "[GWS-logtail] heartbeat ($kind) processed=$_processed matched=$_matched uptime=" . (time()-$script_started_at) . "s\n";
 }

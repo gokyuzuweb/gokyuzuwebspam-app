@@ -19,7 +19,14 @@ const VERDICT_META = {
 function fmtTime(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return d.toLocaleString("tr-TR", { hour12: false });
+  // Panelde her zaman İstanbul saatinde göster (browser konumundan bağımsız).
+  // Böylece kullanıcı ABD'de olsa bile mail geliş saati sunucudakiyle aynı.
+  return d.toLocaleString("tr-TR", {
+    hour12: false,
+    timeZone: "Europe/Istanbul",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
 }
 function timeAgo(iso) {
   if (!iso) return "";
@@ -28,6 +35,52 @@ function timeAgo(iso) {
   if (s < 3600) return `${Math.floor(s/60)}dk`;
   if (s < 86400) return `${Math.floor(s/3600)}sa`;
   return `${Math.floor(s/86400)}g`;
+}
+
+// WHM sunucusundaki mailshield-logtail.pl script'inin canlılık göstergesi.
+// Kullanıcı böylece 'script çalışıyor mu, ne kadar süredir sessiz?' anında görür.
+function LogtailBadge({ status }) {
+  if (!status || !status.items || status.items.length === 0) {
+    return (
+      <span
+        data-testid="logtail-badge-none"
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-700/40 border border-slate-500/40 text-slate-300 text-[10px] font-semibold"
+        title="Hiçbir sunucudan logtail heartbeat gelmedi. WHM sunucunuza plugin kurulu değil ya da mailshield-logtail servisi çalışmıyor."
+      >
+        ● script bekleniyor
+      </span>
+    );
+  }
+  const primary = status.items[0];
+  const st = primary.status;
+  const styles = {
+    alive: {
+      cls: "bg-emerald-500/15 border-emerald-500/40 text-emerald-300",
+      label: "canlı",
+      hint: "Script çalışıyor ve düzenli heartbeat gönderiyor.",
+    },
+    stale: {
+      cls: "bg-amber-500/15 border-amber-500/40 text-amber-300",
+      label: "yavaş",
+      hint: "Son heartbeat 3-15 dakika önce. Script askıda olabilir.",
+    },
+    dead: {
+      cls: "bg-rose-500/15 border-rose-500/40 text-rose-300",
+      label: "kapalı",
+      hint: "15 dakikadan uzun süredir heartbeat yok. systemctl status mailshield-logtail kontrol edin.",
+    },
+  };
+  const conf = styles[st] || { cls: "bg-slate-500/15 border-slate-500/40 text-slate-300", label: st, hint: "" };
+  const age = primary.age_sec >= 0 ? timeAgo(primary.last_seen) : "?";
+  return (
+    <span
+      data-testid={`logtail-badge-${st}`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold mono ${conf.cls}`}
+      title={`${conf.hint}\nHost: ${primary.hostname}\nİşlenen: ${primary.processed} · Eşleşen: ${primary.matched}\nUptime: ${primary.uptime_sec}s`}
+    >
+      ● script {conf.label} · {age} önce
+    </span>
+  );
 }
 
 function VerdictDonut({ byVerdict, total, activeVerdict, onSelect }) {
@@ -150,6 +203,13 @@ export default function LiveMailEvents() {
     enabled: !!licenseKey && licenseKey.length >= 8,
     retry: false,
   });
+  const logtail = useQuery({
+    queryKey: ["logtail-status", licenseKey],
+    queryFn: () => api.logtailStatus(licenseKey),
+    refetchInterval: 30000,   // her 30sn'de bir script canlılık kontrolü
+    enabled: !!licenseKey && licenseKey.length >= 8,
+    retry: false,
+  });
 
   // Detect newly arrived rows and highlight them for 2 seconds (glow animation)
   useEffect(() => {
@@ -232,6 +292,11 @@ export default function LiveMailEvents() {
       if (!hay.includes(q)) return false;
     }
     return true;
+  }).sort((a, b) => {
+    // En yeni mail her zaman en üstte: ts DESC, ts yoksa ingested_at DESC.
+    const ta = new Date(a.ts || a.ingested_at || 0).getTime();
+    const tb = new Date(b.ts || b.ingested_at || 0).getTime();
+    return tb - ta;
   });
 
   return (
@@ -274,6 +339,11 @@ export default function LiveMailEvents() {
             </span></>}
             {" · "}Toplam: <span className="mono text-slate-300" data-testid="live-events-total">{total}</span>
             {summary.data?.last_event_at && <> {" · "}Son: <span className="mono text-slate-300">{timeAgo(summary.data.last_event_at)} önce</span></>}
+            {logtail.data && (
+              <> {" · "}
+                <LogtailBadge status={logtail.data} />
+              </>
+            )}
           </>
         }
         right={
@@ -351,14 +421,14 @@ export default function LiveMailEvents() {
           </div>
         )}
 
-        {!invalid && items.length === 0 && (
+        {!invalid && total === 0 && (
           <div className="text-center py-8 text-slate-500 text-sm" data-testid="live-events-empty">
             Henüz mail event yok. Sunucuda milter'ı bağlayın veya <button
               onClick={handleTestIngest} className="text-indigo-400 underline">5 test eventi</button> gönderin.
           </div>
         )}
 
-        {!invalid && items.length > 0 && (
+        {!invalid && total > 0 && (
           <>
             {/* Verdict donut + filter shortcut */}
             <div className="mb-4 p-3 bg-slate-900/40 rounded border border-slate-800" data-testid="verdict-donut">
@@ -386,12 +456,12 @@ export default function LiveMailEvents() {
                 className="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
                 data-testid="live-events-verdict-filter"
               >
-                <option value="all">Tümü ({items.length})</option>
-                <option value="clean">Temiz</option>
-                <option value="spam">Spam</option>
-                <option value="high_spam">Yüksek Spam</option>
-                <option value="virus">Virüs</option>
-                <option value="blocked">Blocked</option>
+                <option value="all">Tümü ({total})</option>
+                <option value="clean">Temiz ({summary.data?.by_verdict?.clean || 0})</option>
+                <option value="spam">Spam ({summary.data?.by_verdict?.spam || 0})</option>
+                <option value="high_spam">Yüksek Spam ({summary.data?.by_verdict?.high_spam || 0})</option>
+                <option value="virus">Virüs ({summary.data?.by_verdict?.virus || 0})</option>
+                <option value="blocked">Blocked ({summary.data?.by_verdict?.blocked || 0})</option>
               </select>
               {(search || verdictFilter !== "all") && (
                 <button
@@ -405,6 +475,13 @@ export default function LiveMailEvents() {
               </span>
             </div>
           </>
+        )}
+
+        {!invalid && total > 0 && items.length === 0 && verdictFilter !== "all" && (
+          <div className="text-center py-6 text-slate-500 text-sm" data-testid="live-events-verdict-empty">
+            <b className="text-amber-300">{verdictFilter}</b> kategorisinde event yok.{" "}
+            <button onClick={() => setVerdictFilter("all")} className="text-indigo-400 underline">Tümünü göster</button>
+          </div>
         )}
 
         {!invalid && items.length > 0 && filtered.length === 0 && (
