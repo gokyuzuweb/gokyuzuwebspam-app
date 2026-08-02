@@ -21,7 +21,7 @@ def _load_frontend_env():
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or _load_frontend_env() or "").rstrip("/")
 assert BASE_URL, "REACT_APP_BACKEND_URL missing"
 API = f"{BASE_URL}/api"
-LIC = "MS-C02AB012652A4FE692D69676"
+LIC = ""
 MASTER_IP = "89.19.15.58"
 MASTER_HEADERS = {"X-Forwarded-For": MASTER_IP}
 

@@ -6,8 +6,8 @@ import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { Globe2, Activity, MapPin } from "lucide-react";
 
 const LICKEY = () => (typeof window !== "undefined"
-  ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
-  : "MS-C02AB012652A4FE692D69676");
+  ? (localStorage.getItem("gws.event_license") || "")
+  : "");
 
 // Bundled locally (see /public/geo/countries-110m.json). No CDN dependency.
 const GEO_URL = "/geo/countries-110m.json";

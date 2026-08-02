@@ -5,8 +5,8 @@ import { toast } from "sonner";
 import { X, Trash2, Send, RefreshCw, Snowflake, Sun, Undo2 } from "lucide-react";
 
 const LICKEY = () => (typeof window !== "undefined"
-  ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
-  : "MS-C02AB012652A4FE692D69676");
+  ? (localStorage.getItem("gws.event_license") || "")
+  : "");
 
 const ACTIONS = [
   { key: "deliver", label: "İletmeyi Dene", cls: "bg-emerald-500/10 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/20", Icon: Send },

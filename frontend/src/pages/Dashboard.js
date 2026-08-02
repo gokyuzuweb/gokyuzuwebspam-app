@@ -24,8 +24,8 @@ import IpDrilldownDrawer from "@/components/IpDrilldownDrawer";
 import CountryBlockCard from "@/components/CountryBlockCard";
 
 const LICKEY = () => (typeof window !== "undefined"
-  ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
-  : "MS-C02AB012652A4FE692D69676");
+  ? (localStorage.getItem("gws.event_license") || "")
+  : "");
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 
 function verdictBadge(v, t) {

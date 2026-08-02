@@ -8,8 +8,8 @@ import { useIsMaster } from "@/hooks/useIsMaster";
 import { api, API } from "@/lib/api";
 
 const LICKEY = () => (typeof window !== "undefined"
-  ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
-  : "MS-C02AB012652A4FE692D69676");
+  ? (localStorage.getItem("gws.event_license") || "")
+  : "");
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DAYS  = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cts", "Paz"];

@@ -5,7 +5,7 @@ import os, requests, pytest
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 assert BASE, "REACT_APP_BACKEND_URL must be set"
 API = f"{BASE}/api"
-LIC = "MS-C02AB012652A4FE692D69676"
+LIC = ""
 
 s = requests.Session()
 s.headers.update({"Content-Type": "application/json"})

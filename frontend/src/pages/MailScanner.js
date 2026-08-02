@@ -11,8 +11,8 @@ import { Filter, Brain, Sliders, Users, Trash2, Plus, Beaker, Link as LinkIcon, 
 import ModuleFooter from "@/components/ModuleFooter";
 
 const LICKEY = () => (typeof window !== "undefined"
-  ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
-  : "MS-C02AB012652A4FE692D69676");
+  ? (localStorage.getItem("gws.event_license") || "")
+  : "");
 
 const COLORS = ["#10b981", "#f59e0b", "#f43f5e", "#fb7185", "#8b5cf6", "#06b6d4"];
 

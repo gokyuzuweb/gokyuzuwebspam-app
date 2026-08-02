@@ -13,8 +13,8 @@ import GeoBlockedHeatmap from "@/components/GeoBlockedHeatmap";
 import ModuleFooter from "@/components/ModuleFooter";
 
 const LICKEY = () => (typeof window !== "undefined"
-  ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
-  : "MS-C02AB012652A4FE692D69676");
+  ? (localStorage.getItem("gws.event_license") || "")
+  : "");
 
 const ICONS = {
   shield: ShieldCheck, "mail-x": MailX, flask: Beaker, "key-round": KeyRound,

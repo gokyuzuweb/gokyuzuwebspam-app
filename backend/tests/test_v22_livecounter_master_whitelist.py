@@ -6,7 +6,7 @@ import pytest
 import requests
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/") + "/api"
-LICENSE = "MS-C02AB012652A4FE692D69676"
+LICENSE = ""
 
 
 # ---------- Public blocked stats ----------

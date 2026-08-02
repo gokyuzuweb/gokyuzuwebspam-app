@@ -2,8 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
-import { Send, ShieldCheck, ShieldAlert, Bug, Ban, AlertTriangle } from "lucide-react";
+import { Send, ShieldCheck, ShieldAlert, Bug, Ban, AlertTriangle, Crown } from "lucide-react";
 import { toast } from "sonner";
+import { useIsMaster } from "@/hooks/useIsMaster";
 import MailEventDetail from "@/components/MailEventDetail";
 
 const VERDICT_META = {
@@ -95,6 +96,7 @@ function VerdictDonut({ byVerdict, total, activeVerdict, onSelect }) {
 export default function LiveMailEvents() {
   // URL query params: ?scope=user&user=<cpuser> — cPanel end-user modu
   //                   ?ip=<sender_ip> — Top Suspicious IPs chart drilldown
+  const { isMaster } = useIsMaster();
   const [urlTick, setUrlTick] = useState(0); // bumps on popstate to re-read URL
   useEffect(() => {
     const onPop = () => setUrlTick((n) => n + 1);
@@ -108,7 +110,7 @@ export default function LiveMailEvents() {
   void urlTick; // trigger re-render on URL change
 
   const [licenseKey, setLicenseKey] = useState(() =>
-    localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676"
+    localStorage.getItem("gws.event_license") || ""
   );
   const [editOpen, setEditOpen] = useState(false);
   const [draft, setDraft] = useState(licenseKey);
@@ -243,12 +245,21 @@ export default function LiveMailEvents() {
         }
         subtitle={
           <>
-            <span className="mono">Lisans: </span>
-            <button
-              onClick={() => { setDraft(licenseKey); setEditOpen(v => !v); }}
-              className="text-indigo-400 hover:text-indigo-300 mono"
-              data-testid="live-events-license-edit-btn"
-            >{licenseKey.slice(0, 12)}…</button>
+            {isMaster ? (
+              <span data-testid="live-events-master-badge" className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[11px] font-bold">
+                <Crown className="w-3 h-3" />
+                MASTER · Sunucu Sahibi
+              </span>
+            ) : (
+              <>
+                <span className="mono">Lisans: </span>
+                <button
+                  onClick={() => { setDraft(licenseKey); setEditOpen(v => !v); }}
+                  className="text-indigo-400 hover:text-indigo-300 mono"
+                  data-testid="live-events-license-edit-btn"
+                >{licenseKey.slice(0, 12)}…</button>
+              </>
+            )}
             {scopeUser && <> {" · "}<span className="text-amber-400" data-testid="live-events-scope-badge">scope: {scopeUser}</span></>}
             {ipFilter && <> {" · "}<span className="text-rose-400 mono" data-testid="live-events-ip-filter">
               filtre: {ipFilter}
@@ -281,7 +292,7 @@ export default function LiveMailEvents() {
         }
       />
       <CardBody>
-        {editOpen && (
+        {editOpen && !isMaster && (
           <div className="mb-3 flex gap-2 items-center bg-slate-900/60 rounded p-2 border border-slate-800">
             <input
               value={draft}

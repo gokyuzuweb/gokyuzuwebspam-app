@@ -14,7 +14,7 @@ export default function HealthScore() {
   const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview, refetchInterval: 20000 });
   const metrics  = useQuery({
     queryKey: ["health-metrics"],
-    queryFn: () => api.healthMetrics(localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676"),
+    queryFn: () => api.healthMetrics(localStorage.getItem("gws.event_license") || ""),
     refetchInterval: 20000, retry: false,
   });
   const stats = overview.data || {};

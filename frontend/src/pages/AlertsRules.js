@@ -130,7 +130,7 @@ function RuleForm({ licenseKey, initial, onDone }) {
 
 export default function AlertsRules() {
   const [licenseKey, setLicenseKey] = useState(() =>
-    localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676"
+    localStorage.getItem("gws.event_license") || ""
   );
   const [creating, setCreating] = useState(false);
   const qc = useQueryClient();

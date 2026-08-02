@@ -3,8 +3,8 @@ import { api } from "@/lib/api";
 import { X, Globe2, Mail, Activity } from "lucide-react";
 
 const LICKEY = () => (typeof window !== "undefined"
-  ? (localStorage.getItem("gws.event_license") || "MS-C02AB012652A4FE692D69676")
-  : "MS-C02AB012652A4FE692D69676");
+  ? (localStorage.getItem("gws.event_license") || "")
+  : "");
 
 export default function IpDrilldownDrawer({ ip, onClose }) {
   const q = useQuery({
