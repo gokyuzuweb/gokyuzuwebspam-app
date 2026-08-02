@@ -5,7 +5,7 @@ version: '3.9'
 
 services:
   mongo:
-    image: mongo:7
+    image: mongo:4.4
     container_name: gws-mongo
     restart: unless-stopped
     volumes:
@@ -15,7 +15,7 @@ services:
       - MONGO_INITDB_DATABASE=gws_master
     networks: [gws]
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 3
