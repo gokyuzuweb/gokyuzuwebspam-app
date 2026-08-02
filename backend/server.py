@@ -3476,6 +3476,16 @@ async def blacklist_update_request(req_id: str, upd: DelistStatusUpdate):
     return {"updated": True}
 
 
+# Apache/cPanel proxy PUT/DELETE metodlarını bloklayabildiği için POST alternatifi.
+# Frontend `blacklistUpdateRequest` bu endpoint'i kullanır.
+@api.post("/blacklist/requests/{req_id}/update")
+async def blacklist_update_request_post(req_id: str, upd: DelistStatusUpdate):
+    r = await db.delist_requests.update_one({"id": req_id}, {"$set": upd.model_dump()})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Talep bulunamadı")
+    return {"updated": True}
+
+
 @api.get("/blacklist/providers")
 async def blacklist_providers():
     return RBL_PROVIDERS
@@ -3745,6 +3755,70 @@ async def _plugin_status_payload() -> dict:
 @api.get("/plugin/status")
 async def plugin_status():
     return await _plugin_status_payload()
+
+
+# Plan bazlı özellik matrisi — her plan için hangi feature aktif olduğunu tanımlar.
+# Frontend bunları usePlanFeatures ile okuyup UI'de gate eder,
+# backend de yazma endpoint'lerinde bu limitleri zorlar.
+PLAN_FEATURES = {
+    "starter": {
+        "max_domains": 1,
+        "max_mails_per_day": 5000,
+        "ai_explanations": False,
+        "exploit_editor": False,
+        "bulk_actions": False,
+        "custom_rules": False,
+        "attack_map": True,
+        "reseller_mode": False,
+        "priority_support": False,
+        "api_access": False,
+        "label": "Starter",
+    },
+    "pro": {
+        "max_domains": 10,
+        "max_mails_per_day": 50000,
+        "ai_explanations": True,
+        "exploit_editor": True,
+        "bulk_actions": True,
+        "custom_rules": True,
+        "attack_map": True,
+        "reseller_mode": False,
+        "priority_support": True,
+        "api_access": True,
+        "label": "Pro",
+    },
+    "enterprise": {
+        "max_domains": 999999,
+        "max_mails_per_day": 999999999,
+        "ai_explanations": True,
+        "exploit_editor": True,
+        "bulk_actions": True,
+        "custom_rules": True,
+        "attack_map": True,
+        "reseller_mode": True,
+        "priority_support": True,
+        "api_access": True,
+        "label": "Enterprise",
+    },
+}
+
+
+@api.get("/plan/features")
+async def plan_features(license_key: Optional[str] = None):
+    """Mevcut lisansın plan bazlı özellik matrisini döner.
+    Frontend UI gating için kullanır (butonlar/tablar plan yeterli değilse gizlenir).
+    Backend de yazma endpoint'lerinde bu limitleri zorlar."""
+    plan = "starter"  # default
+    if license_key:
+        lic = await db.licenses.find_one({"license_key": license_key, "active": True}, {"_id": 0, "plan": 1})
+        if lic:
+            plan = str(lic.get("plan", "starter")).lower()
+    # Master her zaman enterprise
+    master_key = os.environ.get("MASTER_LICENSE_KEY", "")
+    if license_key and license_key == master_key:
+        plan = "enterprise"
+    features = PLAN_FEATURES.get(plan, PLAN_FEATURES["starter"])
+    return {"plan": plan, "features": features, "labels": {k: PLAN_FEATURES[k]["label"] for k in PLAN_FEATURES}}
 
 
 class LogSourceIn(BaseModel):
@@ -4436,6 +4510,10 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/mail/ingest",        # alternatif mail ingest
     "/api/heartbeat",          # plugin heartbeat (license_key ile doğrulanır)
     "/api/threat/report",      # threat feed report
+    "/api/blacklist/",         # RBL/blacklist sorgu + delisting (lisanslı panellerin
+                               # kendi IP/domainlerini yönetmesi için — DNS lookup
+                               # ve kendi delist takibi; demo yazma kilidi uygulanmaz)
+    "/api/plan/features",      # plan matris sorgusu (ziyaretçi de görebilir)
 )
 
 

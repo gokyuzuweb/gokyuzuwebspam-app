@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
+import { PlanGate, PlanBadge } from "@/components/PlanGate";
 import {
   Bug, ShieldAlert, MailX, Beaker, KeyRound, UserX, Inbox, ArrowUpRight,
   Link, Brain, Server, ShieldCheck, Play, XCircle, AlertTriangle, TrendingUp, TrendingDown,
@@ -68,6 +69,7 @@ export default function Security() {
         <div>
           <h1 className="text-slate-100 text-lg font-semibold flex items-center gap-2">
             <ShieldAlert className="w-5 h-5 text-indigo-400"/> Güvenlik Merkezi
+            <PlanBadge className="ml-1"/>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">10 modül · Exploit tarayıcı · Sandbox · Reputation · BEC · SIEM</p>
         </div>
@@ -127,9 +129,13 @@ export default function Security() {
         </>
       )}
 
-      {tab === "exploit" && <ExploitPanel latest={latest.data} findings={findings.data?.items || []}
-                                          runScan={runScan} dismiss={dismiss}
-                                          expandedFinding={expandedFinding} setExpandedFinding={setExpandedFinding}/>}
+      {tab === "exploit" && (
+        <PlanGate feature="exploit_editor" featureLabel="Exploit / Webshell Tarayıcı" minPlan="pro">
+          <ExploitPanel latest={latest.data} findings={findings.data?.items || []}
+                        runScan={runScan} dismiss={dismiss}
+                        expandedFinding={expandedFinding} setExpandedFinding={setExpandedFinding}/>
+        </PlanGate>
+      )}
 
       {tab === "bec" && (
         <>

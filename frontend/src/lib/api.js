@@ -103,6 +103,9 @@ export const api = {
     client.post("/licenses/revoked/restore", { license_key: licenseKey }).then(r => r.data),
   revokedClear: (payload) =>
     client.post("/licenses/revoked/clear", payload).then(r => r.data),
+  // Plan bazlı özellik matrisi
+  planFeatures: (licenseKey) =>
+    client.get("/plan/features", { params: { license_key: licenseKey } }).then(r => r.data),
   eventGet: (licenseKey, eventId) =>
     client.get(`/events/${eventId}`, { params: { license_key: licenseKey } }).then(r => r.data),
   eventMarkSpam: (licenseKey, eventId) =>
@@ -268,7 +271,7 @@ export const api = {
   blacklistCheck: (payload) => client.post("/blacklist/check", payload).then(r => r.data),
   blacklistDelist: (payload) => client.post("/blacklist/delist", payload).then(r => r.data),
   blacklistRequests: () => client.get("/blacklist/requests").then(r => r.data),
-  blacklistUpdateRequest: (id, payload) => client.put(`/blacklist/requests/${id}`, payload).then(r => r.data),
+  blacklistUpdateRequest: (id, payload) => client.post(`/blacklist/requests/${id}/update`, payload).then(r => r.data),
 
   // AI Rule Generator
   rulesGenerate: (prompt, model, language) => llmClient.post("/rules/generate", { prompt, model, language }).then(r => r.data),

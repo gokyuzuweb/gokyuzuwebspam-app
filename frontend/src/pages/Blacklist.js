@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
+import { PlanBadge } from "@/components/PlanGate";
 import { api } from "@/lib/api";
 
 const isoDT = (iso) => iso ? new Date(iso).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -72,7 +73,7 @@ export default function Blacklist() {
     <div className="p-6 space-y-6">
       <Card>
         <CardHeader
-          title={<span className="flex items-center gap-2"><Radar className="w-4 h-4 text-indigo-400" /> Blacklist / RBL Sorgusu</span>}
+          title={<span className="flex items-center gap-2"><Radar className="w-4 h-4 text-indigo-400" /> Blacklist / RBL Sorgusu <PlanBadge className="ml-1"/></span>}
           subtitle="15+ sağlayıcıda (Spamhaus, Barracuda, SORBS, SpamCop, SURBL, URIBL vs.) IP veya domain kontrolü"
         />
         <CardBody className="space-y-4">
