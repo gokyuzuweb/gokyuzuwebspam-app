@@ -91,6 +91,19 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
             system("systemctl enable --now mailshield-logtail.service 2>/dev/null");
             push @actions, "started: mailshield-logtail.service";
         }
+
+        # 3b) Docker container'ları da güncelle (git pull + docker rebuild)
+        # auto-update.sh script'i git pull + docker compose up --build yapar
+        my $update_script = "/opt/gokyuzuwebspam-app/deployment/auto-update.sh";
+        if (-x $update_script) {
+            my $out = `bash $update_script 2>&1`;
+            my $rc = $? >> 8;
+            if ($rc == 0) {
+                push @actions, "docker-update: OK (git pull + rebuild)";
+            } else {
+                push @errors, "docker-update failed (rc=$rc): " . substr($out, 0, 300);
+            }
+        }
     }
 
     # 4) Cleanup

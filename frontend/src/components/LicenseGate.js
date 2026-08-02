@@ -17,7 +17,7 @@ import { useIsMaster } from "@/hooks/useIsMaster";
 
 export function PluginStatusStripe() {
   const q = useQuery({ queryKey: ["plugin-status"], queryFn: api.pluginStatus, refetchInterval: 30000 });
-  const upd = useQuery({ queryKey: ["version-check"], queryFn: api.versionCheckUpdate, refetchInterval: 3600000 });
+  const upd = useQuery({ queryKey: ["version-check"], queryFn: api.versionCheckUpdate, refetchInterval: 60000 });
   const { isMaster } = useIsMaster();
   const qc = useQueryClient();
   const [upgrading, setUpgrading] = useState(false);

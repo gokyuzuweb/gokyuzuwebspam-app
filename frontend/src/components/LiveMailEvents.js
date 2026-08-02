@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
-import { Send, ShieldCheck, ShieldAlert, Bug, Ban, AlertTriangle, Crown } from "lucide-react";
+import { Send, ShieldCheck, ShieldAlert, Bug, Ban, AlertTriangle, Crown, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 import { useIsMaster } from "@/hooks/useIsMaster";
 import MailEventDetail from "@/components/MailEventDetail";
@@ -133,17 +133,20 @@ export default function LiveMailEvents() {
 
   useEffect(() => { localStorage.setItem("gws.event_license", licenseKey); }, [licenseKey]);
 
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [refreshRate, setRefreshRate] = useState(5000); // 5 saniye default
+
   const events = useQuery({
     queryKey: ["live-events", licenseKey, scopeUser, verdictFilter],
     queryFn: () => api.liveEvents(licenseKey, 100, scopeUser, verdictFilter),
-    refetchInterval: 8000,
+    refetchInterval: autoRefresh ? refreshRate : false,
     enabled: !!licenseKey && licenseKey.length >= 8,
     retry: false,
   });
   const summary = useQuery({
     queryKey: ["live-events-summary", licenseKey, scopeUser],
     queryFn: () => api.liveEventsSummary(licenseKey, scopeUser),
-    refetchInterval: 15000,
+    refetchInterval: autoRefresh ? Math.max(refreshRate, 5000) : false,
     enabled: !!licenseKey && licenseKey.length >= 8,
     retry: false,
   });
@@ -274,7 +277,40 @@ export default function LiveMailEvents() {
           </>
         }
         right={
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {/* Otomatik yenileme toggle + interval */}
+            <div className="flex items-center gap-1 text-[10px] text-slate-400">
+              <button
+                data-testid="live-events-autorefresh-toggle"
+                onClick={() => setAutoRefresh(v => !v)}
+                title={autoRefresh ? "Otomatik yenileme AÇIK" : "Otomatik yenileme KAPALI"}
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded transition ${autoRefresh ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" : "bg-slate-800 text-slate-400 border border-slate-700"}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`}/>
+                {autoRefresh ? "OTO" : "PAUSE"}
+              </button>
+              {autoRefresh && (
+                <select
+                  data-testid="live-events-refresh-rate"
+                  value={refreshRate}
+                  onChange={(e) => setRefreshRate(Number(e.target.value))}
+                  className="bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-[10px] text-slate-300"
+                >
+                  <option value={3000}>3sn</option>
+                  <option value={5000}>5sn</option>
+                  <option value={10000}>10sn</option>
+                  <option value={30000}>30sn</option>
+                </select>
+              )}
+            </div>
+            <button
+              data-testid="live-events-manual-refresh"
+              onClick={() => { events.refetch(); summary.refetch(); toast.success("Yenilendi"); }}
+              className="text-xs px-2.5 py-1.5 rounded bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25 border border-indigo-500/30 transition flex items-center gap-1.5"
+              title="Şimdi yenile"
+            >
+              <RefreshCcw className="w-3 h-3" /> Yenile
+            </button>
             <button
               onClick={handleExportCSV}
               className="text-xs px-3 py-1.5 rounded bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 transition"
