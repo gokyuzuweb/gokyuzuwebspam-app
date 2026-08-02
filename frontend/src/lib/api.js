@@ -1,7 +1,26 @@
 import axios from "axios";
 import { toast } from "sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Backend URL çözümlemesi:
+//  1) window'da runtime override varsa (mesela plugin CGI'sinden set edildiyse) onu kullan
+//  2) REACT_APP_BACKEND_URL env varsa VE geçerli (emergent.sh / emergentagent değilse) onu kullan
+//  3) Aksi halde tarayıcının o an açık olduğu origin'i kullan (kendi domain'inden çekilir)
+//     Bu, "kullanıcı kendi sunucusundan panel açtı ama .env preview URL'ye bakıyor" durumunda
+//     API çağrılarının yanlışlıkla dış Emergent servisine gitmesini engeller.
+const _detectBackendUrl = () => {
+  if (typeof window === "undefined") return "";
+  const envUrl = process.env.REACT_APP_BACKEND_URL || "";
+  const runtimeOverride = window.GWS_BACKEND_URL || "";
+  const looksLikeEmergent = (u) => /emergent(agent)?\.(sh|com)/i.test(u);
+  if (runtimeOverride && !looksLikeEmergent(runtimeOverride)) return runtimeOverride;
+  // Kullanıcının tarayıcıda açık olduğu URL emergent değilse onu tercih et.
+  // Böylece panel.gokyuzuhosting.com'dan açıldığında API da oraya gider.
+  const currentOrigin = window.location.origin || "";
+  if (currentOrigin && !looksLikeEmergent(currentOrigin)) return currentOrigin;
+  // Env fallback (preview / dev için)
+  return envUrl;
+};
+const BACKEND_URL = _detectBackendUrl();
 export const API = `${BACKEND_URL}/api`;
 
 // Cookie-based master session için withCredentials — gws_master_session
