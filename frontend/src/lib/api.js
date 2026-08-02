@@ -1,4 +1,5 @@
 import axios from "axios";
+import { toast } from "sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -6,6 +7,25 @@ export const API = `${BACKEND_URL}/api`;
 const client = axios.create({ baseURL: API, timeout: 20000 });
 // LLM-backed endpoints can take 30-60s (Claude / GPT / Gemini reasoning)
 const llmClient = axios.create({ baseURL: API, timeout: 90000 });
+
+// Demo modu: 423 Locked cevabında kullanıcıyı bilgilendir ve akışı durdur
+const _demoInterceptor = (err) => {
+  if (err?.response?.status === 423 && err.response?.data?.code === "DEMO_READ_ONLY") {
+    toast.error("Demo modunda işlem yapılamaz — Lisans girin", {
+      description: "Sadece görüntüleme aktif. Lisans anahtarınızla panele tam erişim alın.",
+      duration: 4500,
+      action: {
+        label: "Lisans Gir",
+        onClick: () => {
+          try { window.dispatchEvent(new CustomEvent("gws:open-license-modal")); } catch (_) {}
+        },
+      },
+    });
+  }
+  return Promise.reject(err);
+};
+client.interceptors.response.use((r) => r, _demoInterceptor);
+llmClient.interceptors.response.use((r) => r, _demoInterceptor);
 
 export const api = {
   overview: () => client.get("/stats/overview").then(r => r.data),

@@ -3911,6 +3911,56 @@ app.include_router(_maintenance_router, prefix="/api")
 app.include_router(_master_router, prefix="/api")
 app.include_router(_smart_pos_router, prefix="/api")
 
+# ---------------------------------------------------------------------------
+# Demo mode write-guard middleware
+# ---------------------------------------------------------------------------
+# Demo modundaki (lisanssız) müşteri kurulumlarında yazma isteklerini reddeder.
+# Yalnızca /api/* altındaki mutating (POST/PUT/PATCH/DELETE) istekler engellenir.
+# Lisans etkinleştirme ve plugin durumu gibi yollar istisna tutulur.
+# ---------------------------------------------------------------------------
+
+_DEMO_ALLOW_PREFIXES = (
+    "/api/plugin/",            # plugin status, verify-license, upgrade, vs.
+    "/api/admin/master-unlock",
+    "/api/license/",           # müşteri lisans akışı (activate, refresh)
+    "/api/version/",           # sürüm sorgulamaları
+    "/api/master/",            # master API (satıcı tarafı)
+    "/api/reseller/",          # bayi heartbeat
+    "/api/payments/",          # ödeme akışı (lisans satın alma)
+    "/api/smart-pos/",         # ödeme akışı
+    "/api/auth/",              # oturum
+    "/api/invoices/",          # fatura akışı
+    "/api/shop",               # mağaza
+)
+
+
+@app.middleware("http")
+async def demo_write_guard(request: Request, call_next):
+    method = request.method.upper()
+    path = request.url.path
+    if method in ("GET", "HEAD", "OPTIONS") or not path.startswith("/api/"):
+        return await call_next(request)
+    # istisna yolları
+    if any(path.startswith(p) for p in _DEMO_ALLOW_PREFIXES):
+        return await call_next(request)
+    try:
+        status = await _plugin_status_payload()
+    except Exception:
+        return await call_next(request)
+    if status.get("mode") == "customer" and not status.get("licensed"):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=423,
+            content={
+                "detail": "Demo modunda yazma işlemi yapılamaz. Lütfen lisansınızı etkinleştirin.",
+                "code": "DEMO_READ_ONLY",
+                "demo_days_remaining": status.get("demo_days_remaining", 0),
+                "demo_over": status.get("demo_over", False),
+            },
+        )
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

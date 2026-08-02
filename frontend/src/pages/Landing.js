@@ -1421,6 +1421,12 @@ function LicenseEntryModal() {
     }
   }, []);
 
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener("gws:open-license-modal", handler);
+    return () => window.removeEventListener("gws:open-license-modal", handler);
+  }, []);
+
   const submit = async () => {
     if (!key.trim() || !key.trim().startsWith("MS-")) {
       alert("Geçerli bir lisans anahtarı girin (MS-... ile başlamalı)");

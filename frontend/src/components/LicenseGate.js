@@ -71,16 +71,25 @@ export function PluginStatusStripe() {
               <div className="mono">Bitiş: {s.license_expires ? new Date(s.license_expires).toLocaleDateString("tr-TR") : "—"}</div>
             </div>
           ) : s.is_demo && !s.demo_over ? (
-            <div data-testid="plugin-status-demo" className="bg-amber-500/10 border-b border-amber-500/20 text-amber-300 text-xs px-6 py-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Clock className="w-3.5 h-3.5" />
+            <div data-testid="plugin-status-demo" className="relative bg-gradient-to-r from-amber-500/20 via-amber-400/15 to-rose-500/15 border-b-2 border-amber-500/50 text-amber-100 text-xs px-6 py-2.5 flex items-center justify-between shadow-inner shadow-amber-500/20">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-100 text-[10px] font-black uppercase tracking-widest animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-300"/>
+                  Salt Okunur
+                </span>
+                <Clock className="w-3.5 h-3.5 text-amber-300" />
                 <span>
-                  <b>DEMO MODU</b> · <span className="mono">{s.demo_days_remaining}</span> gün kaldı ·
-                  Lisans için satıcınıza IP'nizi bildirin
+                  <b className="text-amber-50">DEMO MODU</b> · <span className="mono text-amber-200">{s.demo_days_remaining}</span> gün kaldı · Yazma işlemleri kilitli, sadece inceleme
                 </span>
               </div>
-              <a href="/shop" target="_blank" rel="noreferrer" className="text-amber-200 hover:text-amber-100 underline mono">
-                Fiyat Planları
+              <a
+                href="#"
+                onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("gws:open-license-modal")); } catch (_) {} }}
+                data-testid="demo-unlock-link"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border border-amber-400/60 bg-amber-400/20 text-amber-50 hover:bg-amber-400/30 hover:border-amber-300 transition"
+              >
+                <KeyRound className="w-3 h-3" />
+                Lisansla Kilidi Aç
               </a>
             </div>
           ) : null}
@@ -97,11 +106,19 @@ export function LicenseGate() {
   const [licenseKey, setLicenseKey] = useState("");
   const [detectedIP, setDetectedIP] = useState("");
   const [showManual, setShowManual] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setManualOpen(true);
+    window.addEventListener("gws:open-license-modal", handler);
+    return () => window.removeEventListener("gws:open-license-modal", handler);
+  }, []);
 
   const verify = useMutation({
     mutationFn: (payload) => api.pluginVerifyLicense(payload),
     onSuccess: (data) => {
       toast.success(`Lisans etkinleştirildi: ${data.customer} · ${data.plan}`);
+      setManualOpen(false);
       qc.invalidateQueries({ queryKey: ["plugin-status"] });
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Doğrulama başarısız"),
@@ -122,11 +139,20 @@ export function LicenseGate() {
 
   if (!q.data) return null;
   if (q.data.mode === "seller") return null;
-  if (!q.data.gated) return null;
+  // Kapı açık değilse ve manuel açma da yoksa görünmez
+  if (!q.data.gated && !manualOpen) return null;
 
   return (
     <div data-testid="license-gate" className="fixed inset-0 z-[9999] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-6 grid-backdrop">
-      <div className="max-w-2xl w-full bg-slate-900 border border-rose-500/30 rounded-lg shadow-2xl overflow-hidden">
+      <div className="max-w-2xl w-full bg-slate-900 border border-rose-500/30 rounded-lg shadow-2xl overflow-hidden relative">
+        {manualOpen && !q.data.gated && (
+          <button
+            data-testid="gate-close-btn"
+            onClick={() => setManualOpen(false)}
+            aria-label="Kapat"
+            className="absolute top-3 right-3 z-10 w-8 h-8 rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-800 text-2xl leading-none flex items-center justify-center"
+          >×</button>
+        )}
         <div className="p-6 bg-gradient-to-br from-rose-500/10 to-amber-500/5 border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-md bg-rose-500/20 border border-rose-500/40 flex items-center justify-center">
@@ -134,13 +160,16 @@ export function LicenseGate() {
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-widest text-rose-300 font-semibold">Lisans Gerekli</div>
-              <h2 className="text-2xl font-bold text-slate-100">GökyüzüWebSpam Deneme Süresi Doldu</h2>
+              <h2 className="text-2xl font-bold text-slate-100">
+                {q.data.gated ? "GökyüzüWebSpam Deneme Süresi Doldu" : "Lisans Etkinleştirme"}
+              </h2>
             </div>
           </div>
           <p className="mt-4 text-slate-300 text-sm">
-            7 günlük ücretsiz deneme süreniz sona erdi. Panelde işlem yapmaya devam etmek için
-            <b> lisansınızı doğrulayın</b>. Sistemde IP'niz kayıtlıysa lisansınız otomatik etkinleşir;
-            yoksa satıcınızla iletişime geçin.
+            {q.data.gated
+              ? <>7 günlük ücretsiz deneme süreniz sona erdi. Panelde işlem yapmaya devam etmek için <b>lisansınızı doğrulayın</b>. Sistemde IP'niz kayıtlıysa lisansınız otomatik etkinleşir; yoksa satıcınızla iletişime geçin.</>
+              : <>Demo modunda yalnızca inceleme yapabilirsiniz. Aç/kapa, başlat/durdur gibi işlemler için lisansınızı etkinleştirin. IP'niz kayıtlıysa lisansınız otomatik etkinleşir.</>
+            }
           </p>
         </div>
 
