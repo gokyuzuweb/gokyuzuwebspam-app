@@ -139,6 +139,22 @@ export function LicenseGate() {
   const verify = useMutation({
     mutationFn: (payload) => api.pluginVerifyLicense(payload),
     onSuccess: (data) => {
+      // Backend "licensed:false, reason:license_revoked" dönebilir — success görünse de
+      // aslında iptal edilmiş. Bu durumda localStorage'ı temizle ve toast göster.
+      if (data && data.licensed === false) {
+        try {
+          localStorage.removeItem("gws.event_license");
+          if (data.reason === "license_revoked") {
+            // Master oturumu değilse master_license'ı da temizle
+            const ml = localStorage.getItem("gws.master_license") || "";
+            if (!ml.startsWith("MS-C")) localStorage.removeItem("gws.master_license");
+          }
+        } catch (_) {}
+        toast.error(data.message || "Lisans doğrulanamadı (iptal edilmiş olabilir).");
+        qc.invalidateQueries({ queryKey: ["plugin-status"] });
+        qc.invalidateQueries({ queryKey: ["is-master"] });
+        return;
+      }
       toast.success(`Lisans etkinleştirildi: ${data.customer} · ${data.plan}`);
       // Lisans anahtarını localStorage'a kaydet (sonraki ziyaretlerde de bilinsin)
       try {
@@ -150,7 +166,17 @@ export function LicenseGate() {
       qc.invalidateQueries({ queryKey: ["plugin-status"] });
       qc.invalidateQueries({ queryKey: ["is-master"] });
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || "Doğrulama başarısız"),
+    onError: (e) => {
+      // Backend 4xx/5xx dönerse (ör. license_revoked 200 ile geliyor ama diğer hatalar
+      // 4xx ile) localStorage'daki eski lisansı ve master ip cache'ini temizleyelim
+      // ki UI "geçmişten kalan lisans" göstermesin.
+      try {
+        localStorage.removeItem("gws.event_license");
+      } catch (_) {}
+      qc.invalidateQueries({ queryKey: ["plugin-status"] });
+      qc.invalidateQueries({ queryKey: ["is-master"] });
+      toast.error(e?.response?.data?.detail || e?.response?.data?.message || "Doğrulama başarısız");
+    },
   });
 
   const runVerify = async () => {
