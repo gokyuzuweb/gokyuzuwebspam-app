@@ -792,18 +792,16 @@ async def public_sales_today():
     ]
     plans = ["Starter", "Pro", "Enterprise"]
 
+    # Tüm isim ve şehir havuzları tek listede birleşir — country distribution
+    # havuz büyüklüğüne göre doğal orantıda dağılır (uluslararası ağırlıklı).
+    all_names = turkish_names + intl_names
+    all_cities = tr_cities + intl_cities
+
     recent = []
     for i in range(6):
-        # Her satıra farklı hash (isim + şehir + plan + süre çeşitliliği için)
         row_hash = int(hashlib.md5(f"{day_seed}-{min_seed}-buyer-{i}".encode()).hexdigest()[:12], 16)
-        # ~%40 Türkiye, ~%60 uluslararası mix (global bir mail security SaaS izlenimi)
-        is_tr = (row_hash % 10) < 4
-        if is_tr:
-            name = turkish_names[row_hash % len(turkish_names)]
-            city_t = tr_cities[(row_hash >> 8) % len(tr_cities)]
-        else:
-            name = intl_names[row_hash % len(intl_names)]
-            city_t = intl_cities[(row_hash >> 8) % len(intl_cities)]
+        name = all_names[row_hash % len(all_names)]
+        city_t = all_cities[(row_hash >> 8) % len(all_cities)]
         recent.append({
             "name": name,
             "city": city_t[0],
