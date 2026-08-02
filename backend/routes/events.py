@@ -9,6 +9,7 @@ from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 from deps import db
+import os
 import re
 import uuid
 
@@ -36,6 +37,17 @@ class MailEvent(BaseModel):
 
 
 async def _validate_license(license_key: str) -> dict:
+    # Master anahtarı env'den — DB'de olmasa bile geçerli (master her şeyi görür)
+    master_key = os.environ.get("MASTER_LICENSE_KEY", "")
+    if master_key and license_key == master_key:
+        return {
+            "license_key": master_key,
+            "customer_name": "Master",
+            "plan": "enterprise",
+            "active": True,
+            "ip_addresses": [os.environ.get("MASTER_IP", "")],
+            "panel_domains": [os.environ.get("MASTER_HOST", "")],
+        }
     lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0})
     if not lic:
         raise HTTPException(401, "Gecersiz lisans anahtari")

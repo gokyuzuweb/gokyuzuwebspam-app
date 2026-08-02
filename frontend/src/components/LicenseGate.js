@@ -62,11 +62,19 @@ export function PluginStatusStripe() {
         </div>
       )}
       {/* Demo / license status
-       * Master anahtarı olan kullanıcılar için hiçbir şey gösterme (tam erişim).
-       * Master anahtarı olmayan tüm ziyaretçilere DEMO bandını göster (server
-       * mode ne olursa olsun).
+       * Master veya lisanslı kullanıcılara demo bandı gösterilmez.
+       * Sadece lisanssız ziyaretçiler DEMO bandını görür.
        */}
-      {!isMaster && !s.gated && (
+      {s.licensed && !isMaster && (
+        <div data-testid="plugin-status-licensed" className="bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-300 text-xs px-6 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>Lisanslı · <span className="mono">{(s.license_key || "").slice(0, 20)}…</span></span>
+          </div>
+          <div className="mono">Bitiş: {s.license_expires ? new Date(s.license_expires).toLocaleDateString("tr-TR") : "—"}</div>
+        </div>
+      )}
+      {!isMaster && !s.licensed && !s.gated && (
         <div data-testid="plugin-status-demo" className="relative bg-gradient-to-r from-amber-500/20 via-amber-400/15 to-rose-500/15 border-b-2 border-amber-500/50 text-amber-100 text-xs px-6 py-2.5 flex items-center justify-between shadow-inner shadow-amber-500/20">
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/50 text-rose-100 text-[10px] font-black uppercase tracking-widest animate-pulse">
@@ -127,8 +135,15 @@ export function LicenseGate() {
     mutationFn: (payload) => api.pluginVerifyLicense(payload),
     onSuccess: (data) => {
       toast.success(`Lisans etkinleştirildi: ${data.customer} · ${data.plan}`);
+      // Lisans anahtarını localStorage'a kaydet (sonraki ziyaretlerde de bilinsin)
+      try {
+        if (data.license_key) {
+          localStorage.setItem("gws.event_license", data.license_key);
+        }
+      } catch (_) {}
       setManualOpen(false);
       qc.invalidateQueries({ queryKey: ["plugin-status"] });
+      qc.invalidateQueries({ queryKey: ["is-master"] });
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Doğrulama başarısız"),
   });

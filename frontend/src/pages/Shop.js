@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
-import { CreditCard, Check, Star, Loader2, CheckCircle2, XCircle, Copy, ArrowRight, Download, Terminal } from "lucide-react";
+import { useSearchParams, Link } from "react-router-dom";
+import { CreditCard, Check, Star, Loader2, CheckCircle2, XCircle, Copy, ArrowRight, ArrowLeft, Download, Terminal, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -39,6 +39,44 @@ export default function Shop() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 grid-backdrop">
+      {/* Header — Ana sayfaya dön */}
+      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-40">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+          <Link
+            to="/"
+            data-testid="shop-home-link"
+            className="flex items-center gap-2 text-slate-300 hover:text-slate-100 transition"
+          >
+            <div className="w-8 h-8 rounded-md bg-gradient-to-br from-indigo-500 to-rose-500 flex items-center justify-center">
+              <ShieldAlert className="w-4 h-4 text-white" />
+            </div>
+            <div className="leading-tight">
+              <div className="text-slate-100 font-bold tracking-tight text-[15px]">
+                Gökyüzü<span className="text-indigo-400">WebSpam</span>
+              </div>
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">
+                Fiyatlandırma
+              </div>
+            </div>
+          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/install"
+              data-testid="shop-install-link"
+              className="hidden sm:inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-amber-500/30 bg-amber-500/5 text-amber-200 hover:bg-amber-500/10 transition"
+            >
+              <Terminal className="w-3 h-3" /> Kurulum Kılavuzu
+            </Link>
+            <Link
+              to="/"
+              data-testid="shop-back-home"
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800 hover:border-slate-600 transition"
+            >
+              <ArrowLeft className="w-3 h-3" /> Ana Sayfa
+            </Link>
+          </div>
+        </div>
+      </header>
       <div className="max-w-6xl mx-auto px-6 py-16">
         <div className="text-center mb-12">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs uppercase tracking-widest font-semibold mb-4">
