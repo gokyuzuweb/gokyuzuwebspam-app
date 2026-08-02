@@ -97,6 +97,12 @@ export const api = {
   logSourceGet: () => client.get("/plugin/log-source").then(r => r.data),
   logSourceSet: (mode, licenseKey) =>
     client.post("/plugin/log-source", { mode, license_key: licenseKey }).then(r => r.data),
+  // Revoke Manager
+  revokedList: () => client.get("/licenses/revoked").then(r => r.data),
+  revokedRestore: (licenseKey) =>
+    client.post("/licenses/revoked/restore", { license_key: licenseKey }).then(r => r.data),
+  revokedClear: (payload) =>
+    client.post("/licenses/revoked/clear", payload).then(r => r.data),
   eventGet: (licenseKey, eventId) =>
     client.get(`/events/${eventId}`, { params: { license_key: licenseKey } }).then(r => r.data),
   eventMarkSpam: (licenseKey, eventId) =>

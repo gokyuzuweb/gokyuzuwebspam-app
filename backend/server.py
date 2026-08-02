@@ -3095,7 +3095,16 @@ async def licenses_revoked_list():
 async def licenses_revoked_clear(payload: dict):
     """Revoke listesinden bir kaydı IP / hostname / license_key ile temizle.
     Master 'yeni lisans ekledim ama hâlâ iptal diyor' durumunda tek tıkla kullanır.
-    Payload: {ip?: str, hostname?: str, license_key?: str}"""
+    Payload: {ip?: str, hostname?: str, license_key?: str, all?: bool}
+    all:true → TÜM revoke kayıtlarını sil (nükleer opsiyon)."""
+    if payload.get("all") is True:
+        r = await db.revoked_licenses.delete_many({})
+        await db.settings.update_many({"_key": "plugin_state"}, {"$unset": {"revoked_at": ""}})
+        await db.logs.insert_one(ActivityLog(
+            source="license", level="info",
+            message=f"TÜM revoke kayıtları temizlendi ({r.deleted_count} satır)",
+        ).model_dump())
+        return {"cleared": r.deleted_count, "ok": True, "scope": "all"}
     or_conds = []
     if payload.get("license_key"):
         or_conds.append({"license_key": payload["license_key"]})
@@ -3104,9 +3113,8 @@ async def licenses_revoked_clear(payload: dict):
     if payload.get("ip"):
         or_conds.append({"ip": payload["ip"]})
     if not or_conds:
-        raise HTTPException(400, "ip / hostname / license_key alanlarından en az biri gerekli")
+        raise HTTPException(400, "ip / hostname / license_key veya all:true gerekli")
     r = await db.revoked_licenses.delete_many({"$or": or_conds})
-    # plugin_state cache'inde de revoked_at varsa temizle
     await db.settings.update_one({"_key": "plugin_state"}, {"$unset": {"revoked_at": ""}})
     await db.logs.insert_one(ActivityLog(
         source="license", level="info",
@@ -3803,8 +3811,24 @@ async def plugin_verify_license(payload: VerifyLicenseIn):
     ambiguous_ip_match = False
 
     # 0) REVOKE KONTROLÜ — master manuel silmişse burada dur, hiçbir yolla
-    # lisans oluşturma/geri getirme. IP/hostname/license_key üçünden herhangi
-    # birisi revoke listesindeyse verify başarısız olur.
+    # lisans oluşturma/geri getirme. Ancak master aynı IP/hostname için YENİDEN
+    # aktif bir lisans oluşturduysa (re-license), stale revoke kaydı verify'ı
+    # bloklamamalı. Bu yüzden ÖNCE aktif eşleşen lisans var mı bak.
+    active_license_exists = False
+    active_check_conds = []
+    if payload.license_key:
+        active_check_conds.append({"license_key": payload.license_key})
+    if payload.hostname:
+        active_check_conds.append({"panel_domains": payload.hostname.lower()})
+    if payload.ip:
+        active_check_conds.append({"ip_addresses": payload.ip})
+    if active_check_conds:
+        existing = await db.licenses.find_one(
+            {"$and": [{"active": True}, {"$or": active_check_conds}]}, {"_id": 0, "id": 1, "license_key": 1}
+        )
+        if existing:
+            active_license_exists = True
+
     revoke_conditions = []
     if payload.license_key:
         revoke_conditions.append({"license_key": payload.license_key})
@@ -3814,6 +3838,15 @@ async def plugin_verify_license(payload: VerifyLicenseIn):
         revoke_conditions.append({"ip": payload.ip})
     if revoke_conditions:
         blocked = await db.revoked_licenses.find_one({"$or": revoke_conditions}, {"_id": 0})
+        if blocked and active_license_exists:
+            # Master re-license yapmış — stale revoke kaydını otomatik temizle
+            await db.revoked_licenses.delete_many({"$or": revoke_conditions})
+            await db.settings.update_one({"_key": "plugin_state"}, {"$unset": {"revoked_at": ""}})
+            await db.logs.insert_one(ActivityLog(
+                source="license", level="info",
+                message=f"Stale revoke otomatik temizlendi (aktif lisans mevcut): IP={payload.ip} host={payload.hostname}",
+            ).model_dump())
+            blocked = None  # devam et, verify başarılı olacak
         if blocked:
             logging.info(f"Verify BLOCKED — revoked: {blocked}")
             v = LicenseViolation(
