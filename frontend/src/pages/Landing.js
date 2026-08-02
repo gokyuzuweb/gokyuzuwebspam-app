@@ -1398,7 +1398,176 @@ export default function Landing() {
       <CTABottom />
       <Footer />
       <FloatingPanelButton />
+      <LicenseEntryModal />
     </div>
+  );
+}
+
+function LicenseEntryModal() {
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    // İlk ziyarette otomatik aç (7 gün önce yapıldıysa yine aç)
+    const lastSeen = localStorage.getItem("gws.license_modal_dismissed");
+    const stored = localStorage.getItem("gws.event_license");
+    if (!stored) {
+      const now = Date.now();
+      const last = lastSeen ? parseInt(lastSeen) : 0;
+      if (!last || (now - last) > 7 * 86400000) {
+        setTimeout(() => setOpen(true), 1500);
+      }
+    }
+  }, []);
+
+  const submit = async () => {
+    if (!key.trim() || !key.trim().startsWith("MS-")) {
+      alert("Geçerli bir lisans anahtarı girin (MS-... ile başlamalı)");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/license/master-unlock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ license_key: key.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        localStorage.setItem("gws.event_license", key.trim());
+        localStorage.removeItem("gws.license_modal_dismissed");
+        setOpen(false);
+        setTimeout(() => window.location.href = "/panel", 500);
+      } else {
+        alert(data.detail || "Lisans doğrulanamadı");
+      }
+    } catch (e) {
+      alert("Bağlantı hatası: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const dismiss = () => {
+    localStorage.setItem("gws.license_modal_dismissed", String(Date.now()));
+    setOpen(false);
+  };
+
+  return (
+    <>
+      {/* Sol-alt sabit "Lisans Gir" butonu */}
+      <button
+        onClick={() => setOpen(true)}
+        data-testid="landing-license-btn"
+        className="fixed bottom-6 left-6 z-40 inline-flex items-center gap-2 px-4 py-3 rounded-full bg-slate-900/90 backdrop-blur border-2 border-indigo-500/60 text-indigo-100 text-sm font-semibold shadow-2xl shadow-indigo-500/30 hover:bg-indigo-500/20 hover:shadow-indigo-500/50 hover:-translate-y-0.5 transition-all"
+      >
+        <span className="text-lg leading-none">🔑</span>
+        <span className="hidden md:inline">Lisans Gir</span>
+      </button>
+
+      {/* Modal */}
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          data-testid="license-entry-modal"
+          onClick={dismiss}
+        >
+          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"/>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-md bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/60 border border-indigo-500/40 rounded-2xl overflow-hidden shadow-2xl shadow-indigo-500/30 animate-in fade-in zoom-in duration-300"
+          >
+            {/* Üstte parlayan gradient */}
+            <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-indigo-400 to-transparent"/>
+            <div className="absolute -top-20 -right-20 w-40 h-40 bg-indigo-500/20 rounded-full blur-3xl"/>
+            <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-rose-500/10 rounded-full blur-3xl"/>
+
+            <div className="relative p-8">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-[10px] font-bold uppercase tracking-widest text-indigo-300 mb-3">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"/>
+                    Lisans Doğrulama
+                  </div>
+                  <h2 className="text-2xl font-bold text-white leading-tight">
+                    Hoş Geldiniz 👋
+                  </h2>
+                  <p className="text-sm text-slate-400 mt-1.5">
+                    Panele erişmek için lisans anahtarınızı girin
+                  </p>
+                </div>
+                <button
+                  onClick={dismiss}
+                  className="text-slate-500 hover:text-slate-200 text-2xl leading-none"
+                >×</button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5 block">
+                    Lisans Anahtarı
+                  </label>
+                  <input
+                    autoFocus
+                    value={key}
+                    onChange={(e) => setKey(e.target.value.trim())}
+                    onKeyDown={(e) => e.key === "Enter" && submit()}
+                    placeholder="MS-XXXXXXXXXXXXXXXXXXXXXXXX"
+                    className="w-full bg-slate-950/80 border-2 border-slate-800 rounded-xl px-4 py-3 text-sm mono text-slate-100 placeholder:text-slate-700 focus:outline-none focus:border-indigo-500/60 focus:shadow-lg focus:shadow-indigo-500/20 transition-all"
+                    data-testid="license-entry-input"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-2">
+                    💡 MS- ile başlayan 24 karakterlik anahtar
+                  </p>
+                </div>
+
+                <button
+                  onClick={submit}
+                  disabled={loading || !key}
+                  data-testid="license-entry-submit"
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-semibold shadow-lg shadow-indigo-500/40 hover:shadow-indigo-500/60 hover:-translate-y-0.5 disabled:opacity-40 disabled:hover:translate-y-0 transition-all"
+                >
+                  {loading ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>
+                      Doğrulanıyor...
+                    </>
+                  ) : (
+                    <>
+                      🔓 Panel'e Gir
+                      <span className="text-lg">→</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                  <span className="flex-1 h-px bg-slate-800"/>
+                  <span>veya</span>
+                  <span className="flex-1 h-px bg-slate-800"/>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <a
+                    href="/shop"
+                    className="text-center px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/50 text-slate-300 hover:border-emerald-500/40 hover:text-emerald-200 transition"
+                  >
+                    🛒 Lisans Al
+                  </a>
+                  <a
+                    href="mailto:destek@gokyuzubilgisayar.com"
+                    className="text-center px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/50 text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200 transition"
+                  >
+                    💬 Yardım
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
