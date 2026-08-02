@@ -45,6 +45,8 @@ services:
     build:
       context: ../frontend
       dockerfile: ../deployment/Dockerfile.frontend
+      args:
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-https://panel.gokyuzuhosting.com}
     container_name: gws-frontend
     restart: unless-stopped
     depends_on: [backend]
