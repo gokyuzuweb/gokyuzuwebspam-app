@@ -2924,12 +2924,27 @@ async def licenses_update(lid: str, payload: LicenseIn):
 @api.delete("/licenses/{lid}")
 async def licenses_delete(lid: str):
     # id ile dene, bulamazsa license_key olarak dene (eski seed'ler id-siz olabilir)
-    r = await db.licenses.delete_one({"id": lid})
-    if r.deleted_count == 0:
-        r = await db.licenses.delete_one({"license_key": lid})
-    if r.deleted_count == 0:
+    doc = await db.licenses.find_one({"id": lid}, {"_id": 0})
+    if not doc:
+        doc = await db.licenses.find_one({"license_key": lid}, {"_id": 0})
+    if not doc:
         raise HTTPException(404, "Lisans bulunamadı")
-    return {"deleted": True}
+    # Silinen lisansı revoke listesine ekle → NS auto-license bunu tekrar
+    # oluşturmaz (kullanıcı manuel sildikten sonra kalıcı olarak silinsin diye)
+    revoke_entry = {
+        "license_key": doc.get("license_key"),
+        "hostname": (doc.get("panel_domains") or [None])[0] if doc.get("panel_domains") else None,
+        "customer_name": doc.get("customer_name"),
+        "revoked_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "manual_delete",
+    }
+    await db.revoked_licenses.update_one(
+        {"license_key": revoke_entry["license_key"]},
+        {"$set": revoke_entry},
+        upsert=True,
+    )
+    r = await db.licenses.delete_one({"id": doc["id"]})
+    return {"deleted": True, "revoked": True, "license_key": doc.get("license_key")}
 
 
 @api.post("/licenses/{lid}/update")
@@ -2975,6 +2990,22 @@ async def licenses_bulk_action(payload: BulkLicenseAction):
     # id VEYA license_key ile eşleştir (eski kayıtlarda id yoksa)
     match = {"$or": [{"id": {"$in": payload.ids}}, {"license_key": {"$in": payload.ids}}]}
     if payload.action == "delete":
+        # Silmeden ÖNCE revoke listesine ekle ki NS auto-license
+        # kalıcı silinen lisansları tekrar oluşturmasın.
+        docs = await db.licenses.find(match, {"_id": 0}).to_list(1000)
+        now = datetime.now(timezone.utc).isoformat()
+        if docs:
+            revokes = [{
+                "license_key": d.get("license_key"),
+                "hostname": (d.get("panel_domains") or [None])[0] if d.get("panel_domains") else None,
+                "customer_name": d.get("customer_name"),
+                "revoked_at": now,
+                "reason": "bulk_delete",
+            } for d in docs if d.get("license_key")]
+            for rv in revokes:
+                await db.revoked_licenses.update_one(
+                    {"license_key": rv["license_key"]}, {"$set": rv}, upsert=True
+                )
         r = await db.licenses.delete_many(match)
         affected = r.deleted_count
     elif payload.action == "suspend":
@@ -2990,6 +3021,32 @@ async def licenses_bulk_action(payload: BulkLicenseAction):
         message=f"Toplu aksiyon: {payload.action} → {affected} lisans etkilendi",
     ).model_dump())
     return {"affected": affected, "action": payload.action}
+
+
+@api.get("/licenses/revoked")
+async def licenses_revoked_list():
+    """Silinmiş (revoke edilmiş) lisanslar — NS auto-license tekrar oluşturmasın diye
+    kalıcı olarak saklanır. Restore için POST /licenses/revoked/restore."""
+    items = await db.revoked_licenses.find({}, {"_id": 0}).sort("revoked_at", -1).to_list(500)
+    return {"items": items, "count": len(items)}
+
+
+class RevokeRestoreIn(BaseModel):
+    license_key: str
+
+
+@api.post("/licenses/revoked/restore")
+async def licenses_revoked_restore(payload: RevokeRestoreIn):
+    """Yanlışlıkla silinen bir lisansı revoke listesinden çıkar. Sonraki verify'da
+    NS auto-license tekrar oluşturur (eğer hostname NS check'i geçerse)."""
+    r = await db.revoked_licenses.delete_one({"license_key": payload.license_key})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Revoke kaydı bulunamadı")
+    await db.logs.insert_one(ActivityLog(
+        source="license", level="info",
+        message=f"Revoke kaldırıldı: {payload.license_key} — NS auto-license artık tekrar oluşturabilir",
+    ).model_dump())
+    return {"restored": True, "license_key": payload.license_key}
 
 
 @api.post("/licenses/fix-missing-ids")
@@ -3632,7 +3689,15 @@ async def plugin_verify_license(payload: VerifyLicenseIn):
     # 4) Nameserver bazlı otomatik lisans — sunucumuzun NS'lerini kullanan
     #    her domain otomatik lisanslı sayılır (hosting müşterisi olduğu için)
     if not lic and payload.hostname:
-        authorized_ns = [
+        # ÖNCE revoke edilmiş bir lisans var mı bak — master lisansı manuel
+        # silmişse (blacklist), aynı hostname için tekrar AUTO-* oluşturma.
+        revoked = await db.revoked_licenses.find_one(
+            {"hostname": payload.hostname.lower()}, {"_id": 0}
+        )
+        if revoked:
+            logging.info(f"NS auto-license SKIP (revoked): {payload.hostname}")
+        else:
+            authorized_ns = [
             ns.strip().lower().rstrip(".")
             for ns in os.environ.get(
                 "AUTHORIZED_NAMESERVERS",
@@ -3640,44 +3705,54 @@ async def plugin_verify_license(payload: VerifyLicenseIn):
             ).split(",")
             if ns.strip()
         ]
-        if authorized_ns:
-            try:
-                import dns.resolver
-                resolver = dns.resolver.Resolver()
-                resolver.timeout = 3
-                resolver.lifetime = 4
-                answer = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: resolver.resolve(payload.hostname, "NS")
-                )
-                domain_ns = [str(r).lower().rstrip(".") for r in answer]
-                if any(ns in domain_ns for ns in authorized_ns):
-                    # Otomatik lisans oluştur / getir
-                    auto_key = f"AUTO-{payload.hostname[:24].upper().replace('.', '-')}"
-                    lic = await db.licenses.find_one(
-                        {"license_key": auto_key, "active": True}, {"_id": 0}
+            authorized_ns = [
+                ns.strip().lower().rstrip(".")
+                for ns in os.environ.get(
+                    "AUTHORIZED_NAMESERVERS",
+                    "ns1.gokyuzuhosting.com,ns2.gokyuzuhosting.com"
+                ).split(",")
+                if ns.strip()
+            ]
+            if authorized_ns:
+                try:
+                    import dns.resolver
+                    resolver = dns.resolver.Resolver()
+                    resolver.timeout = 3
+                    resolver.lifetime = 4
+                    answer = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: resolver.resolve(payload.hostname, "NS")
                     )
-                    if not lic:
-                        auto_valid = (now + timedelta(days=365)).isoformat()
-                        auto_lic = License(
-                            license_key=auto_key,
-                            customer_name=f"Auto: {payload.hostname}",
-                            customer_email="",
-                            plan="pro",
-                            ip_addresses=[payload.ip] if payload.ip else [],
-                            panel_domains=[payload.hostname.lower()],
-                            max_domains=50,
-                            valid_until=auto_valid,
-                            notes=f"Nameserver bazlı otomatik lisans — NS: {', '.join(domain_ns)}",
-                        ).model_dump()
-                        await db.licenses.insert_one(auto_lic)
-                        lic = auto_lic
-                        await db.logs.insert_one(ActivityLog(
-                            source="license", level="info",
-                            message=f"Otomatik NS lisansı oluşturuldu: {payload.hostname} → {auto_key}",
-                        ).model_dump())
-            except Exception as e:
-                # DNS başarısız olsa da normal akış devam eder
-                logging.info(f"NS auto-license check failed for {payload.hostname}: {e}")
+                    domain_ns = [str(r).lower().rstrip(".") for r in answer]
+                    if any(ns in domain_ns for ns in authorized_ns):
+                        # Otomatik lisans oluştur / getir
+                        auto_key = f"AUTO-{payload.hostname[:24].upper().replace('.', '-')}"
+                        # Ekstra güvenlik: bu auto_key revoke edildiyse dokunma
+                        if not await db.revoked_licenses.find_one({"license_key": auto_key}):
+                            lic = await db.licenses.find_one(
+                                {"license_key": auto_key, "active": True}, {"_id": 0}
+                            )
+                            if not lic:
+                                auto_valid = (now + timedelta(days=365)).isoformat()
+                                auto_lic = License(
+                                    license_key=auto_key,
+                                    customer_name=f"Auto: {payload.hostname}",
+                                    customer_email="",
+                                    plan="pro",
+                                    ip_addresses=[payload.ip] if payload.ip else [],
+                                    panel_domains=[payload.hostname.lower()],
+                                    max_domains=50,
+                                    valid_until=auto_valid,
+                                    notes=f"Nameserver bazlı otomatik lisans — NS: {', '.join(domain_ns)}",
+                                ).model_dump()
+                                await db.licenses.insert_one(auto_lic)
+                                lic = auto_lic
+                                await db.logs.insert_one(ActivityLog(
+                                    source="license", level="info",
+                                    message=f"Otomatik NS lisansı oluşturuldu: {payload.hostname} → {auto_key}",
+                                ).model_dump())
+                except Exception as e:
+                    # DNS başarısız olsa da normal akış devam eder
+                    logging.info(f"NS auto-license check failed for {payload.hostname}: {e}")
 
     if not lic:
         v = LicenseViolation(
