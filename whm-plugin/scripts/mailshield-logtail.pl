@@ -90,10 +90,10 @@ while (1) {
     }
 }
 
+our ($_processed, $_matched) = (0, 0);
+
 sub _process_line {
     my ($line) = @_;
-    # Debug: her 100 satırda bir log yaz + eşleşme durumu
-    state $_processed = 0; state $_matched = 0;
     $_processed++;
 
     # Match inbound line:
