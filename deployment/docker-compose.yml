@@ -34,6 +34,7 @@ services:
     environment:
       - MONGO_URL=mongodb://mongo:27017
       - DB_NAME=gws_master
+      - MAILSHIELD_MODE=seller
     volumes:
       - ../backend:/app/backend
       - ./data/uploads:/app/backend/uploads
