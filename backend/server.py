@@ -2939,9 +2939,13 @@ async def licenses_update(lid: str, payload: LicenseIn):
     if r.matched_count == 0:
         raise HTTPException(404, "Lisans bulunamadı")
     # Update sonrası revoke temizle — kullanıcı yeni IP eklediyse veya aktifleştirdiyse
-    # eski revoke kayıtları verify'ı bloklamasın.
-    or_conds = [{"license_key": payload.license_key}]
-    for host in (payload.panel_domains or []):
+    # eski revoke kayıtları verify'ı bloklamasın. license_key ve panel_domains
+    # LicenseIn içinde yok (immutable/DB-managed), o yüzden mevcut kayıttan oku.
+    existing = await db.licenses.find_one({"id": lid}, {"_id": 0, "license_key": 1, "panel_domains": 1}) or {}
+    or_conds = []
+    if existing.get("license_key"):
+        or_conds.append({"license_key": existing["license_key"]})
+    for host in (existing.get("panel_domains") or []):
         or_conds.append({"hostname": host.lower()})
     for ip in (payload.ip_addresses or []):
         or_conds.append({"ip": ip})
@@ -3446,11 +3450,6 @@ async def blacklist_delist(payload: DelistRequestIn):
         # Insert a COPY (insert_one mutates the dict with ObjectId _id)
         await db.delist_requests.insert_one(dict(req))
         created.append(req)  # original clean dict for response
-    await db.logs.insert_one(ActivityLog(
-        source="blacklist", level="info",
-        message=f"Delisting talep(ler)i oluşturuldu: {payload.target} → {len(created)} sağlayıcı, {email_attempts} e-posta",
-    ).model_dump())
-    return {"created": len(created), "email_attempts": email_attempts, "requests": created}
     await db.logs.insert_one(ActivityLog(
         source="blacklist", level="info",
         message=f"Delisting talep(ler)i oluşturuldu: {payload.target} → {len(created)} sağlayıcı, {email_attempts} e-posta",
