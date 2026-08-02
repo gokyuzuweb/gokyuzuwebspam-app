@@ -170,43 +170,48 @@ export function LicenseGate() {
   const verify = useMutation({
     mutationFn: (payload) => api.pluginVerifyLicense(payload),
     onSuccess: (data) => {
-      // Backend "licensed:false, reason:license_revoked" dönebilir — success görünse de
-      // aslında iptal edilmiş. Bu durumda localStorage'ı temizle ve toast göster.
+      // Backend "licensed:false" dönerse (IP tanımsız / revoke / expire) HEMEN
+      // panelin lisanslı durumunu düşür → demo moduna geç. Kullanıcının bir
+      // sonraki tıklaması için tarayıcı reload'una ihtiyacı yok.
       if (data && data.licensed === false) {
         try {
           localStorage.removeItem("gws.event_license");
-          if (data.reason === "license_revoked") {
-            // Master oturumu değilse master_license'ı da temizle
-            const ml = localStorage.getItem("gws.master_license") || "";
-            if (!ml.startsWith("MS-C")) localStorage.removeItem("gws.master_license");
-          }
+          localStorage.removeItem("gws.panel_demo_ack");
+          const ml = localStorage.getItem("gws.master_license") || "";
+          if (!ml.startsWith("MS-C")) localStorage.removeItem("gws.master_license");
+          // gws_master_session cookie'sini de temizle (client-visible değil ise
+          // yine de expire çağrısı yap)
+          document.cookie = "gws_master_session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
         } catch (_) {}
-        toast.error(data.message || "Lisans doğrulanamadı (iptal edilmiş olabilir).");
-        qc.invalidateQueries({ queryKey: ["plugin-status"] });
-        qc.invalidateQueries({ queryKey: ["is-master"] });
+        // Tüm query cache'lerini invalidate + refetch → useIsMaster, plugin-status
+        // hemen yeniden çekilir ve UI demo moduna geçer.
+        qc.invalidateQueries();
+        setManualOpen(false);
+        toast.error(data.message || (
+          data.reason === "license_revoked"
+            ? "Bu lisans iptal edildi. Demo moduna geçildi."
+            : "Bu IP için aktif lisans yok. Demo modundasınız."
+        ), { duration: 5000 });
         return;
       }
       toast.success(`Lisans etkinleştirildi: ${data.customer} · ${data.plan}`);
-      // Lisans anahtarını localStorage'a kaydet (sonraki ziyaretlerde de bilinsin)
       try {
         if (data.license_key) {
           localStorage.setItem("gws.event_license", data.license_key);
         }
       } catch (_) {}
       setManualOpen(false);
-      qc.invalidateQueries({ queryKey: ["plugin-status"] });
-      qc.invalidateQueries({ queryKey: ["is-master"] });
+      qc.invalidateQueries();
     },
     onError: (e) => {
-      // Backend 4xx/5xx dönerse (ör. license_revoked 200 ile geliyor ama diğer hatalar
-      // 4xx ile) localStorage'daki eski lisansı ve master ip cache'ini temizleyelim
-      // ki UI "geçmişten kalan lisans" göstermesin.
+      // 4xx/5xx → cache temizle, demo'ya düş
       try {
         localStorage.removeItem("gws.event_license");
       } catch (_) {}
-      qc.invalidateQueries({ queryKey: ["plugin-status"] });
-      qc.invalidateQueries({ queryKey: ["is-master"] });
-      toast.error(e?.response?.data?.detail || e?.response?.data?.message || "Doğrulama başarısız");
+      qc.invalidateQueries();
+      const msg = e?.response?.data?.detail || e?.response?.data?.message
+                  || "Doğrulama başarısız — demo moduna geçildi.";
+      toast.error(msg);
     },
   });
 
