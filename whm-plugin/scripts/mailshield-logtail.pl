@@ -79,6 +79,12 @@ my $poll_counter = 0;    # her N sn'de bir pending-actions poll'u
 my $hb_counter = 0;      # her N sn'de bir logtail-heartbeat
 my $script_started_at = time();
 
+# GLOBAL: subroutine'lerin göreceği paylaşımlı değişkenler.
+# NOT: while(1) döngüsünden ÖNCE tanımlanmalı ki _remember_mid ve
+# diğer sub'lar closure yerine top-level var'a erişebilsin.
+our ($_processed, $_matched) = (0, 0);
+our $MID_MAP = '/var/lib/mailshield/event-mid.map';
+
 # Startup heartbeat: script canlı olduğunu backend'e bildir
 _post_logtail_heartbeat('startup');
 

@@ -53,6 +53,32 @@ if ! git pull origin main --quiet; then
 fi
 log "✓ Kod indirildi"
 
+# 3b. Perl logtail script'ini /usr/local/mailshield/bin/'e kopyala + systemd restart
+# (Docker dışı, host üzerinde çalışan Perl daemon — auto-update sırasında elle atlanmaması için)
+PERL_SRC="$APP_DIR/whm-plugin/scripts/mailshield-logtail.pl"
+PERL_DST="/usr/local/mailshield/bin/mailshield-logtail.pl"
+if [ -f "$PERL_SRC" ]; then
+    if ! cmp -s "$PERL_SRC" "$PERL_DST" 2>/dev/null; then
+        log "🔄 Perl logtail script değişmiş, güncelleniyor..."
+        mkdir -p /usr/local/mailshield/bin
+        cp -f "$PERL_SRC" "$PERL_DST"
+        chmod +x "$PERL_DST"
+        # Perl syntax kontrolü — bozuk script sistemi kilitler
+        if perl -c "$PERL_DST" 2>&1 | grep -qi "syntax ok"; then
+            log "✓ Perl script kopyalandı ve syntax kontrol OK"
+            if systemctl is-active --quiet mailshield-logtail 2>/dev/null; then
+                systemctl restart mailshield-logtail
+                log "✓ mailshield-logtail servisi restart edildi"
+            fi
+        else
+            log "❌ Perl syntax hatası, script kopyalanmadı — logu kontrol edin"
+            perl -c "$PERL_DST" 2>&1 | tail -5 | tee -a "$LOG_FILE"
+        fi
+    else
+        log "✓ Perl logtail script zaten güncel"
+    fi
+fi
+
 # 4. Docker rebuild
 cd deployment
 docker compose up -d --build > /tmp/compose-build.log 2>&1

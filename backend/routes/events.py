@@ -197,6 +197,28 @@ async def ingest_event(evt: MailEvent, request: Request):
     doc["id"] = str(uuid.uuid4())
     doc["ts"] = doc.get("ts") or datetime.now(timezone.utc).isoformat()
     doc["ingested_at"] = datetime.now(timezone.utc).isoformat()
+    # ---- AUTO TZ CORRECTION ---------------------------------------------
+    # Perl script'in eski versiyonu Exim log lokal saatini alıp yanlış "+00:00"
+    # ile postluyordu. Yeni versiyon bunu düzeltir ama geçiş süresinde ve
+    # deploy edilmemiş sunucular için otomatik correction:
+    #   Eğer ts, server now_utc'sinden > 30dk ileri ise, tam saat offset
+    #   olarak yorumla ve UTC'ye geri çek. Böylece kullanıcı 3sa ileri saat
+    #   görmez, deploy sonrası da double-correction olmaz.
+    try:
+        ts_dt = datetime.fromisoformat(str(doc["ts"]).replace("Z", "+00:00"))
+        if ts_dt.tzinfo is None:
+            ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        diff_min = (ts_dt - now_utc).total_seconds() / 60.0
+        if 30 < diff_min < 720:  # 30dk - 12sa arası ileri → offset hatası
+            offset_hours = round(diff_min / 60.0)
+            from datetime import timedelta as _td
+            corrected = ts_dt - _td(hours=offset_hours)
+            doc["ts"] = corrected.astimezone(timezone.utc).isoformat()
+            doc["ts_auto_corrected"] = f"shifted_-{offset_hours}h"
+    except Exception:
+        pass
+    # ---------------------------------------------------------------------
     # Subject Türkçe karakter safety-net: MIME encoded-word decode (Perl kaçırırsa).
     # =?UTF-8?B?...?= veya =?UTF-8?Q?...?= gibi header'ları Türkçe UTF-8'e çevir.
     if doc.get("subject") and "=?" in doc["subject"]:
