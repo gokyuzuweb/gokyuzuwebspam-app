@@ -447,6 +447,8 @@ export const api = {
     client.get("/maintenance/trust-score/history", { params: { days } }).then(r => r.data),
   publicBlockedStats: (region = "all") =>
     client.get("/maintenance/public/blocked-stats", { params: { region } }).then(r => r.data),
+  publicSalesToday: () =>
+    client.get("/maintenance/public/sales-today").then(r => r.data),
 
   // Whitelist management
   whitelistList: () => client.get("/maintenance/whitelist/list").then(r => r.data),

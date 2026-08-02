@@ -688,3 +688,91 @@ async def ip_status(ip: str = Query(..., min_length=7)):
         "total_events": events, "spam_events": spam_events,
         "list_entry": listed, "ioc_entry": ioc,
     }
+
+
+
+# ============================================================================
+# PUBLIC LANDING: Bugün satın alan kişi sayacı (bot destekli social proof)
+# ============================================================================
+@router.get("/public/sales-today")
+async def public_sales_today():
+    """Landing için 'Bugün X kişi lisans aldı' sayacı.
+    Gerçek satışlar + bot-şişirme kombine edilir (satış kanıtı için).
+
+    Formül:
+      base = 8-14 (günlük tohum ile sabit)
+      time_curve = 0-1 (gün ilerledikçe artar, akşam ~19'da doruk)
+      inflated_today = base + time_curve × (25-45)
+      final = max(gerçek_satış, inflated_today)
+    """
+    import hashlib
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    tr_now = now  # UTC; TR+3 zaten kabaca aynı gün
+    hour = tr_now.hour + tr_now.minute / 60
+
+    # Gerçek bugünkü satış (DB'den)
+    today_start = tr_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        real_today = await db.licenses.count_documents({
+            "created_at": {"$gte": today_start.isoformat()}
+        })
+    except Exception:
+        real_today = 0
+
+    # Günlük tohum → aynı gün boyunca aynı base + hedef sayı
+    day_seed = int(hashlib.md5(tr_now.strftime("%Y-%m-%d").encode()).hexdigest()[:8], 16)
+    base = 8 + (day_seed % 7)  # 8-14
+    daily_target_max = 32 + (day_seed >> 8) % 18  # 32-49
+
+    # Zaman eğrisi: gece 00:00'da 0, akşam 19:00'da 1
+    time_factor = min(1.0, max(0.0, hour / 19.0))
+    inflated_today = base + int(time_factor * daily_target_max)
+
+    # Dakika bazlı küçük dalgalanma
+    min_seed = int(hashlib.md5(tr_now.strftime("%Y-%m-%d %H:%M").encode()).hexdigest()[:6], 16)
+    jitter = min_seed % 3
+    inflated_today += jitter
+
+    # Gerçek satışların altına düşmesin
+    sales_today = max(real_today, inflated_today)
+
+    # Haftalık ve aylık şişirme (satış momentumu)
+    sales_week = sales_today * (5 + (day_seed >> 4) % 3)  # ~5-7 gün
+    sales_month = sales_today * (24 + (day_seed >> 12) % 6)  # ~24-29 gün
+
+    # Son satın alanlar (fake, sosyal kanıt için)
+    turkish_names = [
+        "Ahmet Y.", "Mehmet K.", "Ayşe D.", "Fatma A.", "Mustafa Ö.",
+        "Emre B.", "Zeynep T.", "Elif Ç.", "Ali H.", "Selin M.",
+        "Burak V.", "Deniz S.", "Cem G.", "Merve L.", "Kerem P.",
+        "Hakan U.", "İpek R.", "Onur E.", "Sude N.", "Furkan İ.",
+    ]
+    cities = [
+        "İstanbul", "Ankara", "İzmir", "Bursa", "Antalya",
+        "Konya", "Adana", "Gaziantep", "Kayseri", "Samsun",
+        "Trabzon", "Diyarbakır", "Eskişehir", "Kocaeli", "Mersin",
+    ]
+    plans = ["Starter", "Pro", "Enterprise"]
+
+    recent = []
+    for i in range(6):
+        # Her satıra farklı hash (isim + şehir + plan + süre çeşitliliği için)
+        row_hash = int(hashlib.md5(f"{day_seed}-{min_seed}-buyer-{i}".encode()).hexdigest()[:12], 16)
+        recent.append({
+            "name": turkish_names[row_hash % len(turkish_names)],
+            "city": cities[(row_hash >> 8) % len(cities)],
+            "plan": plans[(row_hash >> 16) % len(plans)],
+            "minutes_ago": 2 + (row_hash >> 24) % 58,  # 2-59 dk önce
+        })
+    # Zamana göre sırala (yakın olan üstte)
+    recent.sort(key=lambda x: x["minutes_ago"])
+
+    return {
+        "sales_today": sales_today,
+        "sales_this_week": sales_week,
+        "sales_this_month": sales_month,
+        "recent_buyers": recent,
+        "generated_at": tr_now.isoformat(),
+    }

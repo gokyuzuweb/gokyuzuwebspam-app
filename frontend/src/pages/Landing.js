@@ -463,6 +463,9 @@ function Hero() {
             <Link to="/panel" data-testid="hero-cta-demo" className="inline-flex items-center gap-2 px-5 py-3 rounded-md border border-slate-700 bg-slate-900/60 text-slate-100 hover:border-slate-600 hover:bg-slate-800/60 transition-all">
               <Rocket className="w-4 h-4" /> {s.cta_secondary}
             </Link>
+            <Link to="/install" data-testid="hero-cta-install" className="inline-flex items-center gap-2 px-5 py-3 rounded-md border border-amber-500/30 bg-amber-500/5 text-amber-200 hover:border-amber-500/60 hover:bg-amber-500/10 transition-all">
+              <Terminal className="w-4 h-4" /> Kurulum Kılavuzu
+            </Link>
             <Link to="/panel/docs" className="inline-flex items-center gap-2 px-5 py-3 rounded-md text-slate-400 hover:text-slate-100 transition-colors">
               Dokümantasyon <ArrowRight className="w-3 h-3"/>
             </Link>
@@ -861,6 +864,77 @@ function Footer() {
   );
 }
 
+function SalesTodayBanner() {
+  const q = useQuery({
+    queryKey: ["landing-sales-today"],
+    queryFn: () => api.publicSalesToday(),
+    refetchInterval: 45000,   // her 45sn'de yenile (fake ticker)
+    staleTime: 30000,
+  });
+  const d = q.data || {};
+  const [tick, setTick] = useState(0);
+  // Buyer carousel ilerlet
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 4000);
+    return () => clearInterval(id);
+  }, []);
+  const buyers = d.recent_buyers || [];
+  const current = buyers.length > 0 ? buyers[tick % buyers.length] : null;
+  const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
+
+  return (
+    <div data-testid="landing-sales-today" className="mb-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+      {/* Bugün satın alanlar */}
+      <div className="col-span-1 md:col-span-1 rounded-lg border border-emerald-500/40 bg-gradient-to-br from-emerald-500/15 to-emerald-500/5 px-3 py-2.5">
+        <div className="flex items-center gap-2 text-[9px] uppercase tracking-widest text-emerald-300 mono font-bold mb-1">
+          <span className="relative flex w-2 h-2">
+            <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-70 animate-ping"/>
+            <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500"/>
+          </span>
+          Bugün Satın Alanlar
+        </div>
+        <div className="flex items-baseline gap-1.5">
+          <span data-testid="sales-today-count" className="text-2xl font-bold text-emerald-100 mono leading-none">{nfmt(d.sales_today || 0)}</span>
+          <span className="text-[11px] text-emerald-300/70">kişi</span>
+        </div>
+        <div className="text-[9px] text-emerald-300/60 mt-0.5">
+          Bu hafta <span className="text-emerald-200 mono">{nfmt(d.sales_this_week || 0)}</span> · Bu ay <span className="text-emerald-200 mono">{nfmt(d.sales_this_month || 0)}</span>
+        </div>
+      </div>
+
+      {/* Son satın alan bilgi kartı (rotating) */}
+      <div className="col-span-1 md:col-span-2 rounded-lg border border-indigo-500/30 bg-slate-950/40 px-3 py-2.5 flex items-center gap-3 overflow-hidden">
+        {current ? (
+          <>
+            <div className="shrink-0 w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/30 border border-indigo-500/40 flex items-center justify-center text-sm font-bold text-indigo-100">
+              {current.name.charAt(0)}
+            </div>
+            <div className="flex-1 min-w-0" key={tick}>
+              <div className="text-[11px] text-slate-300 truncate animate-in fade-in duration-500">
+                <b className="text-slate-100">{current.name}</b>
+                <span className="text-slate-500"> · </span>
+                <span className="text-slate-400">{current.city}</span>
+                <span className="text-slate-500"> aldı: </span>
+                <span className={`mono font-bold ${current.plan === "Enterprise" ? "text-fuchsia-300" : current.plan === "Pro" ? "text-indigo-300" : "text-emerald-300"}`}>{current.plan}</span>
+              </div>
+              <div className="text-[9px] text-slate-500 mono mt-0.5">
+                🕐 {current.minutes_ago} dakika önce · doğrulandı ✓
+              </div>
+            </div>
+            <div className="shrink-0 hidden sm:flex items-center gap-1 text-[9px] text-slate-500">
+              {[...Array(6)].map((_, i) => (
+                <span key={i} className={`w-1 h-1 rounded-full transition-colors ${(tick % 6) === i ? "bg-indigo-400" : "bg-slate-700"}`}/>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="text-[10px] text-slate-500 mono">Son satın alanlar yükleniyor...</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LiveBlockCounter() {
   const q = useQuery({
     queryKey: ["landing-blocked-stats"],
@@ -955,6 +1029,9 @@ function LiveBlockCounter() {
         <span className="text-[11px] uppercase tracking-widest text-rose-300 mono font-semibold">CANLI SİSTEM · GERÇEK ZAMANLI</span>
         <span className="text-[10px] text-slate-400 ml-auto">5sn otomatik yenileme · {d.active_licenses || 0} aktif lisans</span>
       </div>
+
+      {/* Sosyal kanıt: bugün satın alanlar */}
+      <SalesTodayBanner />
 
       {/* Metrik grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -1483,14 +1560,12 @@ function LicenseEntryModal() {
           <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"/>
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/60 border border-indigo-500/40 rounded-2xl overflow-hidden shadow-2xl shadow-indigo-500/30 animate-in fade-in zoom-in duration-300"
+            className="relative w-full max-w-md bg-slate-900 border border-indigo-500/40 rounded-2xl shadow-2xl shadow-indigo-500/30"
           >
             {/* Üstte parlayan gradient */}
             <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-indigo-400 to-transparent"/>
-            <div className="absolute -top-20 -right-20 w-40 h-40 bg-indigo-500/20 rounded-full blur-3xl"/>
-            <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-rose-500/10 rounded-full blur-3xl"/>
 
-            <div className="relative p-8">
+            <div className="p-6 sm:p-8">
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-[10px] font-bold uppercase tracking-widest text-indigo-300 mb-3">
@@ -1554,16 +1629,24 @@ function LicenseEntryModal() {
                   <span className="flex-1 h-px bg-slate-800"/>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   <a
                     href="/shop"
-                    className="text-center px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/50 text-slate-300 hover:border-emerald-500/40 hover:text-emerald-200 transition"
+                    data-testid="landing-modal-buy"
+                    className="text-center px-2 py-2 rounded-lg border border-slate-800 bg-slate-900/50 text-slate-300 hover:border-emerald-500/40 hover:text-emerald-200 transition"
                   >
                     🛒 Lisans Al
                   </a>
                   <a
+                    href={key && key.startsWith("MS-") ? `/install?key=${encodeURIComponent(key)}` : "/install"}
+                    data-testid="landing-modal-install"
+                    className="text-center px-2 py-2 rounded-lg border border-slate-800 bg-slate-900/50 text-slate-300 hover:border-amber-500/40 hover:text-amber-200 transition"
+                  >
+                    🖥️ Kurulum
+                  </a>
+                  <a
                     href="mailto:destek@gokyuzubilgisayar.com"
-                    className="text-center px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/50 text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200 transition"
+                    className="text-center px-2 py-2 rounded-lg border border-slate-800 bg-slate-900/50 text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200 transition"
                   >
                     💬 Yardım
                   </a>

@@ -24,6 +24,7 @@ import UsersPage from "@/pages/Users";
 import LogsPage from "@/pages/Logs";
 import Outbound from "@/pages/Outbound";
 import Install from "@/pages/Install";
+import PublicInstall from "@/pages/PublicInstall";
 import Notifications from "@/pages/Notifications";
 import Reports from "@/pages/Reports";
 import Licenses from "@/pages/Licenses";
@@ -233,6 +234,7 @@ export default function App() {
             <Route path="/shop" element={<Shop />} />
             <Route path="/checkout/success" element={<CheckoutSuccess />} />
             <Route path="/reseller" element={<Reseller />} />
+            <Route path="/install" element={<PublicInstall />} />
             <Route path="/panel/*" element={<><Shell /><LicenseGate /></>} />
             {/* Legacy redirects — old panel URLs → /panel */}
             <Route path="/quarantine" element={<Navigate to="/panel/quarantine" replace />} />

@@ -46,7 +46,14 @@ function Step({ n, title, children }) {
 
 export default function Install() {
   const t = useT();
-  const info = useQuery({ queryKey: ["plugin-install-info"], queryFn: () => api.pluginInstallInfo() });
+  // URL'den lisans anahtarı okunursa kurulum komutuna otomatik eklenir
+  // (public paylaşımlı link: /panel/install?key=MS-XXXX veya /install?key=MS-XXXX)
+  const urlKey = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("key") : null;
+  const info = useQuery({
+    queryKey: ["plugin-install-info", urlKey],
+    queryFn: () => api.pluginInstallInfo(urlKey),
+  });
   const [variant, setVariant] = useState("wget");
   const oneLiner = variant === "wget" ? info.data?.wget_one_liner : info.data?.curl_one_liner;
 
