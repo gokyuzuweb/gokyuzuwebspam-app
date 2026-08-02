@@ -2932,6 +2932,36 @@ async def licenses_delete(lid: str):
     return {"deleted": True}
 
 
+@api.post("/licenses/{lid}/update")
+async def licenses_update_post(lid: str, payload: LicenseIn):
+    """POST alternatifi — cPanel/Apache/WAF ortamlarında PUT bloklu olabildiği
+    için birebir aynı işlemi POST üzerinden sunar."""
+    return await licenses_update(lid, payload)
+
+
+@api.post("/licenses/{lid}/delete")
+async def licenses_delete_post(lid: str):
+    """POST alternatifi — DELETE method'u proxy/WAF tarafından bloklu olabilir.
+    Bu endpoint aynı silme işlemini POST ile yapar."""
+    return await licenses_delete(lid)
+
+
+@api.post("/licenses/{lid}/toggle-active")
+async def licenses_toggle_active(lid: str, request: Request, license_key: Optional[str] = None):
+    """Tek tıkla aktif/pasif — mevcut durumu tersine çevirir. WAF-safe POST."""
+    await _require_master(request, license_key)
+    doc = await db.licenses.find_one({"id": lid}, {"_id": 0, "active": 1})
+    if not doc:
+        raise HTTPException(404, "Lisans bulunamadı")
+    new_active = not doc.get("active", True)
+    await db.licenses.update_one({"id": lid}, {"$set": {"active": new_active}})
+    await db.logs.insert_one(ActivityLog(
+        source="license", level="info",
+        message=f"Lisans {lid[:8]}… → {'aktif' if new_active else 'pasif'}",
+    ).model_dump())
+    return {"ok": True, "id": lid, "active": new_active}
+
+
 class BulkLicenseAction(BaseModel):
     ids: List[str]
     action: Literal["delete", "suspend", "activate"] = "delete"

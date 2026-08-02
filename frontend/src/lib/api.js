@@ -224,8 +224,11 @@ export const api = {
   // Licenses
   licenses: () => client.get("/licenses").then(r => r.data),
   licenseAdd: (payload) => client.post("/licenses", payload).then(r => r.data),
-  licenseUpdate: (id, payload) => client.put(`/licenses/${id}`, payload).then(r => r.data),
-  licenseDelete: (id) => client.delete(`/licenses/${id}`).then(r => r.data),
+  // NOT: cPanel/Apache/WAF ortamlarında DELETE/PUT method'ları bloklu olabilir
+  // ("proxy_pass" düzgün çalışsa bile bazı proxy'ler bu method'ları drop eder).
+  // Bu yüzden POST alternatiflerini kullanıyoruz — backend her ikisini de destekler.
+  licenseUpdate: (id, payload) => client.post(`/licenses/${id}/update`, payload).then(r => r.data),
+  licenseDelete: (id) => client.post(`/licenses/${id}/delete`).then(r => r.data),
   licensesBulkAction: (ids, action) =>
     client.post(`/licenses/bulk-action`, { ids, action }).then(r => r.data),
   licensesFixIds: () => client.post(`/licenses/fix-missing-ids`).then(r => r.data),
