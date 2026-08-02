@@ -38,8 +38,19 @@ fi
 
 log "🔄 Yeni sürüm bulundu: ${LATEST:0:8}"
 
+# 2b. Yerel conflict'leri temizle (sunucuda manuel edit varsa)
+if ! git diff --quiet HEAD; then
+    log "⚠ Yerel değişiklikler tespit edildi, otomatik stash'leniyor..."
+    git stash push -m "auto-update-stash-$(date +%s)" --quiet || true
+    log "✓ Yerel değişiklikler geçici olarak saklandı (git stash list ile görebilirsiniz)"
+fi
+
 # 3. Pull et
-git pull origin main --quiet
+if ! git pull origin main --quiet; then
+    log "❌ Pull hatası — manuel müdahale gerekiyor"
+    log "   Denemek için: cd $APP_DIR && git status"
+    exit 1
+fi
 log "✓ Kod indirildi"
 
 # 4. Docker rebuild
