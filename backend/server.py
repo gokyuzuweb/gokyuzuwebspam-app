@@ -1932,16 +1932,18 @@ async def admin_master_unlock(payload: MasterUnlockIn, request: Request):
         upsert=True,
     )
     resp = {"ok": True, "valid_until": valid_until, "token": token}
-    # Set as HttpOnly-ish cookie (we let JS read it too since our SPA runs in same origin)
+    # Cross-origin iframe (WHM plugin) için cookie flag'leri:
+    # samesite='none' + secure=True → tarayıcı cross-site iframe'den de cookie gönderir.
+    # Bu olmadan WHM iframe içindeki panel PUT/DELETE isteklerinde cookie gitmez → 423.
     from fastapi.responses import JSONResponse
     r_ = JSONResponse(resp)
     r_.set_cookie(
         key="gws_master_session",
         value=token,
         max_age=30 * 86400,
-        samesite="lax",
-        httponly=False,
-        secure=True,
+        samesite="none",   # cross-site cookie için gerekli
+        httponly=True,     # XSS koruması — sadece HTTP request'lerde okunur
+        secure=True,       # samesite=none HTTPS zorunlu
         path="/",
     )
     return r_
@@ -4215,7 +4217,12 @@ async def demo_write_guard(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    # allow_origins=["*"] + allow_credentials=True kombinasyonu tarayıcıda cookie
+    # bazlı auth'u kırar. Env'de CORS_ORIGINS yoksa allow_origin_regex=".*" ile
+    # tüm origin'leri kabul et — starlette bu durumda Access-Control-Allow-Origin
+    # header'ında istek origin'ini geri yansıtır ve cookie düzgün akar.
+    allow_origins=(os.environ.get("CORS_ORIGINS", "").split(",") if os.environ.get("CORS_ORIGINS") else []),
+    allow_origin_regex=(None if os.environ.get("CORS_ORIGINS") else ".*"),
     allow_methods=["*"],
     allow_headers=["*"],
 )
