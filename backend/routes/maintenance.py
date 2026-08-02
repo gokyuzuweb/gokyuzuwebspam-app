@@ -28,7 +28,7 @@ DATA_COLS = [
     "logs", "ai_explanations", "ai_narrations", "ai_weekly_reports",
     "docs_qa_log", "module_qa_log", "dmarc_reports", "threat_iocs",
     "delist_requests", "outbound_queue", "notifications_history",
-    "reseller_logins",
+    "reseller_logins", "license_violations", "violations",
 ]
 SETTINGS_COLS = [
     "settings", "licenses", "users", "engines", "rules", "lists",
@@ -183,6 +183,27 @@ async def auto_cleanup_run_now():
     from datetime import timedelta
     r = await _run_auto_cleanup_once()
     return r
+
+
+@router.post("/violations/auto-cleanup")
+async def violations_auto_cleanup(days: int = 7):
+    """7 günden eski lisans ihlallerini otomatik sil. Cron ile günlük tetiklenir.
+    Master paneli üzerinden manuel de çağrılabilir: POST /api/maintenance/violations/auto-cleanup?days=7"""
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    q = {"$or": [{"at": {"$lt": cutoff}}, {"created_at": {"$lt": cutoff}}]}
+    r1 = await db.license_violations.delete_many(q)
+    r2 = await db.violations.delete_many(q)
+    total = r1.deleted_count + r2.deleted_count
+    if total:
+        await db.logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "source": "auto_cleanup",
+            "level": "info",
+            "message": f"Otomatik temizlik: {days} günden eski {total} lisans ihlali silindi",
+            "at": _iso(),
+        })
+    return {"deleted": total, "older_than_days": days, "ok": True}
 
 
 async def _run_auto_cleanup_once():
