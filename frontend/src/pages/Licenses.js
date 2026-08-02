@@ -14,6 +14,7 @@ import VersionPublishCard from "@/components/VersionPublishCard";
 import ResellerAdminPanel from "@/components/ResellerAdminPanel";
 import AdminOperationsCard from "@/components/AdminOperationsCard";
 import { useIsMaster } from "@/hooks/useIsMaster";
+import ErrorBoundary from "@/components/ErrorBoundary";
 
 /**
  * MasterUnlockButton — one-time master session bootstrap.
@@ -239,6 +240,14 @@ function VersionCard() {
 }
 
 export default function Licenses() {
+  return (
+    <ErrorBoundary label="Lisans Yönetimi">
+      <LicensesInner />
+    </ErrorBoundary>
+  );
+}
+
+function LicensesInner() {
   const qc = useQueryClient();
   const { isMaster, isLoading: masterLoading, clientIp, masterIp } = useIsMaster();
   const licenses = useQuery({ queryKey: ["licenses"], queryFn: api.licenses, refetchInterval: 20000, enabled: isMaster });
@@ -631,6 +640,7 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
                           return next;
                         });
                       }}
+                      style={{ minWidth: 16, minHeight: 16, cursor: "pointer" }}
                       className="w-4 h-4 accent-indigo-500 cursor-pointer"
                     />
                   </td>
