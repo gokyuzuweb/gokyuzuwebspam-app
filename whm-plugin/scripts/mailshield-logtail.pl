@@ -91,6 +91,8 @@ while (1) {
 }
 
 our ($_processed, $_matched) = (0, 0);
+# event_id -> exim_mid map path (top-level init'den önce başka yerlerde kullanılıyor)
+my $MID_MAP = '/var/lib/mailshield/event-mid.map';
 
 sub _process_line {
     my ($line) = @_;
@@ -365,7 +367,6 @@ sub _poll_and_execute_actions {
 }
 
 # event_id -> exim_mid map, sonradan lookup icin diske yaz
-my $MID_MAP = '/var/lib/mailshield/event-mid.map';
 sub _remember_mid {
     my ($event_id, $mid) = @_;
     return unless $event_id && $mid;
