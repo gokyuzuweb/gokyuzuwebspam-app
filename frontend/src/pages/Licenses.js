@@ -513,7 +513,7 @@ function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, s
 
 function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPlanFilter,
                               statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onDelete,
-                              selectedIds, setSelectedIds, bulkAction, onFixIds }) {
+                              selectedIds = new Set(), setSelectedIds = () => {}, bulkAction, onFixIds }) {
   return (
     <Card>
       {/* Search + Filter bar */}

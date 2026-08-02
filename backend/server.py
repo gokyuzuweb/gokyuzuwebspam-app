@@ -4081,6 +4081,11 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/auth/",              # oturum
     "/api/invoices/",          # fatura akışı
     "/api/shop",               # mağaza
+    "/api/events/ingest",      # Exim milter'dan mail event ingest (license_key ile doğrulanır)
+    "/api/events/action",      # milter/logtail action reporting
+    "/api/mail/ingest",        # alternatif mail ingest
+    "/api/heartbeat",          # plugin heartbeat (license_key ile doğrulanır)
+    "/api/threat/report",      # threat feed report
 )
 
 
