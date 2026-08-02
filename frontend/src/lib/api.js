@@ -4,9 +4,11 @@ import { toast } from "sonner";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
-const client = axios.create({ baseURL: API, timeout: 20000 });
+// Cookie-based master session için withCredentials — gws_master_session
+// cookie'sinin cross-origin isteklerde otomatik gönderilmesini sağlar.
+const client = axios.create({ baseURL: API, timeout: 20000, withCredentials: true });
 // LLM-backed endpoints can take 30-60s (Claude / GPT / Gemini reasoning)
-const llmClient = axios.create({ baseURL: API, timeout: 90000 });
+const llmClient = axios.create({ baseURL: API, timeout: 90000, withCredentials: true });
 
 // Master anahtarını her istekle X-Master-Key header'ında gönder.
 // Öncelik: gws.master_license (backend whoami tarafından set edilir) →
@@ -73,6 +75,9 @@ export const api = {
     client.get("/events/by-server", { params: { license_key: licenseKey } }).then(r => r.data),
   logtailStatus: (licenseKey) =>
     client.get("/events/logtail-status", { params: { license_key: licenseKey } }).then(r => r.data),
+  logSourceGet: () => client.get("/plugin/log-source").then(r => r.data),
+  logSourceSet: (mode, licenseKey) =>
+    client.post("/plugin/log-source", { mode, license_key: licenseKey }).then(r => r.data),
   eventGet: (licenseKey, eventId) =>
     client.get(`/events/${eventId}`, { params: { license_key: licenseKey } }).then(r => r.data),
   eventMarkSpam: (licenseKey, eventId) =>

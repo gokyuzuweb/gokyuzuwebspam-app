@@ -1,0 +1,33 @@
+{
+  "summary": "Backend-only tests for v30+3 backlog items: (1) cookie-based master session via /api/admin/master-unlock, (2) log-source selector GET/POST /api/plugin/log-source, (3) Turkish double-encoded UTF-8 mojibake auto-fix in /api/events/ingest. Created new pytest file with 10 tests covering all 11 requested scenarios. All 10 tests PASS.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v19_master_cookie_logsrc_mojibake.py",
+    "/app/test_reports/pytest/v19_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "demo_write_guard returns HTTP 423 (Locked) for demo-mode blocked writes — non-standard but semantically defensible; documented in code. Tests now accept 401/403/423.",
+    "server.py is ~4222 lines — recommend splitting license/master/plugin/log-source endpoints into their own routers modules.",
+    "master-unlock cookie is httponly=False so JS can read it. Since same-origin SPA, consider HttpOnly=True + rely purely on withCredentials to reduce XSS blast radius.",
+    "log-source POST accepts license_key both in body AND X-Master-Key header — pick one canonical channel to reduce ambiguity."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v19_master_cookie_logsrc_mojibake.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "N/A (frontend testing skipped per request)"},
+  "test_credentials": "Master license key: MS-C02AB012652A4FE692D69676 (from request; matches env MASTER_LICENSE_KEY)",
+  "seed_data_creation": "Test creates+deletes a TEST_cookie_lic license inside the cookie-flow test; ingests one MailEvent (subject 'HAZAL AMBALAJ iÃ§in fiyat teklifi') under master license which remains in mail_events collection (small, cheap). log_source_mode is toggled to 'exim' then reset to 'auto' during test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New test file at /app/backend/tests/test_v19_master_cookie_logsrc_mojibake.py. To run: `REACT_APP_BACKEND_URL=<url> pytest backend/tests/test_v19_master_cookie_logsrc_mojibake.py -v`. Verified all 3 v19 features: (a) POST /api/admin/master-unlock issues 30-day gws_master_session cookie and this cookie alone bypasses demo_write_guard for POST/PUT/DELETE /api/licenses; whoami reports via_cookie=true. (b) GET /api/plugin/log-source defaults to 'auto' with description dict; POST without master → 403; invalid mode → 422; POST with X-Master-Key sets and persists. (c) /api/events/ingest fixes 'iÃ§in' → 'için' automatically and sets subject_double_decoded=true. Events list is sorted DESC by ts.",
+  "rca of the issue": "N/A — all target features passing."
+}

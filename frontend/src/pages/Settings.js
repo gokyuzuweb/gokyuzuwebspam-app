@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages } from "lucide-react";
+import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages, Server, ShieldCheck, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -34,6 +34,73 @@ function Toggle({ checked, onChange, testid }) {
         }`}
       />
     </button>
+  );
+}
+
+function LogSourceCard() {
+  const qc = useQueryClient();
+  const licenseKey = typeof window !== "undefined"
+    ? (localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license") || "")
+    : "";
+  const q = useQuery({ queryKey: ["log-source"], queryFn: api.logSourceGet });
+  const save = useMutation({
+    mutationFn: (mode) => api.logSourceSet(mode, licenseKey),
+    onSuccess: (d) => {
+      toast.success(`Log kaynağı '${d.mode}' olarak kaydedildi`, {
+        description: "Sunucuda 'systemctl restart mailshield-logtail' çalıştırın",
+        duration: 6000,
+      });
+      qc.invalidateQueries({ queryKey: ["log-source"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Kayıt başarısız"),
+  });
+  const current = q.data?.mode || "auto";
+  const options = [
+    { mode: "auto",        Icon: Zap,         label: "Otomatik (önerilir)",
+      desc: "MailScanner varsa onu, yoksa Exim'i kullan. En esnek." },
+    { mode: "exim",        Icon: Server,      label: "Sadece Exim mainlog",
+      desc: "Yerel WHM sunucusu — MailScanner kurulu değilse veya bağımsız çalışmak istersen." },
+    { mode: "mailscanner", Icon: ShieldCheck, label: "Sadece MailScanner",
+      desc: "ConfigServer MSFE ile birebir parite. MailScanner header'ları kullanılır." },
+  ];
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><Server className="w-4 h-4 text-indigo-400"/> Log Kaynağı · Mail Trafik Toplama</span>}
+        subtitle="GökyüzüWebSpam'in mail olaylarını hangi log/spool'dan okuyacağını seçin. MailScanner opsiyoneldir."
+      />
+      <CardBody className="space-y-3" data-testid="log-source-card">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {options.map(({ mode, Icon, label, desc }) => (
+            <button
+              key={mode}
+              data-testid={`log-source-${mode}`}
+              onClick={() => save.mutate(mode)}
+              disabled={save.isPending}
+              className={`text-left p-3 rounded-lg border transition-colors ${
+                current === mode
+                  ? "border-indigo-500/60 bg-indigo-500/15 text-indigo-100"
+                  : "border-slate-800 bg-slate-950/40 text-slate-300 hover:border-slate-700"
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <Icon className={`w-4 h-4 ${current === mode ? "text-indigo-300" : "text-slate-500"}`}/>
+                <span className="text-sm font-semibold">{label}</span>
+                {current === mode && (
+                  <span className="ml-auto text-[10px] mono px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300">AKTİF</span>
+                )}
+              </div>
+              <div className="text-[11px] text-slate-400 leading-relaxed">{desc}</div>
+            </button>
+          ))}
+        </div>
+        <div className="text-[11px] text-slate-500 bg-slate-900/60 rounded p-2 border border-slate-800">
+          <b className="text-amber-300">Not:</b> Değişiklik sunucudaki Perl daemon'un yeniden başlatılmasıyla aktif olur.
+          Ayar kaydedildikten sonra sunucunuzda şu komutu çalıştırın: <br/>
+          <code className="mono text-emerald-300">systemctl restart mailshield-logtail</code>
+        </div>
+      </CardBody>
+    </Card>
   );
 }
 
@@ -96,6 +163,8 @@ export default function SettingsPage() {
             </div>
           </CardBody>
         </Card>
+
+        <LogSourceCard />
 
         <Card>
           <CardHeader

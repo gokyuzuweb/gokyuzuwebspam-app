@@ -3518,6 +3518,45 @@ async def plugin_status():
     return await _plugin_status_payload()
 
 
+class LogSourceIn(BaseModel):
+    mode: Literal["exim", "mailscanner", "auto"] = "auto"
+    license_key: Optional[str] = None
+
+
+@api.get("/plugin/log-source")
+async def plugin_log_source_get():
+    """WHM sunucusu Exim log'u mu, MailScanner spool'unu mu, ya da her ikisini
+    (auto) mu kullansın — bu ayar Perl script tarafından startup'ta okunur.
+    'exim' → sadece /var/log/exim_mainlog (bağımsız, MailScanner gerektirmez)
+    'mailscanner' → sadece MailScanner spool + SpamCheck header'ları
+    'auto' → ikisini birden (varsa MailScanner, yoksa Exim) — DEFAULT
+    """
+    row = await db.settings.find_one({"_key": "log_source_mode"}, {"_id": 0}) or {}
+    return {
+        "mode": row.get("mode", "auto"),
+        "description": {
+            "exim":        "Sadece Exim mainlog — MailScanner kurulu olmayan sunucular için",
+            "mailscanner": "Sadece MailScanner spool — ConfigServer MSFE ile birebir parite",
+            "auto":        "Otomatik: MailScanner varsa onu, yoksa Exim'i kullan (önerilir)",
+        },
+        "updated_at": row.get("updated_at"),
+    }
+
+
+@api.post("/plugin/log-source")
+async def plugin_log_source_set(payload: LogSourceIn, request: Request):
+    """Sadece master anahtarı bu ayarı değiştirebilir."""
+    await _require_master(request, payload.license_key)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.settings.update_one(
+        {"_key": "log_source_mode"},
+        {"$set": {"_key": "log_source_mode", "mode": payload.mode, "updated_at": now}},
+        upsert=True,
+    )
+    return {"ok": True, "mode": payload.mode, "updated_at": now,
+            "note": "Perl script bir sonraki restart'ta yeni modu kullanır (systemctl restart mailshield-logtail)"}
+
+
 class VerifyLicenseIn(BaseModel):
     license_key: Optional[str] = None
     ip: Optional[str] = None  # public IP of the plugin host

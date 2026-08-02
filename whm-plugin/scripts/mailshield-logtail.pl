@@ -57,6 +57,20 @@ my $host    = Sys::Hostname::hostname();
 my $TZ_OFFSET = $cfg{logtail}{timezone_offset} // _compute_tz_offset();
 warn "[GWS-logtail] tz_offset=$TZ_OFFSET (Exim log lokal saat kullanır, ISO timestamp bu offset ile üretilir)\n";
 
+# Log kaynağı modu — backend GET /api/plugin/log-source'dan startup'ta okunur.
+# Değerler: 'exim' (sadece Exim), 'mailscanner' (sadece MailScanner spool),
+# 'auto' (ikisini birden — default).
+# Env override: MAILSHIELD_LOG_SOURCE=exim|mailscanner|auto
+our $LOG_SOURCE_MODE = $ENV{MAILSHIELD_LOG_SOURCE} || 'auto';
+if (!$ENV{MAILSHIELD_LOG_SOURCE}) {
+    # Backend'den son ayarı çek — sadece startup'ta bir kez.
+    my $resp = qx(curl -sS --max-time 4 "$server/api/plugin/log-source" 2>/dev/null);
+    if ($resp && $resp =~ /"mode"\s*:\s*"(exim|mailscanner|auto)"/) {
+        $LOG_SOURCE_MODE = $1;
+    }
+}
+warn "[GWS-logtail] log_source_mode = $LOG_SOURCE_MODE\n";
+
 _mkdirp('/var/lib/mailshield');
 
 my $pos = -e $posfile ? do { local(@ARGV,$/) = ($posfile); my $x = <>; chomp($x); $x } : undef;

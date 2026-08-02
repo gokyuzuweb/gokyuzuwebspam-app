@@ -32,6 +32,26 @@ export function useIsMaster() {
       } catch (_) {}
     }
   }, [q.data?.is_master, q.data?.master_key]);
+  // Cookie-based master session: is_master doğrulanınca (ve session yoksa)
+  // /api/admin/master-unlock'u otomatik çağırıp 30-günlük gws_master_session
+  // cookie'sini al. Bu cookie tüm PUT/DELETE isteklerinde otomatik gider ve
+  // demo_write_guard'ı geçer — localStorage/header/proxy sorunlarından bağımsız.
+  useEffect(() => {
+    if (!q.data?.is_master || !q.data?.master_key) return;
+    // Cookie zaten varsa tekrar unlock etme
+    try {
+      if (document.cookie.split(";").some((c) => c.trim().startsWith("gws_master_session="))) {
+        return;
+      }
+    } catch (_) {}
+    (async () => {
+      try {
+        await api.masterUnlock(q.data.master_key);
+      } catch (e) {
+        // sessizce geç — ip mismatch olabilir, sonraki whoami'de tekrar denenir
+      }
+    })();
+  }, [q.data?.is_master, q.data?.master_key]);
   return {
     isMaster: !!q.data?.is_master,
     ipMatch:  !!q.data?.ip_match,
