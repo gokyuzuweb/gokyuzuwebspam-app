@@ -266,6 +266,12 @@ export const api = {
   // Bayi sunucu kayıt
   bayiRegisterServer: (payload) => client.post("/bayi/register-server", payload).then(r => r.data),
   bayiMyServer: () => client.get("/bayi/my-server").then(r => r.data),
+  // Master Stripe config
+  adminStripeConfig: (licenseKey) =>
+    client.get("/admin/stripe-config", { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminStripeConfigSave: (apiKey, licenseKey) =>
+    client.post("/admin/stripe-config", { api_key: apiKey },
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
   adminBayiServers: (licenseKey) =>
     client.get("/admin/bayi-servers",
       { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),

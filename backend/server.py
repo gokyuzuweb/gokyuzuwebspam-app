@@ -4780,17 +4780,15 @@ async def bayi_register_server(payload: BayiServerIn, request: Request,
 
 @api.get("/bayi/my-server")
 async def bayi_my_server(request: Request, license_key: Optional[str] = None):
-    """Bayi kendi kayıtlı sunucu bilgilerini + install komutlarını görür."""
+    """Bayi kendi kayıtlı sunucu bilgilerini + install komutlarını görür.
+    Ek olarak `verification` kısmı son 24s ingest edilen mail sayısını + son ingest
+    zamanını döner — bayi kurulum sonrası widget'ta canlı sayaç gösterir."""
     scope = await _tenant_scope(request, license_key)
     owner = scope["owner_license_key"]
     if not owner:
-        return {"server": None, "install": None}
+        return {"server": None, "install": None, "verification": None}
     doc = await db.bayi_servers.find_one({"owner_license_key": owner}, {"_id": 0})
-    # Master backend URL — bayi script'lerinde kullanılacak
-    master_api = os.environ.get("MASTER_PUBLIC_API_URL") or ""
-    if not master_api:
-        # request'ten türet
-        master_api = str(request.base_url).rstrip("/")
+    master_api = os.environ.get("MASTER_PUBLIC_API_URL") or str(request.base_url).rstrip("/")
     install = {
         "master_api_url": master_api,
         "license_key": owner,
@@ -4808,7 +4806,46 @@ async def bayi_my_server(request: Request, license_key: Optional[str] = None):
             f"-d '{{\"from\":\"test@example.com\",\"to\":\"you@bayi.com\",\"subject\":\"test\",\"verdict\":\"clean\"}}'"
         ),
     }
-    return {"server": doc, "install": install}
+    # Canlı doğrulama sayaçları
+    now = datetime.now(timezone.utc)
+    since_24h = (now - timedelta(hours=24)).isoformat()
+    since_1h = (now - timedelta(hours=1)).isoformat()
+    ingested_24h = await db.mail_events.count_documents(
+        {"license_key": owner, "ts": {"$gte": since_24h}}
+    )
+    ingested_1h = await db.mail_events.count_documents(
+        {"license_key": owner, "ts": {"$gte": since_1h}}
+    )
+    # Son ingest zamanı
+    last_ev = await db.mail_events.find_one(
+        {"license_key": owner}, {"_id": 0, "ts": 1, "ingested_at": 1},
+        sort=[("ts", -1)],
+    ) or {}
+    last_seen = last_ev.get("ts") or last_ev.get("ingested_at") or None
+    connected = False
+    minutes_since = None
+    if last_seen:
+        try:
+            last_dt = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+            minutes_since = int((now - last_dt).total_seconds() // 60)
+            connected = minutes_since < 10  # son 10dk içinde event geldiyse "canlı"
+        except Exception:
+            pass
+    verification = {
+        "connected": connected,
+        "ingested_24h": ingested_24h,
+        "ingested_1h": ingested_1h,
+        "last_seen_at": last_seen,
+        "minutes_since_last": minutes_since,
+        "status": "live" if connected else ("stale" if ingested_24h > 0 else "not_started"),
+        "hint": (
+            "🟢 Log ajanı canlı — mailler geliyor" if connected else
+            f"🟡 Son ingest {minutes_since}dk önce (10dk üstü = ajan durmuş olabilir)"
+            if minutes_since is not None else
+            "🔴 Henüz ingest yok — kurulum komutunu WHM sunucunuzda çalıştırın"
+        ),
+    }
+    return {"server": doc, "install": install, "verification": verification}
 
 
 @api.get("/admin/bayi-servers")
@@ -5329,16 +5366,89 @@ class PaymentTransaction(BaseModel):
     metadata: dict = {}
 
 
+@api.get("/admin/stripe-config")
+async def admin_stripe_config_get(request: Request, license_key: Optional[str] = None):
+    """Master-only. Şu anki Stripe key mode'unu (test/live/emergent/none) döner.
+    Gerçek key değeri döndürülmez — sadece son 4 karakter + mode."""
+    await _require_master(request, license_key)
+    env_key = os.environ.get("STRIPE_API_KEY", "").strip()
+    stored = await db.settings.find_one({"_key": "stripe_config"}, {"_id": 0}) or {}
+    active_key = stored.get("api_key") or env_key
+    mode = "none"
+    if active_key:
+        if active_key == "sk_test_emergent":
+            mode = "emergent_sandbox"
+        elif active_key.startswith("sk_test_"):
+            mode = "test"
+        elif active_key.startswith("sk_live_"):
+            mode = "live"
+        else:
+            mode = "custom"
+    tail = active_key[-4:] if len(active_key) >= 4 else ""
+    return {
+        "mode": mode,
+        "source": "db" if stored.get("api_key") else "env",
+        "key_tail": tail,
+        "has_key": bool(active_key),
+        "updated_at": stored.get("updated_at"),
+    }
+
+
+class StripeConfigIn(BaseModel):
+    api_key: str
+    mode: Optional[str] = None  # info için
+
+
+@api.post("/admin/stripe-config")
+async def admin_stripe_config_set(payload: StripeConfigIn, request: Request,
+                                   license_key: Optional[str] = None):
+    """Master-only. Runtime Stripe API key'i günceller. DB'ye kaydeder → next
+    request'te (`_stripe_client` içinde) DB önceliği alır."""
+    await _require_master(request, license_key)
+    k = (payload.api_key or "").strip()
+    if not k:
+        raise HTTPException(400, "API key boş olamaz")
+    if not (k.startswith("sk_test_") or k.startswith("sk_live_") or k == "sk_test_emergent"):
+        raise HTTPException(400, "Geçersiz format — Stripe key'leri sk_test_ veya sk_live_ ile başlamalı")
+    await db.settings.update_one(
+        {"_key": "stripe_config"},
+        {"$set": {"_key": "stripe_config", "api_key": k, "updated_at": _iso()}},
+        upsert=True,
+    )
+    await db.logs.insert_one(ActivityLog(
+        source="stripe", level="info",
+        message=f"Stripe API key güncellendi (mode: {'live' if k.startswith('sk_live_') else 'test'})",
+    ).model_dump())
+    return {"ok": True, "mode": "live" if k.startswith("sk_live_") else "test"}
+
+
 def _stripe_client(origin: str):
     from emergentintegrations.payments.stripe.checkout import StripeCheckout
+    # DB'de saklı runtime key varsa öncelikli — master Panel'den değiştirebilir
+    # Async değil, ancak stripe_config sık okunur ve küçük — kısa bir sync-ish kullanım
     api_key = os.environ.get("STRIPE_API_KEY", "").strip()
+    # sync context yok — env fallback (async endpoints DB'den okuduğu için sorun değil)
     if not api_key:
         raise HTTPException(
             503,
-            "Stripe yapılandırılmamış. Master lütfen /app/backend/.env dosyasına "
-            "STRIPE_API_KEY ekleyip backend'i restart etsin.",
+            "Stripe yapılandırılmamış. Master lütfen /panel/settings → Stripe bölümünden "
+            "API key girsin veya /app/backend/.env dosyasına STRIPE_API_KEY ekleyip backend'i restart etsin.",
         )
-    # sk_test_emergent Emergent'ın shared test sandbox key'idir — kabul edilir
+    return StripeCheckout(api_key=api_key, webhook_url=f"{origin}/api/checkout/webhook")
+
+
+async def _stripe_client_async(origin: str):
+    """DB-first Stripe client factory (async). checkout_create_session içinde
+    kullanılır; DB'de override varsa env yerine onu kullanır."""
+    from emergentintegrations.payments.stripe.checkout import StripeCheckout
+    stored = await db.settings.find_one({"_key": "stripe_config"}, {"_id": 0}) or {}
+    api_key = (stored.get("api_key") or os.environ.get("STRIPE_API_KEY", "")).strip()
+    if not api_key:
+        raise HTTPException(
+            503,
+            "Stripe yapılandırılmamış. Master lütfen /panel/settings → Stripe bölümünden "
+            "API key girsin.",
+        )
     return StripeCheckout(api_key=api_key, webhook_url=f"{origin}/api/checkout/webhook")
 
 
@@ -5354,7 +5464,7 @@ async def checkout_create_session(payload: CheckoutCreateIn):
         raise HTTPException(400, "Bu plan için ödeme alınamaz — Master fiyatlandırma sayfasından güncelleyin")
     currency = plan.get("currency", "USD").lower()
     origin = payload.origin_url.rstrip("/")
-    stripe = _stripe_client(origin)
+    stripe = await _stripe_client_async(origin)
     session_request = CheckoutSessionRequest(
         amount=float(amount), currency=currency,
         success_url=f"{origin}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
@@ -5539,7 +5649,7 @@ async def checkout_status(session_id: str, request: Request):
     if tx["status"] == "paid":
         return tx
     origin = str(request.base_url).rstrip("/")
-    stripe = _stripe_client(origin)
+    stripe = await _stripe_client_async(origin)
     try:
         s = await stripe.get_checkout_status(session_id)
         if s.payment_status == "paid":
@@ -5555,7 +5665,7 @@ async def checkout_webhook(request: Request):
     body = await request.body()
     sig = request.headers.get("stripe-signature", "")
     origin = str(request.base_url).rstrip("/")
-    stripe = _stripe_client(origin)
+    stripe = await _stripe_client_async(origin)
     try:
         event = await stripe.handle_webhook(body, sig)
     except Exception as e:

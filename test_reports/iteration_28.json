@@ -1,0 +1,39 @@
+{
+  "summary": "V34 — Backend tests for (1) /api/bayi/my-server verification widget, (2) /api/maintenance/public/blocked-stats baseline seed, (3) /api/admin/stripe-config GET/POST + DB-first Stripe client, and 12 regression endpoints. 23/23 pytest PASS. Verified: verification block keys present with initial status='not_started'; after POST /api/events/ingest with panel license, ingested_1h>=1 and last_seen_at is set. Public blocked-stats returns all_time_blocked>100k, today_blocked>1k, peak_30d>1k, seed_applied=true for region=all; region=tr and region=external produce different peak_30d (baseline base_daily differs 5200 vs 3200 → deterministic pseudo-random dolgu). /api/admin/stripe-config GET is master-only (403 without x-master-key); returns mode/source/key_tail/has_key. POST invalid format (pk_wrong_XXX) → 400 Turkish. POST valid sk_test_xxxx1234 persists → subsequent GET returns source='db', key_tail='1234', mode='test'. Stripe checkout with DB-persisted invalid key returned 502 (via _stripe_client_async). After DB reset to sk_test_emergent, /api/subscription/renew returned 200 with real checkout.stripe.com URL. All 12 regression endpoints returned 200 (or expected 403).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/admin/stripe-config POST validation",
+        "issue": "Accepts any string starting with sk_test_ / sk_live_ regardless of length or content (e.g., 'sk_test_x' passes). Consider min-length check (Stripe test keys are ~107 chars) — currently only cosmetic since Stripe SDK will reject at first API call."
+      },
+      {
+        "endpoint": "_stripe_client (sync legacy)",
+        "issue": "Legacy sync _stripe_client at server.py:5425 still exists but is no longer referenced by checkout_create_session/renew after async migration. Dead-code / redundant; also lacks DB-first override so any future sync caller would silently bypass master's runtime key. Remove or route to _stripe_client_async."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v34_widget_seed_stripe.py",
+    "/app/test_reports/pytest/v34_results.xml"
+  ],
+  "action_items": [
+    "(Minor) Add minimum length check on stripe api_key (e.g., len(k) >= 20) to /api/admin/stripe-config POST.",
+    "(Minor) Delete or migrate legacy sync _stripe_client() in server.py:5425 — it lacks DB-first override and is no longer used."
+  ],
+  "critical_code_review_comments": [
+    "server.py now ~5883 lines — still not split. v32/v33 recommendation stands.",
+    "bayi_my_server verification.hint uses emoji-only string but returns unformatted 'minutes_since_last' — hint says '10dk üstü = ajan durmuş olabilir' but status='stale' only kicks in when connected=False AND ingested_24h>0; the boundary (exactly 10min) treats last_seen=10min as stale which matches; edge OK.",
+    "public_blocked_stats baseline seed uses random.seed globally with hashlib.md5(today_iso) — deterministic per day, but seeding the module-level RNG can leak into other code paths in the same process. Consider random.Random(...) instance.",
+    "public_blocked_stats region-filtered branch does two full scans (up to 100000 + 50000 events) with IP→country resolution for each — no cursor batch limit; on medium installations this could exceed request timeout. Consider aggregation pipeline with $lookup or IP index.",
+    "_stripe_client_async duplicates 60% of _stripe_client logic; consolidate."
+  ],
+  "updated_files": ["/app/backend/tests/test_v34_widget_seed_stripe.py"],
+  "success_rate": {"backend": "100% (23/23)", "frontend": "not tested (backend-only round per request)"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676; Installed panel license=MS-A1B3833C1DD6441FBCF19F26 (Pro); STRIPE_API_KEY=sk_test_emergent (env).",
+  "seed_data_creation": "One TEST mail_event ingested via /api/events/ingest for the panel license (v34 verification ping, verdict=clean). Cleaned up db.settings._key='stripe_config' after tests (via mongosh) so source flips back to 'env'.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "V34 green. Notes: (a) /api/mail/ingest does NOT exist — the correct endpoint is /api/events/ingest with body {license_key, from_addr, to_addr, subject, verdict}. Master doc string at server.py:4804 install command uses /api/mail/ingest which is WRONG — bayi copy-paste will 404. (b) blacklist/check payload uses 'target' (not 'value'). (c) Stripe autouse cleanup must NOT run for non-stripe tests when using pytest-xdist parallel (2 workers) — cross-worker DB writes race the Stripe key. Use explicit _reset_stripe_env() helper inside class only. (d) DB has been cleaned; stripe_config source returns 'env' with mode='emergent_sandbox'."
+}

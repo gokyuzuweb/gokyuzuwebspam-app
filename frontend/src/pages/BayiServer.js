@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Server, Save, Copy, CheckCircle, AlertCircle, Terminal, Loader2, Globe, Network, Mail,
+  Activity, RefreshCw, Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
@@ -28,6 +29,7 @@ export default function BayiServer() {
   const q = useQuery({
     queryKey: ["bayi-my-server"],
     queryFn: api.bayiMyServer,
+    refetchInterval: 10000,  // Widget canlı: 10sn'de bir yenile
     retry: false,
   });
 
@@ -81,6 +83,9 @@ export default function BayiServer() {
           mail trafiğinizi master paneline aktarmaya başlayın.
         </p>
       </div>
+
+      {/* Canlı Trafik Doğrulama Widget */}
+      <VerificationWidget verification={q.data?.verification} refreshing={q.isFetching} onRefresh={() => q.refetch()} />
 
       {/* 1. Sunucu Bilgileri */}
       <Card>
@@ -218,6 +223,84 @@ function MiniInfo({ label, value, mono }) {
     <div className="p-2.5 rounded-md border border-slate-800 bg-slate-900/40">
       <div className="text-[10px] uppercase tracking-widest text-slate-500">{label}</div>
       <div className={`text-xs text-slate-200 mt-0.5 truncate ${mono ? "mono" : ""}`}>{value || "—"}</div>
+    </div>
+  );
+}
+
+function VerificationWidget({ verification: v, refreshing, onRefresh }) {
+  if (!v) return null;
+  const tone =
+    v.status === "live" ? {
+      bg: "border-emerald-500/40 bg-emerald-500/5",
+      accent: "text-emerald-300",
+      dot: "bg-emerald-400 animate-pulse",
+      label: "CANLI",
+    } : v.status === "stale" ? {
+      bg: "border-amber-500/40 bg-amber-500/5",
+      accent: "text-amber-300",
+      dot: "bg-amber-400",
+      label: "DURAKLADI",
+    } : {
+      bg: "border-slate-700 bg-slate-900/40",
+      accent: "text-slate-400",
+      dot: "bg-slate-600",
+      label: "BEKLİYOR",
+    };
+  const fmtRel = (iso) => {
+    if (!iso) return "—";
+    const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (min < 1) return "az önce";
+    if (min < 60) return `${min}dk önce`;
+    if (min < 1440) return `${Math.floor(min / 60)}sa önce`;
+    return `${Math.floor(min / 1440)}g önce`;
+  };
+  return (
+    <div data-testid="bs-verification" className={`rounded-lg border ${tone.bg} p-4`}>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Activity className={`w-5 h-5 ${tone.accent}`} />
+            <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${tone.dot}`} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <b className={`text-sm ${tone.accent}`}>{tone.label}</b>
+              <span className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                Canlı Trafik Doğrulama
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">{v.hint}</p>
+          </div>
+        </div>
+        <button
+          data-testid="bs-verify-refresh"
+          onClick={onRefresh}
+          className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+          title="Yenile"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        <VerifStat label="Son 24 Saat" value={v.ingested_24h?.toLocaleString("tr-TR") || 0} unit="mail" icon={Mail} />
+        <VerifStat label="Son 1 Saat" value={v.ingested_1h?.toLocaleString("tr-TR") || 0} unit="mail" icon={Activity} />
+        <VerifStat label="Son Etkinlik" value={fmtRel(v.last_seen_at)} unit="" icon={Clock} />
+      </div>
+    </div>
+  );
+}
+
+function VerifStat({ label, value, unit, icon: Icon }) {
+  return (
+    <div className="p-3 rounded-md border border-slate-800 bg-slate-950/40">
+      <div className="text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-1">
+        <Icon className="w-3 h-3" />
+        {label}
+      </div>
+      <div className="mt-1 flex items-baseline gap-1">
+        <span className="text-lg font-semibold text-slate-100 tabular-nums">{value}</span>
+        {unit && <span className="text-[11px] text-slate-500">{unit}</span>}
+      </div>
     </div>
   );
 }

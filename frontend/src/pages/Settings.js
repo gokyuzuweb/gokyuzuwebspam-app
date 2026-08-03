@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages, Server, ShieldCheck, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
+import StripeConfigCard from "@/components/StripeConfigCard";
 import { api } from "@/lib/api";
 import { useI18n, useT } from "@/i18n";
 
@@ -267,6 +268,9 @@ export default function SettingsPage() {
             </Row>
           </CardBody>
         </Card>
+
+        {/* Stripe API Key - master only */}
+        <StripeConfigCard />
       </div>
 
       <div className="col-span-12 lg:col-span-4 space-y-4">
