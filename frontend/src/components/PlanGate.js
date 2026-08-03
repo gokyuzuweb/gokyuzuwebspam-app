@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Lock, Sparkles } from "lucide-react";
 import { usePlanFeatures } from "@/hooks/usePlanFeatures";
 import { PlanUpgradeModal } from "@/components/PlanUpgradeModal";
+import { trackPlanEvent } from "@/lib/track";
 
 /**
  * PlanGate — Kullanıcının aktif plan matrisi feature'ı kapsamıyorsa
@@ -15,8 +16,26 @@ import { PlanUpgradeModal } from "@/components/PlanUpgradeModal";
 export function PlanGate({ feature, featureLabel, minPlan = "pro", children, compact = false }) {
   const { features, plan, labels, isLoading } = usePlanFeatures();
   const [modalOpen, setModalOpen] = useState(false);
-  if (isLoading) return null;
   const allowed = !!features[feature];
+
+  // Kilit görüldüğünde bir kez view event'i (fire once per mount)
+  useEffect(() => {
+    if (!isLoading && !allowed) {
+      trackPlanEvent("gate_view", {
+        feature, current_plan: plan, target_plan: minPlan,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, allowed]);
+
+  const openModal = () => {
+    trackPlanEvent("gate_click", {
+      feature, current_plan: plan, target_plan: minPlan,
+    });
+    setModalOpen(true);
+  };
+
+  if (isLoading) return null;
   if (allowed) return children;
 
   const requiredLabel = labels[minPlan] || "Pro";
@@ -27,7 +46,7 @@ export function PlanGate({ feature, featureLabel, minPlan = "pro", children, com
       <>
         <button
           type="button"
-          onClick={() => setModalOpen(true)}
+          onClick={openModal}
           data-testid={`plan-gate-${feature}`}
           className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-200 text-xs hover:bg-amber-500/20 transition-colors"
         >
@@ -72,7 +91,7 @@ export function PlanGate({ feature, featureLabel, minPlan = "pro", children, com
           </p>
           <button
             type="button"
-            onClick={() => setModalOpen(true)}
+            onClick={openModal}
             data-testid={`plan-gate-${feature}-upgrade`}
             className="mt-3 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-indigo-500/40 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/20 transition-colors"
           >

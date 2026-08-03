@@ -1,0 +1,39 @@
+{
+  "summary": "V28 (Plan Upgrade Funnel Analytics + Reseller Threat Ratio Alerts) fully tested. Backend: 18/18 pytest tests passing — plan-event accepts all 6 valid events (no auth) and rejects invalid with 400; /admin/plan-funnel returns correct 5-stage schema (gate_view→gate_click→modal_open→checkout_click→purchase) with by_feature, by_target_plan, recent; anon returns 403. Threat-alerts list/scan/ack/ack-all all work; scan dedupe returns created:0; bad-id ack returns 404; POST without auth returns 423 (demo-write guard, still non-authorized). Regression (plugin/status, blacklist/check, licenses, plan/features, resellers-live, violations/auto-cleanup) all 200. Frontend: /panel/plan-analytics renders correctly for master with header 'Plan Yükseltme Huni Analitiği', 4 stat cards (3/3/3/%100.0), 5 funnel bars each with data-testid=pa-funnel-{stage}, feature breakdown table (TEST_feature=2, exploit_editor=1). Period buttons 7g/14g/30g/90g visible in top-right (screenshot). ThreatAlertBell present in header with data-testid='threat-bell', clicking opens data-testid='threat-bell-panel' listing 1 alert: 'Test Bayi Ltd son 60dk'da %88.0 tehdit oranına ulaştı (22/25 mail)'. Background _threat_ratio_monitor_task confirmed registered at server.py:467.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/threat-alerts/scan", "issue": "Anon returns 423 (demo-write guard) instead of 403. Functionally correct (still blocks), but review request expected 403. Order of checks: demo_write_guard runs before _require_master."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PlanAnalytics — Huni Aşamaları", "issues": ["Conversion % can exceed 100% (e.g. purchase shows %150) because logic `prev = n if n else prev` keeps last non-zero: when modal_open=2, checkout=2, purchase=3, ratio=3/2. In real funnels count should be monotonically non-increasing, but for defensive display cap at 100% or explicitly flag anomaly."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v28_plan_funnel_threat_alerts.py",
+    "/app/test_reports/pytest/v28_results.xml"
+  ],
+  "action_items": [
+    "(Optional low) Cap funnel conversion_pct at 100 in /admin/plan-funnel response — currently emits %150 when later stage count > previous non-zero stage.",
+    "(Optional low) Reorder demo_write_guard to run after master check on /admin/* POST endpoints so anon gets 403 instead of 423 for parity with the spec."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 5003 lines — over the 700-line guideline. Continue extracting to routes/ modules (threat_alerts + analytics can go into routes/analytics.py).",
+    "_threat_ratio_scan_once loops all resellers sequentially and awaits email per hit — for large tenant counts consider gathering with asyncio.gather + timeout on _send_email.",
+    "Funnel conversion math treats missing intermediate stages by keeping last non-zero prev — masks data quality issues; add explicit `raw_prev` for downstream analytics.",
+    "PlanEventIn accepts arbitrary meta dict without size cap — consider len(json)<=2048 to avoid abuse from unauth endpoint."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v28_plan_funnel_threat_alerts.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "MASTER MS-C02AB012652A4FE692D69676 (query license_key or POST /api/admin/master-unlock for cookie gws_master_session); Pro MS-A1B3833C1DD6441FBCF19F26",
+  "seed_data_creation": "Test created 6 additional plan_events (TEST_ prefixed session_ids TEST_sess_v28_1/2). Existing 3 events + these 6 → funnel showed 3/3/3 in 30d window before dedupe.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "V28 fully green. Backend 18/18 (test_v28_plan_funnel_threat_alerts.py). Frontend renders /panel/plan-analytics and header ThreatAlertBell for master. Both are working end-to-end with real data. Two minor design/order suggestions listed as action_items; neither blocks users."
+}

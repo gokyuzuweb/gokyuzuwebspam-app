@@ -26,6 +26,7 @@ export const API = `${BACKEND_URL}/api`;
 // Cookie-based master session için withCredentials — gws_master_session
 // cookie'sinin cross-origin isteklerde otomatik gönderilmesini sağlar.
 const client = axios.create({ baseURL: API, timeout: 20000, withCredentials: true });
+export { client };
 // LLM-backed endpoints can take 30-60s (Claude / GPT / Gemini reasoning)
 const llmClient = axios.create({ baseURL: API, timeout: 90000, withCredentials: true });
 
@@ -226,6 +227,30 @@ export const api = {
     `${client.defaults.baseURL}/admin/analytics/export?fmt=csv&days=${days}${licenseKey ? `&license_key=${encodeURIComponent(licenseKey)}` : ""}`,
   adminResellersLive: (licenseKey, hours = 24) =>
     client.get("/admin/resellers-live", { params: { hours, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
+  adminThreatAlerts: (licenseKey, opts = {}) =>
+    client.get("/admin/threat-alerts", {
+      params: { limit: opts.limit || 50, unseen_only: !!opts.unseenOnly,
+                ...(licenseKey ? { license_key: licenseKey } : {}) },
+      withCredentials: true,
+    }).then(r => r.data),
+  adminThreatAlertAck: (id, licenseKey) =>
+    client.post(`/admin/threat-alerts/${id}/ack`, null,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminThreatAlertsAckAll: (licenseKey) =>
+    client.post("/admin/threat-alerts/ack-all", null,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminThreatAlertsScan: (licenseKey, opts = {}) =>
+    client.post("/admin/threat-alerts/scan", null, {
+      params: { min_mails: opts.minMails || 20, threshold_pct: opts.thresholdPct || 30,
+                window_minutes: opts.windowMinutes || 60,
+                ...(licenseKey ? { license_key: licenseKey } : {}) },
+      withCredentials: true,
+    }).then(r => r.data),
+  adminPlanFunnel: (licenseKey, days = 30) =>
+    client.get("/admin/plan-funnel", {
+      params: { days, ...(licenseKey ? { license_key: licenseKey } : {}) },
+      withCredentials: true,
+    }).then(r => r.data),
   violationsAutoCleanup: (licenseKey, days = 7) =>
     client.post("/maintenance/violations/auto-cleanup", null,
                 { params: { days, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),

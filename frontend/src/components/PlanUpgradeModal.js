@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { X, Check, Sparkles, ArrowRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { trackPlanEvent } from "@/lib/track";
 
 /**
  * PlanUpgradeModal — Kullanıcı kilitli bir özelliğe tıkladığında açılan modal.
@@ -27,10 +28,15 @@ export function PlanUpgradeModal({ open, onClose, currentPlan = "starter", targe
 
   useEffect(() => {
     if (!open) return;
+    // Modal açıldı event'i
+    trackPlanEvent("modal_open", {
+      feature: featureLabel, current_plan: currentPlan, target_plan: targetPlan,
+    });
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   if (!open) return null;
 
@@ -44,6 +50,9 @@ export function PlanUpgradeModal({ open, onClose, currentPlan = "starter", targe
   const diff = priceOf(tgt) - priceOf(cur);
 
   const goCheckout = () => {
+    trackPlanEvent("checkout_click", {
+      feature: featureLabel, current_plan: currentPlan, target_plan: targetPlan, cycle,
+    });
     // Panel içinde /panel/pricing var; oradan checkout başlar.
     toast.info(`${tgt?.name || targetPlan} planına yükseltme sayfasına yönlendiriliyor…`);
     window.location.href = `/panel/pricing?upgrade=${encodeURIComponent(targetPlan)}&cycle=${cycle}`;
@@ -93,7 +102,12 @@ export function PlanUpgradeModal({ open, onClose, currentPlan = "starter", targe
               <button
                 key={o.v}
                 data-testid={`plan-upgrade-cycle-${o.v}`}
-                onClick={() => setCycle(o.v)}
+                onClick={() => {
+                  setCycle(o.v);
+                  trackPlanEvent("cycle_change", {
+                    feature: featureLabel, current_plan: currentPlan, target_plan: targetPlan, cycle: o.v,
+                  });
+                }}
                 className={`text-xs px-3 py-1.5 rounded transition-colors ${
                   cycle === o.v ? "bg-indigo-500/25 text-indigo-200" : "text-slate-400 hover:text-slate-100"
                 }`}

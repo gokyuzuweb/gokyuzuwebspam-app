@@ -19,7 +19,7 @@ import random
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 
 import httpx
 from dotenv import load_dotenv
@@ -464,6 +464,7 @@ async def _startup() -> None:
     asyncio.create_task(_license_expiry_alerts_task())
     asyncio.create_task(_pos_health_monitor_task())
     asyncio.create_task(_daily_violations_cleanup_task())
+    asyncio.create_task(_threat_ratio_monitor_task())
 
 
 async def _daily_violations_cleanup_task():
@@ -498,6 +499,118 @@ async def _daily_violations_cleanup_task():
         except Exception as ex:
             log.warning("daily-violations-cleanup error: %s", ex)
         await asyncio.sleep(86400)  # 24 saat
+
+
+async def _threat_ratio_monitor_task():
+    """Her 5 dakikada bir tüm bayilerin son 1 saatlik mail trafiğini kontrol eder.
+    Bayi min. 20 mail almış VE (spam+virus+phish)/toplam > %30 ise:
+      • `master_alerts` collection'a UNSEEN alert kaydı ekler (aynı bayi için son
+        1 saat içinde alert varsa dedupe yapar)
+      • Admin e-postasına uyarı gönderir (notify_settings.email_enabled ise)
+      • Activity logs'a yazar
+    Frontend master badge/bell bu collection'ı polling yapar."""
+    await asyncio.sleep(180)  # startup'tan 3 dk sonra ilk tarama
+    while True:
+        try:
+            await _threat_ratio_scan_once()
+        except Exception as ex:
+            log.warning("threat-ratio-monitor error: %s", ex)
+        await asyncio.sleep(300)  # 5 dakika
+
+
+async def _threat_ratio_scan_once(min_mails: int = 20, threshold: float = 0.30,
+                                  window_minutes: int = 60, dedupe_minutes: int = 60) -> int:
+    """Bir tarama turu — kaç yeni alert oluşturulduğunu döner. Master paneli
+    isteğe bağlı olarak `POST /api/admin/threat-alerts/scan` üzerinden çağırabilir."""
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(minutes=window_minutes)).isoformat()
+    dedupe_cutoff = (now - timedelta(minutes=dedupe_minutes)).isoformat()
+    created = 0
+    async for r in db.resellers.find({"active": {"$ne": False}}, {"_id": 0}):
+        lic_key = r.get("license_key") or ""
+        if not lic_key:
+            continue
+        pipe = [
+            {"$match": {"license_key": lic_key, "ts": {"$gte": cutoff}}},
+            {"$group": {"_id": "$verdict", "n": {"$sum": 1}}},
+        ]
+        mails = spam = virus = phish = 0
+        try:
+            async for row in db.mail_events.aggregate(pipe):
+                v = (row.get("_id") or "").lower()
+                n = int(row.get("n") or 0)
+                mails += n
+                if v in ("spam", "high_spam"): spam += n
+                elif v == "virus": virus += n
+                elif v in ("phish", "phishing"): phish += n
+        except Exception:
+            continue
+        if mails < min_mails:
+            continue
+        bad = spam + virus + phish
+        ratio = bad / mails
+        if ratio < threshold:
+            continue
+        # Dedupe: aynı bayi için son N dakikada UNSEEN alert varsa atla
+        existing = await db.master_alerts.find_one({
+            "type": "threat_ratio", "reseller_id": r.get("id"),
+            "created_at": {"$gte": dedupe_cutoff},
+        })
+        if existing:
+            continue
+        alert_id = str(uuid.uuid4())
+        pct = round(ratio * 100, 1)
+        payload = {
+            "id": alert_id,
+            "type": "threat_ratio",
+            "severity": "critical" if ratio >= 0.6 else "warning",
+            "reseller_id": r.get("id"),
+            "reseller_email": r.get("email", ""),
+            "reseller_company": r.get("company", ""),
+            "license_key": lic_key,
+            "ratio_pct": pct,
+            "mails": mails,
+            "spam": spam, "virus": virus, "phish": phish,
+            "window_minutes": window_minutes,
+            "threshold_pct": int(threshold * 100),
+            "message": (f"⚠️ {r.get('company') or r.get('email')} son {window_minutes}dk'da "
+                        f"%{pct} tehdit oranına ulaştı ({bad}/{mails} mail)"),
+            "seen": False,
+            "created_at": now.isoformat(),
+        }
+        await db.master_alerts.insert_one(payload)
+        created += 1
+        try:
+            await db.logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "source": "threat_monitor",
+                "level": "warn",
+                "message": payload["message"],
+                "at": now.isoformat(),
+            })
+        except Exception:
+            pass
+        # E-posta bildirimi
+        try:
+            ns = await _notify_settings()
+            if ns.get("email_enabled") and ns.get("admin_email"):
+                subj = f"[GökyüzüWebSpam] Bayi Tehdit Uyarısı: %{pct} — {r.get('company') or r.get('email')}"
+                body = (
+                    f"Merhaba,\n\n"
+                    f"Aşağıdaki bayinin son {window_minutes} dakikada tehdit oranı eşiği aştı:\n\n"
+                    f"  Bayi     : {r.get('company','')} <{r.get('email','')}>\n"
+                    f"  Lisans   : {lic_key}\n"
+                    f"  Toplam   : {mails} mail\n"
+                    f"  Kötüler  : {bad} (spam:{spam} virüs:{virus} phishing:{phish})\n"
+                    f"  Oran     : %{pct}  (eşik %{int(threshold*100)})\n"
+                    f"  Zaman    : {now.isoformat()}\n\n"
+                    f"Master panel Canlı Bayi Trafiği: /panel/master-live\n"
+                    f"— GökyüzüWebSpam Threat Monitor\n"
+                )
+                await _send_email(ns["admin_email"], subj, body)
+        except Exception as em:
+            log.warning("threat-alert email failed: %s", em)
+    return created
 
 
 async def _auto_suspend_daily_task():
@@ -2366,6 +2479,165 @@ async def admin_resellers_live(request: Request, license_key: Optional[str] = No
         "total_resellers": len(out),
         "online_count": sum(1 for x in out if x["online"]),
         "resellers": out,
+    }
+
+
+@api.get("/admin/threat-alerts")
+async def admin_threat_alerts(request: Request, license_key: Optional[str] = None,
+                              limit: int = 50, unseen_only: bool = False):
+    """Master-only. Son N tehdit oranı alert'ini döner. Frontend zil ikonu polling yapar."""
+    await _require_master(request, license_key)
+    q = {"seen": False} if unseen_only else {}
+    limit = max(1, min(limit, 200))
+    items = []
+    async for a in db.master_alerts.find(q, {"_id": 0}).sort("created_at", -1).limit(limit):
+        items.append(a)
+    unseen_count = await db.master_alerts.count_documents({"seen": False})
+    return {"items": items, "unseen_count": unseen_count, "returned": len(items)}
+
+
+@api.post("/admin/threat-alerts/{alert_id}/ack")
+async def admin_threat_alert_ack(alert_id: str, request: Request,
+                                 license_key: Optional[str] = None):
+    """Master alert'i okundu (seen=True) işaretler."""
+    await _require_master(request, license_key)
+    r = await db.master_alerts.update_one({"id": alert_id}, {"$set": {"seen": True}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Alert bulunamadı")
+    unseen_count = await db.master_alerts.count_documents({"seen": False})
+    return {"ok": True, "unseen_count": unseen_count}
+
+
+@api.post("/admin/threat-alerts/ack-all")
+async def admin_threat_alerts_ack_all(request: Request, license_key: Optional[str] = None):
+    """Master bütün unseen alert'leri okundu işaretler."""
+    await _require_master(request, license_key)
+    r = await db.master_alerts.update_many({"seen": False}, {"$set": {"seen": True}})
+    return {"ok": True, "acked": r.modified_count}
+
+
+@api.post("/admin/threat-alerts/scan")
+async def admin_threat_alerts_scan(request: Request, license_key: Optional[str] = None,
+                                   min_mails: int = 20, threshold_pct: int = 30,
+                                   window_minutes: int = 60):
+    """Master anında bir tarama tetikleyebilir (background scheduler bekleyip vakit
+    kaybetmesin diye)."""
+    await _require_master(request, license_key)
+    created = await _threat_ratio_scan_once(
+        min_mails=max(1, min_mails),
+        threshold=max(0.01, min(0.99, threshold_pct / 100)),
+        window_minutes=max(5, min(1440, window_minutes)),
+    )
+    return {"ok": True, "created": created}
+
+
+# ------------------ Plan Upgrade Funnel Analytics ------------------
+class PlanEventIn(BaseModel):
+    event: str  # gate_view | gate_click | modal_open | cycle_change | checkout_click | purchase
+    feature: Optional[str] = None
+    current_plan: Optional[str] = None
+    target_plan: Optional[str] = None
+    cycle: Optional[str] = None  # monthly|yearly
+    license_key: Optional[str] = None
+    session_id: Optional[str] = None
+    page: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
+@api.post("/analytics/plan-event")
+async def analytics_plan_event(payload: PlanEventIn, request: Request):
+    """Frontend PlanGate/PlanUpgradeModal her aşamada bu endpoint'e event yazar.
+    Ziyaretçilerden de gelebilir; demo-lock yok (allow-list'te)."""
+    valid = {"gate_view", "gate_click", "modal_open", "cycle_change", "checkout_click", "purchase"}
+    if payload.event not in valid:
+        raise HTTPException(400, f"Geçersiz event: {payload.event}")
+    doc = payload.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["ip"] = _client_ip(request)
+    doc["user_agent"] = (request.headers.get("user-agent") or "")[:250]
+    await db.plan_events.insert_one(doc)
+    return {"ok": True, "id": doc["id"]}
+
+
+@api.get("/admin/plan-funnel")
+async def admin_plan_funnel(request: Request, license_key: Optional[str] = None,
+                            days: int = 30):
+    """Master-only. Plan-upgrade huni raporu:
+      • funnel: her aşamanın toplam sayısı ve önceki aşamadan dönüşüm oranı
+      • by_feature: hangi PlanGate feature'ı en çok tıklandı → en çok satın alındı
+      • by_target_plan: hedef plana göre dağılım
+      • recent: son 20 event (debug için)"""
+    await _require_master(request, license_key)
+    days = max(1, min(days, 365))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    match = {"created_at": {"$gte": cutoff}}
+
+    # Aşama sayaçları
+    stages = ["gate_view", "gate_click", "modal_open", "checkout_click", "purchase"]
+    counts = {s: 0 for s in stages}
+    async for row in db.plan_events.aggregate([
+        {"$match": match},
+        {"$group": {"_id": "$event", "n": {"$sum": 1}}},
+    ]):
+        ev = row.get("_id")
+        if ev in counts:
+            counts[ev] = int(row.get("n") or 0)
+
+    funnel = []
+    prev = None
+    for s in stages:
+        n = counts[s]
+        conv = round(n / prev * 100, 1) if prev else 100.0
+        funnel.append({"stage": s, "count": n, "conversion_pct": conv})
+        prev = n if n else prev  # keep last non-zero to avoid /0
+
+    # Feature breakdown (gate_click → purchase)
+    by_feature: Dict[str, Dict[str, int]] = {}
+    async for row in db.plan_events.aggregate([
+        {"$match": {**match, "event": {"$in": ["gate_click", "purchase"]}}},
+        {"$group": {"_id": {"feature": "$feature", "event": "$event"}, "n": {"$sum": 1}}},
+    ]):
+        f = row["_id"].get("feature") or "unknown"
+        ev = row["_id"].get("event")
+        by_feature.setdefault(f, {"gate_click": 0, "purchase": 0})
+        by_feature[f][ev] = int(row.get("n") or 0)
+    feature_rows = []
+    for f, s in by_feature.items():
+        clicks = s.get("gate_click", 0)
+        purchases = s.get("purchase", 0)
+        feature_rows.append({
+            "feature": f,
+            "clicks": clicks,
+            "purchases": purchases,
+            "conversion_pct": round(purchases / clicks * 100, 1) if clicks else 0,
+        })
+    feature_rows.sort(key=lambda x: -x["clicks"])
+
+    # Target-plan breakdown
+    by_target_plan = []
+    async for row in db.plan_events.aggregate([
+        {"$match": {**match, "event": {"$in": ["gate_click", "purchase"]}}},
+        {"$group": {"_id": {"target_plan": "$target_plan", "event": "$event"}, "n": {"$sum": 1}}},
+    ]):
+        by_target_plan.append({
+            "target_plan": row["_id"].get("target_plan") or "unknown",
+            "event": row["_id"].get("event"),
+            "count": int(row.get("n") or 0),
+        })
+
+    # Recent events (last 20)
+    recent = []
+    async for r in db.plan_events.find(match, {"_id": 0}).sort("created_at", -1).limit(20):
+        recent.append(r)
+
+    return {
+        "days": days,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "funnel": funnel,
+        "by_feature": feature_rows,
+        "by_target_plan": by_target_plan,
+        "recent": recent,
     }
 
 
@@ -4637,6 +4909,7 @@ _DEMO_ALLOW_PREFIXES = (
                                # kendi IP/domainlerini yönetmesi için — DNS lookup
                                # ve kendi delist takibi; demo yazma kilidi uygulanmaz)
     "/api/plan/features",      # plan matris sorgusu (ziyaretçi de görebilir)
+    "/api/analytics/plan-event", # PlanGate funnel tracking (ziyaretçi de yazabilir)
 )
 
 

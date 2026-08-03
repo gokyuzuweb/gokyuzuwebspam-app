@@ -217,6 +217,23 @@ export function CheckoutSuccess() {
   const tx = q.data;
   const paid = tx?.status === "paid";
 
+  // Purchase event firing — payment paid olduğunda funnel analytics'e yaz.
+  // (Fire only once per session_id via a session-storage flag)
+  useEffect(() => {
+    if (!paid || !sid) return;
+    try {
+      const k = `gws.paid_tracked_${sid}`;
+      if (sessionStorage.getItem(k)) return;
+      sessionStorage.setItem(k, "1");
+      import("@/lib/track").then(({ trackPlanEvent }) => {
+        trackPlanEvent("purchase", {
+          target_plan: tx?.plan || tx?.plan_code || null,
+          meta: { session_id: sid, license_key: tx?.license_key || null },
+        });
+      });
+    } catch (_) { /* noop */ }
+  }, [paid, sid, tx]);
+
   // Fetch personalized install command with license key baked in
   const info = useQuery({
     queryKey: ["install-info", tx?.license_key],
