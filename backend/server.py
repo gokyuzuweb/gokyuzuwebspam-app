@@ -4304,11 +4304,13 @@ async def subscription_renew(payload: SubscriptionRenewIn, request: Request):
         origin_url=origin,
     )
     result = await checkout_create_session(ck)  # aynı dosyada tanımlı
-    # Yenileme intent'i işaretle (webhook success sonrası valid_until +period yapılsın)
+    # Yenileme intent'i işaretle (webhook success sonrası valid_until +period yapılsın).
+    # Anahtar: customer_email + plan (Stripe metadata bize sadece email geri getirir).
     await db.settings.update_one(
-        {"_key": f"renewal_intent:{s['license_key']}"},
+        {"_key": f"renewal_intent:{customer_email}:{plan_code}"},
         {"$set": {"license_key": s["license_key"], "plan_code": plan_code,
                   "billing_period": payload.billing_period,
+                  "customer_email": customer_email,
                   "requested_at": _iso()}},
         upsert=True,
     )
@@ -4858,6 +4860,59 @@ async def _finalize_purchase(session_id: str, metadata: dict) -> Optional[dict]:
     plan_code = metadata.get("plan_code") or tx.get("plan_code", "pro")
     pricing = await _pricing_settings()
     plan = next((p for p in pricing["plans"] if p["code"] == plan_code), None) or {}
+    customer_email = metadata.get("customer_email") or tx.get("customer_email", "")
+
+    # ✅ Yenileme senaryosu: `renewal_intent:{email}:{plan}` işareti varsa mevcut
+    # lisansı yeni bir kayıt açmak yerine `valid_until` alanını uzat.
+    renewal_marker_key = f"renewal_intent:{customer_email}:{plan_code}"
+    renewal = await db.settings.find_one({"_key": renewal_marker_key}, {"_id": 0})
+    if renewal and renewal.get("license_key"):
+        target_lic = await db.licenses.find_one({"license_key": renewal["license_key"]}, {"_id": 0})
+        if target_lic:
+            # Bitiş tarihinden gelecekteyse ondan uzat, geçtiyse şimdiden uzat
+            try:
+                cur_exp = datetime.fromisoformat(str(target_lic["valid_until"]).replace("Z", "+00:00"))
+            except Exception:
+                cur_exp = now
+            base = cur_exp if cur_exp > now else now
+            new_exp = (base + timedelta(days=days)).isoformat()
+            # Version'ı da arttır ki panel cache'ini tazelesin
+            new_ver = int(target_lic.get("license_version") or 0) + 1
+            await db.licenses.update_one(
+                {"license_key": renewal["license_key"]},
+                {"$set": {"valid_until": new_exp, "plan": plan_code,
+                          "active": True, "license_version": new_ver,
+                          "renewed_at": now.isoformat()}},
+            )
+            await db.payment_transactions.update_one(
+                {"session_id": session_id},
+                {"$set": {"status": "paid", "completed_at": now.isoformat(),
+                          "license_key": renewal["license_key"], "is_renewal": True}},
+            )
+            await db.settings.delete_one({"_key": renewal_marker_key})
+            await db.logs.insert_one(ActivityLog(
+                source="checkout", level="info",
+                message=f"LİSANS YENİLENDİ · {customer_email} · {plan_code}/{billing_period} · {renewal['license_key'][:16]}… → {new_exp[:10]}",
+            ).model_dump())
+            # Renewal onay maili
+            try:
+                subj = f"GökyüzüWebSpam · Lisans Yenilendi · {plan.get('name', plan_code)}"
+                body = (
+                    f"Merhaba,\n\n"
+                    f"GökyüzüWebSpam lisansınız başarıyla yenilendi. 🎉\n\n"
+                    f"  Lisans      : {renewal['license_key']}\n"
+                    f"  Plan        : {plan.get('name', plan_code)} ({billing_period})\n"
+                    f"  Yeni bitiş  : {new_exp[:10]}\n"
+                    f"  Tutar       : {tx['amount']} {tx['currency']}\n\n"
+                    f"Panelinizde ek adım gerekmez — yeni süre birkaç dakika içinde otomatik yansır.\n\n"
+                    f"— GökyüzüWebSpam"
+                )
+                await _send_email(customer_email, subj, body)
+            except Exception:
+                pass
+            # Yenilenen tx'i döndür
+            return await db.payment_transactions.find_one({"session_id": session_id})
+
     lic = License(
         customer_name=metadata.get("customer_name") or tx.get("customer_email"),
         customer_email=metadata.get("customer_email") or tx.get("customer_email", ""),

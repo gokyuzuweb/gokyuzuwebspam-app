@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { X, Clock, AlertTriangle, Sparkles, ArrowRight } from "lucide-react";
 import { api } from "@/lib/api";
 
-const DISMISS_KEY = "gws.renewal_banner_dismissed";
+const DISMISS_KEY_BASE = "gws.renewal_banner_dismissed";
 const DISMISS_HOURS = 24;
 
 /**
@@ -37,13 +37,18 @@ export default function RenewalBanner() {
   });
 
   const info = q.data;
+  // Dismiss key'i lisans bazlı — bir bayi bir başkasının panelinde açtığında
+  // eski dismissed state taşınmasın.
+  const dismissKey = info?.license_key
+    ? `${DISMISS_KEY_BASE}:${info.license_key}`
+    : DISMISS_KEY_BASE;
   const dismissedUntil = useMemo(() => {
     try {
-      const raw = sessionStorage.getItem(DISMISS_KEY);
+      const raw = sessionStorage.getItem(dismissKey);
       return raw ? Number(raw) : 0;
     } catch (_) { return 0; }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dismissTick, info?.expires_at]);
+  }, [dismissTick, info?.expires_at, dismissKey]);
 
   // Kritik uyarı kapatılamaz — dismiss ignore
   const isCritical = info?.severity === "critical";
@@ -51,7 +56,7 @@ export default function RenewalBanner() {
 
   const onDismiss = () => {
     try {
-      sessionStorage.setItem(DISMISS_KEY, String(Date.now() + DISMISS_HOURS * 3600 * 1000));
+      sessionStorage.setItem(dismissKey, String(Date.now() + DISMISS_HOURS * 3600 * 1000));
       setDismissTick((t) => t + 1);
     } catch (_) {}
   };
