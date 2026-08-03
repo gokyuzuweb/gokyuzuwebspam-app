@@ -1,0 +1,32 @@
+{
+  "summary": "V29 fully tested — P0 bug fix (demo_write_guard licensed-seller branch) + broadcast-refresh endpoint + license_version field + /panel/subscription page + /panel/licenses sky broadcast button. Backend: 16/16 pytest tests passing. Frontend: Subscription page renders with hero 'Mevcut Aboneliğiniz' → Pro AKTİF badge on plan card, aylık/yıllık toggle, deep link ?upgrade=pro&cycle=yearly correctly adds ring-2 glow on pro card and 'POPÜLER' star. Broadcast button (data-testid=lic-broadcast-{id}) on Licenses page returns 200 with {ok:true, license_version:N} and shows toast 'Zorla güncelleme iletildi (v10). Hedef panel bir sonraki polling'de cache'i yenileyecek' bottom-right. PlanUpgradeModal.goCheckout confirmed redirects to /panel/subscription (line 58). PluginStatusStripe useEffect confirmed watches license_version (LicenseGate.js line 30-43).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/engines/{name}/config", "issue": "Endpoint not found (404). Spec listed it as testable but only /engines/{name}/toggle exists in server.py. Not a regression."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v29_broadcast_refresh_demo_guard.py",
+    "/app/test_reports/pytest/v29_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py still at 5065 lines — split into routes/ modules (licenses.py, plugin_status.py, demo_guard.py middleware).",
+    "demo_write_guard 'customer' branch (line 5039) still returns 423 when licensed=false. If a customer-mode panel obtains license via new flow, ensure PLUGIN_MODE toggle happens too — otherwise the fix only covers seller mode.",
+    "broadcast-refresh has no rate limit — a master could spam the endpoint and inflate license_version + logs collection. Add throttle (e.g. max 10/min per lid).",
+    "plugin/status runs a per-request DB read for license_version even for licensed panels — cache in local var when license_key unchanged to reduce Mongo load on the 30s polling loop."
+  ],
+  "updated_files": ["/app/backend/tests/test_v29_broadcast_refresh_demo_guard.py (new)"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "MASTER MS-C02AB012652A4FE692D69676 (query license_key or POST /api/admin/master-unlock cookie). Panel installed license: Pro MS-A1B3833C1DD6441FBCF19F26 (id=aa2bb3bb-387e-4819-9210-42d35a2ad415).",
+  "seed_data_creation": "test_licenses_update wrote current Pro license values back (idempotent). broadcast-refresh incremented license_version several times (0→10 over run).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "V29 green. New test file /app/backend/tests/test_v29_broadcast_refresh_demo_guard.py covers demo-guard licensed-seller fix, broadcast-refresh (403/404/200 + version bump), and full regression across 8 endpoints. Frontend routes /panel/subscription and /panel/subscription?upgrade=pro&cycle=yearly work; sky refresh button on /panel/licenses rows fires broadcast-refresh and shows toast. PlanUpgradeModal now targets /panel/subscription."
+}

@@ -284,6 +284,16 @@ function LicensesInner() {
     mutationFn: ({ lic, active }) => api.licenseUpdate(lic.id, { ...lic, active }),
     onSuccess: () => { toast.success("Güncellendi"); qc.invalidateQueries({ queryKey: ["licenses"] }); },
   });
+  const broadcast = useMutation({
+    mutationFn: (id) => api.licenseBroadcastRefresh(id),
+    onSuccess: (d) => {
+      toast.success(`Zorla güncelleme iletildi (v${d.license_version})`, {
+        description: "Hedef panel bir sonraki polling'de cache'i yenileyecek",
+      });
+      qc.invalidateQueries({ queryKey: ["licenses"] });
+    },
+    onError: (e) => toast.error("Zorla iletim başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
   const clearViol = useMutation({
     mutationFn: () => api.violationsClear(),
     onSuccess: (d) => { toast.success(`${d.deleted} kayıt temizlendi`); qc.invalidateQueries({ queryKey: ["violations"] }); },
@@ -364,6 +374,7 @@ function LicensesInner() {
         onEdit={setEditing}
         onCopy={copyKey}
         onToggle={toggleActive}
+        onBroadcast={broadcast}
         onDelete={del}
         onSimulate={simulate}
         onClearViol={clearViol}
@@ -403,7 +414,7 @@ const TAB_TONE_MAP = {
 };
 
 function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, setPlanFilter,
-                       statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onDelete,
+                       statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onBroadcast, onDelete,
                        onSimulate, onClearViol, onFixIds, selectedIds, setSelectedIds,
                        bulkAction, onAdded }) {
   const [tab, setTab] = useState("list");
@@ -460,7 +471,7 @@ function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, s
                            statusFilter={statusFilter} setStatusFilter={setStatusFilter}
                            selectedIds={selectedIds} setSelectedIds={setSelectedIds}
                            bulkAction={bulkAction} onFixIds={onFixIds}
-                           onEdit={onEdit} onCopy={onCopy} onToggle={onToggle} onDelete={onDelete}/>
+                           onEdit={onEdit} onCopy={onCopy} onToggle={onToggle} onBroadcast={onBroadcast} onDelete={onDelete}/>
       )}
       {tab === "new" && (
         <Card>
@@ -524,7 +535,7 @@ function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, s
 }
 
 function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPlanFilter,
-                              statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onDelete,
+                              statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onBroadcast, onDelete,
                               selectedIds = new Set(), setSelectedIds = () => {}, bulkAction, onFixIds }) {
   return (
     <Card>
@@ -714,6 +725,12 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
                                 : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/25"
                             }`}>
                       <Radio className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => onBroadcast?.mutate(r.id)}
+                            title="Bu lisansı hedef panele zorla ilet — yerel cache anında yenilenir"
+                            data-testid={`lic-broadcast-${r.id}`}
+                            className="mr-1.5 inline-flex items-center px-1.5 py-1 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/25 transition">
+                      <RefreshCw className="w-3.5 h-3.5" />
                     </button>
                     <button data-testid={`lic-del-${r.id}`}
                             onClick={() => { if (confirm(`${r.customer_name} lisansı silinsin mi?`)) onDelete.mutate(r.id); }}

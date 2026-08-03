@@ -3421,6 +3421,44 @@ async def licenses_toggle_active(lid: str, request: Request, license_key: Option
     return {"ok": True, "id": lid, "active": new_active}
 
 
+@api.post("/licenses/{lid}/broadcast-refresh")
+async def licenses_broadcast_refresh(lid: str, request: Request, license_key: Optional[str] = None):
+    """**Zorla Güncelleme İletimi** — Master lisans üzerinde değişiklik yaptıktan sonra
+    hedef panel(ler)in cache'lerini bir sonraki `plugin/verify-license` çağrısında
+    yenilemesini garantiler.
+
+    Uygulama: lisans belgesindeki `license_version` sayacını 1 arttırır. Uzak
+    plugin script'i (`mailshield-logtail.pl` ve panel frontend) her polling'de
+    bu değeri okur; değiştiğinde yerel `.mailshield/license.cache` dosyasını
+    yeniden yükler ve panel React query cache'ini invalidate eder.
+
+    Ayrıca `license_events` collection'ına bir `refresh_requested` kaydı düşer
+    (heartbeat frontend'i son 60 saniye içindeki bu kayıtları toast ile bildirir)."""
+    await _require_master(request, license_key)
+    doc = await db.licenses.find_one({"id": lid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Lisans bulunamadı")
+    new_ver = int(doc.get("license_version") or 0) + 1
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.licenses.update_one(
+        {"id": lid},
+        {"$set": {"license_version": new_ver, "refresh_requested_at": now_iso}},
+    )
+    await db.license_events.insert_one({
+        "id": str(uuid.uuid4()),
+        "license_key": doc.get("license_key"),
+        "license_id": lid,
+        "event": "refresh_requested",
+        "version": new_ver,
+        "created_at": now_iso,
+    })
+    await db.logs.insert_one(ActivityLog(
+        source="license", level="info",
+        message=f"Lisans {lid[:8]}… için zorla güncelleme iletildi (v{new_ver})",
+    ).model_dump())
+    return {"ok": True, "id": lid, "license_version": new_ver, "at": now_iso}
+
+
 class BulkLicenseAction(BaseModel):
     ids: List[str]
     action: Literal["delete", "suspend", "activate"] = "delete"
@@ -4130,6 +4168,19 @@ async def _plugin_status_payload() -> dict:
         licensed = False
         gated = PLUGIN_MODE == "customer"
 
+    # license_version — master "Zorla Güncelle" bastığında artar; frontend/plugin
+    # buradaki değeri kaydeder ve değiştiğinde cache'i temizler.
+    license_version = 0
+    if licensed and st.get("license_key"):
+        try:
+            lv_doc = await db.licenses.find_one(
+                {"license_key": st.get("license_key")}, {"_id": 0, "license_version": 1}
+            )
+            if lv_doc:
+                license_version = int(lv_doc.get("license_version") or 0)
+        except Exception:
+            pass
+
     return {
         "mode": PLUGIN_MODE,
         "installed_at": st.get("installed_at"),
@@ -4143,6 +4194,7 @@ async def _plugin_status_payload() -> dict:
         "license_customer_name": license_customer_name,
         "license_plan": license_plan,
         "license_active": license_active_flag,
+        "license_version": license_version,
         "gated": gated,
         "gate_reason": (
             "license_suspended" if licensed is False and st.get("license_key") and not license_active_flag else
@@ -4947,6 +4999,11 @@ async def demo_write_guard(request: Request, call_next):
     # Seller/master modu: master anahtarı istekle geldiyse yazma serbest,
     # gelmediyse (ziyaretçi) demo yazma kilidi çalışır.
     if status.get("mode") == "seller":
+        # ✅ Kritik: Panelde geçerli bir lisans yüklüyse (kendi bayi/pro lisansı)
+        # yazma serbesttir. Aksi halde motor/blacklist/list vb. yazma işlemleri
+        # lisanslı panelde bile 423 dönerdi.
+        if status.get("licensed"):
+            return await call_next(request)
         master_key_env = os.environ.get("MASTER_LICENSE_KEY", "")
         master_ip_env = os.environ.get("MASTER_IP", "")
         provided_key = (

@@ -5,7 +5,7 @@ import { Toaster } from "sonner";
 import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
-  Bell, BellRing, FileText, Key, Radar, DollarSign, Home,
+  Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles,
   Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
@@ -43,6 +43,7 @@ import PaymentsAdmin from "@/pages/PaymentsAdmin";
 import ResellersAdmin from "@/pages/ResellersAdmin";
 import MasterLive from "@/pages/MasterLive";
 import PlanAnalytics from "@/pages/PlanAnalytics";
+import Subscription from "@/pages/Subscription";
 import WhitelistHistory from "@/pages/WhitelistHistory";
 import Header from "@/components/Header";
 
@@ -62,6 +63,7 @@ const NAV = [
   { to: "/panel/alerts", key: "alerts", icon: BellRing, testid: "nav-alerts" },
   { to: "/panel/reports", key: "reports", icon: FileText, testid: "nav-reports" },
   { to: "/panel/licenses", key: "licenses", icon: Key, testid: "nav-licenses", sellerOnly: true, masterOnly: true },
+  { to: "/panel/subscription", key: "subscription", icon: Sparkles, testid: "nav-subscription", label: "Aboneliğim" },
   { to: "/panel/pricing", key: "pricing", icon: DollarSign, testid: "nav-pricing", sellerOnly: true, masterOnly: true },
   { to: "/panel/users", key: "users", icon: Users, testid: "nav-users" },
   { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs" },
@@ -189,6 +191,7 @@ function Shell() {
             <Route path="/resellers-admin" element={<ResellersAdmin />} />
             <Route path="/master-live" element={<MasterLive />} />
             <Route path="/plan-analytics" element={<PlanAnalytics />} />
+            <Route path="/subscription" element={<Subscription />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/quarantine" element={<Quarantine />} />

@@ -53,9 +53,9 @@ export function PlanUpgradeModal({ open, onClose, currentPlan = "starter", targe
     trackPlanEvent("checkout_click", {
       feature: featureLabel, current_plan: currentPlan, target_plan: targetPlan, cycle,
     });
-    // Panel içinde /panel/pricing var; oradan checkout başlar.
-    toast.info(`${tgt?.name || targetPlan} planına yükseltme sayfasına yönlendiriliyor…`);
-    window.location.href = `/panel/pricing?upgrade=${encodeURIComponent(targetPlan)}&cycle=${cycle}`;
+    // Aboneliğim sayfasında hedef plan otomatik seçili + scroll olur.
+    toast.info(`${tgt?.name || targetPlan} planı seçim ekranına gidiliyor…`);
+    window.location.href = `/panel/subscription?upgrade=${encodeURIComponent(targetPlan)}&cycle=${cycle}`;
   };
 
   return (

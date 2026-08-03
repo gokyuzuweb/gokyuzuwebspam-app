@@ -22,6 +22,26 @@ export function PluginStatusStripe() {
   const qc = useQueryClient();
   const [upgrading, setUpgrading] = useState(false);
 
+  // ✅ Zorla Güncelleme İletimi — master lisansı düzenleyip broadcast-refresh
+  // butonuna bastığında `license_version` artar. Panel bunu görünce React Query
+  // cache'lerini invalidate eder ve kullanıcı toast ile bilgilendirilir.
+  useEffect(() => {
+    if (!q.data) return;
+    const currentVer = q.data.license_version ?? 0;
+    try {
+      const prev = Number(sessionStorage.getItem("gws.license_version") || 0);
+      if (currentVer > prev && prev !== 0) {
+        toast.success("Lisans güncellendi", {
+          description: "Yeni plan/limitler yüklendi, sayfa verileri yenilendi.",
+          duration: 5000,
+        });
+        // İlgili tüm cache'leri temizle (plan features, licenses, engines...)
+        qc.invalidateQueries();
+      }
+      sessionStorage.setItem("gws.license_version", String(currentVer));
+    } catch (_) { /* noop */ }
+  }, [q.data?.license_version]);  // eslint-disable-line react-hooks/exhaustive-deps
+
   const upgrade = useMutation({
     mutationFn: () => api.pluginUpgrade(),
     onMutate: () => setUpgrading(true),

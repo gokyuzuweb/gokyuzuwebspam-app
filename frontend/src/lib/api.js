@@ -287,6 +287,9 @@ export const api = {
   // Bu yüzden POST alternatiflerini kullanıyoruz — backend her ikisini de destekler.
   licenseUpdate: (id, payload) => client.post(`/licenses/${id}/update`, payload).then(r => r.data),
   licenseDelete: (id) => client.post(`/licenses/${id}/delete`).then(r => r.data),
+  licenseBroadcastRefresh: (id, licenseKey) =>
+    client.post(`/licenses/${id}/broadcast-refresh`, null,
+                { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
   licensesBulkAction: (ids, action) =>
     client.post(`/licenses/bulk-action`, { ids, action }).then(r => r.data),
   licensesFixIds: () => client.post(`/licenses/fix-missing-ids`).then(r => r.data),
@@ -324,6 +327,9 @@ export const api = {
 
   // Stripe checkout
   checkoutCreate: (payload) => client.post("/checkout/create-session", payload).then(r => r.data),
+  // Ödeme geçmişi — pod'da bu endpoint henüz yok, hata sessizce yutulur ve
+  // Subscription sayfasındaki "Ödeme Geçmişi" bölümü render edilmez.
+  myPayments: () => client.get("/payments/mine").then(r => r.data).catch(() => ({ items: [] })),
   checkoutStatus: (session_id) => client.get(`/checkout/status/${session_id}`).then(r => r.data),
   checkoutTransactions: () => client.get("/checkout/transactions").then(r => r.data),
 
