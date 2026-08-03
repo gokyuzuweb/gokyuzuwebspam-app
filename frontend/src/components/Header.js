@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Clock, RefreshCw } from "lucide-react";
 import ThreatAlertBell from "@/components/ThreatAlertBell";
+import { ImpersonatePicker } from "@/components/Impersonate";
 
 export default function Header({ title }) {
   const { data, refetch, isFetching } = useQuery({
@@ -34,6 +35,7 @@ export default function Header({ title }) {
         >
           <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
         </button>
+        <ImpersonatePicker />
         <ThreatAlertBell />
         <div data-testid="engine-status" className="flex items-center gap-2 text-xs">
           <span className="relative inline-flex w-2 h-2">

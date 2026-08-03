@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   SlidersHorizontal, Save, RotateCcw, Check, X, Info, ShieldCheck,
-  Loader2, ChevronRight, Package,
+  Loader2, ChevronRight, Package, History, User2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
@@ -24,23 +24,60 @@ const FEATURE_GROUPS = [
     ],
   },
   {
-    title: "İleri Güvenlik",
-    icon: ShieldCheck,
+    title: "Temel Modüller",
+    icon: Check,
     features: [
-      { key: "exploit_editor", label: "Exploit / Webshell Tarayıcı", type: "bool", hint: "Custom regex imzaları + tarama" },
-      { key: "custom_rules", label: "Özel Kural / Regex Editörü", type: "bool", hint: "Bayi kendi kurallarını yazabilir" },
-      { key: "ai_explanations", label: "AI Destekli Açıklamalar", type: "bool", hint: "GPT/Claude ile spam açıklama" },
-      { key: "attack_map", label: "Canlı Attack Map", type: "bool", hint: "Coğrafi saldırı görselleştirme" },
+      { key: "dashboard", label: "Dashboard", type: "bool", hint: "Ana panel görünümü" },
+      { key: "live_traffic", label: "Canlı Mail Trafiği", type: "bool", hint: "Real-time trafik akışı" },
+      { key: "attack_map", label: "Attack Map", type: "bool", hint: "Coğrafi saldırı görselleştirme" },
+      { key: "logs_view", label: "Log Görüntüleme", type: "bool", hint: "Sistem logları" },
     ],
   },
   {
-    title: "Ekosistem",
+    title: "Liste Yönetimi",
+    icon: ShieldCheck,
+    features: [
+      { key: "blacklist_check", label: "Blacklist / RBL Sorgu", type: "bool", hint: "15+ RBL sağlayıcı sorgusu" },
+      { key: "blacklist_manage", label: "Kara Liste Ekle/Sil", type: "bool", hint: "IP/domain blackliste ekleme" },
+      { key: "whitelist_manage", label: "Beyaz Liste Ekle/Sil", type: "bool", hint: "IP/domain whiteliste ekleme" },
+      { key: "quarantine_view", label: "Karantina Görüntüleme", type: "bool", hint: "Karantinaya düşen mailler" },
+      { key: "quarantine_release", label: "Karantinadan Serbest Bırak", type: "bool", hint: "Karantinadan mail çıkarma" },
+    ],
+  },
+  {
+    title: "İleri Güvenlik",
+    icon: ShieldCheck,
+    features: [
+      { key: "custom_rules", label: "Kural Editörü (Rules)", type: "bool", hint: "Custom regex spam kuralları" },
+      { key: "exploit_editor", label: "Exploit / Webshell Tarayıcı", type: "bool", hint: "Sunucuda kötü niyetli dosya tarama" },
+      { key: "ai_explanations", label: "AI Destekli Açıklama", type: "bool", hint: "GPT/Claude ile spam açıklama" },
+      { key: "threat_intel", label: "Tehdit Zekası (Threat Intel)", type: "bool", hint: "Global threat feed erişimi" },
+      { key: "bec_detection", label: "BEC / Business Email Compromise", type: "bool", hint: "Yönetici sahtekarlık tespiti" },
+      { key: "sandbox", label: "Ek/URL Sandbox", type: "bool", hint: "Şüpheli ek+URL sandbox analizi" },
+      { key: "attachment_scan", label: "Ek Tarama", type: "bool", hint: "Virüs / imza taraması" },
+      { key: "url_scan", label: "URL Taraması", type: "bool", hint: "Phishing URL tespit" },
+    ],
+  },
+  {
+    title: "Bildirim & Raporlama",
+    icon: Info,
+    features: [
+      { key: "alerts_rules", label: "Custom Alert Kuralları", type: "bool", hint: "Özel uyarı tetikleyicileri" },
+      { key: "reports_weekly", label: "Haftalık AI Raporu", type: "bool", hint: "Otomatik weekly summary" },
+      { key: "reports_export", label: "Rapor Export (CSV/PDF)", type: "bool", hint: "Rapor dışa aktarma" },
+      { key: "email_notifications", label: "E-posta Bildirimleri", type: "bool", hint: "Kritik olay maili" },
+    ],
+  },
+  {
+    title: "Yönetim & Ekosistem",
     icon: SlidersHorizontal,
     features: [
-      { key: "bulk_actions", label: "Toplu İşlemler", type: "bool", hint: "Toplu sil / toplu whitelist" },
-      { key: "reseller_mode", label: "Bayi Modu (Sub-Account)", type: "bool", hint: "Alt bayi hesapları oluşturma" },
-      { key: "api_access", label: "REST API Dış Erişim", type: "bool", hint: "3rd party entegrasyon anahtarı" },
-      { key: "priority_support", label: "Öncelikli Destek", type: "bool", hint: "SLA + WhatsApp önceliği" },
+      { key: "bulk_actions", label: "Toplu İşlemler", type: "bool", hint: "Toplu sil / whitelist / import" },
+      { key: "sub_users", label: "Alt Kullanıcı Yönetimi", type: "bool", hint: "Panel içi sub-account" },
+      { key: "reseller_mode", label: "Bayi Modu (Alt Bayi)", type: "bool", hint: "Kendi altına bayi açabilme" },
+      { key: "api_access", label: "REST API Dış Erişim", type: "bool", hint: "API anahtarı ile 3rd party" },
+      { key: "priority_support", label: "Öncelikli Destek (SLA)", type: "bool", hint: "WhatsApp / öncelik" },
+      { key: "custom_branding", label: "Beyaz Etiket (Custom Logo/Domain)", type: "bool", hint: "Kendi marka görünümü" },
     ],
   },
 ];
@@ -55,10 +92,18 @@ export default function PlanConfig() {
   const qc = useQueryClient();
   const [matrix, setMatrix] = useState(null);
   const [dirty, setDirty] = useState(false);
+  const [tab, setTab] = useState("edit"); // 'edit' | 'history'
 
   const q = useQuery({
     queryKey: ["plan-matrix"],
     queryFn: () => api.adminPlanMatrix(LICKEY()),
+    retry: false,
+  });
+
+  const history = useQuery({
+    queryKey: ["plan-matrix-history"],
+    queryFn: () => api.adminPlanMatrixHistory(LICKEY(), 100),
+    enabled: tab === "history",
     retry: false,
   });
 
@@ -70,12 +115,13 @@ export default function PlanConfig() {
     mutationFn: (m) => api.adminPlanMatrixSave(m, LICKEY()),
     onSuccess: (d) => {
       toast.success("Plan matrisi kaydedildi", {
-        description: "Tüm bayilerin panelleri en fazla 30sn içinde yeni matriste çalışır",
+        description: `${d.changes ?? 0} alan değişti · bayi panelleri ~30sn içinde yeni matriste çalışır`,
       });
       setMatrix(d.matrix);
       setDirty(false);
       qc.invalidateQueries({ queryKey: ["plan-features"] });
       qc.invalidateQueries({ queryKey: ["plan-matrix"] });
+      qc.invalidateQueries({ queryKey: ["plan-matrix-history"] });
     },
     onError: (e) => toast.error("Kayıt başarısız: " + (e?.response?.data?.detail || e.message)),
   });
@@ -139,6 +185,88 @@ export default function PlanConfig() {
           </button>
         </div>
       </div>
+
+      {/* Tab switcher */}
+      <div className="flex items-center gap-1 bg-slate-900/60 border border-slate-800 rounded-md p-1 w-fit">
+        <button
+          data-testid="pc-tab-edit"
+          onClick={() => setTab("edit")}
+          className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded transition ${
+            tab === "edit" ? "bg-indigo-500/25 text-indigo-100" : "text-slate-400 hover:text-slate-100"
+          }`}
+        >
+          <SlidersHorizontal className="w-3.5 h-3.5" /> Düzenle
+        </button>
+        <button
+          data-testid="pc-tab-history"
+          onClick={() => setTab("history")}
+          className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded transition ${
+            tab === "history" ? "bg-indigo-500/25 text-indigo-100" : "text-slate-400 hover:text-slate-100"
+          }`}
+        >
+          <History className="w-3.5 h-3.5" /> Değişiklik Geçmişi
+        </button>
+      </div>
+
+      {tab === "history" ? (
+        <Card>
+          <CardHeader title="Plan Matris Değişiklik Geçmişi" subtitle="Kim ne zaman hangi modülü açtı/kapattı" />
+          <CardBody className="p-0">
+            {history.isLoading ? (
+              <div className="text-center py-8 text-slate-500 text-sm"><Loader2 className="w-4 h-4 animate-spin inline mr-2"/> Yükleniyor…</div>
+            ) : !history.data?.items?.length ? (
+              <div className="text-center py-12 text-slate-500 text-xs">Henüz değişiklik kaydı yok</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-900/50 text-[10px] uppercase tracking-widest text-slate-500">
+                    <tr>
+                      <th className="text-left px-4 py-2">Tarih</th>
+                      <th className="text-left px-4 py-2">İşlem</th>
+                      <th className="text-left px-4 py-2">IP</th>
+                      <th className="text-left px-4 py-2">Değişiklikler</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {history.data.items.map((h) => (
+                      <tr key={h.id} data-testid={`pc-history-row-${h.id}`} className="hover:bg-slate-900/40">
+                        <td className="px-4 py-2.5 text-slate-300 mono text-xs whitespace-nowrap">
+                          {new Date(h.at).toLocaleString("tr-TR")}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className={`text-[10px] uppercase tracking-widest px-2 py-0.5 rounded ${
+                            h.action === "reset" ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"
+                          }`}>
+                            {h.action === "reset" ? "sıfırla" : "güncelle"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-500 mono text-[11px]">{h.actor_ip || "—"}</td>
+                        <td className="px-4 py-2.5">
+                          {h.action === "reset" ? (
+                            <span className="text-slate-500 text-xs">Tümü varsayılana döndü</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {(h.changes || []).slice(0, 5).map((c, i) => (
+                                <span key={i} className="text-[11px] mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+                                  <b className="text-slate-400">{c.plan}</b>.{c.feature}:{" "}
+                                  <span className="text-rose-300">{String(c.from)}</span>→<span className="text-emerald-300">{String(c.to)}</span>
+                                </span>
+                              ))}
+                              {(h.changes || []).length > 5 && (
+                                <span className="text-[11px] text-slate-500">+{h.changes.length - 5} daha</span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      ) : (<>
 
       {/* Info banner */}
       <div className="p-3 rounded-md border border-sky-500/25 bg-sky-500/5 text-xs text-sky-100 flex items-start gap-2">
@@ -233,6 +361,7 @@ export default function PlanConfig() {
           </button>
         </div>
       )}
+      </>)}
     </div>
   );
 }

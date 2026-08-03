@@ -1,0 +1,46 @@
+{
+  "summary": "V32 — Bayi Impersonation, Plan Matrix History, Bayi Server Register, 30+ feature PLAN_FEATURES_DEFAULT — 29/29 pytest backend PASSING + full frontend UI verified. Impersonation lifecycle (start→cookie→bayi-scoped /plugin/status,/engines→stop) works end-to-end. POST /admin/plan-matrix now returns {changes:N} with diff logging to plan_matrix_history; GET /admin/plan-matrix/history returns items[] with action/actor_ip/changes/changes_count/at fields. Reset action logged as action='reset'. Non-master → 403 on all admin endpoints. Bayi server register is idempotent (same owner_license_key updates in place). Master /admin/bayi-servers enriches with customer_name/plan/license_active. /bayi/my-server returns install/logtail/test-ingest commands with license key embedded. PLAN_FEATURES_DEFAULT has 30 keys per plan (29 features + label) covering all requested modules. Frontend: 6 feature groups × 29 rows render, edit/history tabs work, ImpersonatePicker dropdown lists 23 bayis, red ImpersonationBar shows on impersonate + 'Master'a Dön' clears cookie. /panel/my-server renders 6 form fields + 3 CommandBlocks with copy + 'Nasıl çalışır' section. Full regression on 10 prior endpoints + blacklist/check + analytics/plan-event + broadcast-refresh + master-unlock all 200/expected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /admin/impersonate/start",
+        "issue": "Parameter is named `license_key_arg` (line 4791) instead of `license_key` — inconsistent with every other master-guarded endpoint that uses `license_key`. Master auth via query param would silently fail if a client sent `?license_key=...`. Works today because tests use `x-master-key` header. Recommend renaming to `license_key` for consistency."
+      },
+      {
+        "endpoint": "GET /plan/features (during impersonation)",
+        "issue": "The endpoint does NOT read the gws_impersonate cookie. Only accepts explicit ?license_key= arg. Frontend must therefore know to pass the impersonated key. If PlanConfig-consuming pages use the license from localStorage (gws.master_license), they will see master-scoped features (enterprise) even while impersonation cookie is active. Consider making /plan/features cookie-aware for full symmetry with /plugin/status."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v32_impersonation_history_bayiserver.py",
+    "/app/test_reports/pytest/v32_results.xml"
+  ],
+  "action_items": [
+    "(Minor) Rename admin_impersonate_start parameter `license_key_arg` → `license_key` for consistency with other master-guarded endpoints.",
+    "(Minor) Consider making /plan/features honor gws_impersonate cookie so impersonation shows bayi's plan features without an explicit ?license_key argument.",
+    "(Preserved from iter25) _tenant_scope precedence for master-on-behalf-of-bayi rule creation via ?license_key= — still not fixed; documented in iter25 minor issue."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~5700 lines — high priority to split (plan_matrix.py, bayi_server.py, impersonate.py). Reviewing endpoint changes across such a monolith is fragile.",
+    "plan_matrix_history collection has no TTL/index; capped at limit=500 on GET but grows unbounded on disk. Consider a TTL index on `at` (e.g., 90 days) or a rolling cleanup job.",
+    "Impersonation cookie uses secure=False and httponly=False so JS-side status polls work, but that's an XSS risk vector: any injected script could steal or set the impersonation cookie. Consider httponly=True + a server-rendered flag in /admin/impersonate/status instead of JS-readable cookie.",
+    "Impersonation cookie has no CSRF protection on /admin/impersonate/start; only master-key check. If master session cookie exists in browser, a CSRF from another tab could pin impersonation. Consider requiring the master-key header (which it does today via _require_master) — verify frontend never falls back to cookie-only auth.",
+    "BayiServer.js — save button gated on hostname+primary_ip only; the field marked '*' but no client-side validation for IP format or hostname regex. Payload accepted server-side too. Low risk but adds bad data to admin listing."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v32_impersonation_history_bayiserver.py"
+  ],
+  "success_rate": {"backend": "100% (29/29)", "frontend": "100%"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676; Panel license MS-A1B3833C1DD6441FBCF19F26 (Pro).",
+  "seed_data_creation": "Test bayi_servers doc for PANEL license — cleaned up in module teardown (delete_many + plan-matrix reset).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "V32 green. Test file /app/backend/tests/test_v32_impersonation_history_bayiserver.py covers plan matrix history diff+reset+non-master 403, impersonation cookie lifecycle (start→status→plugin_status impersonated→engines bayi-scoped→stop), bayi server register idempotency + master listing + verify, PLAN_FEATURES_DEFAULT >=29 features. Uses requests.Session() to hold impersonation cookies across the full lifecycle test. Note: admin_impersonate_start signature uses `license_key_arg` (not `license_key`) — pass master via `x-master-key` header. Frontend impersonation UI is on Header via ImpersonatePicker; renders 23 bayis in this environment. Plan-config history tab shows most-recent-first with 'from→to' badges on each change."
+}

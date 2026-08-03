@@ -260,6 +260,27 @@ export const api = {
   adminPlanMatrixReset: (licenseKey) =>
     client.post("/admin/plan-matrix/reset", null,
       { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminPlanMatrixHistory: (licenseKey, limit = 100) =>
+    client.get("/admin/plan-matrix/history",
+      { params: { limit, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
+  // Bayi sunucu kayıt
+  bayiRegisterServer: (payload) => client.post("/bayi/register-server", payload).then(r => r.data),
+  bayiMyServer: () => client.get("/bayi/my-server").then(r => r.data),
+  adminBayiServers: (licenseKey) =>
+    client.get("/admin/bayi-servers",
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminBayiServerVerify: (id, licenseKey) =>
+    client.post(`/admin/bayi-servers/${id}/verify`, null,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  // Impersonation
+  adminImpersonateStart: (targetKey, licenseKey) =>
+    client.post("/admin/impersonate/start", null,
+      { params: { target_license_key: targetKey, ...(licenseKey ? { license_key_arg: licenseKey } : {}) },
+        withCredentials: true }).then(r => r.data),
+  adminImpersonateStop: () =>
+    client.post("/admin/impersonate/stop", null, { withCredentials: true }).then(r => r.data),
+  adminImpersonateStatus: () =>
+    client.get("/admin/impersonate/status", { withCredentials: true }).then(r => r.data),
   violationsAutoCleanup: (licenseKey, days = 7) =>
     client.post("/maintenance/violations/auto-cleanup", null,
                 { params: { days, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),

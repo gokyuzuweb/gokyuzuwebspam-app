@@ -23,7 +23,7 @@ from typing import List, Optional, Literal, Dict, Any
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
@@ -1270,6 +1270,11 @@ async def _tenant_scope(request: Request, license_key_arg: Optional[str]) -> dic
     master_env = os.environ.get("MASTER_LICENSE_KEY", "")
     hdr = request.headers.get("x-master-key") or ""
     cookie = request.cookies.get("gws_master_session") or ""
+    # 0) Impersonation aktifse — master bayi görünümüne geçmiş olur; scope bayidir
+    #    (ama is_master=True kalır, çünkü altta yatan yetkisi master'dır).
+    impersonate = request.cookies.get(IMPERSONATE_COOKIE) if 'IMPERSONATE_COOKIE' in globals() else request.cookies.get("gws_impersonate")
+    if impersonate and master_env and (hdr == master_env or cookie == master_env or license_key_arg == master_env):
+        return {"is_master": False, "owner_license_key": impersonate, "impersonated": True}
     # 1) Auth: master header/cookie via
     if master_env and (hdr == master_env or cookie == master_env):
         target = license_key_arg if (license_key_arg and license_key_arg != master_env) else ""
@@ -4371,7 +4376,24 @@ async def _plugin_status_payload() -> dict:
 
 
 @api.get("/plugin/status")
-async def plugin_status():
+async def plugin_status(request: Request):
+    """Impersonation aktifken bayi lisansı bakış açısını döner (plan_features
+    ve UI gating impersonate edilen bayiye göre çalışsın)."""
+    imp = request.cookies.get("gws_impersonate")
+    if imp:
+        lic = await db.licenses.find_one({"license_key": imp}, {"_id": 0}) or {}
+        base = await _plugin_status_payload()
+        # Bayinin görünürlüğü: onun plan/expires/customer_name'i
+        base.update({
+            "licensed": bool(lic and lic.get("active", True)),
+            "license_key": imp,
+            "license_customer_name": lic.get("customer_name", ""),
+            "license_plan": lic.get("plan", "starter"),
+            "license_expires": lic.get("valid_until", ""),
+            "license_active": lic.get("active", True),
+            "impersonated": True,
+        })
+        return base
     return await _plugin_status_payload()
 
 
@@ -4480,42 +4502,68 @@ async def subscription_renew(payload: SubscriptionRenewIn, request: Request):
 # backend de yazma endpoint'lerinde bu limitleri zorlar.
 PLAN_FEATURES_DEFAULT = {
     "starter": {
+        # Kapasite
         "max_domains": 1,
         "max_mails_per_day": 5000,
-        "ai_explanations": False,
-        "exploit_editor": False,
-        "bulk_actions": False,
-        "custom_rules": False,
+        # Temel modüller
         "attack_map": True,
-        "reseller_mode": False,
-        "priority_support": False,
-        "api_access": False,
+        "dashboard": True,
+        "live_traffic": True,
+        "blacklist_check": True,     # RBL sorgu / delist
+        "whitelist_manage": True,    # Whitelist ekleme
+        "blacklist_manage": True,    # Blacklist ekleme
+        "quarantine_view": True,     # Karantina görüntüleme
+        "quarantine_release": False, # Karantinadan çıkarma
+        "logs_view": True,
+        # İleri modüller
+        "custom_rules": False,       # Kural editörü (Rules sayfası)
+        "exploit_editor": False,     # Exploit/Webshell tarayıcı
+        "ai_explanations": False,    # AI destekli açıklama
+        "threat_intel": False,       # Tehdit zekası feed'i
+        "bec_detection": False,      # Business Email Compromise
+        "sandbox": False,            # Ek/URL sandbox
+        "attachment_scan": True,     # Ek tarama
+        "url_scan": True,            # URL taraması
+        # Bildirim & Raporlama
+        "alerts_rules": False,       # Custom alert kuralları
+        "reports_weekly": False,     # Haftalık AI raporu
+        "reports_export": False,     # CSV/PDF export
+        "email_notifications": True, # Basit e-posta bildirim
+        # Yönetim
+        "bulk_actions": False,       # Toplu işlem
+        "sub_users": False,          # Alt kullanıcı
+        "reseller_mode": False,      # Alt bayi
+        "api_access": False,         # REST API
+        "priority_support": False,   # Öncelikli destek
+        "custom_branding": False,    # Beyaz etiket / logo
         "label": "Starter",
     },
     "pro": {
-        "max_domains": 10,
-        "max_mails_per_day": 50000,
-        "ai_explanations": True,
-        "exploit_editor": True,
-        "bulk_actions": True,
-        "custom_rules": True,
-        "attack_map": True,
-        "reseller_mode": False,
-        "priority_support": True,
-        "api_access": True,
+        "max_domains": 10, "max_mails_per_day": 50000,
+        "attack_map": True, "dashboard": True, "live_traffic": True,
+        "blacklist_check": True, "whitelist_manage": True, "blacklist_manage": True,
+        "quarantine_view": True, "quarantine_release": True, "logs_view": True,
+        "custom_rules": True, "exploit_editor": True, "ai_explanations": True,
+        "threat_intel": True, "bec_detection": True, "sandbox": True,
+        "attachment_scan": True, "url_scan": True,
+        "alerts_rules": True, "reports_weekly": True, "reports_export": True,
+        "email_notifications": True,
+        "bulk_actions": True, "sub_users": True, "reseller_mode": False,
+        "api_access": True, "priority_support": True, "custom_branding": False,
         "label": "Pro",
     },
     "enterprise": {
-        "max_domains": 999999,
-        "max_mails_per_day": 999999999,
-        "ai_explanations": True,
-        "exploit_editor": True,
-        "bulk_actions": True,
-        "custom_rules": True,
-        "attack_map": True,
-        "reseller_mode": True,
-        "priority_support": True,
-        "api_access": True,
+        "max_domains": 999999, "max_mails_per_day": 999999999,
+        "attack_map": True, "dashboard": True, "live_traffic": True,
+        "blacklist_check": True, "whitelist_manage": True, "blacklist_manage": True,
+        "quarantine_view": True, "quarantine_release": True, "logs_view": True,
+        "custom_rules": True, "exploit_editor": True, "ai_explanations": True,
+        "threat_intel": True, "bec_detection": True, "sandbox": True,
+        "attachment_scan": True, "url_scan": True,
+        "alerts_rules": True, "reports_weekly": True, "reports_export": True,
+        "email_notifications": True,
+        "bulk_actions": True, "sub_users": True, "reseller_mode": True,
+        "api_access": True, "priority_support": True, "custom_branding": True,
         "label": "Enterprise",
     },
 }
@@ -4543,6 +4591,19 @@ async def admin_plan_matrix_get(request: Request, license_key: Optional[str] = N
     await _require_master(request, license_key)
     current = await _load_plan_matrix()
     return {"matrix": current, "defaults": PLAN_FEATURES_DEFAULT}
+
+
+@api.get("/admin/plan-matrix/history")
+async def admin_plan_matrix_history(request: Request, license_key: Optional[str] = None,
+                                     limit: int = 100):
+    """Master-only. Plan matrisinde yapılan değişikliklerin tarihçesi.
+    Her POST /admin/plan-matrix veya /reset çağrısı bir kayıt oluşturur."""
+    await _require_master(request, license_key)
+    limit = max(1, min(limit, 500))
+    items = []
+    async for r in db.plan_matrix_history.find({}, {"_id": 0}).sort("at", -1).limit(limit):
+        items.append(r)
+    return {"items": items, "count": len(items)}
 
 
 class PlanMatrixIn(BaseModel):
@@ -4574,17 +4635,37 @@ async def admin_plan_matrix_set(payload: PlanMatrixIn, request: Request,
                 sanitized[plan_code][k] = str(v)[:32]
             else:
                 sanitized[plan_code][k] = bool(v)
+    # Diff için önceki matrisi al
+    before_doc = await db.settings.find_one({"_key": "plan_matrix"}, {"_id": 0, "matrix": 1})
     await db.settings.update_one(
         {"_key": "plan_matrix"},
         {"$set": {"_key": "plan_matrix", "matrix": sanitized,
                   "updated_at": _iso()}},
         upsert=True,
     )
+    # History — hangi alanların değiştiğini diff'le
+    prev_matrix = (before_doc.get("matrix") if before_doc else PLAN_FEATURES_DEFAULT) or PLAN_FEATURES_DEFAULT
+    now_matrix = await _load_plan_matrix()
+    changes = []
+    for plan_code, feats in now_matrix.items():
+        for k, v in feats.items():
+            prev_v = (prev_matrix.get(plan_code) or {}).get(k, PLAN_FEATURES_DEFAULT[plan_code].get(k))
+            if prev_v != v:
+                changes.append({"plan": plan_code, "feature": k, "from": prev_v, "to": v})
+    if changes:
+        await db.plan_matrix_history.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "update",
+            "actor_ip": _client_ip(request),
+            "changes": changes,
+            "changes_count": len(changes),
+            "at": _iso(),
+        })
     await db.logs.insert_one(ActivityLog(
         source="plan_matrix", level="info",
-        message="Plan matrisi master tarafından güncellendi",
+        message=f"Plan matrisi güncellendi — {len(changes)} alan değişti",
     ).model_dump())
-    return {"ok": True, "matrix": await _load_plan_matrix()}
+    return {"ok": True, "matrix": now_matrix, "changes": len(changes)}
 
 
 @api.post("/admin/plan-matrix/reset")
@@ -4592,7 +4673,162 @@ async def admin_plan_matrix_reset(request: Request, license_key: Optional[str] =
     """Master-only. Plan matrisini varsayılana döndürür."""
     await _require_master(request, license_key)
     await db.settings.delete_one({"_key": "plan_matrix"})
+    await db.plan_matrix_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": "reset",
+        "actor_ip": _client_ip(request),
+        "changes": [],
+        "changes_count": 0,
+        "at": _iso(),
+    })
     return {"ok": True, "matrix": PLAN_FEATURES_DEFAULT}
+
+
+# ================== BAYİ SUNUCU KAYIT ==================
+class BayiServerIn(BaseModel):
+    """Bayi kendi WHM sunucusunu master paneline tanıtır."""
+    hostname: str        # cpanel.bayi.com
+    primary_ip: str      # 1.2.3.4
+    ns_records: List[str] = []      # ns1.bayi.com, ns2.bayi.com
+    mail_domains: List[str] = []    # Korunan domain'ler
+    contact_email: str = ""
+    server_notes: Optional[str] = ""
+
+
+@api.post("/bayi/register-server")
+async def bayi_register_server(payload: BayiServerIn, request: Request,
+                               license_key: Optional[str] = None):
+    """Bayi kendi WHM sunucu bilgilerini kaydeder (hostname/IP/NS/mail domain).
+    Master bunları `/admin/bayi-servers`'da görür. Lisans yoksa 403."""
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"]
+    if not owner:
+        raise HTTPException(403, "Sunucu kaydı için aktif bir lisans gerekli")
+    doc = payload.model_dump()
+    doc["owner_license_key"] = owner
+    doc["updated_at"] = _iso()
+    doc["verified"] = False  # master onaylayacak (opsiyonel)
+    existing = await db.bayi_servers.find_one({"owner_license_key": owner}, {"_id": 0})
+    if existing:
+        await db.bayi_servers.update_one({"owner_license_key": owner}, {"$set": doc})
+        doc["id"] = existing.get("id")
+    else:
+        doc["id"] = str(uuid.uuid4())
+        doc["created_at"] = _iso()
+        await db.bayi_servers.insert_one(doc)
+    doc.pop("_id", None)
+    return {"ok": True, "server": doc}
+
+
+@api.get("/bayi/my-server")
+async def bayi_my_server(request: Request, license_key: Optional[str] = None):
+    """Bayi kendi kayıtlı sunucu bilgilerini + install komutlarını görür."""
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"]
+    if not owner:
+        return {"server": None, "install": None}
+    doc = await db.bayi_servers.find_one({"owner_license_key": owner}, {"_id": 0})
+    # Master backend URL — bayi script'lerinde kullanılacak
+    master_api = os.environ.get("MASTER_PUBLIC_API_URL") or ""
+    if not master_api:
+        # request'ten türet
+        master_api = str(request.base_url).rstrip("/")
+    install = {
+        "master_api_url": master_api,
+        "license_key": owner,
+        "install_cmd": (
+            f"curl -sSL {master_api}/scripts/install-bayi.sh | "
+            f"sudo LICENSE_KEY={owner} MASTER_URL={master_api} bash"
+        ),
+        "logtail_cmd": (
+            f"sudo /opt/gokyuzuwebspam/mailshield-logtail.pl "
+            f"--license={owner} --master={master_api} --daemon"
+        ),
+        "test_ingest_cmd": (
+            f"curl -X POST {master_api}/api/mail/ingest "
+            f"-H 'X-License-Key: {owner}' -H 'Content-Type: application/json' "
+            f"-d '{{\"from\":\"test@example.com\",\"to\":\"you@bayi.com\",\"subject\":\"test\",\"verdict\":\"clean\"}}'"
+        ),
+    }
+    return {"server": doc, "install": install}
+
+
+@api.get("/admin/bayi-servers")
+async def admin_bayi_servers(request: Request, license_key: Optional[str] = None):
+    """Master-only. Tüm bayi sunucu kayıtlarını döner."""
+    await _require_master(request, license_key)
+    items = []
+    async for r in db.bayi_servers.find({}, {"_id": 0}).sort("updated_at", -1):
+        # Bayi bilgilerini enrich et
+        lic = await db.licenses.find_one(
+            {"license_key": r.get("owner_license_key")},
+            {"_id": 0, "customer_name": 1, "customer_email": 1, "plan": 1, "active": 1},
+        ) or {}
+        r["customer_name"] = lic.get("customer_name", "")
+        r["plan"] = lic.get("plan", "")
+        r["license_active"] = lic.get("active", False)
+        items.append(r)
+    return {"items": items, "count": len(items)}
+
+
+@api.post("/admin/bayi-servers/{server_id}/verify")
+async def admin_bayi_server_verify(server_id: str, request: Request,
+                                    license_key: Optional[str] = None):
+    """Master bayi sunucusunu onaylı olarak işaretler."""
+    await _require_master(request, license_key)
+    r = await db.bayi_servers.update_one({"id": server_id}, {"$set": {"verified": True, "verified_at": _iso()}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Sunucu bulunamadı")
+    return {"ok": True}
+
+
+# ================== IMPERSONATION MODU ==================
+IMPERSONATE_COOKIE = "gws_impersonate"
+
+
+@api.post("/admin/impersonate/start")
+async def admin_impersonate_start(request: Request, response: Response,
+                                    license_key_arg: Optional[str] = None,
+                                    target_license_key: Optional[str] = None):
+    """Master seçili bayi lisansı ile impersonate başlatır. Sonraki isteklerde
+    `_tenant_scope` bayi context'ine düşer → plan/features/kurallar/motorlar
+    hepsi bayi görünümü olur. Master session cookie'si korunur (istediği an çıkar)."""
+    await _require_master(request, license_key_arg)
+    if not target_license_key:
+        raise HTTPException(400, "target_license_key parametresi zorunlu")
+    lic = await db.licenses.find_one({"license_key": target_license_key}, {"_id": 0})
+    if not lic:
+        raise HTTPException(404, "Hedef lisans bulunamadı")
+    # Cookie ile impersonation
+    response.set_cookie(
+        IMPERSONATE_COOKIE, target_license_key,
+        httponly=False, samesite="lax", secure=False, max_age=3600,
+    )
+    await db.logs.insert_one(ActivityLog(
+        source="impersonate", level="info",
+        message=f"Master → bayi görünümüne geçti: {lic.get('customer_name','')} ({target_license_key[:16]}…)",
+    ).model_dump())
+    return {"ok": True, "impersonating": target_license_key,
+            "customer_name": lic.get("customer_name",""), "plan": lic.get("plan","")}
+
+
+@api.post("/admin/impersonate/stop")
+async def admin_impersonate_stop(response: Response):
+    """Impersonation cookie'sini siler — master normal görünüme döner."""
+    response.delete_cookie(IMPERSONATE_COOKIE)
+    return {"ok": True}
+
+
+@api.get("/admin/impersonate/status")
+async def admin_impersonate_status(request: Request):
+    """Frontend banner için: şu an impersonate ediliyor mu?"""
+    key = request.cookies.get(IMPERSONATE_COOKIE)
+    if not key:
+        return {"active": False}
+    lic = await db.licenses.find_one({"license_key": key}, {"_id": 0}) or {}
+    return {"active": True, "target_license_key": key,
+            "customer_name": lic.get("customer_name",""),
+            "plan": lic.get("plan","")}
 
 
 @api.get("/plan/features")

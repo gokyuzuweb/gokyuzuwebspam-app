@@ -5,13 +5,14 @@ import { Toaster } from "sonner";
 import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
-  Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal,
+  Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal, Server,
   Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { PluginStatusStripe, LicenseGate } from "@/components/LicenseGate";
 import RenewalBanner from "@/components/RenewalBanner";
+import { ImpersonationBar } from "@/components/Impersonate";
 import { useIsMaster } from "@/hooks/useIsMaster";
 import { api } from "@/lib/api";
 import Landing from "@/pages/Landing";
@@ -46,6 +47,7 @@ import MasterLive from "@/pages/MasterLive";
 import PlanAnalytics from "@/pages/PlanAnalytics";
 import Subscription from "@/pages/Subscription";
 import PlanConfig from "@/pages/PlanConfig";
+import BayiServer from "@/pages/BayiServer";
 import WhitelistHistory from "@/pages/WhitelistHistory";
 import Header from "@/components/Header";
 
@@ -66,6 +68,7 @@ const NAV = [
   { to: "/panel/reports", key: "reports", icon: FileText, testid: "nav-reports" },
   { to: "/panel/licenses", key: "licenses", icon: Key, testid: "nav-licenses", sellerOnly: true, masterOnly: true },
   { to: "/panel/subscription", key: "subscription", icon: Sparkles, testid: "nav-subscription", label: "Aboneliğim" },
+  { to: "/panel/my-server", key: "my_server", icon: Server, testid: "nav-my-server", label: "Sunucumu Bağla" },
   { to: "/panel/pricing", key: "pricing", icon: DollarSign, testid: "nav-pricing", sellerOnly: true, masterOnly: true },
   { to: "/panel/users", key: "users", icon: Users, testid: "nav-users" },
   { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs" },
@@ -181,6 +184,7 @@ function Shell() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <PluginStatusStripe />
+        <ImpersonationBar />
         <RenewalBanner />
         <Header title={active ? (active.label || t(`nav.${active.key}`)) : "GökyüzüWebSpam"} />
         <main className="flex-1 min-w-0 overflow-x-hidden">
@@ -197,6 +201,7 @@ function Shell() {
             <Route path="/plan-analytics" element={<PlanAnalytics />} />
             <Route path="/plan-config" element={<PlanConfig />} />
             <Route path="/subscription" element={<Subscription />} />
+            <Route path="/my-server" element={<BayiServer />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/quarantine" element={<Quarantine />} />
