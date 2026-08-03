@@ -1237,15 +1237,14 @@ async def rules_get(request: Request, license_key: Optional[str] = None):
     """Kurallar listesi — bayi/master scope'a göre filtrelenir.
 
     • Master (x-master-key veya gws_master_session cookie): tüm kuralları görür,
-      ayrıca `?license_key=WS-…` ile belirli bir bayinin kuralına drill-down yapabilir.
+      `?license_key=WS-…` ile belirli bir bayinin kurallarına drill-down yapabilir.
     • Bayi: sadece **kendi lisansının** eklediği kurallar görünür.
     """
-    scope = await _rules_scope(request, license_key)
+    scope = await _tenant_scope(request, license_key)
     q = {}
     if scope["is_master"]:
-        # Master drill-down (license_key parametresi verildiyse)
-        if license_key and license_key != os.environ.get("MASTER_LICENSE_KEY", ""):
-            q = {"owner_license_key": license_key}
+        if scope["owner_license_key"]:
+            q = {"owner_license_key": scope["owner_license_key"]}
         # aksi halde tüm kurallar
     else:
         q = {"owner_license_key": scope["owner_license_key"]}
@@ -1261,22 +1260,24 @@ async def _tenant_scope(request: Request, license_key_arg: Optional[str]) -> dic
     """Multi-tenant izolasyon scope helper. Master ve bayi arasında yazma/okuma
     ayrımı için tüm koleksiyonlarda kullanılır.
 
-    Master: `x-master-key` header / `gws_master_session` cookie / `license_key`
-    query'sinde MASTER_LICENSE_KEY görüldüğünde.
-
-    Bayi: master değilse, panele install edilmiş `plugin_state.license_key`
-    döner (installasyonda kayıtlı bayi lisansı). Hiç lisans yoksa `""` — hiçbir
-    kayıt görülmez (ziyaretçi).
+    Öncelik sırası (auth ayrımını 'target tenant'tan ayır):
+      1) `x-master-key` header VEYA `gws_master_session` cookie master ise →
+         is_master=True. `license_key_arg` varsa hedef bayi olarak kullanılır
+         (master başkası adına işlem yapmak istiyor demektir).
+      2) `license_key_arg` master anahtarına eşitse → is_master=True (legacy).
+      3) Aksi halde bayi kabul edilir; hedef `plugin_state.license_key`.
     """
     master_env = os.environ.get("MASTER_LICENSE_KEY", "")
-    provided = (
-        license_key_arg
-        or request.headers.get("x-master-key")
-        or request.cookies.get("gws_master_session")
-        or ""
-    )
-    if master_env and provided == master_env:
+    hdr = request.headers.get("x-master-key") or ""
+    cookie = request.cookies.get("gws_master_session") or ""
+    # 1) Auth: master header/cookie via
+    if master_env and (hdr == master_env or cookie == master_env):
+        target = license_key_arg if (license_key_arg and license_key_arg != master_env) else ""
+        return {"is_master": True, "owner_license_key": target}
+    # 2) Legacy: license_key_arg master ile eşleşiyor
+    if master_env and license_key_arg == master_env:
         return {"is_master": True, "owner_license_key": ""}
+    # 3) Bayi
     st = await _plugin_status_payload()
     return {"is_master": False, "owner_license_key": st.get("license_key") or ""}
 
@@ -1292,23 +1293,16 @@ class RuleIn(BaseModel):
 
 @api.post("/rules")
 async def rules_add(rule: RuleIn, request: Request, license_key: Optional[str] = None):
-    scope = await _rules_scope(request, license_key)
+    scope = await _tenant_scope(request, license_key)
     # Ziyaretçi (lisanssız ziyaretçi) kural ekleyemez — demo_write_guard zaten
     # engelliyor ama defense-in-depth için burada da doğrulayalım.
-    owner = scope["owner_license_key"]
-    if not scope["is_master"] and not owner:
+    if not scope["is_master"] and not scope["owner_license_key"]:
         raise HTTPException(403, "Kural eklemek için lisans gerekli")
     obj = Rule(**rule.model_dump())
     doc = obj.model_dump()
-    # Master eklediğinde owner boş kalır (global sistem kuralı olur), bayi eklediğinde
-    # kendi lisansı ile scope'lanır. Master bir bayi adına eklemek isterse
-    # `?license_key=WS-…` göndersin.
-    if scope["is_master"] and license_key and license_key != os.environ.get("MASTER_LICENSE_KEY", ""):
-        doc["owner_license_key"] = license_key
-    elif scope["is_master"]:
-        doc["owner_license_key"] = ""  # global master rule
-    else:
-        doc["owner_license_key"] = owner
+    # scope.owner_license_key: bayi ise kendi lisansı; master global için "";
+    # master drill-down için hedef bayi lisansı.
+    doc["owner_license_key"] = scope["owner_license_key"]
     await db.rules.insert_one(doc)
     return {k: v for k, v in doc.items() if k != "_id"}
 
@@ -1316,13 +1310,13 @@ async def rules_add(rule: RuleIn, request: Request, license_key: Optional[str] =
 async def _authorize_rule_action(rule_id: str, request: Request, license_key: Optional[str]) -> dict:
     """Kural sahibi mi kontrol et. Master hepsine erişebilir; bayi sadece
     `owner_license_key == kendi lisansı` olanlara. Bulamazsa 404, izin yoksa 403."""
-    scope = await _rules_scope(request, license_key)
+    scope = await _tenant_scope(request, license_key)
     rule = await db.rules.find_one({"id": rule_id}, {"_id": 0})
     if not rule:
         raise HTTPException(404, "Kural bulunamadı")
     if scope["is_master"]:
         return rule
-    if rule.get("owner_license_key") != scope["owner_license_key"] or not scope["owner_license_key"]:
+    if not scope["owner_license_key"] or rule.get("owner_license_key") != scope["owner_license_key"]:
         raise HTTPException(403, "Bu kural sizin lisansınıza ait değil")
     return rule
 
