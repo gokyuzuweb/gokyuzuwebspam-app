@@ -2588,7 +2588,12 @@ async def admin_plan_funnel(request: Request, license_key: Optional[str] = None,
     prev = None
     for s in stages:
         n = counts[s]
-        conv = round(n / prev * 100, 1) if prev else 100.0
+        # Cap conversion at 100% (later stages may exceed earlier when older
+        # events fall outside the same window — surface as "≥100%" cap).
+        if prev:
+            conv = round(min(100.0, n / prev * 100), 1)
+        else:
+            conv = 100.0
         funnel.append({"stage": s, "count": n, "conversion_pct": conv})
         prev = n if n else prev  # keep last non-zero to avoid /0
 
