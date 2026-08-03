@@ -1,0 +1,38 @@
+{
+  "summary": "V33 — Tenant-scoped stats/overview + plan-feature backend enforcement + Stripe renew — 21/21 pytest PASS. Verified: (1) GET /api/stats/overview returns license-scoped counters — bayi (installed panel license MS-A1B3833C1DD6441FBCF19F26) sees scanned=0/caught=0 while master (x-master-key) sees full DB view. (2) POST /api/blacklist/check|/blacklist/delist|/rules return 403 with Turkish message 'Bu özellik (X) '<plan>' planınızda kapalı — üst versiyona geçin.' when the corresponding plan matrix key is flipped (pro.blacklist_check=false, pro.blacklist_manage=false, pro.custom_rules=false); after reset bayi restored to 200. Master with x-master-key bypasses gates (plan resolves to enterprise which stays true) — validated on blacklist_check and rules. (3) POST /api/subscription/renew {billing_period:'yearly'} → 200 with real Stripe checkout URL (https://checkout.stripe.com/c/pay/cs_test_...), session_id, renewal:true — no more 503 'Stripe yapılandırılmamış'. Pricing plans intact (starter 29/290, pro 79/790, enterprise 199/1990). Regression clean on 13 endpoints (plugin/status, plan/features, engines, settings, rules, plugin/renewal-info, admin/plan-matrix, plan-matrix/history, bayi-servers, impersonate/status, resellers-live, threat-alerts, plan-funnel, bayi/my-server).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "_require_feature error message format",
+        "issue": "Actual message wraps plan in single quotes: 'Bu özellik (blacklist_check) \\'pro\\' planınızda kapalı — üst versiyona geçin.' — user-facing spec listed 'pro planınızda' (no quotes). Frontend prompts should match. Cosmetic — test only asserts substring 'kapalı'."
+      },
+      {
+        "endpoint": "POST /api/blacklist/check|/delist (master bypass semantics)",
+        "issue": "Master bypass is IMPLICIT — master's plan resolves to 'enterprise' via _plan_of_scope, and enterprise plan defaults keep the feature enabled. If a master ever flips enterprise.blacklist_check=false, they will lock themselves out of their own endpoint. Recommend an explicit `if scope['is_master']: return` short-circuit in _require_feature (like rules_add does) to prevent self-lockout."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v33_tenant_stats_feature_gates_stripe.py",
+    "/app/test_reports/pytest/v33_results.xml"
+  ],
+  "action_items": [
+    "(Minor) Add explicit master bypass inside _require_feature (e.g., `if scope.get('is_master') and not scope.get('impersonated'): return`) instead of relying on enterprise plan defaults — prevents accidental master self-lockout.",
+    "(Cosmetic) Consider dropping single quotes around plan name in _require_feature message to match user-facing docs, or update docs to match code."
+  ],
+  "critical_code_review_comments": [
+    "server.py now ~5767 lines — v32 recommendation to split (plan_matrix, bayi_server, impersonate modules) still not addressed.",
+    "_require_feature is called unconditionally on blacklist_check/blacklist_delist — master relies on plan=enterprise having the feature. Should have explicit is_master bypass for defense-in-depth. rules_add already does this correctly (line 1352 `if not scope['is_master']: await _require_feature(...)`).",
+    "stats_overview quarantine filter (line 1008) uses `{}` (unfiltered) for master when owner is empty — correct — but engines filter uses `{'owner_license_key': ''}` as master fallback which assumes seed template has empty owner. If any real bayi engine records existed without owner_key they'd leak into master view. Consider explicit index or query on `is_default:true`.",
+    "_stripe_client accepts any non-empty STRIPE_API_KEY string — the sk_test_emergent value is a shared sandbox; no validation that key format matches sk_test_/sk_live_. Fine for now but a typo like ' ' would pass strip() checks and fail deeper in Stripe SDK with a less clear error."
+  ],
+  "updated_files": ["/app/backend/tests/test_v33_tenant_stats_feature_gates_stripe.py"],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "not tested (backend-only round)"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676; Installed panel license=MS-A1B3833C1DD6441FBCF19F26 (Pro, customer_email=active@example.com); STRIPE_API_KEY=sk_test_emergent.",
+  "seed_data_creation": "None persistent — plan matrix modified during tests but reset in module teardown + inline try/finally. Any master-created TEST_rule cleaned via best-effort DELETE.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "V33 green. Test file /app/backend/tests/test_v33_tenant_stats_feature_gates_stripe.py covers tenant-scoped stats, feature gates (blacklist_check/blacklist_manage/custom_rules), Stripe renewal, and regression on 13 endpoints. Feature gate tests flip pro plan matrix then restore in finally — safe to rerun. Renewal test hits real Stripe sandbox (sk_test_emergent) and returns cs_test session; if Stripe API is down the test will 5xx — not a code bug. Note: bayi identity is derived from _plugin_status_payload (installed license) — anonymous requests are automatically the panel bayi. Master identity via `x-master-key` header only."
+}

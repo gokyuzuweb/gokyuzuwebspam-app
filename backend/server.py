@@ -999,14 +999,29 @@ async def root():
 
 
 @api.get("/stats/overview")
-async def stats_overview():
-    total = await db.quarantine.count_documents({})
-    phish = await db.quarantine.count_documents({"verdict": "phish"})
-    virus = await db.quarantine.count_documents({"verdict": "virus"})
-    high = await db.quarantine.count_documents({"verdict": "high_spam"})
-    engines = await db.engines.find({}, {"_id": 0}).to_list(20)
-    scanned = sum(e.get("scanned_today", 0) for e in engines if e.get("enabled"))
-    caught = sum(e.get("caught_today", 0) for e in engines if e.get("enabled"))
+async def stats_overview(request: Request, license_key: Optional[str] = None):
+    """Bayi/master scope'a göre izole edilir. Bayi sadece kendi mail_events +
+    quarantine + engines sayaçlarını görür."""
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"]
+    # Quarantine filtresi
+    q_filter = {} if scope["is_master"] and not owner else ({"owner_license_key": owner} if owner else {})
+    total = await db.quarantine.count_documents(q_filter)
+    phish = await db.quarantine.count_documents({**q_filter, "verdict": "phish"})
+    virus = await db.quarantine.count_documents({**q_filter, "verdict": "virus"})
+    high = await db.quarantine.count_documents({**q_filter, "verdict": "high_spam"})
+    # Engines filtresi (owner=='' master global template'i)
+    eng_filter = {"owner_license_key": owner} if owner or not scope["is_master"] else {"owner_license_key": ""}
+    engines = await db.engines.find(eng_filter, {"_id": 0}).to_list(20)
+    # Canlı mail_events sayaçları (son 24s) — bayi izolasyonu buradan gelir
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    me_filter = {"ts": {"$gte": since}}
+    if owner:
+        me_filter["license_key"] = owner
+    scanned = await db.mail_events.count_documents(me_filter)
+    caught = await db.mail_events.count_documents({
+        **me_filter, "verdict": {"$in": ["spam", "high_spam", "virus", "phish"]},
+    })
     ham = max(scanned - caught, 0)
     return {
         "scanned_today": scanned,
@@ -1256,6 +1271,36 @@ async def _rules_scope(request: Request, license_key_arg: Optional[str]) -> dict
     return await _tenant_scope(request, license_key_arg)
 
 
+async def _plan_of_scope(scope: dict) -> str:
+    """Verilen scope için efektif plan kodunu döner. Impersonation → hedef bayi
+    planı. Master (non-impersonated) → enterprise. Bayi → kendi lisansının planı."""
+    if scope.get("impersonated") and scope.get("owner_license_key"):
+        lic = await db.licenses.find_one(
+            {"license_key": scope["owner_license_key"]}, {"_id": 0, "plan": 1}
+        )
+        return str((lic or {}).get("plan", "starter")).lower()
+    if scope.get("is_master"):
+        return "enterprise"
+    if scope.get("owner_license_key"):
+        lic = await db.licenses.find_one(
+            {"license_key": scope["owner_license_key"]}, {"_id": 0, "plan": 1}
+        )
+        return str((lic or {}).get("plan", "starter")).lower()
+    return "starter"
+
+
+async def _require_feature(scope: dict, feature: str) -> None:
+    """Plan matris feature toggle kontrolü. Kapalıysa 403 ile net Türkçe mesaj döner."""
+    plan = await _plan_of_scope(scope)
+    matrix = await _load_plan_matrix()
+    allowed = bool((matrix.get(plan) or {}).get(feature, False))
+    if not allowed:
+        raise HTTPException(
+            403,
+            f"Bu özellik ({feature}) '{plan}' planınızda kapalı — üst versiyona geçin.",
+        )
+
+
 async def _tenant_scope(request: Request, license_key_arg: Optional[str]) -> dict:
     """Multi-tenant izolasyon scope helper. Master ve bayi arasında yazma/okuma
     ayrımı için tüm koleksiyonlarda kullanılır.
@@ -1303,6 +1348,9 @@ async def rules_add(rule: RuleIn, request: Request, license_key: Optional[str] =
     # engelliyor ama defense-in-depth için burada da doğrulayalım.
     if not scope["is_master"] and not scope["owner_license_key"]:
         raise HTTPException(403, "Kural eklemek için lisans gerekli")
+    # Plan matrisi custom_rules kapalıysa engel (master her zaman geçer)
+    if not scope["is_master"]:
+        await _require_feature(scope, "custom_rules")
     obj = Rule(**rule.model_dump())
     doc = obj.model_dump()
     # scope.owner_license_key: bayi ise kendi lisansı; master global için "";
@@ -3960,7 +4008,9 @@ class BlacklistCheckIn(BaseModel):
 
 
 @api.post("/blacklist/check")
-async def blacklist_check(payload: BlacklistCheckIn):
+async def blacklist_check(payload: BlacklistCheckIn, request: Request, license_key: Optional[str] = None):
+    scope = await _tenant_scope(request, license_key)
+    await _require_feature(scope, "blacklist_check")
     is_ip = payload.type == "ip"
     results = []
     listed_count = 0
@@ -4013,7 +4063,9 @@ class DelistRequest(BaseModel):
 
 
 @api.post("/blacklist/delist")
-async def blacklist_delist(payload: DelistRequestIn):
+async def blacklist_delist(payload: DelistRequestIn, request: Request, license_key: Optional[str] = None):
+    scope = await _tenant_scope(request, license_key)
+    await _require_feature(scope, "blacklist_manage")
     provider_map = {p["code"]: p for p in RBL_PROVIDERS}
     created = []
     email_attempts = 0
@@ -5273,9 +5325,14 @@ class PaymentTransaction(BaseModel):
 
 def _stripe_client(origin: str):
     from emergentintegrations.payments.stripe.checkout import StripeCheckout
-    api_key = os.environ.get("STRIPE_API_KEY")
+    api_key = os.environ.get("STRIPE_API_KEY", "").strip()
     if not api_key:
-        raise HTTPException(500, "Stripe yapılandırılmamış")
+        raise HTTPException(
+            503,
+            "Stripe yapılandırılmamış. Master lütfen /app/backend/.env dosyasına "
+            "STRIPE_API_KEY ekleyip backend'i restart etsin.",
+        )
+    # sk_test_emergent Emergent'ın shared test sandbox key'idir — kabul edilir
     return StripeCheckout(api_key=api_key, webhook_url=f"{origin}/api/checkout/webhook")
 
 
@@ -5288,7 +5345,7 @@ async def checkout_create_session(payload: CheckoutCreateIn):
         raise HTTPException(404, "Plan bulunamadı veya pasif")
     amount = plan["yearly_price"] if payload.billing_period == "yearly" else plan["monthly_price"]
     if amount <= 0:
-        raise HTTPException(400, "Bu plan için ödeme alınamaz")
+        raise HTTPException(400, "Bu plan için ödeme alınamaz — Master fiyatlandırma sayfasından güncelleyin")
     currency = plan.get("currency", "USD").lower()
     origin = payload.origin_url.rstrip("/")
     stripe = _stripe_client(origin)
@@ -5306,7 +5363,16 @@ async def checkout_create_session(payload: CheckoutCreateIn):
             "max_domains": str(plan.get("max_domains", 100)),
         },
     )
-    session = await stripe.create_checkout_session(session_request)
+    try:
+        session = await stripe.create_checkout_session(session_request)
+    except HTTPException:
+        raise
+    except Exception as ex:
+        raise HTTPException(
+            502,
+            f"Stripe checkout oluşturulamadı — API key geçersiz olabilir ({type(ex).__name__}). "
+            f"Detay: {str(ex)[:200]}",
+        )
     tx = PaymentTransaction(
         session_id=session.session_id, plan_code=payload.plan_code,
         billing_period=payload.billing_period, amount=float(amount),
