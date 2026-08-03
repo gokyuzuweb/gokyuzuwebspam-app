@@ -463,6 +463,41 @@ async def _startup() -> None:
     asyncio.create_task(_monthly_auto_cleanup_task())
     asyncio.create_task(_license_expiry_alerts_task())
     asyncio.create_task(_pos_health_monitor_task())
+    asyncio.create_task(_daily_violations_cleanup_task())
+
+
+async def _daily_violations_cleanup_task():
+    """7 günden eski license_violations kayıtlarını her gece sil. İlk çalıştırma
+    startup'tan 15 dk sonra, sonra her 24 saatte bir. Delete count'u maintenance_log'a
+    ve activity logs'a yazar. Master paneli manuel tetikleme:
+    POST /api/maintenance/violations/auto-cleanup?days=7."""
+    await asyncio.sleep(900)  # 15 dk bekle
+    while True:
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            q = {"$or": [{"at": {"$lt": cutoff}}, {"created_at": {"$lt": cutoff}}]}
+            r1 = await db.license_violations.delete_many(q)
+            r2 = await db.violations.delete_many(q)
+            total = r1.deleted_count + r2.deleted_count
+            await db.maintenance_log.insert_one({
+                "id": str(uuid.uuid4()),
+                "action": "auto_cleanup_violations",
+                "older_than_days": 7,
+                "deleted": total,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            if total:
+                await db.logs.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "source": "auto_cleanup",
+                    "level": "info",
+                    "message": f"Cron: 7 günden eski {total} lisans ihlali otomatik silindi",
+                    "at": datetime.now(timezone.utc).isoformat(),
+                })
+                log.info("daily-violations-cleanup: %d rows deleted", total)
+        except Exception as ex:
+            log.warning("daily-violations-cleanup error: %s", ex)
+        await asyncio.sleep(86400)  # 24 saat
 
 
 async def _auto_suspend_daily_task():
@@ -2243,6 +2278,88 @@ async def run_auto_suspend(request: Request, license_key: Optional[str] = None):
         "last_suspended_count": len(suspended),
     }})
     return {"ok": True, "suspended": len(suspended), "items": suspended}
+
+
+@api.get("/admin/resellers-live")
+async def admin_resellers_live(request: Request, license_key: Optional[str] = None,
+                               hours: int = 24):
+    """Master-only. **Canlı Bayi Trafik Panosu** — her aktif bayi için son N saatlik
+    mail trafiği, spam/virüs/phishing kırılımı, blok sayısı ve son aktivite zamanı
+    döner. Master dashboard "yan yana bayi kartları" için tasarlandı.
+
+    Response: {
+      "hours": 24, "generated_at": iso, "total_resellers": N,
+      "resellers": [
+        { "id", "email", "company", "license_key", "plan", "active", "online",
+          "last_seen_at", "counters": {"mails","spam","virus","phish","blocks","clean"},
+          "spam_ratio_pct" }, ...
+      ]
+    }"""
+    await _require_master(request, license_key)
+    hours = max(1, min(hours, 168))  # 1 hour .. 1 week
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    online_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    out = []
+    async for r in db.resellers.find({}, {"_id": 0, "password_hash": 0}):
+        lic_key = r.get("license_key") or ""
+        # count breakdown in a single aggregation
+        pipeline = [
+            {"$match": {"license_key": lic_key, "ts": {"$gte": cutoff}}},
+            {"$group": {"_id": "$verdict", "n": {"$sum": 1}}},
+        ]
+        counters = {"mails": 0, "spam": 0, "virus": 0, "phish": 0, "blocks": 0, "clean": 0}
+        try:
+            async for row in db.mail_events.aggregate(pipeline):
+                v = (row.get("_id") or "").lower()
+                n = int(row.get("n") or 0)
+                counters["mails"] += n
+                if v in ("spam", "high_spam"):
+                    counters["spam"] += n
+                elif v == "virus":
+                    counters["virus"] += n
+                elif v in ("phish", "phishing"):
+                    counters["phish"] += n
+                elif v in ("block", "blocked"):
+                    counters["blocks"] += n
+                elif v == "clean":
+                    counters["clean"] += n
+        except Exception:
+            pass
+        # violations in period (attacks against license)
+        violations_period = 0
+        try:
+            violations_period = await db.license_violations.count_documents(
+                {"license_key": lic_key, "at": {"$gte": cutoff}}
+            )
+        except Exception:
+            pass
+        last_seen = r.get("last_heartbeat_at") or r.get("last_seen_at") or ""
+        online = bool(last_seen and last_seen >= online_cutoff)
+        spam_ratio = round(
+            (counters["spam"] + counters["virus"] + counters["phish"]) / counters["mails"] * 100, 1
+        ) if counters["mails"] else 0
+        out.append({
+            "id": r.get("id"),
+            "email": r.get("email"),
+            "company": r.get("company", ""),
+            "license_key": lic_key,
+            "plan": r.get("plan", ""),
+            "active": r.get("active", True),
+            "online": online,
+            "last_seen_at": last_seen,
+            "counters": counters,
+            "violations_period": violations_period,
+            "spam_ratio_pct": spam_ratio,
+        })
+    # Sort by activity: online first, then by mails desc
+    out.sort(key=lambda x: (not x["online"], -x["counters"]["mails"]))
+    return {
+        "hours": hours,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "total_resellers": len(out),
+        "online_count": sum(1 for x in out if x["online"]),
+        "resellers": out,
+    }
 
 
 @api.get("/admin/analytics/export")

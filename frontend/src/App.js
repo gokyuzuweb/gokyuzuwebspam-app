@@ -41,6 +41,7 @@ import MailHealth from "@/pages/MailHealth";
 import Maintenance from "@/pages/Maintenance";
 import PaymentsAdmin from "@/pages/PaymentsAdmin";
 import ResellersAdmin from "@/pages/ResellersAdmin";
+import MasterLive from "@/pages/MasterLive";
 import WhitelistHistory from "@/pages/WhitelistHistory";
 import Header from "@/components/Header";
 
@@ -67,6 +68,7 @@ const NAV = [
   { to: "/panel/maintenance", key: "maintenance", icon: HardDrive, testid: "nav-maintenance", label: "DB Bakım" },
   { to: "/panel/payments-admin", key: "payments_admin", icon: DollarSign, testid: "nav-payments-admin", label: "Ödeme Panosu" },
   { to: "/panel/resellers-admin", key: "resellers_admin", icon: Users, testid: "nav-resellers-admin", label: "Bayi Panosu" },
+  { to: "/panel/master-live", key: "master_live", icon: Activity, testid: "nav-master-live", label: "Canlı Bayi Trafiği", masterOnly: true, sellerOnly: true },
   { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
@@ -183,6 +185,7 @@ function Shell() {
             <Route path="/maintenance" element={<Maintenance />} />
             <Route path="/payments-admin" element={<PaymentsAdmin />} />
             <Route path="/resellers-admin" element={<ResellersAdmin />} />
+            <Route path="/master-live" element={<MasterLive />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/quarantine" element={<Quarantine />} />

@@ -1,0 +1,39 @@
+{
+  "summary": "V27 (Master Live + Violations Auto-Cleanup + PlanUpgradeModal) tested. Backend: 13/13 pytest tests passing — /api/admin/resellers-live returns 200 with query license_key for hours=1/24/168 and 403 without; /api/maintenance/violations/auto-cleanup returns 200 and is idempotent (second call deletes 0); all regression endpoints (plugin/status, plan/features=pro, blacklist/check, blacklist/requests, licenses list, POST /licenses/{id}/update) pass with no 500. Frontend: /panel/master-live renders correctly for master (header, 5 period buttons, 6 stat cards with data, search input, online-only checkbox, 1 reseller card — Test Bayi Ltd enterprise). PlanUpgradeModal code + wiring verified via code review (all data-testids present, ESC/backdrop/close handlers wired, redirects to /panel/pricing?upgrade=&cycle=). Could not runtime-trigger PlanUpgradeModal because master session has enterprise plan (PlanGate lets all features through). Daily cleanup cron task confirmed registered at server.py:466 with 2 grep hits for _daily_violations_cleanup_task, and 'Application startup complete' seen in backend logs after fixing an unrelated earlier indentation error (already resolved by main agent — backend now running clean).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/admin/resellers-live", "issue": "Does not accept X-Master-Key HTTP header — only query param license_key. _is_master() at server.py:1884 reads license_key arg only. demo_write_guard (POST/PUT/DELETE) accepts X-Master-Key but GET master endpoints don't. Review request stated header should work. Suggest updating _is_master to also read request.headers.get('x-master-key')."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MasterLive.js StatCard usage (lines 109-114)", "issue": "Passes data-testid prop but StatCard component (ui-primitives.js:33) only accepts a `testid` prop, so the data-testid attribute is dropped. Stat cards render fine visually but automated testing cannot select them by data-testid=ml-stat-*. Fix: change prop name to testid, or update StatCard to spread data-testid.", "selector": "[data-testid='ml-stat-resellers']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v27_masterlive_violations_cleanup.py",
+    "/app/test_reports/pytest/v27_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Make GET master endpoints accept X-Master-Key header in _is_master(). Currently only query license_key works. This is not blocking — frontend uses cookie auth.",
+    "Fix MasterLive.js StatCard usage: pass `testid` instead of `data-testid` (StatCard component only reads `testid` prop)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 4723 lines — well over the 700-line guideline. Recommend splitting into modules (already partially done via routes/*.py).",
+    "_daily_violations_cleanup_task duplicates the logic in routes/maintenance.py::violations_auto_cleanup. Consider having the cron call the router function via _run_violations_cleanup helper (DRY).",
+    "PlanUpgradeModal has correct backdrop-click close via onClick={onClose} on outer + stopPropagation on inner — good pattern.",
+    "MasterLive uses 15s refetch interval — good, but consider pausing when tab hidden (visibilitychange) to save API calls."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v27_masterlive_violations_cleanup.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "90%"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676 (env + query param); Pro license MS-A1B3833C1DD6441FBCF19F26",
+  "seed_data_creation": "None; used existing 'Test Bayi Ltd' reseller row.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "V27 backend fully green. Two minor frontend/backend consistency issues remain: (a) GET /admin/* master endpoints don't accept X-Master-Key header (only query param license_key); (b) MasterLive StatCard data-testid prop is not honored because StatCard component only accepts testid. Neither blocks users. PlanUpgradeModal could not be runtime-tested because master session has enterprise plan (all features unlocked). To runtime-test the modal in a future iteration, log in as a starter-plan reseller/customer, navigate to a page containing <PlanGate feature='...'>, click 'Planı Yükselt' button — modal should appear with data-testid='plan-upgrade-modal'."
+}

@@ -224,6 +224,11 @@ export const api = {
                 { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
   adminAnalyticsExport: (licenseKey, days = 30) =>
     `${client.defaults.baseURL}/admin/analytics/export?fmt=csv&days=${days}${licenseKey ? `&license_key=${encodeURIComponent(licenseKey)}` : ""}`,
+  adminResellersLive: (licenseKey, hours = 24) =>
+    client.get("/admin/resellers-live", { params: { hours, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
+  violationsAutoCleanup: (licenseKey, days = 7) =>
+    client.post("/maintenance/violations/auto-cleanup", null,
+                { params: { days, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
   pushVapidPublic: () => client.get("/push/vapid-public").then(r => r.data),
   pushSubscribe: (payload) => client.post("/push/subscribe", payload).then(r => r.data),
   pushSend: (payload) => client.post("/push/send", payload, { withCredentials: true }).then(r => r.data),
