@@ -275,7 +275,7 @@ export const api = {
   // Impersonation
   adminImpersonateStart: (targetKey, licenseKey) =>
     client.post("/admin/impersonate/start", null,
-      { params: { target_license_key: targetKey, ...(licenseKey ? { license_key_arg: licenseKey } : {}) },
+      { params: { target_license_key: targetKey, ...(licenseKey ? { license_key: licenseKey } : {}) },
         withCredentials: true }).then(r => r.data),
   adminImpersonateStop: () =>
     client.post("/admin/impersonate/stop", null, { withCredentials: true }).then(r => r.data),

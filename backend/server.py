@@ -4788,12 +4788,12 @@ IMPERSONATE_COOKIE = "gws_impersonate"
 
 @api.post("/admin/impersonate/start")
 async def admin_impersonate_start(request: Request, response: Response,
-                                    license_key_arg: Optional[str] = None,
+                                    license_key: Optional[str] = None,
                                     target_license_key: Optional[str] = None):
     """Master seçili bayi lisansı ile impersonate başlatır. Sonraki isteklerde
     `_tenant_scope` bayi context'ine düşer → plan/features/kurallar/motorlar
     hepsi bayi görünümü olur. Master session cookie'si korunur (istediği an çıkar)."""
-    await _require_master(request, license_key_arg)
+    await _require_master(request, license_key)
     if not target_license_key:
         raise HTTPException(400, "target_license_key parametresi zorunlu")
     lic = await db.licenses.find_one({"license_key": target_license_key}, {"_id": 0})
@@ -4832,22 +4832,28 @@ async def admin_impersonate_status(request: Request):
 
 
 @api.get("/plan/features")
-async def plan_features(license_key: Optional[str] = None):
+async def plan_features(request: Request, license_key: Optional[str] = None):
     """Mevcut lisansın plan bazlı özellik matrisini döner (DB-backed).
-    Frontend UI gating için kullanır. Master her zaman enterprise görür."""
+    Frontend UI gating için kullanır. Master her zaman enterprise görür.
+    Impersonation aktifken (gws_impersonate cookie) hedef bayinin planı döner."""
+    # Impersonation önceliği — master `Bayi Görüntüle` modunda bayi planını görür
+    imp = request.cookies.get("gws_impersonate")
+    if imp and not license_key:
+        license_key = imp
     plan = "starter"  # default
     if license_key:
         lic = await db.licenses.find_one({"license_key": license_key, "active": True}, {"_id": 0, "plan": 1})
         if lic:
             plan = str(lic.get("plan", "starter")).lower()
-    # Master her zaman enterprise
+    # Master her zaman enterprise (impersonation değilse)
     master_key = os.environ.get("MASTER_LICENSE_KEY", "")
-    if license_key and license_key == master_key:
+    if not imp and license_key and license_key == master_key:
         plan = "enterprise"
     matrix = await _load_plan_matrix()
     features = matrix.get(plan, matrix["starter"])
     return {"plan": plan, "features": features,
-            "labels": {k: matrix[k]["label"] for k in matrix}}
+            "labels": {k: matrix[k]["label"] for k in matrix},
+            "impersonated": bool(imp)}
 
 
 class LogSourceIn(BaseModel):
