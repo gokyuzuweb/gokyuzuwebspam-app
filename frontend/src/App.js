@@ -5,7 +5,7 @@ import { Toaster } from "sonner";
 import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
-  Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles,
+  Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal,
   Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
@@ -45,6 +45,7 @@ import ResellersAdmin from "@/pages/ResellersAdmin";
 import MasterLive from "@/pages/MasterLive";
 import PlanAnalytics from "@/pages/PlanAnalytics";
 import Subscription from "@/pages/Subscription";
+import PlanConfig from "@/pages/PlanConfig";
 import WhitelistHistory from "@/pages/WhitelistHistory";
 import Header from "@/components/Header";
 
@@ -74,6 +75,7 @@ const NAV = [
   { to: "/panel/resellers-admin", key: "resellers_admin", icon: Users, testid: "nav-resellers-admin", label: "Bayi Panosu" },
   { to: "/panel/master-live", key: "master_live", icon: Activity, testid: "nav-master-live", label: "Canlı Bayi Trafiği", masterOnly: true, sellerOnly: true },
   { to: "/panel/plan-analytics", key: "plan_analytics", icon: DollarSign, testid: "nav-plan-analytics", label: "Plan Analitiği", masterOnly: true, sellerOnly: true },
+  { to: "/panel/plan-config", key: "plan_config", icon: SlidersHorizontal, testid: "nav-plan-config", label: "Plan Modül Yapıl.", masterOnly: true, sellerOnly: true },
   { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
@@ -193,6 +195,7 @@ function Shell() {
             <Route path="/resellers-admin" element={<ResellersAdmin />} />
             <Route path="/master-live" element={<MasterLive />} />
             <Route path="/plan-analytics" element={<PlanAnalytics />} />
+            <Route path="/plan-config" element={<PlanConfig />} />
             <Route path="/subscription" element={<Subscription />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />

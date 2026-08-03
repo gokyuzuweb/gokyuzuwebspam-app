@@ -93,6 +93,7 @@ class Rule(BaseModel):
     target: Literal["subject", "body", "header", "from", "any"] = "any"
     enabled: bool = True
     description: Optional[str] = ""
+    owner_license_key: str = ""  # bayi lisansı ile scope'lu (boşsa master/global)
     created_at: str = Field(default_factory=_iso)
 
 
@@ -444,16 +445,32 @@ async def seed_if_empty() -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     await seed_if_empty()
-    # Deduplicate engines (was seeded multiple times in earlier versions)
+    # Deduplicate engines by (name, owner_license_key) — multi-tenant safe.
+    # Legacy pre-multitenancy dedupe used only `name` which wiped bayi copies,
+    # and legacy `name_1` unique index conflicts with per-bayi rows.
     try:
+        # Drop any legacy single-field unique index on name (if it exists)
+        try:
+            await db.engines.drop_index("name_1")
+        except Exception:
+            pass
+        # Tag legacy docs missing owner_license_key as master template ""
+        await db.engines.update_many(
+            {"owner_license_key": {"$exists": False}},
+            {"$set": {"owner_license_key": ""}},
+        )
+        # Dedupe by (name, owner_license_key)
         seen = set()
-        async for e in db.engines.find({}, {"_id": 1, "name": 1}):
-            n = e.get("name")
-            if n in seen:
+        async for e in db.engines.find({}, {"_id": 1, "name": 1, "owner_license_key": 1}):
+            key = (e.get("name"), e.get("owner_license_key", ""))
+            if key in seen:
                 await db.engines.delete_one({"_id": e["_id"]})
             else:
-                seen.add(n)
-        await db.engines.create_index("name", unique=True)
+                seen.add(key)
+        await db.engines.create_index(
+            [("name", 1), ("owner_license_key", 1)],
+            unique=True, name="name_owner_unique",
+        )
     except Exception as ex:
         log.warning("engines dedupe skipped: %s", ex)
     # Kick off background housekeeping tasks
@@ -1216,8 +1233,52 @@ async def lists_delete(entry_id: str):
 
 # ----- Rules -----
 @api.get("/rules")
-async def rules_get():
-    return await db.rules.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def rules_get(request: Request, license_key: Optional[str] = None):
+    """Kurallar listesi — bayi/master scope'a göre filtrelenir.
+
+    • Master (x-master-key veya gws_master_session cookie): tüm kuralları görür,
+      ayrıca `?license_key=WS-…` ile belirli bir bayinin kuralına drill-down yapabilir.
+    • Bayi: sadece **kendi lisansının** eklediği kurallar görünür.
+    """
+    scope = await _rules_scope(request, license_key)
+    q = {}
+    if scope["is_master"]:
+        # Master drill-down (license_key parametresi verildiyse)
+        if license_key and license_key != os.environ.get("MASTER_LICENSE_KEY", ""):
+            q = {"owner_license_key": license_key}
+        # aksi halde tüm kurallar
+    else:
+        q = {"owner_license_key": scope["owner_license_key"]}
+    return await db.rules.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+async def _rules_scope(request: Request, license_key_arg: Optional[str]) -> dict:
+    """Rules izolasyon scope helper (`_tenant_scope`'un takma adı — geriye uyum)."""
+    return await _tenant_scope(request, license_key_arg)
+
+
+async def _tenant_scope(request: Request, license_key_arg: Optional[str]) -> dict:
+    """Multi-tenant izolasyon scope helper. Master ve bayi arasında yazma/okuma
+    ayrımı için tüm koleksiyonlarda kullanılır.
+
+    Master: `x-master-key` header / `gws_master_session` cookie / `license_key`
+    query'sinde MASTER_LICENSE_KEY görüldüğünde.
+
+    Bayi: master değilse, panele install edilmiş `plugin_state.license_key`
+    döner (installasyonda kayıtlı bayi lisansı). Hiç lisans yoksa `""` — hiçbir
+    kayıt görülmez (ziyaretçi).
+    """
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    provided = (
+        license_key_arg
+        or request.headers.get("x-master-key")
+        or request.cookies.get("gws_master_session")
+        or ""
+    )
+    if master_env and provided == master_env:
+        return {"is_master": True, "owner_license_key": ""}
+    st = await _plugin_status_payload()
+    return {"is_master": False, "owner_license_key": st.get("license_key") or ""}
 
 
 class RuleIn(BaseModel):
@@ -1230,65 +1291,167 @@ class RuleIn(BaseModel):
 
 
 @api.post("/rules")
-async def rules_add(rule: RuleIn):
+async def rules_add(rule: RuleIn, request: Request, license_key: Optional[str] = None):
+    scope = await _rules_scope(request, license_key)
+    # Ziyaretçi (lisanssız ziyaretçi) kural ekleyemez — demo_write_guard zaten
+    # engelliyor ama defense-in-depth için burada da doğrulayalım.
+    owner = scope["owner_license_key"]
+    if not scope["is_master"] and not owner:
+        raise HTTPException(403, "Kural eklemek için lisans gerekli")
     obj = Rule(**rule.model_dump())
-    await db.rules.insert_one(obj.model_dump())
-    return obj.model_dump()
+    doc = obj.model_dump()
+    # Master eklediğinde owner boş kalır (global sistem kuralı olur), bayi eklediğinde
+    # kendi lisansı ile scope'lanır. Master bir bayi adına eklemek isterse
+    # `?license_key=WS-…` göndersin.
+    if scope["is_master"] and license_key and license_key != os.environ.get("MASTER_LICENSE_KEY", ""):
+        doc["owner_license_key"] = license_key
+    elif scope["is_master"]:
+        doc["owner_license_key"] = ""  # global master rule
+    else:
+        doc["owner_license_key"] = owner
+    await db.rules.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+async def _authorize_rule_action(rule_id: str, request: Request, license_key: Optional[str]) -> dict:
+    """Kural sahibi mi kontrol et. Master hepsine erişebilir; bayi sadece
+    `owner_license_key == kendi lisansı` olanlara. Bulamazsa 404, izin yoksa 403."""
+    scope = await _rules_scope(request, license_key)
+    rule = await db.rules.find_one({"id": rule_id}, {"_id": 0})
+    if not rule:
+        raise HTTPException(404, "Kural bulunamadı")
+    if scope["is_master"]:
+        return rule
+    if rule.get("owner_license_key") != scope["owner_license_key"] or not scope["owner_license_key"]:
+        raise HTTPException(403, "Bu kural sizin lisansınıza ait değil")
+    return rule
 
 
 @api.put("/rules/{rule_id}")
-async def rules_update(rule_id: str, rule: RuleIn):
-    r = await db.rules.update_one({"id": rule_id}, {"$set": rule.model_dump()})
+async def rules_update(rule_id: str, rule: RuleIn, request: Request, license_key: Optional[str] = None):
+    existing = await _authorize_rule_action(rule_id, request, license_key)
+    upd = rule.model_dump()
+    upd["owner_license_key"] = existing.get("owner_license_key", "")  # sahiplik değişmez
+    r = await db.rules.update_one({"id": rule_id}, {"$set": upd})
     if r.matched_count == 0:
         raise HTTPException(404, "Kural bulunamadı")
     return {"updated": True}
 
 
+# Apache/cPanel PUT/DELETE bloğu için POST alternatifleri
+@api.post("/rules/{rule_id}/update")
+async def rules_update_post(rule_id: str, rule: RuleIn, request: Request, license_key: Optional[str] = None):
+    return await rules_update(rule_id, rule, request, license_key)
+
+
 @api.delete("/rules/{rule_id}")
-async def rules_delete(rule_id: str):
+async def rules_delete(rule_id: str, request: Request, license_key: Optional[str] = None):
+    await _authorize_rule_action(rule_id, request, license_key)
     r = await db.rules.delete_one({"id": rule_id})
     if r.deleted_count == 0:
         raise HTTPException(404, "Kural bulunamadı")
     return {"deleted": True}
 
 
+@api.post("/rules/{rule_id}/delete")
+async def rules_delete_post(rule_id: str, request: Request, license_key: Optional[str] = None):
+    return await rules_delete(rule_id, request, license_key)
+
+
 # ----- Engines -----
+async def _engines_for(owner: str) -> list:
+    """Bir owner (bayi lisansı veya master boş) için motor listesi.
+    Bayi tarafında ilk çağrıda global template'den bootstrap eder — her bayi
+    kendi bağımsız engine on/off state'ine sahip olur."""
+    rows = await db.engines.find({"owner_license_key": owner}, {"_id": 0}).to_list(20)
+    if rows:
+        return rows
+    # Bootstrap: master global engines'i klonla, sahibi bayi olsun
+    template = await db.engines.find({"owner_license_key": ""}, {"_id": 0}).to_list(20)
+    if not template:
+        template = await db.engines.find({"owner_license_key": {"$exists": False}}, {"_id": 0}).to_list(20)
+    if not owner or not template:
+        return template
+    seed = []
+    for t in template:
+        t2 = {**t}
+        t2.pop("_id", None)
+        t2["owner_license_key"] = owner
+        seed.append(t2)
+    if seed:
+        await db.engines.insert_many(seed)
+    return await db.engines.find({"owner_license_key": owner}, {"_id": 0}).to_list(20)
+
+
 @api.get("/engines")
-async def engines_get():
-    return await db.engines.find({}, {"_id": 0}).to_list(20)
+async def engines_get(request: Request, license_key: Optional[str] = None):
+    """Motor listesi — bayi/master scope'a göre izole edilir. Bayi kendi
+    on/off state'ini görür; toggle diğer bayileri veya master WHM'i etkilemez."""
+    scope = await _tenant_scope(request, license_key)
+    return await _engines_for(scope["owner_license_key"])
 
 
 @api.post("/engines/{name}/toggle")
-async def engines_toggle(name: str):
-    doc = await db.engines.find_one({"name": name})
+async def engines_toggle(name: str, request: Request, license_key: Optional[str] = None):
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"]
+    # Bootstrap edilmemişse yap
+    await _engines_for(owner)
+    doc = await db.engines.find_one({"name": name, "owner_license_key": owner})
     if not doc:
         raise HTTPException(404, "Motor bulunamadı")
     new_val = not doc.get("enabled", False)
-    await db.engines.update_one({"name": name}, {"$set": {"enabled": new_val}})
+    await db.engines.update_one(
+        {"name": name, "owner_license_key": owner},
+        {"$set": {"enabled": new_val}},
+    )
     await db.logs.insert_one(ActivityLog(
         source=name, level="info",
-        message=f"{doc.get('label', name)} {'etkinleştirildi' if new_val else 'devre dışı bırakıldı'}",
+        message=f"{doc.get('label', name)} {'etkinleştirildi' if new_val else 'devre dışı bırakıldı'} · scope={owner[:16] if owner else 'master'}",
     ).model_dump())
     return {"name": name, "enabled": new_val}
 
 
 # ----- Settings -----
 @api.get("/settings")
-async def settings_get():
-    doc = await db.settings.find_one({"_key": "policy"}, {"_id": 0, "_key": 0})
+async def settings_get(request: Request, license_key: Optional[str] = None):
+    """Politika ayarları — her bayi kendi threshold/quarantine/notification
+    tercihine sahip olur. Master ise "policy" global default'unu görür."""
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"]
+    key = f"policy:{owner}" if owner else "policy"
+    doc = await db.settings.find_one({"_key": key}, {"_id": 0, "_key": 0})
+    if not doc and owner:
+        # Bayi için ilk çağrı: master defaults'tan klonla
+        default = await db.settings.find_one({"_key": "policy"}, {"_id": 0, "_key": 0})
+        doc = default or PolicySettings().model_dump()
+        await db.settings.update_one(
+            {"_key": key}, {"$set": {**doc, "_key": key}}, upsert=True,
+        )
     return doc or PolicySettings().model_dump()
 
 
 @api.put("/settings")
-async def settings_put(policy: PolicySettings):
+async def settings_put(policy: PolicySettings, request: Request,
+                       license_key: Optional[str] = None):
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"]
+    key = f"policy:{owner}" if owner else "policy"
     await db.settings.update_one(
-        {"_key": "policy"}, {"$set": {**policy.model_dump(), "_key": "policy"}}, upsert=True
+        {"_key": key}, {"$set": {**policy.model_dump(), "_key": key}}, upsert=True
     )
     await db.logs.insert_one(ActivityLog(
         source="settings", level="info",
-        message=f"Politika güncellendi (threshold {policy.spam_threshold_low}/{policy.spam_threshold_high})",
+        message=f"Politika güncellendi (threshold {policy.spam_threshold_low}/{policy.spam_threshold_high}) · scope={owner[:16] if owner else 'master'}",
     ).model_dump())
     return policy.model_dump()
+
+
+# Apache PUT bloğu için POST alternatifi
+@api.post("/settings/update")
+async def settings_put_post(policy: PolicySettings, request: Request,
+                            license_key: Optional[str] = None):
+    return await settings_put(policy, request, license_key)
 
 
 # ----- Users -----
@@ -4321,7 +4484,7 @@ async def subscription_renew(payload: SubscriptionRenewIn, request: Request):
 # Plan bazlı özellik matrisi — her plan için hangi feature aktif olduğunu tanımlar.
 # Frontend bunları usePlanFeatures ile okuyup UI'de gate eder,
 # backend de yazma endpoint'lerinde bu limitleri zorlar.
-PLAN_FEATURES = {
+PLAN_FEATURES_DEFAULT = {
     "starter": {
         "max_domains": 1,
         "max_mails_per_day": 5000,
@@ -4363,12 +4526,85 @@ PLAN_FEATURES = {
     },
 }
 
+# Backward-compat alias
+PLAN_FEATURES = PLAN_FEATURES_DEFAULT
+
+
+async def _load_plan_matrix() -> dict:
+    """DB-backed plan matrisi. Master `/panel/plan-config` sayfasından her plan
+    için modül-modül aç/kapa yapabilir. Kayıt yoksa varsayılan matrix döner."""
+    doc = await db.settings.find_one({"_key": "plan_matrix"}, {"_id": 0, "matrix": 1})
+    if doc and isinstance(doc.get("matrix"), dict):
+        # Boş plan varsa varsayılanla birleştir (güvenlik)
+        merged = {}
+        for k, defaults in PLAN_FEATURES_DEFAULT.items():
+            merged[k] = {**defaults, **(doc["matrix"].get(k) or {})}
+        return merged
+    return PLAN_FEATURES_DEFAULT
+
+
+@api.get("/admin/plan-matrix")
+async def admin_plan_matrix_get(request: Request, license_key: Optional[str] = None):
+    """Master-only. Mevcut plan matrisini ve varsayılanları döner."""
+    await _require_master(request, license_key)
+    current = await _load_plan_matrix()
+    return {"matrix": current, "defaults": PLAN_FEATURES_DEFAULT}
+
+
+class PlanMatrixIn(BaseModel):
+    matrix: Dict[str, Dict[str, Any]]
+
+
+@api.post("/admin/plan-matrix")
+async def admin_plan_matrix_set(payload: PlanMatrixIn, request: Request,
+                                 license_key: Optional[str] = None):
+    """Master-only. Plan matrisini kaydeder. `starter`/`pro`/`enterprise` üç anahtar
+    beklenir; ek anahtar yok sayılır. Her plan altında sadece bilinen özellik
+    anahtarları saklanır (defense against arbitrary keys)."""
+    await _require_master(request, license_key)
+    allowed_plans = {"starter", "pro", "enterprise"}
+    allowed_keys = set(PLAN_FEATURES_DEFAULT["starter"].keys())
+    sanitized: Dict[str, Dict[str, Any]] = {}
+    for plan_code, feats in (payload.matrix or {}).items():
+        if plan_code not in allowed_plans or not isinstance(feats, dict):
+            continue
+        sanitized[plan_code] = {}
+        for k, v in feats.items():
+            if k not in allowed_keys:
+                continue
+            # numeric fields → int; label → str; rest → bool
+            if k in ("max_domains", "max_mails_per_day"):
+                try: sanitized[plan_code][k] = int(v)
+                except Exception: pass
+            elif k == "label":
+                sanitized[plan_code][k] = str(v)[:32]
+            else:
+                sanitized[plan_code][k] = bool(v)
+    await db.settings.update_one(
+        {"_key": "plan_matrix"},
+        {"$set": {"_key": "plan_matrix", "matrix": sanitized,
+                  "updated_at": _iso()}},
+        upsert=True,
+    )
+    await db.logs.insert_one(ActivityLog(
+        source="plan_matrix", level="info",
+        message="Plan matrisi master tarafından güncellendi",
+    ).model_dump())
+    return {"ok": True, "matrix": await _load_plan_matrix()}
+
+
+@api.post("/admin/plan-matrix/reset")
+async def admin_plan_matrix_reset(request: Request, license_key: Optional[str] = None):
+    """Master-only. Plan matrisini varsayılana döndürür."""
+    await _require_master(request, license_key)
+    await db.settings.delete_one({"_key": "plan_matrix"})
+    return {"ok": True, "matrix": PLAN_FEATURES_DEFAULT}
+
 
 @api.get("/plan/features")
 async def plan_features(license_key: Optional[str] = None):
-    """Mevcut lisansın plan bazlı özellik matrisini döner.
-    Frontend UI gating için kullanır (butonlar/tablar plan yeterli değilse gizlenir).
-    Backend de yazma endpoint'lerinde bu limitleri zorlar."""
+    """Mevcut lisansın plan bazlı özellik matrisini döner (DB-backed).
+    Frontend UI gating için kullanır. Master her zaman enterprise görür."""
     plan = "starter"  # default
     if license_key:
         lic = await db.licenses.find_one({"license_key": license_key, "active": True}, {"_id": 0, "plan": 1})
@@ -4378,8 +4614,10 @@ async def plan_features(license_key: Optional[str] = None):
     master_key = os.environ.get("MASTER_LICENSE_KEY", "")
     if license_key and license_key == master_key:
         plan = "enterprise"
-    features = PLAN_FEATURES.get(plan, PLAN_FEATURES["starter"])
-    return {"plan": plan, "features": features, "labels": {k: PLAN_FEATURES[k]["label"] for k in PLAN_FEATURES}}
+    matrix = await _load_plan_matrix()
+    features = matrix.get(plan, matrix["starter"])
+    return {"plan": plan, "features": features,
+            "labels": {k: matrix[k]["label"] for k in matrix}}
 
 
 class LogSourceIn(BaseModel):
