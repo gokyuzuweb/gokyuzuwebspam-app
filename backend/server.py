@@ -706,7 +706,10 @@ async def _monthly_auto_cleanup_task():
 
 async def _license_expiry_alerts_task():
     """Her sabah 09:00 UTC'de lisans bitiş kontrolü.
-    14 gün kala uyarı, 3 gün kala kritik uyarı gönderir. Aynı uyarı 24 saatte 1 kez."""
+    30 gün kala bilgi, 14 gün kala uyarı, 3 gün kala kritik e-posta gönderir.
+    Aynı eşik için aynı lisansa günde 1 kez mail atılır (dedupe).
+
+    NOT: Şema `valid_until` alanını kullanıyor (`expires_at` değil)."""
     await asyncio.sleep(900)  # startup'tan 15dk sonra
     while True:
         try:
@@ -724,47 +727,53 @@ async def _license_expiry_alerts_task():
                 if not already:
                     sent = 0
                     async for lic in db.licenses.find(
-                        {"status": {"$ne": "cancelled"}, "expires_at": {"$exists": True, "$ne": None}},
+                        {"active": {"$ne": False}, "valid_until": {"$exists": True, "$nin": [None, ""]}},
                         {"_id": 0},
                     ):
                         try:
-                            exp = datetime.fromisoformat(str(lic["expires_at"]).replace("Z", "+00:00"))
+                            exp = datetime.fromisoformat(str(lic["valid_until"]).replace("Z", "+00:00"))
                             days_left = (exp - now).days
                         except Exception:
                             continue
-                        # 14 veya 3 gün ise mail
-                        if days_left in (14, 3):
-                            email = lic.get("email") or lic.get("customer_email")
-                            if not email or "@" not in email:
-                                continue
-                            urgent = days_left <= 3
-                            subj = (f"🚨 KRİTİK: Lisansınız {days_left} gün içinde sona eriyor!"
-                                    if urgent else
-                                    f"⚠️ Lisansınız 14 gün içinde sona eriyor · GökyüzüWebSpam")
-                            body = (
-                                f"Sayın {lic.get('reseller_name') or lic.get('customer_name') or 'Kullanıcı'},\n\n"
-                                f"GökyüzüWebSpam lisansınız {days_left} gün içinde ({exp.date()}) sona erecek.\n\n"
-                                f"Lisans Bilgileri:\n"
-                                f"  Lisans No: {lic.get('license_key')}\n"
-                                f"  Plan: {lic.get('plan', 'starter')}\n"
-                                f"  Bitiş: {exp.strftime('%d.%m.%Y')}\n\n"
-                                f"Kesintisiz hizmet için lütfen lisansınızı yenileyin:\n"
-                                f"  https://panel.gokyuzuhosting.com/checkout\n\n"
-                                f"Sorularınız için: destek@gokyuzuhosting.com"
-                            )
-                            # Bayi kendi domain'inden gönderilsin (Otomatik Mod)
-                            from_addr = await _smart_from(lic.get("license_key"))
-                            ok, via = await _send_email(email, subj, body, from_addr=from_addr)
-                            if ok:
-                                sent += 1
-                                await db.notifications_history.insert_one({
-                                    "id": str(uuid.uuid4()),
-                                    "kind": "license_expiry_alert",
-                                    "license_key": lic.get("license_key"),
-                                    "days_left": days_left, "urgent": urgent,
-                                    "to": email, "via": via,
-                                    "created_at": _iso(),
-                                })
+                        # 30 / 14 / 3 gün → mail
+                        if days_left not in (30, 14, 3):
+                            continue
+                        email = lic.get("customer_email") or lic.get("email")
+                        if not email or "@" not in email:
+                            continue
+                        urgent = days_left <= 3
+                        warning = days_left <= 14
+                        subj = (
+                            f"🚨 KRİTİK: Lisansınız {days_left} gün içinde sona eriyor!" if urgent else
+                            f"⚠️ Lisansınız {days_left} gün içinde sona eriyor · GökyüzüWebSpam" if warning else
+                            f"📅 Lisansınız 30 gün içinde yenilenmeli · GökyüzüWebSpam"
+                        )
+                        body = (
+                            f"Sayın {lic.get('customer_name') or 'Kullanıcı'},\n\n"
+                            f"GökyüzüWebSpam lisansınız {days_left} gün içinde ({exp.date()}) sona erecek.\n\n"
+                            f"Lisans Bilgileri:\n"
+                            f"  Lisans No : {lic.get('license_key')}\n"
+                            f"  Plan      : {lic.get('plan', 'starter')}\n"
+                            f"  Bitiş     : {exp.strftime('%d.%m.%Y')}\n\n"
+                            f"Kesintisiz hizmet için tek tık ile yenileyin:\n"
+                            f"  /panel/subscription?renew=1\n\n"
+                            f"Yıllık plan seçerek 2 ay hediye kazanabilirsiniz.\n\n"
+                            f"Sorularınız için: destek@gokyuzuhosting.com"
+                        )
+                        # Bayi kendi domain'inden gönderilsin (Otomatik Mod)
+                        from_addr = await _smart_from(lic.get("license_key"))
+                        ok, via = await _send_email(email, subj, body, from_addr=from_addr)
+                        if ok:
+                            sent += 1
+                            await db.notifications_history.insert_one({
+                                "id": str(uuid.uuid4()),
+                                "kind": "license_expiry_alert",
+                                "license_key": lic.get("license_key"),
+                                "days_left": days_left,
+                                "urgent": urgent, "warning": warning,
+                                "to": email, "via": via,
+                                "created_at": _iso(),
+                            })
                     await db.settings.update_one(
                         {"_key": "expiry_alerts_last_run"},
                         {"$set": {"_key": "expiry_alerts_last_run", "ts": _iso(), "sent": sent}},
@@ -4207,6 +4216,104 @@ async def _plugin_status_payload() -> dict:
 @api.get("/plugin/status")
 async def plugin_status():
     return await _plugin_status_payload()
+
+
+@api.get("/plugin/renewal-info")
+async def plugin_renewal_info():
+    """Panel içi banner için lisans bitişi bilgisi. Her istekte kalan gün + banner
+    şiddeti + tek-tık yenileme URL'i döner. Ziyaretçi (licensed=false) için
+    should_show_banner=False."""
+    s = await _plugin_status_payload()
+    if not s.get("licensed") or not s.get("license_expires"):
+        return {
+            "licensed": False,
+            "days_left": None,
+            "expires_at": None,
+            "should_show_banner": False,
+            "severity": None,
+            "plan": s.get("license_plan", ""),
+            "renewal_url": "/panel/subscription",
+        }
+    try:
+        exp = datetime.fromisoformat(str(s["license_expires"]).replace("Z", "+00:00"))
+        days_left = (exp - datetime.now(timezone.utc)).days
+    except Exception:
+        return {
+            "licensed": True, "days_left": None, "expires_at": s.get("license_expires"),
+            "should_show_banner": False, "severity": None,
+            "plan": s.get("license_plan", ""), "renewal_url": "/panel/subscription",
+        }
+
+    severity = None
+    if days_left <= 3:
+        severity = "critical"
+    elif days_left <= 14:
+        severity = "warning"
+    elif days_left <= 30:
+        severity = "info"
+    return {
+        "licensed": True,
+        "days_left": days_left,
+        "expires_at": s.get("license_expires"),
+        "should_show_banner": days_left <= 30,
+        "severity": severity,
+        "plan": s.get("license_plan", ""),
+        "customer_name": s.get("license_customer_name", ""),
+        "license_key": s.get("license_key", ""),
+        "renewal_url": "/panel/subscription?renew=1",
+    }
+
+
+class SubscriptionRenewIn(BaseModel):
+    billing_period: Literal["monthly", "yearly"] = "yearly"
+    plan_code: Optional[str] = None  # None → mevcut planla yenile
+    origin_url: Optional[str] = None
+
+
+@api.post("/subscription/renew")
+async def subscription_renew(payload: SubscriptionRenewIn, request: Request):
+    """Tek-tık lisans yenileme. Mevcut lisansın plan/e-posta bilgilerini otomatik
+    çeker ve Stripe checkout başlatır. Ödeme tamamlandığında `checkout/success`
+    akışı `valid_until` alanını uzatır (mevcut checkout webhook mantığı devreye girer)."""
+    s = await _plugin_status_payload()
+    if not s.get("licensed") or not s.get("license_key"):
+        raise HTTPException(400, "Yenileme için aktif bir lisans gerekli. Önce bir plan satın alın.")
+    # DB'den mevcut lisansı çek — e-posta / müşteri adı için
+    lic = await db.licenses.find_one({"license_key": s["license_key"]}, {"_id": 0})
+    if not lic:
+        raise HTTPException(404, "Lisans kaydı bulunamadı")
+    plan_code = payload.plan_code or s.get("license_plan") or lic.get("plan") or "pro"
+    customer_email = lic.get("customer_email") or ""
+    customer_name = lic.get("customer_name") or ""
+    if not customer_email or "@" not in customer_email:
+        raise HTTPException(400, "Lisansta kayıtlı e-posta yok — önce Aboneliğim sayfasından e-posta güncelleyin")
+
+    # Mevcut checkout endpoint'ini yeniden kullan (uyumluluk garantili)
+    origin = payload.origin_url or str(request.base_url).rstrip("/")
+    try:
+        from routes.payments import checkout_create as _cc  # noqa: F401
+    except Exception:
+        pass
+    # Doğrudan CheckoutCreateIn kullanan endpoint'i çağırmak yerine data model
+    # zaten yerleşik olduğundan checkout create'i çağıralım.
+    ck = CheckoutCreateIn(
+        plan_code=plan_code,
+        billing_period=payload.billing_period,
+        customer_email=customer_email,
+        customer_name=customer_name,
+        origin_url=origin,
+    )
+    result = await checkout_create_session(ck)  # aynı dosyada tanımlı
+    # Yenileme intent'i işaretle (webhook success sonrası valid_until +period yapılsın)
+    await db.settings.update_one(
+        {"_key": f"renewal_intent:{s['license_key']}"},
+        {"$set": {"license_key": s["license_key"], "plan_code": plan_code,
+                  "billing_period": payload.billing_period,
+                  "requested_at": _iso()}},
+        upsert=True,
+    )
+    return {**result, "renewal": True, "current_plan": s.get("license_plan"),
+            "current_expires": s.get("license_expires")}
 
 
 # Plan bazlı özellik matrisi — her plan için hangi feature aktif olduğunu tanımlar.

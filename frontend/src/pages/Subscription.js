@@ -38,6 +38,7 @@ function daysLeft(iso) {
 export default function Subscription() {
   const [sp] = useSearchParams();
   const upgradeTarget = (sp.get("upgrade") || "").toLowerCase();
+  const isRenewal = sp.get("renew") === "1";
   const initialCycle = (sp.get("cycle") || "yearly").toLowerCase();
   const [cycle, setCycle] = useState(initialCycle === "monthly" ? "monthly" : "yearly");
   const [email, setEmail] = useState("");
@@ -47,14 +48,36 @@ export default function Subscription() {
   const status = useQuery({ queryKey: ["plugin-status"], queryFn: api.pluginStatus });
   const pricing = useQuery({ queryKey: ["pricing"], queryFn: api.pricing });
   const payments = useQuery({ queryKey: ["my-payments"], queryFn: api.myPayments, retry: false });
+  const renewalInfo = useQuery({ queryKey: ["renewal-info"], queryFn: api.pluginRenewalInfo, retry: false });
 
   const highlightRef = useRef(null);
+
+  // Deep link: /panel/subscription?renew=1 → mevcut plana scroll + yıllık seçili
+  useEffect(() => {
+    if (isRenewal && status.data && highlightRef.current) {
+      setTimeout(() => highlightRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 400);
+    }
+  }, [isRenewal, status.data]);
 
   useEffect(() => {
     if (upgradeTarget && highlightRef.current) {
       setTimeout(() => highlightRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 400);
     }
   }, [upgradeTarget, pricing.data]);
+
+  const renew = useMutation({
+    mutationFn: () => api.subscriptionRenew({ billing_period: cycle }),
+    onSuccess: (d) => {
+      trackPlanEvent("checkout_click", {
+        current_plan: status.data?.license_plan,
+        target_plan: d.plan_code || status.data?.license_plan,
+        cycle, feature: "renewal_one_click",
+      });
+      if (d.url) window.location.href = d.url;
+      else toast.error("Yenileme URL'i alınamadı");
+    },
+    onError: (e) => toast.error("Yenileme başlatılamadı: " + (e?.response?.data?.detail || e.message)),
+  });
 
   const start = useMutation({
     mutationFn: (planCode) => {
@@ -130,6 +153,34 @@ export default function Subscription() {
                   </>
                 ) : "Plan yükselterek tüm özelliklerin kilidini açın."}
               </p>
+
+              {/* Tek Tık Yenile — 30 gün altında veya ?renew=1 iken göster */}
+              {s?.licensed && (renewalInfo.data?.should_show_banner || isRenewal) && (
+                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                  <button
+                    data-testid="sub-quick-renew"
+                    onClick={() => renew.mutate()}
+                    disabled={renew.isPending}
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-all ${
+                      renewalInfo.data?.severity === "critical"
+                        ? "bg-rose-500 text-white hover:bg-rose-400 border border-rose-400 shadow-lg shadow-rose-500/25"
+                        : "bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white hover:brightness-110 border border-indigo-400/40 shadow-lg shadow-indigo-500/20"
+                    } disabled:opacity-50`}
+                  >
+                    {renew.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4" />
+                    )}
+                    Tek Tık {cycle === "yearly" ? "1 Yıl" : "1 Ay"} Uzat
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[11px] text-slate-500">
+                    · Mevcut {plans.find((x) => x.code === currentPlan)?.name || currentPlan} planı
+                    {cycle === "yearly" && " ile 2 ay hediye"}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-2 md:min-w-[280px]">

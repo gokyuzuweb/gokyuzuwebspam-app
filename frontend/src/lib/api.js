@@ -315,6 +315,10 @@ export const api = {
 
   // Plugin state (demo / licensed)
   pluginStatus: () => client.get("/plugin/status").then(r => r.data),
+  pluginRenewalInfo: () => client.get("/plugin/renewal-info").then(r => r.data),
+  subscriptionRenew: (payload) =>
+    client.post("/subscription/renew", { billing_period: "yearly", ...payload,
+      origin_url: (payload?.origin_url || window.location.origin) }).then(r => r.data),
   pluginVerifyLicense: (payload) => client.post("/plugin/verify-license", payload).then(r => r.data),
   pluginResetDemo: () => client.post("/plugin/reset-demo").then(r => r.data),
   pluginSimulateState: (state) => client.post("/plugin/simulate-state", { state }).then(r => r.data),

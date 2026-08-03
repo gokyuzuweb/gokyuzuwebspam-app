@@ -11,6 +11,7 @@ import {
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { PluginStatusStripe, LicenseGate } from "@/components/LicenseGate";
+import RenewalBanner from "@/components/RenewalBanner";
 import { useIsMaster } from "@/hooks/useIsMaster";
 import { api } from "@/lib/api";
 import Landing from "@/pages/Landing";
@@ -178,6 +179,7 @@ function Shell() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <PluginStatusStripe />
+        <RenewalBanner />
         <Header title={active ? (active.label || t(`nav.${active.key}`)) : "GökyüzüWebSpam"} />
         <main className="flex-1 min-w-0 overflow-x-hidden">
           <Routes>
