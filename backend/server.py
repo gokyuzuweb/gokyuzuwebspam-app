@@ -4801,9 +4801,10 @@ async def bayi_my_server(request: Request, license_key: Optional[str] = None):
             f"--license={owner} --master={master_api} --daemon"
         ),
         "test_ingest_cmd": (
-            f"curl -X POST {master_api}/api/mail/ingest "
-            f"-H 'X-License-Key: {owner}' -H 'Content-Type: application/json' "
-            f"-d '{{\"from\":\"test@example.com\",\"to\":\"you@bayi.com\",\"subject\":\"test\",\"verdict\":\"clean\"}}'"
+            f"curl -X POST {master_api}/api/events/ingest "
+            f"-H 'Content-Type: application/json' "
+            f"-d '{{\"license_key\":\"{owner}\",\"from_addr\":\"test@example.com\","
+            f"\"to_addr\":\"you@bayi.com\",\"subject\":\"Bağlantı testi\",\"verdict\":\"clean\"}}'"
         ),
     }
     # Canlı doğrulama sayaçları
@@ -5410,6 +5411,8 @@ async def admin_stripe_config_set(payload: StripeConfigIn, request: Request,
         raise HTTPException(400, "API key boş olamaz")
     if not (k.startswith("sk_test_") or k.startswith("sk_live_") or k == "sk_test_emergent"):
         raise HTTPException(400, "Geçersiz format — Stripe key'leri sk_test_ veya sk_live_ ile başlamalı")
+    if k != "sk_test_emergent" and len(k) < 20:
+        raise HTTPException(400, "Stripe key çok kısa — dashboard'dan tam key'i kopyaladığınızdan emin olun")
     await db.settings.update_one(
         {"_key": "stripe_config"},
         {"$set": {"_key": "stripe_config", "api_key": k, "updated_at": _iso()}},
@@ -5423,16 +5426,14 @@ async def admin_stripe_config_set(payload: StripeConfigIn, request: Request,
 
 
 def _stripe_client(origin: str):
+    """Legacy sync API — new code should use `_stripe_client_async` which honors
+    the DB-first key override set via /admin/stripe-config."""
     from emergentintegrations.payments.stripe.checkout import StripeCheckout
-    # DB'de saklı runtime key varsa öncelikli — master Panel'den değiştirebilir
-    # Async değil, ancak stripe_config sık okunur ve küçük — kısa bir sync-ish kullanım
     api_key = os.environ.get("STRIPE_API_KEY", "").strip()
-    # sync context yok — env fallback (async endpoints DB'den okuduğu için sorun değil)
     if not api_key:
         raise HTTPException(
             503,
-            "Stripe yapılandırılmamış. Master lütfen /panel/settings → Stripe bölümünden "
-            "API key girsin veya /app/backend/.env dosyasına STRIPE_API_KEY ekleyip backend'i restart etsin.",
+            "Stripe yapılandırılmamış. Master lütfen /panel/settings → Stripe bölümünden API key girsin.",
         )
     return StripeCheckout(api_key=api_key, webhook_url=f"{origin}/api/checkout/webhook")
 

@@ -565,9 +565,9 @@ async def public_blocked_stats(region: str = "all"):
     seed_cfg = await db.settings.find_one({"_key": "landing_traffic_seed"}, {"_id": 0}) or {}
     seed_enabled = seed_cfg.get("enabled", True)
     if seed_enabled and total_real < 500:  # ilk kurulum eşiği
-        import hashlib, random as _r
-        # Tarih-deterministik pseudo-rastgele (aynı gün aynı sayı)
-        _r.seed(int(hashlib.md5(today_iso.encode()).hexdigest()[:8], 16))
+        import hashlib, random as _rmod
+        # İzole RNG instance — global random state'e sızıntı yok
+        _r = _rmod.Random(int(hashlib.md5(today_iso.encode()).hexdigest()[:8], 16))
         # Bölgeye göre baseline yoğunluğu
         base_daily = 8500 if region == "all" else 5200 if region == "tr" else 3200
         for i, s in enumerate(series):
