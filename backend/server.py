@@ -1290,14 +1290,20 @@ async def _plan_of_scope(scope: dict) -> str:
 
 
 async def _require_feature(scope: dict, feature: str) -> None:
-    """Plan matris feature toggle kontrolü. Kapalıysa 403 ile net Türkçe mesaj döner."""
+    """Plan matris feature toggle kontrolü. Kapalıysa 403 ile net Türkçe mesaj döner.
+
+    Master explicit bypass — impersonation aktif DEĞİLSE master her zaman geçer
+    (self-lockout riskini önler; master'ın enterprise plan defaults'una bağımlılık
+    yerine explicit kontrol)."""
+    if scope.get("is_master") and not scope.get("impersonated"):
+        return
     plan = await _plan_of_scope(scope)
     matrix = await _load_plan_matrix()
     allowed = bool((matrix.get(plan) or {}).get(feature, False))
     if not allowed:
         raise HTTPException(
             403,
-            f"Bu özellik ({feature}) '{plan}' planınızda kapalı — üst versiyona geçin.",
+            f"Bu özellik ({feature}) {plan} planınızda kapalı — üst versiyona geçin.",
         )
 
 
