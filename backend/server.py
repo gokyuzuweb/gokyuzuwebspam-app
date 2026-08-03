@@ -1885,10 +1885,17 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
     """Master authenticated when the license_key equals the master's (either the
     env-configured MASTER_LICENSE_KEY or a license bound to MASTER_IP).
 
-    IP match is reported for defense-in-depth information, but not strictly
-    required — the user asked that master admin be accessible from the master
-    server itself regardless of which browser/network they're on.
+    Accepts the license key from either the `license_key` query/body arg or the
+    `X-Master-Key` HTTP header (parity with `demo_write_guard` middleware and
+    `gws_master_session` cookie flow).
     """
+    # Fallback: header (parity with mutating endpoints)
+    if not license_key:
+        license_key = request.headers.get("x-master-key") or None
+    # Fallback: cookie (30-day master session)
+    if not license_key:
+        license_key = request.cookies.get("gws_master_session") or None
+
     client_ip = _client_ip(request)
     xff_chain = request.headers.get("x-forwarded-for", "") + "," + client_ip
     ip_match = bool(MASTER_IP and MASTER_IP in xff_chain)

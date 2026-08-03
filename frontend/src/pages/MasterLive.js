@@ -106,12 +106,12 @@ export default function MasterLive() {
 
       {/* Aggregate stats */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard label="Bayi" value={rows.length} icon={Users2} data-testid="ml-stat-resellers" />
-        <StatCard label="Çevrim İçi" value={live.data?.online_count || 0} icon={Circle} tone="emerald" data-testid="ml-stat-online" />
-        <StatCard label="Toplam Mail" value={totals.mails.toLocaleString("tr-TR")} icon={TrendingUp} data-testid="ml-stat-mails" />
-        <StatCard label="Spam" value={totals.spam.toLocaleString("tr-TR")} icon={ShieldAlert} tone="rose" data-testid="ml-stat-spam" />
-        <StatCard label="Virüs" value={totals.virus.toLocaleString("tr-TR")} icon={ShieldAlert} tone="rose" data-testid="ml-stat-virus" />
-        <StatCard label="İhlal" value={totals.violations.toLocaleString("tr-TR")} icon={ShieldAlert} tone="amber" data-testid="ml-stat-violations" />
+        <StatCard label="Bayi" value={rows.length} icon={Users2} testid="ml-stat-resellers" />
+        <StatCard label="Çevrim İçi" value={live.data?.online_count || 0} icon={Circle} tone="emerald" testid="ml-stat-online" />
+        <StatCard label="Toplam Mail" value={totals.mails.toLocaleString("tr-TR")} icon={TrendingUp} testid="ml-stat-mails" />
+        <StatCard label="Spam" value={totals.spam.toLocaleString("tr-TR")} icon={ShieldAlert} tone="rose" testid="ml-stat-spam" />
+        <StatCard label="Virüs" value={totals.virus.toLocaleString("tr-TR")} icon={ShieldAlert} tone="rose" testid="ml-stat-virus" />
+        <StatCard label="İhlal" value={totals.violations.toLocaleString("tr-TR")} icon={ShieldAlert} tone="amber" testid="ml-stat-violations" />
       </div>
 
       {/* Filters */}
