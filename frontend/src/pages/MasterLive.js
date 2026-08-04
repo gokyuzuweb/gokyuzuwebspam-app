@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Activity, Users2, ShieldAlert, Search, RefreshCw, ArrowRight,
-  Circle, TrendingUp, ChevronRight,
+  Circle, TrendingUp, ChevronRight, Zap, Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 
@@ -34,15 +35,33 @@ export default function MasterLive() {
   const [hours, setHours] = useState(24);
   const [q, setQ] = useState("");
   const [onlineOnly, setOnlineOnly] = useState(false);
+  const [pingWatchList, setPingWatchList] = useState(null); // ping sonrası izlenen license'lar
+  const qc = useQueryClient();
 
   const live = useQuery({
     queryKey: ["master-live", hours],
     queryFn: () => api.adminResellersLive(LICKEY(), hours),
-    refetchInterval: 15000,
+    // Ping izleme modunda 5sn'de bir yenile ki yeşile dönenler otomatik çıksın
+    refetchInterval: pingWatchList ? 5000 : 15000,
     retry: false,
   });
 
+  const pingRed = useMutation({
+    mutationFn: () => api.adminBayiHealthPingRed(LICKEY()),
+    onSuccess: (d) => {
+      toast.success(`🔔 ${d.pinged} kırmızı bayiye canlan pingi yollandı`, {
+        description: "Yeşile dönenler listeden otomatik çıkar (60sn)",
+      });
+      // Ping edilen listeyi watch'a al — 60sn sonra otomatik temizlensin
+      setPingWatchList(new Set((d.licenses || []).map((r) => r.license_key)));
+      setTimeout(() => setPingWatchList(null), 60000);
+      qc.invalidateQueries({ queryKey: ["master-live"] });
+    },
+    onError: (e) => toast.error("Ping başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
+
   const rows = live.data?.resellers || [];
+  const redCount = rows.filter((r) => r.health === "red").length;
   const totals = useMemo(() => {
     return rows.reduce(
       (acc, r) => {
@@ -101,8 +120,38 @@ export default function MasterLive() {
           >
             <RefreshCw className={`w-3 h-3 ${live.isFetching ? "animate-spin" : ""}`} /> Yenile
           </button>
+          {/* Kırmızıları toplu canlan pingle — 30dk+ heartbeat yok olan tüm bayilere sinyal */}
+          {redCount > 0 && (
+            <button
+              data-testid="ml-ping-red"
+              onClick={() => {
+                if (confirm(`${redCount} kırmızı bayiye canlan pingi göndermek istediğinize emin misiniz?`)) {
+                  pingRed.mutate();
+                }
+              }}
+              disabled={pingRed.isPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-gradient-to-r from-rose-500 to-orange-500 text-white shadow-lg shadow-rose-500/20 border border-rose-400/40 hover:brightness-110 disabled:opacity-60"
+            >
+              {pingRed.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <Zap className="w-3.5 h-3.5"/>}
+              🔔 {redCount} Kırmızıyı Pingle
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Ping watch banner — hangi bayiler izleniyor */}
+      {pingWatchList && (
+        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 flex items-center gap-2 text-xs text-emerald-100" data-testid="ml-ping-watch">
+          <Activity className="w-4 h-4 text-emerald-300 animate-pulse"/>
+          <div className="flex-1">
+            <b className="text-emerald-200">İzleniyor:</b> {pingWatchList.size} bayi pingle edildi.
+            Yeşile dönenler otomatik listeden çıkar — 60sn sonra izleme durur.
+          </div>
+          <button onClick={() => setPingWatchList(null)} className="text-emerald-300 hover:text-emerald-100 text-[11px]">
+            İzlemeyi durdur
+          </button>
+        </div>
+      )}
 
       {/* Aggregate stats */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">

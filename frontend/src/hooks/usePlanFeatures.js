@@ -20,9 +20,13 @@ export function usePlanFeatures() {
   const q = useQuery({
     queryKey: ["plan-features", licenseKey],
     queryFn: () => api.planFeatures(licenseKey),
-    refetchInterval: 60000,
+    // Master plan matrix'i güncelleyince bayilerin panelinde ~30sn içinde
+    // yeni yetkilerin aktifleşmesi için sıkı polling + window-focus refetch.
+    refetchInterval: 30000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: "always",
     retry: false,
-    staleTime: 30000,
+    staleTime: 15000,
     enabled: !!licenseKey,
   });
   const plan = q.data?.plan || "starter";

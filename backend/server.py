@@ -5181,6 +5181,17 @@ async def admin_plan_matrix_set(payload: PlanMatrixIn, request: Request,
         source="plan_matrix", level="info",
         message=f"Plan matrisi güncellendi — {len(changes)} alan değişti",
     ).model_dump())
+    # Bayilerin panellerinde plan_features cache'i tazelensin — WS broadcast
+    try:
+        from routes.maintenance import push_attack_event
+        await push_attack_event({
+            "type": "plan_matrix_updated",
+            "changes_count": len(changes),
+            "affected_plans": list({c["plan"] for c in changes}),
+            "ts": _iso(),
+        })
+    except Exception:
+        pass
     return {"ok": True, "matrix": now_matrix, "changes": len(changes)}
 
 
@@ -5197,7 +5208,106 @@ async def admin_plan_matrix_reset(request: Request, license_key: Optional[str] =
         "changes_count": 0,
         "at": _iso(),
     })
+    try:
+        from routes.maintenance import push_attack_event
+        await push_attack_event({"type": "plan_matrix_updated", "reset": True, "ts": _iso()})
+    except Exception:
+        pass
     return {"ok": True, "matrix": PLAN_FEATURES_DEFAULT}
+
+
+# ================== BAYİ TOPLU CANLAN PING ==================
+@api.post("/admin/bayi-health/ping-all-red")
+async def admin_bayi_health_ping_all_red(request: Request,
+                                          license_key: Optional[str] = None):
+    """Master-only. Kırmızı (30dk+ heartbeat yok) bayilere toplu "canlan" pingi
+    atar. Mekanizma:
+      1) WS broadcast → connected bayilere `wake` sinyali
+      2) `db.bayi_wake_signals` koleksiyonuna 5dk TTL flag koyar — bayi plugin
+         bir sonraki plugin/status çağrısında flag'i görüp anında heartbeat atar
+      3) ActivityLog + master toast düşer
+    Frontend polling ile 60sn boyunca yeşile dönenleri listeden çıkarır."""
+    await _require_master(request, license_key)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    red_cutoff = (now - timedelta(minutes=30)).isoformat()
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+
+    red_licenses = []
+    async for l in db.licenses.find({"active": True}, {"_id": 0}):
+        lk = l.get("license_key") or ""
+        if not lk or lk == master_env:
+            continue
+        ls = l.get("last_heartbeat_at") or ""
+        if not ls or ls < red_cutoff:
+            red_licenses.append({
+                "license_key": lk,
+                "customer_name": l.get("customer_name") or l.get("customer_email") or "Bayi",
+            })
+
+    # Wake sinyali kayıtları (5dk TTL, bayi plugin polling ile alacak)
+    expires = (now + timedelta(minutes=5)).isoformat()
+    for r in red_licenses:
+        await db.bayi_wake_signals.update_one(
+            {"license_key": r["license_key"]},
+            {"$set": {
+                "license_key": r["license_key"],
+                "signaled_at": now.isoformat(),
+                "expires_at": expires,
+                "signaled_by": "master_bulk_ping",
+            }},
+            upsert=True,
+        )
+    # WS broadcast
+    try:
+        from routes.maintenance import push_attack_event
+        await push_attack_event({
+            "type": "bayi_wake_bulk",
+            "licenses": [r["license_key"] for r in red_licenses],
+            "ts": now.isoformat(),
+        })
+    except Exception:
+        pass
+    # Master toast + activity log
+    await _push_master_toast(
+        kind="bulk_ping",
+        title=f"🔔 {len(red_licenses)} kırmızı bayiye ping gönderildi",
+        body=("Bayi panelleri 5 dakika içinde bir sonraki heartbeat'te "
+              "yeşile dönmeli — dönmezlerse manuel kontrol gerekebilir."),
+        link="/panel/master-live",
+        meta={"count": len(red_licenses)},
+    )
+    await db.logs.insert_one(ActivityLog(
+        source="bayi_health", level="info",
+        message=f"TOPLU CANLAN PİNG · {len(red_licenses)} kırmızı bayi tetiklendi",
+    ).model_dump())
+    return {"ok": True, "pinged": len(red_licenses), "licenses": red_licenses}
+
+
+@api.get("/plugin/wake-signal")
+async def plugin_wake_signal(request: Request, license_key: Optional[str] = None):
+    """Bayi plugin bu endpoint'i her plugin/status çağrısında check eder.
+    Master tarafından wake sinyali yollanmışsa `wake=true` döner. Bayi de bir
+    sonraki cycle'da heartbeat atarak yeşile döner."""
+    scope = await _tenant_scope(request, license_key)
+    lk = scope.get("owner_license_key") or ""
+    if not lk:
+        return {"wake": False}
+    sig = await db.bayi_wake_signals.find_one({"license_key": lk}, {"_id": 0})
+    if not sig:
+        return {"wake": False}
+    # Süresi geçmişse temizle
+    exp = sig.get("expires_at") or ""
+    if exp and exp < _iso():
+        await db.bayi_wake_signals.delete_one({"license_key": lk})
+        return {"wake": False}
+    # Sinyal alındığına göre bir defalık temizle
+    await db.bayi_wake_signals.delete_one({"license_key": lk})
+    return {
+        "wake": True,
+        "signaled_at": sig.get("signaled_at"),
+        "signaled_by": sig.get("signaled_by"),
+    }
 
 
 # ================== BAYİ SUNUCU KAYIT ==================

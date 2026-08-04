@@ -331,6 +331,9 @@ export const api = {
   adminBayiHealth: (licenseKey) =>
     client.get(`/admin/bayi-health`,
       { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminBayiHealthPingRed: (licenseKey) =>
+    client.post(`/admin/bayi-health/ping-all-red`, null,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
   pushToasts: (since, licenseKey) =>
     client.get(`/push/toasts`,
       { params: { ...(since ? { since } : {}), ...(licenseKey ? { license_key: licenseKey } : {}) },
