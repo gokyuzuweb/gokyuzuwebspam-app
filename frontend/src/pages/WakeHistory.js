@@ -67,6 +67,9 @@ export default function WakeHistory() {
         <StatBox label="Başarı %" value={`${overallSuccess}%`} color="text-emerald-300" bg="bg-emerald-500/10 border-emerald-500/30" hint={`${totals.red} hâlâ kırmızı`}/>
       </div>
 
+      {/* Trend grafiği — batch bazında başarı % */}
+      {items.length >= 2 && <SuccessTrend items={items.slice().reverse()} />}
+
       {q.isLoading ? (
         <div className="p-8 text-center text-slate-500 text-sm">
           <Loader2 className="w-4 h-4 animate-spin inline mr-1" /> Yükleniyor…
@@ -108,6 +111,82 @@ function StatBox({ label, value, color = "text-slate-100", bg = "bg-slate-900/60
       {hint && <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div>}
     </div>
   );
+}
+
+/**
+ * SuccessTrend — Batch bazında başarı % trend çizgisi (SVG line chart).
+ * Kullanıcı zamanla başarı oranının artıp azaldığını görür.
+ */
+function SuccessTrend({ items }) {
+  const W = 720, H = 120, P = 24;
+  const data = items.map((it) => ({
+    at: it.at,
+    pct: Number(it.success_pct || 0),
+    count: it.count || 0,
+  }));
+  if (data.length < 2) return null;
+  const stepX = (W - P * 2) / (data.length - 1);
+  const pts = data.map((d, i) => [P + i * stepX, P + (H - P * 2) * (1 - d.pct / 100)]);
+  const path = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+  const areaPath = `${path} L ${pts[pts.length - 1][0]},${H - P} L ${pts[0][0]},${H - P} Z`;
+  const avg = Math.round(data.reduce((s, d) => s + d.pct, 0) / data.length);
+  const first = data[0].pct, last = data[data.length - 1].pct;
+  const trend = last - first;
+  const trendColor = trend > 5 ? "text-emerald-300" : trend < -5 ? "text-rose-300" : "text-slate-400";
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4" data-testid="wh-trend">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+          📈 Başarı Trendi
+          <span className="text-[11px] text-slate-500">son {data.length} batch</span>
+        </div>
+        <div className="text-[11px] flex items-center gap-3">
+          <span className="text-slate-400">Ortalama: <b className="text-slate-100">%{avg}</b></span>
+          <span className={trendColor}>
+            {trend > 0 ? "▲" : trend < 0 ? "▼" : "="} %{Math.abs(trend).toFixed(0)}
+          </span>
+          <span className="text-slate-500">
+            İlk: <b className="text-slate-300">%{first}</b> · Son: <b className="text-slate-300">%{last}</b>
+          </span>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none" style={{ height: "120px" }}>
+        <defs>
+          <linearGradient id="wh-grad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#10b981" stopOpacity="0.4"/>
+            <stop offset="100%" stopColor="#10b981" stopOpacity="0"/>
+          </linearGradient>
+        </defs>
+        {/* Gridlines */}
+        {[0, 25, 50, 75, 100].map((y) => {
+          const yPos = P + (H - P * 2) * (1 - y / 100);
+          return (
+            <g key={y}>
+              <line x1={P} y1={yPos} x2={W - P} y2={yPos} stroke="#1e293b" strokeDasharray="2 3"/>
+              <text x={P - 4} y={yPos + 3} textAnchor="end" fill="#64748b" fontSize="8">{y}%</text>
+            </g>
+          );
+        })}
+        <path d={areaPath} fill="url(#wh-grad)"/>
+        <path d={path} fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        {pts.map((p, i) => {
+          const d = data[i];
+          const dotColor = d.pct >= 70 ? "#10b981" : d.pct >= 40 ? "#f59e0b" : "#f43f5e";
+          return (
+            <g key={i}>
+              <circle cx={p[0]} cy={p[1]} r="3" fill={dotColor} stroke="#0f172a" strokeWidth="1.5"/>
+              <title>{`${new Date(d.at).toLocaleString("tr-TR")} · ${d.count} bayi · %${d.pct}`}</title>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function _StatBoxUnused({ label, value, color = "text-slate-100", bg = "bg-slate-900/60", hint }) {
+  return null;
 }
 
 function BatchRow({ batch }) {

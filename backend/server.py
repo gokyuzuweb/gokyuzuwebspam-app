@@ -5275,6 +5275,53 @@ async def admin_plan_matrix_reset(request: Request, license_key: Optional[str] =
 
 
 # ================== BAYİ TOPLU CANLAN PING ==================
+@api.post("/admin/bayi-health/ping/{target_license}")
+async def admin_bayi_health_ping_single(target_license: str, request: Request,
+                                          license_key: Optional[str] = None):
+    """Master-only. Tek bir bayiye canlan pingi yollar. Aynı toplu ping ile
+    aynı wake-signal + WS broadcast + history kaydı akışını kullanır."""
+    await _require_master(request, license_key)
+    lic = await db.licenses.find_one({"license_key": target_license}, {"_id": 0})
+    if not lic:
+        raise HTTPException(404, "Lisans bulunamadı")
+    now = datetime.now(timezone.utc)
+    expires = (now + timedelta(minutes=5)).isoformat()
+    batch_id = str(uuid.uuid4())
+    await db.bayi_wake_signals.update_one(
+        {"license_key": target_license},
+        {"$set": {
+            "license_key": target_license,
+            "signaled_at": now.isoformat(),
+            "expires_at": expires,
+            "signaled_by": "master_single_ping",
+            "batch_id": batch_id,
+        }},
+        upsert=True,
+    )
+    customer = lic.get("customer_name") or lic.get("customer_email") or "Bayi"
+    await db.wake_history.insert_one({
+        "id": batch_id,
+        "at": now.isoformat(),
+        "count": 1,
+        "kind": "single",
+        "licenses": [{"license_key": target_license, "customer_name": customer}],
+    })
+    try:
+        from routes.maintenance import push_attack_event
+        await push_attack_event({
+            "type": "bayi_wake_bulk",
+            "licenses": [target_license],
+            "ts": now.isoformat(),
+        })
+    except Exception:
+        pass
+    await db.logs.insert_one(ActivityLog(
+        source="bayi_health", level="info",
+        message=f"TEK CANLAN PİNG · {customer} ({target_license[:16]}…)",
+    ).model_dump())
+    return {"ok": True, "license_key": target_license, "customer_name": customer}
+
+
 @api.post("/admin/bayi-health/ping-all-red")
 async def admin_bayi_health_ping_all_red(request: Request,
                                           license_key: Optional[str] = None):
@@ -5413,6 +5460,146 @@ async def plugin_wake_signal(request: Request, license_key: Optional[str] = None
         "signaled_at": sig.get("signaled_at"),
         "signaled_by": sig.get("signaled_by"),
     }
+
+
+# ================== E-POSTA ŞABLON EDİTÖRÜ ==================
+# Master otomatik sistem maillerinin metnini + marka rengini + logosunu
+# panelden özelleştirir. Şablonlar `db.email_templates` içinde saklanır.
+# Değişken interpolasyonu: {{customer_name}}, {{plan}}, {{amount}}, vs.
+
+_EMAIL_TEMPLATE_DEFAULTS = {
+    "havale_confirmed": {
+        "subject": "GökyüzüWebSpam · Havale Ödemeniz Onaylandı",
+        "body": (
+            "Merhaba {{customer_name}},\n\n"
+            "Havale ödemeniz doğrulandı, teşekkür ederiz!\n\n"
+            "Referans: {{reference}}\n"
+            "Plan: {{plan}} ({{billing_period}})\n"
+            "Tutar: {{amount}} {{currency}}\n\n"
+            "Lisansınız otomatik olarak {{action}}. "
+            "Panele girmek için: https://gokyuzuhosting.com/panel/subscription\n\n"
+            "GökyüzüWebSpam ekibi"
+        ),
+    },
+    "session_deactivated": {
+        "subject": "GökyüzüWebSpam · Lisansınız Pasifleştirildi",
+        "body": (
+            "Merhaba {{customer_name}},\n\n"
+            "Lisansınız yönetici tarafından pasifleştirildi ve paneliniz "
+            "erişilemez duruma geldi.\n\nSebep hakkında bilgi almak için "
+            "destek@gokyuzuhosting.com adresi ile iletişime geçin.\n\n"
+            "GökyüzüWebSpam ekibi"
+        ),
+    },
+    "plan_changed": {
+        "subject": "GökyüzüWebSpam · Planınız Güncellendi",
+        "body": (
+            "Merhaba {{customer_name}},\n\n"
+            "Aboneliğiniz {{old_plan}} → {{new_plan}} planına güncellendi. "
+            "Yeni modüller ve limitler panelinizde aktif.\n\n"
+            "Detay: https://gokyuzuhosting.com/panel/subscription\n\n"
+            "GökyüzüWebSpam ekibi"
+        ),
+    },
+    "bulk_ping_bayi": {
+        "subject": "GökyüzüWebSpam · Panel Bağlantı Kontrol",
+        "body": (
+            "Merhaba {{customer_name}},\n\n"
+            "Sunucunuzdan uzun süredir bize heartbeat gelmiyor. Lütfen:\n\n"
+            "  1) systemctl status gokyuzuwebspam-logtail\n"
+            "  2) Firewall (443 çıkış)\n"
+            "  3) journalctl -u gokyuzuwebspam-logtail -n 50\n\n"
+            "kontrolü yapın. Sorun sürerse destek@gokyuzuhosting.com'a başvurun.\n\n"
+            "GökyüzüWebSpam ekibi"
+        ),
+    },
+}
+
+
+@api.get("/admin/email-templates")
+async def admin_email_templates_get(request: Request, license_key: Optional[str] = None):
+    """Master-only. Tüm sistem mail şablonlarını + branding ayarlarını döner."""
+    await _require_master(request, license_key)
+    brand_doc = await db.settings.find_one({"_key": "email_branding"}, {"_id": 0}) or {}
+    brand = {
+        "color": brand_doc.get("color", "#10b981"),
+        "logo_url": brand_doc.get("logo_url", ""),
+        "company_name": brand_doc.get("company_name", "GökyüzüWebSpam"),
+        "footer_text": brand_doc.get("footer_text", "Bu bildirim otomatik olarak gönderildi."),
+        "from_name": brand_doc.get("from_name", "GökyüzüWebSpam"),
+        "from_email": brand_doc.get("from_email", f"noreply@{MASTER_HOST or 'gokyuzuhosting.com'}"),
+    }
+    templates = {}
+    for key, default in _EMAIL_TEMPLATE_DEFAULTS.items():
+        doc = await db.email_templates.find_one({"_key": key}, {"_id": 0}) or {}
+        templates[key] = {
+            "key": key,
+            "subject": doc.get("subject") or default["subject"],
+            "body": doc.get("body") or default["body"],
+            "enabled": doc.get("enabled", True),
+            "customized": bool(doc),
+            "default_subject": default["subject"],
+            "default_body": default["body"],
+        }
+    return {"branding": brand, "templates": templates}
+
+
+class EmailTemplateSave(BaseModel):
+    key: Literal["havale_confirmed", "session_deactivated", "plan_changed", "bulk_ping_bayi"]
+    subject: str
+    body: str
+    enabled: bool = True
+
+
+@api.post("/admin/email-templates/save")
+async def admin_email_templates_save(payload: EmailTemplateSave, request: Request,
+                                       license_key: Optional[str] = None):
+    """Master-only. Belirli bir template'i kaydeder."""
+    await _require_master(request, license_key)
+    await db.email_templates.update_one(
+        {"_key": payload.key},
+        {"$set": {
+            "_key": payload.key,
+            "subject": payload.subject,
+            "body": payload.body,
+            "enabled": payload.enabled,
+            "updated_at": _iso(),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "key": payload.key}
+
+
+@api.post("/admin/email-templates/{key}/reset")
+async def admin_email_templates_reset(key: str, request: Request,
+                                        license_key: Optional[str] = None):
+    """Template'i default'a geri döndürür."""
+    await _require_master(request, license_key)
+    await db.email_templates.delete_one({"_key": key})
+    return {"ok": True, "key": key, "reset": True}
+
+
+class EmailBrandingSave(BaseModel):
+    color: str = "#10b981"
+    logo_url: str = ""
+    company_name: str = "GökyüzüWebSpam"
+    footer_text: str = "Bu bildirim otomatik olarak gönderildi."
+    from_name: str = "GökyüzüWebSpam"
+    from_email: str = ""
+
+
+@api.post("/admin/email-branding/save")
+async def admin_email_branding_save(payload: EmailBrandingSave, request: Request,
+                                      license_key: Optional[str] = None):
+    """Master mail markası: renk, logo, imza, gönderici. Şablonlarda HTML
+    render'da bu renk arkaplan gradient'i olarak kullanılır."""
+    await _require_master(request, license_key)
+    await db.settings.update_one(
+        {"_key": "email_branding"},
+        {"$set": {"_key": "email_branding", **payload.model_dump(), "updated_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True}
 
 
 # ================== BAYİ SUNUCU KAYIT ==================

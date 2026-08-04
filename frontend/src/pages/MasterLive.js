@@ -217,6 +217,20 @@ function ResellerCard({ r, hours }) {
   const total = c.mails || 0;
   const bad = c.spam + c.virus + c.phish;
   const badPct = total ? Math.min(100, Math.round((bad / total) * 100)) : 0;
+  const qc = useQueryClient();
+  const isRed = r.health === "red";
+  const isYellow = r.health === "yellow";
+  const pingSingle = useMutation({
+    mutationFn: () => api.adminBayiHealthPingSingle(r.license_key, LICKEY()),
+    onSuccess: (d) => {
+      toast.success(`🔔 ${d.customer_name} pinglendi`, {
+        description: "Bir sonraki heartbeat'te yeşile dönmesi bekleniyor",
+      });
+      qc.invalidateQueries({ queryKey: ["master-live"] });
+      qc.invalidateQueries({ queryKey: ["wake-history"] });
+    },
+    onError: (e) => toast.error("Ping başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
 
   return (
     <Link
@@ -239,6 +253,25 @@ function ResellerCard({ r, hours }) {
               {r.plan || "starter"}
             </span>
             {!r.active && <Badge tone="danger">PASİF</Badge>}
+            {(isRed || isYellow) && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  pingSingle.mutate();
+                }}
+                disabled={pingSingle.isPending}
+                data-testid={`ml-ping-single-${r.id}`}
+                title="Canlan pingi yolla"
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold border ${
+                  isRed
+                    ? "bg-rose-500/15 text-rose-200 border-rose-400/40 hover:bg-rose-500/25"
+                    : "bg-amber-500/15 text-amber-200 border-amber-400/40 hover:bg-amber-500/25"
+                } disabled:opacity-50`}
+              >
+                {pingSingle.isPending ? "..." : "🔔 PİNG"}
+              </button>
+            )}
           </div>
         </div>
 

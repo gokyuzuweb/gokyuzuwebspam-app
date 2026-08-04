@@ -334,6 +334,23 @@ export const api = {
   adminBayiHealthPingRed: (licenseKey) =>
     client.post(`/admin/bayi-health/ping-all-red`, null,
       { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminBayiHealthPingSingle: (targetLicense, licenseKey) =>
+    client.post(`/admin/bayi-health/ping/${targetLicense}`, null,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminEmailTemplates: (licenseKey) =>
+    client.get(`/admin/email-templates`,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminEmailTemplateSave: (payload, licenseKey) =>
+    client.post(`/admin/email-templates/save`,
+      { ...payload, license_key: licenseKey || undefined },
+      { withCredentials: true }).then(r => r.data),
+  adminEmailTemplateReset: (key, licenseKey) =>
+    client.post(`/admin/email-templates/${key}/reset`, null,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  adminEmailBrandingSave: (payload, licenseKey) =>
+    client.post(`/admin/email-branding/save`,
+      { ...payload, license_key: licenseKey || undefined },
+      { withCredentials: true }).then(r => r.data),
   adminWakeHistory: (licenseKey, limit = 50) =>
     client.get(`/admin/wake-history`,
       { params: { limit, ...(licenseKey ? { license_key: licenseKey } : {}) },

@@ -5,7 +5,7 @@ import { Toaster } from "sonner";
 import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
-  Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal, Server, History,
+  Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal, Server, History, Mail,
   Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
@@ -38,6 +38,7 @@ import Shop, { CheckoutSuccess } from "@/pages/Shop";
 import HavalePayment from "@/pages/HavalePayment";
 import VersionPublish from "@/pages/VersionPublish";
 import WakeHistory from "@/pages/WakeHistory";
+import EmailTemplates from "@/pages/EmailTemplates";
 import Blacklist from "@/pages/Blacklist";
 import Reseller from "@/pages/Reseller";
 import Security from "@/pages/Security";
@@ -86,6 +87,7 @@ const NAV = [
   { to: "/panel/plan-config", key: "plan_config", icon: SlidersHorizontal, testid: "nav-plan-config", label: "Plan Modül Yapıl.", masterOnly: true, sellerOnly: true },
   { to: "/panel/version-publish", key: "version_publish", icon: PackageOpen, testid: "nav-version-publish", label: "Sürüm Yayın", masterOnly: true, sellerOnly: true },
   { to: "/panel/wake-history", key: "wake_history", icon: History, testid: "nav-wake-history", label: "Ping Geçmişi", masterOnly: true, sellerOnly: true },
+  { to: "/panel/email-templates", key: "email_templates", icon: Mail, testid: "nav-email-templates", label: "Mail Şablonları", masterOnly: true, sellerOnly: true },
   { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
@@ -213,6 +215,7 @@ function Shell() {
             <Route path="/payment/havale" element={<HavalePayment />} />
             <Route path="/version-publish" element={<VersionPublish />} />
             <Route path="/wake-history" element={<WakeHistory />} />
+            <Route path="/email-templates" element={<EmailTemplates />} />
             <Route path="/my-server" element={<BayiServer />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />
