@@ -2645,7 +2645,25 @@ async def admin_resellers_live(request: Request, license_key: Optional[str] = No
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     online_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
     out = []
+    # Bayi kaynakları: hem db.resellers (auth'lı bayi hesapları) hem de
+    # db.licenses (lisans olarak oluşturulan bayiler, master hariç). Aynı
+    # license_key iki kez saymamak için seen set'i kullanılır.
+    seen_keys = set()
+    sources = []
     async for r in db.resellers.find({}, {"_id": 0, "password_hash": 0}):
+        sources.append({"kind": "reseller", "doc": r})
+        if r.get("license_key"):
+            seen_keys.add(r["license_key"])
+    master_key_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    async for l in db.licenses.find({"active": True}, {"_id": 0}):
+        lk = l.get("license_key") or ""
+        if not lk or lk == master_key_env or lk in seen_keys:
+            continue
+        seen_keys.add(lk)
+        sources.append({"kind": "license", "doc": l})
+    for src in sources:
+        r = src["doc"]
+        is_license = src["kind"] == "license"
         lic_key = r.get("license_key") or ""
         # count breakdown in a single aggregation
         pipeline = [
@@ -2683,18 +2701,31 @@ async def admin_resellers_live(request: Request, license_key: Optional[str] = No
         spam_ratio = round(
             (counters["spam"] + counters["virus"] + counters["phish"]) / counters["mails"] * 100, 1
         ) if counters["mails"] else 0
+        if is_license:
+            email = r.get("customer_email") or ""
+            company = r.get("customer_name") or r.get("customer_email") or "Bayi"
+            plan_name = r.get("plan", "")
+            active_flag = r.get("active", True)
+            rid = r.get("id") or lic_key
+        else:
+            email = r.get("email") or ""
+            company = r.get("company", "")
+            plan_name = r.get("plan", "")
+            active_flag = r.get("active", True)
+            rid = r.get("id")
         out.append({
-            "id": r.get("id"),
-            "email": r.get("email"),
-            "company": r.get("company", ""),
+            "id": rid,
+            "email": email,
+            "company": company,
             "license_key": lic_key,
-            "plan": r.get("plan", ""),
-            "active": r.get("active", True),
+            "plan": plan_name,
+            "active": active_flag,
             "online": online,
             "last_seen_at": last_seen,
             "counters": counters,
             "violations_period": violations_period,
             "spam_ratio_pct": spam_ratio,
+            "source": src["kind"],  # frontend "lisans / bayi hesabı" ayrımı için
         })
     # Sort by activity: online first, then by mails desc
     out.sort(key=lambda x: (not x["online"], -x["counters"]["mails"]))
@@ -4525,14 +4556,62 @@ async def subscription_renew(payload: SubscriptionRenewIn, request: Request):
     if not customer_email or "@" not in customer_email:
         raise HTTPException(400, "Lisansta kayıtlı e-posta yok — önce Aboneliğim sayfasından e-posta güncelleyin")
 
-    # Mevcut checkout endpoint'ini yeniden kullan (uyumluluk garantili)
+    # Master `payment_settings.default_gateway` = 'havale' (varsayılan) veya 'stripe'.
+    # Havale mode → Stripe API key gerekmez, ücretsiz manual onay akışı.
+    pay_cfg = await db.settings.find_one({"_key": "payment_settings"}, {"_id": 0}) or {}
+    gateway = (pay_cfg.get("default_gateway") or "havale").lower()
+
+    # Fiyatı çek
+    pricing = await _pricing_settings()
+    plan = next((p for p in pricing["plans"] if p["code"] == plan_code and p.get("active", True)), None)
+    if not plan:
+        raise HTTPException(404, "Plan bulunamadı veya pasif")
+    amount = plan["yearly_price"] if payload.billing_period == "yearly" else plan["monthly_price"]
+    if amount <= 0:
+        raise HTTPException(400, "Bu plan için ödeme alınamaz — Master fiyatlandırma sayfasından güncelleyin")
+
+    if gateway == "havale":
+        # Havale/EFT akışı — ücretsiz, API key gerekmez
+        import uuid as _uuid
+        merchant_oid = f"REN{_uuid.uuid4().hex[:20].upper()}"
+        bank_iban = os.environ.get("BANK_IBAN", "TR00 0000 0000 0000 0000 0000 00")
+        bank_name = os.environ.get("BANK_NAME", "Banka Adı")
+        bank_beneficiary = os.environ.get("BANK_BENEFICIARY", "Şirket Adı")
+        await db.payments.insert_one({
+            "id": merchant_oid, "merchant_oid": merchant_oid,
+            "provider": "havale", "status": "awaiting_transfer",
+            "email": customer_email, "user_name": customer_name,
+            "amount": amount, "currency": plan.get("currency", "TRY"),
+            "plan_code": plan_code, "billing_period": payload.billing_period,
+            "is_renewal": True, "renewal_license_key": s["license_key"],
+            "created_at": _iso(),
+        })
+        await db.settings.update_one(
+            {"_key": f"renewal_intent:{customer_email}:{plan_code}"},
+            {"$set": {"license_key": s["license_key"], "plan_code": plan_code,
+                      "billing_period": payload.billing_period,
+                      "customer_email": customer_email,
+                      "merchant_oid": merchant_oid,
+                      "requested_at": _iso()}},
+            upsert=True,
+        )
+        return {
+            "renewal": True, "gateway": "havale", "session_id": merchant_oid,
+            "url": f"/panel/payment/havale?ref={merchant_oid}",
+            "amount": amount, "currency": plan.get("currency", "TRY"),
+            "iban": bank_iban, "bank": bank_name, "beneficiary": bank_beneficiary,
+            "reference": merchant_oid, "plan": plan.get("name", plan_code),
+            "current_plan": s.get("license_plan"),
+            "current_expires": s.get("license_expires"),
+            "instructions": (
+                f"Kayıtlı IBAN'a {amount:.2f} {plan.get('currency','TRY')} havale yapın; "
+                f"AÇIKLAMA alanına '{merchant_oid}' yazmayı unutmayın. "
+                f"Ödemeniz doğrulandıktan sonra lisansınız otomatik uzatılır (max 24 saat)."
+            ),
+        }
+
+    # Stripe akışı (fallback)
     origin = payload.origin_url or str(request.base_url).rstrip("/")
-    try:
-        from routes.payments import checkout_create as _cc  # noqa: F401
-    except Exception:
-        pass
-    # Doğrudan CheckoutCreateIn kullanan endpoint'i çağırmak yerine data model
-    # zaten yerleşik olduğundan checkout create'i çağıralım.
     ck = CheckoutCreateIn(
         plan_code=plan_code,
         billing_period=payload.billing_period,
@@ -4788,7 +4867,22 @@ async def bayi_my_server(request: Request, license_key: Optional[str] = None):
     if not owner:
         return {"server": None, "install": None, "verification": None}
     doc = await db.bayi_servers.find_one({"owner_license_key": owner}, {"_id": 0})
-    master_api = os.environ.get("MASTER_PUBLIC_API_URL") or str(request.base_url).rstrip("/")
+    # Master public API URL öncelik sırası:
+    #  1) DB override (master panel'de canlıya alındıysa)
+    #  2) MASTER_PUBLIC_API_URL env
+    #  3) https://{MASTER_HOST}  (env'den — gokyuzuhosting.com)
+    #  4) request.base_url  (son çare — asla 127.0.0.1 dönmemesi için önce host bakılır)
+    settings_row = await db.settings.find_one({"_key": "master_public_url"}, {"_id": 0}) or {}
+    master_api = (
+        settings_row.get("url")
+        or os.environ.get("MASTER_PUBLIC_API_URL")
+        or (f"https://{MASTER_HOST}" if MASTER_HOST else None)
+        or str(request.base_url).rstrip("/")
+    ).rstrip("/")
+    # request.base_url güvence ağı: eğer localhost/127.0.0.1 döndüyse (container'da)
+    # ve MASTER_HOST varsa, gerçek public host'a zorla çevir.
+    if MASTER_HOST and ("127.0.0.1" in master_api or "localhost" in master_api):
+        master_api = f"https://{MASTER_HOST}"
     install = {
         "master_api_url": master_api,
         "license_key": owner,
@@ -5398,6 +5492,67 @@ async def admin_stripe_config_get(request: Request, license_key: Optional[str] =
 class StripeConfigIn(BaseModel):
     api_key: str
     mode: Optional[str] = None  # info için
+
+
+@api.get("/admin/payment-settings")
+async def admin_payment_settings_get(request: Request, license_key: Optional[str] = None):
+    """Master-only. Aktif ödeme gateway ('havale' veya 'stripe')."""
+    await _require_master(request, license_key)
+    doc = await db.settings.find_one({"_key": "payment_settings"}, {"_id": 0}) or {}
+    return {
+        "default_gateway": doc.get("default_gateway", "havale"),
+        "havale_enabled": doc.get("havale_enabled", True),
+        "stripe_enabled": doc.get("stripe_enabled", True),
+        "bank_iban": os.environ.get("BANK_IBAN", ""),
+        "bank_name": os.environ.get("BANK_NAME", ""),
+        "bank_beneficiary": os.environ.get("BANK_BENEFICIARY", ""),
+    }
+
+
+class PaymentSettingsIn(BaseModel):
+    default_gateway: Literal["havale", "stripe"] = "havale"
+    havale_enabled: bool = True
+    stripe_enabled: bool = True
+
+
+@api.post("/admin/payment-settings")
+async def admin_payment_settings_set(payload: PaymentSettingsIn, request: Request,
+                                       license_key: Optional[str] = None):
+    """Master-only. Varsayılan gateway'i günceller. Havale seçiliyken bayi
+    'Yükselt' dediğinde IBAN/referans döner (Stripe API key gerekmez)."""
+    await _require_master(request, license_key)
+    await db.settings.update_one(
+        {"_key": "payment_settings"},
+        {"$set": {**payload.model_dump(), "_key": "payment_settings", "updated_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True, **payload.model_dump()}
+
+
+@api.post("/bayi/test-ping")
+async def bayi_test_ping(request: Request, license_key: Optional[str] = None):
+    """Verification widget "🚀 Test Ping" butonu — bayi lisansı ile sahte bir
+    mail_event yaratıp aynı sunucuya push eder. Widget 10sn içinde `ingested_1h`
+    sayacında artışı görür."""
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"]
+    if not owner:
+        raise HTTPException(403, "Test ping için aktif bir lisans gerekli")
+    ev = {
+        "id": str(uuid.uuid4()),
+        "license_key": owner,
+        "from_addr": "test@gokyuzuwebspam.local",
+        "to_addr": "verify@bayi.local",
+        "subject": "[Bağlantı Testi] Widget doğrulama",
+        "verdict": "clean",
+        "score": 0.0,
+        "engine": "test_ping",
+        "ts": _iso(),
+        "ingested_at": _iso(),
+        "test_ping": True,
+    }
+    await db.mail_events.insert_one(ev)
+    return {"ok": True, "event_id": ev["id"], "ts": ev["ts"]}
 
 
 @api.post("/admin/stripe-config")

@@ -1125,13 +1125,13 @@ function BlockedTrendWidget() {
                 ? (isToday ? "from-amber-500 to-amber-400" : "from-amber-500/60 to-amber-400/70")
                 : (isToday ? "from-rose-500 to-rose-400" : "from-indigo-500/60 to-indigo-400/80");
               return (
-                <div key={s.date} className="flex-1 flex flex-col items-center gap-1 group relative">
-                  <div className="w-full h-full flex items-end">
+                <div key={s.date} className="flex-1 h-full flex flex-col items-center gap-1 group relative">
+                  <div className="w-full flex-1 flex items-end">
                     <div
                       className={`w-full rounded-t transition-all bg-gradient-to-t ${barColor} ${
                         isToday ? "shadow-lg" : "group-hover:brightness-125"
                       }`}
-                      style={{ height: `${h}%` }}
+                      style={{ height: `${h}%`, minHeight: "4px" }}
                     >
                       <div className="opacity-0 group-hover:opacity-100 -mt-8 text-[10px] mono text-slate-100 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 whitespace-nowrap transition-opacity">
                         {nfmt(s.count)}

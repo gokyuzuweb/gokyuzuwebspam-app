@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Server, Save, Copy, CheckCircle, AlertCircle, Terminal, Loader2, Globe, Network, Mail,
-  Activity, RefreshCw, Clock,
+  Activity, RefreshCw, Clock, ShieldCheck, KeyRound, Zap, HelpCircle, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
@@ -137,35 +137,133 @@ export default function BayiServer() {
           title={<span className="flex items-center gap-2"><Terminal className="w-4 h-4 text-emerald-400"/> 2. Sunucuya Bağlan — Tek Satır Kurulum</span>}
           subtitle="Aşağıdaki komutu WHM sunucunuzda root olarak çalıştırın. mailshield-logtail.pl otomatik cron'a eklenir."
         />
-        <CardBody className="space-y-4">
-          <div>
-            <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1.5">Adım A · Kurulum</div>
+        <CardBody className="space-y-5">
+          {/* Ön Koşullar */}
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] text-amber-100 space-y-1.5">
+            <div className="flex items-center gap-1.5 font-semibold text-amber-200">
+              <ShieldCheck className="w-3.5 h-3.5" /> Kuruluma başlamadan kontrol edin
+            </div>
+            <ul className="list-disc list-inside space-y-0.5 marker:text-amber-400/60">
+              <li>Sunucunuz <b>CentOS 7/8, AlmaLinux 8/9 veya Ubuntu 20/22</b> olmalı ve <b>root</b> erişiminiz bulunmalı.</li>
+              <li>WHM/cPanel + Exim (veya MailScanner) aktif olmalı — log yolları otomatik tespit edilir.</li>
+              <li>Sunucu <b>internet çıkışı</b> yapabilmeli (giden 443 portu). Firewall'da <span className="mono">gokyuzuhosting.com</span> üzerine kısıtlama olmamalı.</li>
+              <li>Yukarıdaki <b>1. Sunucu Bilgileri</b> kartını doldurup kaydettiğinizden emin olun — aksi halde master doğrulama başarısız olur.</li>
+            </ul>
+          </div>
+
+          {/* Adım 0: SSH Bağlantısı */}
+          <StepBlock
+            no="0"
+            title="SSH ile sunucuya bağlanın"
+            icon={KeyRound}
+            desc="Yerel bilgisayarınızın terminalinden (Windows'ta PuTTY veya Windows Terminal) sunucuya root olarak bağlanın."
+          >
+            <CommandBlock
+              testid="bs-ssh-cmd"
+              cmd={`ssh root@${form.primary_ip || "SUNUCU_IP"}`}
+              onCopy={() => copyCmd(`ssh root@${form.primary_ip || "SUNUCU_IP"}`)}
+            />
+            <ul className="text-[11px] text-slate-400 mt-2 space-y-0.5 list-disc list-inside marker:text-slate-600">
+              <li>Root parolanız yoksa: <span className="mono">sudo su -</span> ile root'a geçin.</li>
+              <li>SSH portunuz farklıysa <span className="mono">-p 2222</span> gibi port ekleyin.</li>
+              <li>Windows kullanıcıları: PuTTY veya <span className="mono">Windows PowerShell</span>'den de aynı komut çalışır.</li>
+            </ul>
+          </StepBlock>
+
+          {/* Adım A: Kurulum */}
+          <StepBlock
+            no="A"
+            title="Kurulum komutunu çalıştırın"
+            icon={Terminal}
+            desc="Tek satırlık komut master sunucusundan installer'ı indirir, gerekli paketleri kurar ve mailshield-logtail.pl'i /opt/gokyuzuwebspam/ altına yerleştirir. Cron ve systemd unit otomatik oluşturulur."
+          >
             <CommandBlock
               testid="bs-install-cmd"
               cmd={install?.install_cmd || ""}
               onCopy={() => install && copyCmd(install.install_cmd)}
             />
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1.5">Adım B · Log Ajanı Başlat (kalıcı daemon)</div>
+            <div className="text-[11px] text-slate-400 mt-2">
+              Kurulum genellikle <b>30-60 saniye</b> sürer. Başarılı olunca konsolda{" "}
+              <span className="mono text-emerald-300">"✔ GökyüzüWebSpam kuruldu"</span> mesajını görürsünüz.
+            </div>
+          </StepBlock>
+
+          {/* Adım B: Log Ajanı */}
+          <StepBlock
+            no="B"
+            title="Log ajanını kalıcı olarak başlatın (opsiyonel)"
+            icon={Zap}
+            desc="Kurulum systemd unit'ini otomatik enable eder. Manuel başlatmak veya farklı parametrelerle çalıştırmak isterseniz:"
+          >
             <CommandBlock
               testid="bs-logtail-cmd"
               cmd={install?.logtail_cmd || ""}
               onCopy={() => install && copyCmd(install.logtail_cmd)}
             />
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1.5">Adım C · Bağlantı Testi (Opsiyonel)</div>
+            <ul className="text-[11px] text-slate-400 mt-2 space-y-0.5 list-disc list-inside marker:text-slate-600">
+              <li>Durumu kontrol: <span className="mono text-slate-300">systemctl status gokyuzuwebspam-logtail</span></li>
+              <li>Logları izle: <span className="mono text-slate-300">journalctl -u gokyuzuwebspam-logtail -f</span></li>
+              <li>Yeniden başlat: <span className="mono text-slate-300">systemctl restart gokyuzuwebspam-logtail</span></li>
+            </ul>
+          </StepBlock>
+
+          {/* Adım C: Bağlantı Testi */}
+          <StepBlock
+            no="C"
+            title="Bağlantıyı test edin"
+            icon={Activity}
+            desc="Aşağıdaki tek satırlık curl komutu sahte bir mail olayı gönderir. Yukarıdaki widget'ta 30 saniye içinde 'Son 1 Saat' sayacı 1 artmalı."
+          >
             <CommandBlock
               testid="bs-test-cmd"
               cmd={install?.test_ingest_cmd || ""}
               onCopy={() => install && copyCmd(install.test_ingest_cmd)}
             />
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-3 text-xs">
+            <div className="text-[11px] text-slate-400 mt-2">
+              Beklenen cevap: <span className="mono text-emerald-300">{`{"ok":true,"event_id":"..."}`}</span>. Panelin üstündeki doğrulama widget'ı <b>YEŞİL / CANLI</b> duruma geçer.
+            </div>
+          </StepBlock>
+
+          {/* Bağlantı bilgileri */}
+          <div className="mt-1 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
             <MiniInfo label="Master API URL" value={install?.master_api_url} />
             <MiniInfo label="Lisans Anahtarı" value={install?.license_key} mono />
           </div>
+
+          {/* Sorun giderme */}
+          <details className="rounded-md border border-slate-800 bg-slate-950/40 p-3 mt-2 group">
+            <summary className="flex items-center gap-1.5 cursor-pointer text-[11px] font-semibold text-slate-300 hover:text-slate-100">
+              <HelpCircle className="w-3.5 h-3.5 text-sky-400" />
+              Kurulum sonrası ingest gelmiyor / widget hâlâ "BEKLİYOR" mu?
+              <ChevronRight className="w-3 h-3 text-slate-500 group-open:rotate-90 transition-transform ml-auto" />
+            </summary>
+            <ul className="mt-2 text-[11px] text-slate-400 space-y-1.5 pl-2 border-l-2 border-slate-800">
+              <li>
+                <b className="text-slate-300">1) Servis çalışıyor mu?</b>{" "}
+                <span className="mono text-slate-200">systemctl status gokyuzuwebspam-logtail</span> — Active: running olmalı.
+              </li>
+              <li>
+                <b className="text-slate-300">2) Log yolu doğru mu?</b>{" "}
+                <span className="mono text-slate-200">tail -f /var/log/exim_mainlog</span> ile Exim'in canlı yazdığını doğrulayın.
+              </li>
+              <li>
+                <b className="text-slate-300">3) Firewall kapatmış mı?</b>{" "}
+                <span className="mono text-slate-200">curl -I {install?.master_api_url || "https://gokyuzuhosting.com"}/api/</span> ile 200/404 dönmeli. Timeout dönerse dış çıkış kapalıdır.
+              </li>
+              <li>
+                <b className="text-slate-300">4) Lisans doğru mu?</b>{" "}
+                Kurulum komutundaki <span className="mono text-slate-200">LICENSE_KEY=</span> değeri size verilen anahtarla aynı olmalı.
+              </li>
+              <li>
+                <b className="text-slate-300">5) Manuel test ping:</b>{" "}
+                Yukarıdaki <b>Adım C</b> komutunu tekrar çalıştırın; hata mesajını yakalarsınız.
+              </li>
+              <li>
+                <b className="text-slate-300">6) Hâlâ çözülmedi?</b>{" "}
+                <span className="mono text-slate-200">journalctl -u gokyuzuwebspam-logtail -n 100</span> çıktısını master'a iletin — 15 dk içinde dönüş yaparız.
+              </li>
+            </ul>
+          </details>
         </CardBody>
       </Card>
 
@@ -194,6 +292,26 @@ function Field({ label, value, onChange, hint, testid, full }) {
         className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono focus:border-indigo-500/60 outline-none"
       />
       {hint && <div className="text-[10px] text-slate-500 mt-1">{hint}</div>}
+    </div>
+  );
+}
+
+function StepBlock({ no, title, icon: Icon, desc, children }) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/30 p-3 space-y-2">
+      <div className="flex items-start gap-2.5">
+        <span className="shrink-0 w-6 h-6 rounded-md bg-gradient-to-br from-emerald-500/25 to-sky-500/20 border border-emerald-400/40 flex items-center justify-center text-[11px] font-bold text-emerald-200">
+          {no}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-100">
+            {Icon && <Icon className="w-3.5 h-3.5 text-emerald-400" />}
+            {title}
+          </div>
+          {desc && <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">{desc}</p>}
+        </div>
+      </div>
+      <div className="pl-8">{children}</div>
     </div>
   );
 }
