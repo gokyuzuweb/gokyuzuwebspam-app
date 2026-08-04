@@ -42,6 +42,24 @@ const FEATURE_GROUPS = [
       { key: "whitelist_manage", label: "Beyaz Liste Ekle/Sil", type: "bool", hint: "IP/domain whiteliste ekleme" },
       { key: "quarantine_view", label: "Karantina Görüntüleme", type: "bool", hint: "Karantinaya düşen mailler" },
       { key: "quarantine_release", label: "Karantinadan Serbest Bırak", type: "bool", hint: "Karantinadan mail çıkarma" },
+      { key: "quarantine_delete", label: "Karantinadan Silme", type: "bool", hint: "Toplu karantina silme yetkisi" },
+    ],
+  },
+  {
+    title: "Güvenlik & Motorlar",
+    icon: ShieldCheck,
+    features: [
+      { key: "security_view", label: "Güvenlik Sayfası Görüntüleme", type: "bool", hint: "Country rules, engine listesi görme" },
+      { key: "security_config", label: "Güvenlik Ayarı Değiştirme", type: "bool", hint: "Country blok, ratelimit, greylist ayarları" },
+      { key: "engine_toggle", label: "Motor Aç / Kapa", type: "bool", hint: "SpamAssassin/ClamAV motorlarını yönetme" },
+    ],
+  },
+  {
+    title: "Giden Mail",
+    icon: SlidersHorizontal,
+    features: [
+      { key: "outbound_view", label: "Giden Mail Görüntüleme", type: "bool", hint: "Sunucudan giden mailleri izleme" },
+      { key: "outbound_control", label: "Giden Mail Kontrolü", type: "bool", hint: "Giden mail askıya alma / silme" },
     ],
   },
   {
@@ -63,9 +81,11 @@ const FEATURE_GROUPS = [
     icon: Info,
     features: [
       { key: "alerts_rules", label: "Custom Alert Kuralları", type: "bool", hint: "Özel uyarı tetikleyicileri" },
+      { key: "reports_view", label: "Rapor Sayfası Görüntüleme", type: "bool", hint: "Rapor tablarına erişim" },
       { key: "reports_weekly", label: "Haftalık AI Raporu", type: "bool", hint: "Otomatik weekly summary" },
       { key: "reports_export", label: "Rapor Export (CSV/PDF)", type: "bool", hint: "Rapor dışa aktarma" },
       { key: "email_notifications", label: "E-posta Bildirimleri", type: "bool", hint: "Kritik olay maili" },
+      { key: "smtp_settings", label: "SMTP Relay Ayarları", type: "bool", hint: "Kendi SMTP yapılandırması" },
     ],
   },
   {
@@ -76,8 +96,11 @@ const FEATURE_GROUPS = [
       { key: "sub_users", label: "Alt Kullanıcı Yönetimi", type: "bool", hint: "Panel içi sub-account" },
       { key: "reseller_mode", label: "Bayi Modu (Alt Bayi)", type: "bool", hint: "Kendi altına bayi açabilme" },
       { key: "api_access", label: "REST API Dış Erişim", type: "bool", hint: "API anahtarı ile 3rd party" },
+      { key: "webhooks", label: "Webhook Entegrasyonu", type: "bool", hint: "Olay bazlı 3rd party bildirim" },
+      { key: "two_factor_auth", label: "İki Faktörlü Doğrulama (2FA)", type: "bool", hint: "TOTP/SMS ile giriş" },
       { key: "priority_support", label: "Öncelikli Destek (SLA)", type: "bool", hint: "WhatsApp / öncelik" },
       { key: "custom_branding", label: "Beyaz Etiket (Custom Logo/Domain)", type: "bool", hint: "Kendi marka görünümü" },
+      { key: "settings_customize", label: "Genel Ayar Değiştirme", type: "bool", hint: "Sistem ayarlarını değiştirme yetkisi" },
     ],
   },
 ];

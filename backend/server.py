@@ -1077,12 +1077,24 @@ async def top_senders(limit: int = 8):
 # ----- Quarantine -----
 @api.get("/quarantine")
 async def quarantine_list(
+    request: Request,
     search: Optional[str] = None,
     verdict: Optional[str] = None,
     engine: Optional[str] = None,
     limit: int = 200,
+    license_key: Optional[str] = None,
 ):
+    """Karantina listesi — bayi/master scope izole. Bayi kendi lisansına ait
+    kayıtları görür; master hepsini veya `?license_key=X` ile bir bayinin."""
+    scope = await _tenant_scope(request, license_key)
+    # Plan gate: karantina görüntüleme özelliği kapalıysa 403
+    await _require_feature(scope, "quarantine_view")
     q: dict = {}
+    if scope["is_master"]:
+        if scope["owner_license_key"]:
+            q["owner_license_key"] = scope["owner_license_key"]
+    else:
+        q["owner_license_key"] = scope["owner_license_key"] or "__none__"
     if verdict and verdict != "all":
         q["verdict"] = verdict
     if engine and engine != "all":
@@ -1155,13 +1167,20 @@ class BulkAction(BaseModel):
 
 
 @api.post("/quarantine/release")
-async def quarantine_release(action: BulkAction):
+async def quarantine_release(action: BulkAction, request: Request, license_key: Optional[str] = None):
     """
     'Spam değil' işareti = mesajı gelen kutusuna teslim et + göndericiyi otomatik
     whitelist'e ekle + Bayes'e ham (temiz) olarak öğret. Böylece aynı gönderici
     bir daha karantinaya düşmez.
+    Plan gate: `quarantine_release`. Tenant izolasyonu: sadece kendi kayıtları.
     """
-    docs = await db.quarantine.find({"id": {"$in": action.ids}}, {"_id": 0}).to_list(500)
+    scope = await _tenant_scope(request, license_key)
+    await _require_feature(scope, "quarantine_release")
+    # ID filtresini owner ile daralt (bayi sadece kendisine ait ID'leri işleyebilir)
+    match = {"id": {"$in": action.ids}}
+    if not scope["is_master"]:
+        match["owner_license_key"] = scope["owner_license_key"] or "__none__"
+    docs = await db.quarantine.find(match, {"_id": 0}).to_list(500)
     whitelisted_count = 0
     for d in docs:
         sender = d.get("sender", "")
@@ -1182,7 +1201,7 @@ async def quarantine_release(action: BulkAction):
                 await db.lists.insert_one(ip_entry.model_dump())
                 whitelisted_count += 1
     result = await db.quarantine.update_many(
-        {"id": {"$in": action.ids}}, {"$set": {"released": True}}
+        match, {"$set": {"released": True}}
     )
     await db.logs.insert_one(ActivityLog(
         source="quarantine", level="info",
@@ -1192,8 +1211,15 @@ async def quarantine_release(action: BulkAction):
 
 
 @api.post("/quarantine/delete")
-async def quarantine_delete(action: BulkAction):
-    result = await db.quarantine.delete_many({"id": {"$in": action.ids}})
+async def quarantine_delete(action: BulkAction, request: Request, license_key: Optional[str] = None):
+    """Karantina toplu silme. Plan gate: `quarantine_delete`. Bayi sadece
+    kendi lisansındaki kayıtları silebilir."""
+    scope = await _tenant_scope(request, license_key)
+    await _require_feature(scope, "quarantine_delete")
+    match = {"id": {"$in": action.ids}}
+    if not scope["is_master"]:
+        match["owner_license_key"] = scope["owner_license_key"] or "__none__"
+    result = await db.quarantine.delete_many(match)
     await db.logs.insert_one(ActivityLog(
         source="quarantine", level="warn",
         message=f"{result.deleted_count} karantina mesajı silindi",
@@ -4979,11 +5005,19 @@ PLAN_FEATURES_DEFAULT = {
         "dashboard": True,
         "live_traffic": True,
         "blacklist_check": True,     # RBL sorgu / delist
-        "whitelist_manage": True,    # Whitelist ekleme
-        "blacklist_manage": True,    # Blacklist ekleme
+        "whitelist_manage": False,   # Whitelist ekleme (kapalı = üst plan)
+        "blacklist_manage": False,   # Blacklist ekleme (kapalı = üst plan)
         "quarantine_view": True,     # Karantina görüntüleme
         "quarantine_release": False, # Karantinadan çıkarma
+        "quarantine_delete": False,  # Karantinadan silme
         "logs_view": True,
+        # Güvenlik ekranı
+        "security_view": True,       # Güvenlik sayfası görüntüleme
+        "security_config": False,    # Güvenlik ayarları değiştirme
+        "engine_toggle": False,      # Motor aç/kapa
+        # Giden mail
+        "outbound_view": True,       # Giden mail görüntüleme
+        "outbound_control": False,   # Giden mail askıya alma/silme
         # İleri modüller
         "custom_rules": False,       # Kural editörü (Rules sayfası)
         "exploit_editor": False,     # Exploit/Webshell tarayıcı
@@ -4995,44 +5029,57 @@ PLAN_FEATURES_DEFAULT = {
         "url_scan": True,            # URL taraması
         # Bildirim & Raporlama
         "alerts_rules": False,       # Custom alert kuralları
+        "reports_view": True,        # Rapor sayfası görüntüleme
         "reports_weekly": False,     # Haftalık AI raporu
         "reports_export": False,     # CSV/PDF export
         "email_notifications": True, # Basit e-posta bildirim
+        "smtp_settings": False,      # SMTP relay yapılandırma
         # Yönetim
         "bulk_actions": False,       # Toplu işlem
         "sub_users": False,          # Alt kullanıcı
         "reseller_mode": False,      # Alt bayi
         "api_access": False,         # REST API
+        "webhooks": False,           # Webhook entegrasyon
+        "two_factor_auth": False,    # 2FA
         "priority_support": False,   # Öncelikli destek
         "custom_branding": False,    # Beyaz etiket / logo
+        "settings_customize": False, # Genel ayarları değiştirme
         "label": "Starter",
     },
     "pro": {
         "max_domains": 10, "max_mails_per_day": 50000,
         "attack_map": True, "dashboard": True, "live_traffic": True,
         "blacklist_check": True, "whitelist_manage": True, "blacklist_manage": True,
-        "quarantine_view": True, "quarantine_release": True, "logs_view": True,
+        "quarantine_view": True, "quarantine_release": True, "quarantine_delete": True,
+        "logs_view": True,
+        "security_view": True, "security_config": True, "engine_toggle": True,
+        "outbound_view": True, "outbound_control": True,
         "custom_rules": True, "exploit_editor": True, "ai_explanations": True,
         "threat_intel": True, "bec_detection": True, "sandbox": True,
         "attachment_scan": True, "url_scan": True,
-        "alerts_rules": True, "reports_weekly": True, "reports_export": True,
-        "email_notifications": True,
+        "alerts_rules": True, "reports_view": True, "reports_weekly": True,
+        "reports_export": True, "email_notifications": True, "smtp_settings": True,
         "bulk_actions": True, "sub_users": True, "reseller_mode": False,
-        "api_access": True, "priority_support": True, "custom_branding": False,
+        "api_access": True, "webhooks": True, "two_factor_auth": True,
+        "priority_support": True, "custom_branding": False, "settings_customize": True,
         "label": "Pro",
     },
     "enterprise": {
         "max_domains": 999999, "max_mails_per_day": 999999999,
         "attack_map": True, "dashboard": True, "live_traffic": True,
         "blacklist_check": True, "whitelist_manage": True, "blacklist_manage": True,
-        "quarantine_view": True, "quarantine_release": True, "logs_view": True,
+        "quarantine_view": True, "quarantine_release": True, "quarantine_delete": True,
+        "logs_view": True,
+        "security_view": True, "security_config": True, "engine_toggle": True,
+        "outbound_view": True, "outbound_control": True,
         "custom_rules": True, "exploit_editor": True, "ai_explanations": True,
         "threat_intel": True, "bec_detection": True, "sandbox": True,
         "attachment_scan": True, "url_scan": True,
-        "alerts_rules": True, "reports_weekly": True, "reports_export": True,
-        "email_notifications": True,
+        "alerts_rules": True, "reports_view": True, "reports_weekly": True,
+        "reports_export": True, "email_notifications": True, "smtp_settings": True,
         "bulk_actions": True, "sub_users": True, "reseller_mode": True,
-        "api_access": True, "priority_support": True, "custom_branding": True,
+        "api_access": True, "webhooks": True, "two_factor_auth": True,
+        "priority_support": True, "custom_branding": True, "settings_customize": True,
         "label": "Enterprise",
     },
 }

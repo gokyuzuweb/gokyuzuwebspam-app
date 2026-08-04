@@ -1,106 +1,69 @@
-# GökyüzüWebSpam — Product Requirements Document
+# GökyüzüWebSpam — PRD
 
 ## Original Problem Statement
-User requested a comprehensive WHM/cPanel mail spam application (plugin) named
-**GökyüzüWebSpam** with IP-based licensing, reseller scoping, checkout systems,
-full multi-language support, and a standalone live License Server. Master hosting
-domain: **gokyuzuhosting.com** (89.19.15.58). Product package name remains
-`GökyüzüWebSpam` / `gokyuzuwebspam-{version}.tar.gz`.
+Comprehensive WHM/cPanel mail spam plugin with IP-based licensing, reseller
+scoping, checkout systems, multi-language, live License Server. Master hosting:
+gokyuzuhosting.com.
 
 ## Architecture
-- **Backend**: FastAPI + Motor (MongoDB). Master routes at `/api/*`.
-- **Frontend**: React + TanStack Query + TailwindCSS + Shadcn UI.
-- **Master domain**: `https://gokyuzuhosting.com`.
-- **Package dist**: `/app/backend/dist/gokyuzuwebspam-{version}.tar.gz`.
-- **Multi-tenant isolation**: `owner_license_key` on `rules`, `engines`,
-  `mail_events`, `settings:policy:{owner}` docs. `_tenant_scope()` scope helper.
-- **Impersonation**: `gws_impersonate` cookie → master views panel as reseller.
+- Backend: FastAPI + Motor (MongoDB). Routes at `/api/*`.
+- Frontend: React + TanStack Query + TailwindCSS + Shadcn UI.
+- Master domain: gokyuzuhosting.com.
+- Multi-tenant isolation via `owner_license_key` on rules, engines, mail_events,
+  quarantine, lists, settings.
+- Impersonation: `gws_impersonate` cookie.
 
-## Recently Completed (Feb 2026)
-### Feb 4 batch (2)
-- ✅ **Whitelist/Blacklist silme fix**: DELETE metodu → POST `/lists/{id}/delete`
-  (Apache/cPanel proxy DELETE'i bloklar). Frontend api.listDel güncellendi.
-- ✅ **Plan gate enforcement (P0)**: `POST /api/lists` ve
-  `/lists/{id}/delete` artık `blacklist_manage` / `whitelist_manage` feature
-  gate'i kontrol eder. Bayi starter'da → 403. Tenant isolation eklendi
-  (`owner_license_key`).
-- ✅ **Payment method choice**: Bayi checkout'ta Havale/EFT veya Kredi Kartı
-  (Stripe) seçebilir. `payment_settings.havale_enabled/stripe_enabled` ile
-  master gateway'leri açıp kapatabilir.
-- ✅ **Landing GeoBlockedHeatmap zenginleştirme**:
-  - Kavisli SVG arc'lar (yay şeklinde saldırı çizgileri) + hareketli mermi.
-  - Hedefte impact flash (Türkiye üzerinde parlayan halka).
-  - Ülke satırlarında spam/virüs/phish verdict kırılım chip'leri.
-  - **LiveAttackFeed** side panel (son 20 saldırı, animasyonlu giriş).
-  - **MapFooterLiveTicker** (harita altında CANLI kayan bant, "Otomatik
-    yenileme" yerine gerçek event'ler).
-  - **CountryAttackSummary** modal'da 4 verdict kart + son saldırı zamanı.
-  - 90+ ülke isim + koordinat + verdict kırılımı.
-- ✅ **Panel AttackMap**: aynı kavisli arc + mermi + impact flash.
-- ✅ Push toasts + Bayi Health monitoring (green/yellow/red).
-- ✅ Version Publish UI + stable plugin download infra.
+## Feb 4 Latest (Session 6)
+- ✅ **Plan matrix genişletildi** (25+ modül): security_view, security_config,
+  engine_toggle, outbound_view, outbound_control, quarantine_delete, reports_view,
+  smtp_settings, webhooks, two_factor_auth, settings_customize.
+- ✅ **Karantina tenant izolasyonu**: `/quarantine`, `/quarantine/release`,
+  `/quarantine/delete` artık `owner_license_key` bazlı filtreleniyor.
+- ✅ **Karantina plan gate**: quarantine_view / quarantine_release /
+  quarantine_delete feature check. Starter'da kapalı → 403 + "üst versiyona geçin".
+- ✅ **PlanConfig UI** yeni grup: Güvenlik & Motorlar, Giden Mail, Ayar Değişikliği.
+- ✅ **Bulk block country** (master): `/admin/geo/bulk-block-country?cc=RU`
+- ✅ **Country IP list** endpoint: `/geo/country/{cc}/ips`
+- ✅ **Geo heatmap license filter**: `?license_key=X`
+- ✅ **WebSocket attacks stream**: `/api/maintenance/ws/attacks` — ingest anında
+  broadcast. Landing → patlama animasyonu (1.6sn flash).
+- ✅ Geo modal 2 bölüm: "Blacklist Kayıtları" + "Son Saldıran IP'ler".
 
-### Feb 4 batch (1)
-- ✅ Engine stats tenant isolation: `/api/engines` computes today's
-  `scanned_today`/`caught_today` per-tenant from `mail_events`.
-- ✅ Havale (bank transfer) upgrade path — Stripe API key not required.
-- ✅ Stable plugin download: `/api/plugin/download`, `/download/{version}`,
-  `/api/plugin/versions`, `/api/scripts/install-bayi.sh`.
-- ✅ Landing LiveTicker component (bottom-center pill, 5sn polling).
-- ✅ **Bayi Sağlık Monitörü**: `/api/admin/bayi-health` returns green/yellow/red
-  status per license based on `last_heartbeat_at`. Colored dots on MasterLive
-  cards + aggregated totals.
-- ✅ **Master Havale Panosu**: existing PaymentsAdmin retains flow; `mark-paid`
-  extended to send customer confirmation email + push master toast.
-- ✅ **Test Ping Button**: BayiServer.js has "🚀 Test Ping Gönder" button —
-  clicking sends synthetic mail_event → widget turns green in 10s. Tested E2E.
-- ✅ **Version Publish UI**: `/panel/version-publish` — dropdown of dist
-  packages, one-click publish → auto-promotes dist + version_manifest.
-- ✅ **Push Toast Bridge**: `PushToastBridge` component polls /api/push/toasts
-  every 10s; new events → Sonner toast + browser Notification API. Wired for
-  bayi_registered, payment_confirmed events.
-- ✅ Public URLs cleanup: `gokyuzuwebspam.com` → `gokyuzuhosting.com`.
-- ✅ Backend IndentationError fixed (duplicate empty `_stripe_client`).
-- ✅ Bayi install URL always `https://gokyuzuhosting.com` (never 127.0.0.1).
-- ✅ BayiServer detailed install guide (SSH, systemd, troubleshooting).
-- ✅ `admin/resellers-live` merges `db.resellers` + `db.licenses`.
+## Prev Batches (özet)
+- Bayi Sağlık monitor (green/yellow/red) + Push Toast Bridge + Version Publish UI.
+- Havale + Stripe checkout choice, Master Havale Panosu.
+- Test Ping butonu.
+- Engine stats izolasyonu (mail_events'ten günlük hesap).
+- Stabil plugin download (`/api/plugin/download`, `/api/plugin/download/{v}`).
+- Landing LiveTicker + GeoBlockedHeatmap zenginleştirme (arcs + verdict chips).
+- List/Rules tenant isolation + plan gate.
+- Backend URL cleanup: gokyuzuwebspam.com → gokyuzuhosting.com.
 
 ## Data Models
-- `licenses`: `{license_key, plan, active, valid_until, customer_name,
-   last_heartbeat_at, last_heartbeat_ip, last_heartbeat_version, ...}`
-- `engines`: `{name, enabled, owner_license_key, version}` (counts on-the-fly)
-- `rules`: `{..., owner_license_key}`
-- `mail_events`: `{license_key, engine, verdict, ts, ...}`
-- `bayi_servers`: `{owner_license_key, hostname, primary_ip, ...}`
-- `payments`: `{merchant_oid, status, provider, plan_code, amount, currency}`
-- `master_toasts`: `{id, kind, title, body, link, meta, created_at, seen}`
-- `settings`: `_key`-scoped docs.
+- `licenses`: `{license_key, plan, active, valid_until, last_heartbeat_at, ...}`
+- `engines`: `{name, enabled, owner_license_key}` (counts on-the-fly)
+- `rules`, `lists`, `quarantine`, `mail_events`: hepsi `owner_license_key`
+- `bayi_servers`: `{owner_license_key, hostname, primary_ip}`
+- `payments`: `{merchant_oid, status:'awaiting_transfer'|'paid'|'failed'}`
+- `master_toasts`, `plan_matrix_history`, `settings`.
 
-## Health Dot Rules
-- 🟢 **green**: `last_heartbeat_at` within 5 minutes (active)
-- 🟡 **yellow**: 5-30 minutes (slowed)
-- 🔴 **red**: 30+ minutes or no heartbeat (disconnected)
+## Plan Gate Rules
+Bayi'nin planında kapalı bir modül endpoint'i tetiklerse → HTTP 403 +
+`"Bu özellik ({feature_name}) {plan}  planınızda kapalı — üst versiyona geçin."`
+Master hepsini bypass eder. Impersonation aktifken master da bayi kısıtlarına
+tabidir.
 
-Endpoints:
-- `GET /api/admin/bayi-health` → master-only, aggregated totals + sorted list
-- `admin/resellers-live` also exposes `health` field per bayi card
+## Backlog
+### P1
+- **Security/Settings page tenant isolation**: `/api/security/country-rules`,
+  `/api/settings/*` endpoint'lerini owner_license_key ile izole et.
+- **Reports page plan gate**: `reports_view` false → sayfada PlanGate göster.
+- **Outbound Mail tenant isolation**.
 
-## Prioritized Backlog
-
-### P1 — Next value-adds
-- **Bayi Health Dashboard Page**: dedicated `/panel/bayi-health` with filter
-  by health color + bulk "ping tümü" action.
-- **Email templates config**: allow master to customize onboarding + havale
-  confirmation email body/subject via settings.
-- **SHA256 in version_manifest**: verify tar.gz integrity before install.
-
-### P2 — Performance / cleanup
-- Optimize `public/blocked-stats` $lookup + country compound index.
-- Refactor `server.py` (6600+ lines) into modules.
-
-### P3 — Nice-to-have
-- SSE/WebSocket for push toasts (replace 10sn polling).
-- Delta package updates (rsync-style) for faster upgrades.
+### P2
+- server.py (6700+ lines) modular split.
+- Choropleth heatmap layer.
+- WebSocket-based live feed for MasterLive.
 
 ## Testing Credentials
-See `/app/memory/test_credentials.md`.
+`/app/memory/test_credentials.md`.
