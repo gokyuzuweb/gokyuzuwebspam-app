@@ -180,13 +180,7 @@ function ResellerCard({ r, hours }) {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-sm text-slate-200 truncate font-medium">
-              {r.online ? (
-                <span className="inline-flex items-center gap-1 text-emerald-400 shrink-0">
-                  <Circle className="w-2 h-2 fill-current animate-pulse" />
-                </span>
-              ) : (
-                <span className="w-2 h-2 rounded-full bg-slate-700 shrink-0" />
-              )}
+              <HealthDot health={r.health} />
               <span className="truncate">{r.company || r.email}</span>
             </div>
             <div className="text-[11px] text-slate-500 mono truncate mt-0.5">{r.email}</div>
@@ -268,5 +262,27 @@ function ResellerCard({ r, hours }) {
         </div>
       </div>
     </Link>
+  );
+}
+
+/**
+ * HealthDot — bayi bağlantı durumu göstergesi:
+ *   green  → son 5dk içinde heartbeat (aktif ping)
+ *   yellow → 5-30dk (yavaşlamış)
+ *   red    → 30dk+ veya hiç (kopuk)
+ */
+function HealthDot({ health }) {
+  const map = {
+    green:  { cls: "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]", anim: "animate-pulse", title: "Aktif · <5dk" },
+    yellow: { cls: "bg-amber-400  shadow-[0_0_8px_rgba(251,191,36,0.7)]", anim: "", title: "Yavaşlamış · 5-30dk" },
+    red:    { cls: "bg-rose-500   shadow-[0_0_8px_rgba(244,63,94,0.7)]",  anim: "", title: "Bağlantı kopuk · 30dk+" },
+  };
+  const t = map[health] || map.red;
+  return (
+    <span
+      data-testid={`ml-health-${health}`}
+      title={t.title}
+      className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${t.cls} ${t.anim}`}
+    />
   );
 }

@@ -13,6 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PluginStatusStripe, LicenseGate } from "@/components/LicenseGate";
 import RenewalBanner from "@/components/RenewalBanner";
 import { ImpersonationBar } from "@/components/Impersonate";
+import PushToastBridge from "@/components/PushToastBridge";
 import { useIsMaster } from "@/hooks/useIsMaster";
 import { api } from "@/lib/api";
 import Landing from "@/pages/Landing";
@@ -34,6 +35,7 @@ import AlertsRules from "@/pages/AlertsRules";
 import Pricing from "@/pages/Pricing";
 import Shop, { CheckoutSuccess } from "@/pages/Shop";
 import HavalePayment from "@/pages/HavalePayment";
+import VersionPublish from "@/pages/VersionPublish";
 import Blacklist from "@/pages/Blacklist";
 import Reseller from "@/pages/Reseller";
 import Security from "@/pages/Security";
@@ -80,6 +82,7 @@ const NAV = [
   { to: "/panel/master-live", key: "master_live", icon: Activity, testid: "nav-master-live", label: "Canlı Bayi Trafiği", masterOnly: true, sellerOnly: true },
   { to: "/panel/plan-analytics", key: "plan_analytics", icon: DollarSign, testid: "nav-plan-analytics", label: "Plan Analitiği", masterOnly: true, sellerOnly: true },
   { to: "/panel/plan-config", key: "plan_config", icon: SlidersHorizontal, testid: "nav-plan-config", label: "Plan Modül Yapıl.", masterOnly: true, sellerOnly: true },
+  { to: "/panel/version-publish", key: "version_publish", icon: PackageOpen, testid: "nav-version-publish", label: "Sürüm Yayın", masterOnly: true, sellerOnly: true },
   { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
@@ -186,6 +189,7 @@ function Shell() {
       <div className="flex-1 flex flex-col min-w-0">
         <PluginStatusStripe />
         <ImpersonationBar />
+        <PushToastBridge />
         <RenewalBanner />
         <Header title={active ? (active.label || t(`nav.${active.key}`)) : "GökyüzüWebSpam"} />
         <main className="flex-1 min-w-0 overflow-x-hidden">
@@ -203,6 +207,7 @@ function Shell() {
             <Route path="/plan-config" element={<PlanConfig />} />
             <Route path="/subscription" element={<Subscription />} />
             <Route path="/payment/havale" element={<HavalePayment />} />
+            <Route path="/version-publish" element={<VersionPublish />} />
             <Route path="/my-server" element={<BayiServer />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />

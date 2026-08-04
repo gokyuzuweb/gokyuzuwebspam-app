@@ -321,6 +321,29 @@ export const api = {
   adminPaymentHavaleMarkPaid: (ref, licenseKey) =>
     client.post(`/admin/payment/havale/mark-paid`, null,
       { params: { ref, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
+  adminPaymentHavaleReject: (ref, reason, licenseKey) =>
+    client.post(`/admin/payments/reject-havale`, null,
+      { params: { ref, reason, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
+  adminPaymentsPendingHavale: (licenseKey) =>
+    client.get(`/admin/payments/pending-havale`,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  // Bayi sağlık & push
+  adminBayiHealth: (licenseKey) =>
+    client.get(`/admin/bayi-health`,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  pushToasts: (since, licenseKey) =>
+    client.get(`/push/toasts`,
+      { params: { ...(since ? { since } : {}), ...(licenseKey ? { license_key: licenseKey } : {}) },
+        withCredentials: true }).then(r => r.data),
+  // Bayi test ping (kendi kurulumunu doğrulama)
+  bayiTestPing: (licenseKey) =>
+    client.post(`/bayi/test-ping`, null,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  // Plugin versioning
+  pluginVersions: () => client.get(`/plugin/versions`).then(r => r.data),
+  versionPublish: (payload, licenseKey) =>
+    client.post(`/version/publish`, { ...payload, license_key: licenseKey || undefined },
+      { withCredentials: true }).then(r => r.data),
   // Licenses
   licenses: () => client.get("/licenses").then(r => r.data),
   licenseAdd: (payload) => client.post("/licenses", payload).then(r => r.data),

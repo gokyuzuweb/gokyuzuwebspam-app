@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Server, Save, Copy, CheckCircle, AlertCircle, Terminal, Loader2, Globe, Network, Mail,
-  Activity, RefreshCw, Clock, ShieldCheck, KeyRound, Zap, HelpCircle, ChevronRight,
+  Activity, RefreshCw, Clock, ShieldCheck, KeyRound, Zap, HelpCircle, ChevronRight, Send,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
@@ -63,6 +63,18 @@ export default function BayiServer() {
     onError: (e) => toast.error("Kayıt başarısız: " + (e?.response?.data?.detail || e.message)),
   });
 
+  const testPing = useMutation({
+    mutationFn: () => api.bayiTestPing(),
+    onSuccess: () => {
+      toast.success("🚀 Test ping gönderildi", {
+        description: "Widget 10 saniye içinde 'CANLI' duruma geçmeli",
+      });
+      // Widget'ı hemen yenile — event backend'e düştü, count artmalı
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["bayi-my-server"] }), 1500);
+    },
+    onError: (e) => toast.error("Test ping başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
+
   const install = q.data?.install;
   const s = q.data?.server;
 
@@ -85,7 +97,7 @@ export default function BayiServer() {
       </div>
 
       {/* Canlı Trafik Doğrulama Widget */}
-      <VerificationWidget verification={q.data?.verification} refreshing={q.isFetching} onRefresh={() => q.refetch()} />
+      <VerificationWidget verification={q.data?.verification} refreshing={q.isFetching} onRefresh={() => q.refetch()} onTestPing={() => testPing.mutate()} testPinging={testPing.isPending} />
 
       {/* 1. Sunucu Bilgileri */}
       <Card>
@@ -345,7 +357,7 @@ function MiniInfo({ label, value, mono }) {
   );
 }
 
-function VerificationWidget({ verification: v, refreshing, onRefresh }) {
+function VerificationWidget({ verification: v, refreshing, onRefresh, onTestPing, testPinging }) {
   if (!v) return null;
   const tone =
     v.status === "live" ? {
@@ -397,6 +409,21 @@ function VerificationWidget({ verification: v, refreshing, onRefresh }) {
           title="Yenile"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+      {/* Test Ping butonu — bayi kurulumu doğrular */}
+      <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-[11px] text-slate-500 leading-relaxed max-w-md">
+          <b className="text-slate-300">Kurulumu tamamladıysanız</b> sağdaki butonla test event gönderin — widget 10 saniye içinde CANLI (yeşil) duruma geçmeli.
+        </div>
+        <button
+          data-testid="bs-test-ping"
+          onClick={onTestPing}
+          disabled={testPinging}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-gradient-to-r from-emerald-500 to-sky-500 text-white shadow-lg shadow-emerald-500/20 border border-emerald-400/40 hover:brightness-110 disabled:opacity-60"
+        >
+          {testPinging ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <Send className="w-3.5 h-3.5"/>}
+          🚀 Test Ping Gönder
         </button>
       </div>
       <div className="mt-4 grid grid-cols-3 gap-3">

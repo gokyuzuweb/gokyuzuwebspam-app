@@ -1,7 +1,5 @@
 # GökyüzüWebSpam — Product Requirements Document
 
-Master repository for the WHM/cPanel-based multi-tenant mail security SaaS.
-
 ## Original Problem Statement
 User requested a comprehensive WHM/cPanel mail spam application (plugin) named
 **GökyüzüWebSpam** with IP-based licensing, reseller scoping, checkout systems,
@@ -12,69 +10,74 @@ domain: **gokyuzuhosting.com** (89.19.15.58). Product package name remains
 ## Architecture
 - **Backend**: FastAPI + Motor (MongoDB). Master routes at `/api/*`.
 - **Frontend**: React + TanStack Query + TailwindCSS + Shadcn UI.
-- **Master domain**: `https://gokyuzuhosting.com` (all plugin/download URLs).
+- **Master domain**: `https://gokyuzuhosting.com`.
 - **Package dist**: `/app/backend/dist/gokyuzuwebspam-{version}.tar.gz`.
-- **Multi-tenant isolation**: `owner_license_key` field on `rules`, `engines`,
-  `mail_events`, `settings:policy:{owner}` docs. `_tenant_scope()` helper decides
-  scope from `X-Master-Key` header, `gws_master_session` cookie, or fallback.
+- **Multi-tenant isolation**: `owner_license_key` on `rules`, `engines`,
+  `mail_events`, `settings:policy:{owner}` docs. `_tenant_scope()` scope helper.
 - **Impersonation**: `gws_impersonate` cookie → master views panel as reseller.
 
 ## Recently Completed (Feb 2026)
-- ✅ Backend `IndentationError` fix (duplicate empty `_stripe_client` at 5512).
-- ✅ Bayi install URL always uses `https://gokyuzuhosting.com` (never 127.0.0.1).
-- ✅ BayiServer.js detailed install guide: prerequisites, SSH, install, systemd,
-  test ping, troubleshooting accordion.
-- ✅ `/api/admin/resellers-live` merges `db.resellers` + `db.licenses` (master
-  excluded) → 18 bayi cards showing traffic breakdown.
-- ✅ Engine stats tenant isolation: `/api/engines` now computes
-  `scanned_today`/`caught_today` per-owner from `mail_events` today (each
-  bayi/master sees own numbers only).
-- ✅ Havale (bank transfer) upgrade path — Stripe API key not required:
-  - `/api/checkout/create-session` returns Havale response if
-    `payment_settings.default_gateway=havale`.
-  - `/api/payment/havale/status` polling endpoint.
-  - `/api/admin/payment/havale/mark-paid` manual master approval endpoint.
-  - `/panel/payment/havale` frontend page with 4-section detailed instructions.
-- ✅ Stable plugin download infrastructure:
-  - `/api/plugin/download` → latest package (currently 2.6.0).
-  - `/api/plugin/download/{version}` → version-pinned.
-  - `/api/plugin/versions` → available versions list.
-  - `/api/scripts/install-bayi.sh` → working bash installer with systemd unit.
-  - `version_manifest` auto-promotes dist when new version published.
-- ✅ Landing Live Ticker: bottom-center pill shows "Son dakikada X saldırı
-  engellendi · Son 1 saat Y · Z aktif bayi" — 5sn polling with odometer anim.
-- ✅ Public URL cleanup: all `gokyuzuwebspam.com` → `gokyuzuhosting.com`
-  (invoices, emails, license gate, Landing footer).
+### Feb 4 batch
+- ✅ Engine stats tenant isolation: `/api/engines` computes today's
+  `scanned_today`/`caught_today` per-tenant from `mail_events`.
+- ✅ Havale (bank transfer) upgrade path — Stripe API key not required.
+- ✅ Stable plugin download: `/api/plugin/download`, `/download/{version}`,
+  `/api/plugin/versions`, `/api/scripts/install-bayi.sh`.
+- ✅ Landing LiveTicker component (bottom-center pill, 5sn polling).
+- ✅ **Bayi Sağlık Monitörü**: `/api/admin/bayi-health` returns green/yellow/red
+  status per license based on `last_heartbeat_at`. Colored dots on MasterLive
+  cards + aggregated totals.
+- ✅ **Master Havale Panosu**: existing PaymentsAdmin retains flow; `mark-paid`
+  extended to send customer confirmation email + push master toast.
+- ✅ **Test Ping Button**: BayiServer.js has "🚀 Test Ping Gönder" button —
+  clicking sends synthetic mail_event → widget turns green in 10s. Tested E2E.
+- ✅ **Version Publish UI**: `/panel/version-publish` — dropdown of dist
+  packages, one-click publish → auto-promotes dist + version_manifest.
+- ✅ **Push Toast Bridge**: `PushToastBridge` component polls /api/push/toasts
+  every 10s; new events → Sonner toast + browser Notification API. Wired for
+  bayi_registered, payment_confirmed events.
+- ✅ Public URLs cleanup: `gokyuzuwebspam.com` → `gokyuzuhosting.com`.
+- ✅ Backend IndentationError fixed (duplicate empty `_stripe_client`).
+- ✅ Bayi install URL always `https://gokyuzuhosting.com` (never 127.0.0.1).
+- ✅ BayiServer detailed install guide (SSH, systemd, troubleshooting).
+- ✅ `admin/resellers-live` merges `db.resellers` + `db.licenses`.
 
 ## Data Models
-- `licenses`: `{license_key, plan, active, valid_until, customer_name, ...}`
-- `engines`: `{name, enabled, owner_license_key, version}` (scanned/caught
-  computed on-the-fly from mail_events)
+- `licenses`: `{license_key, plan, active, valid_until, customer_name,
+   last_heartbeat_at, last_heartbeat_ip, last_heartbeat_version, ...}`
+- `engines`: `{name, enabled, owner_license_key, version}` (counts on-the-fly)
 - `rules`: `{..., owner_license_key}`
 - `mail_events`: `{license_key, engine, verdict, ts, ...}`
-- `bayi_servers`: `{owner_license_key, hostname, primary_ip, ns_records, ...}`
+- `bayi_servers`: `{owner_license_key, hostname, primary_ip, ...}`
 - `payments`: `{merchant_oid, status, provider, plan_code, amount, currency}`
-- `settings`: `_key`-scoped docs (policy:{owner}, version_manifest,
-  payment_settings, landing_traffic_seed, master_public_url).
+- `master_toasts`: `{id, kind, title, body, link, meta, created_at, seen}`
+- `settings`: `_key`-scoped docs.
+
+## Health Dot Rules
+- 🟢 **green**: `last_heartbeat_at` within 5 minutes (active)
+- 🟡 **yellow**: 5-30 minutes (slowed)
+- 🔴 **red**: 30+ minutes or no heartbeat (disconnected)
+
+Endpoints:
+- `GET /api/admin/bayi-health` → master-only, aggregated totals + sorted list
+- `admin/resellers-live` also exposes `health` field per bayi card
 
 ## Prioritized Backlog
 
 ### P1 — Next value-adds
-- **Widget Test Ping Button**: BayiServer.js add "🚀 Test Ping Gönder" button
-  wired to `POST /api/bayi/test-ping` (backend already exists at server.py:5858).
-- **Master Havale Panosu**: `/panel/payments-admin` new tab listing
-  `awaiting_transfer` payments with "Onayla" button → `mark-paid`.
-- **Version Publish UI**: dropdown listing `/api/plugin/versions` and one-click
-  publish that runs `_promote_dist_version()`.
+- **Bayi Health Dashboard Page**: dedicated `/panel/bayi-health` with filter
+  by health color + bulk "ping tümü" action.
+- **Email templates config**: allow master to customize onboarding + havale
+  confirmation email body/subject via settings.
+- **SHA256 in version_manifest**: verify tar.gz integrity before install.
 
 ### P2 — Performance / cleanup
-- Optimize `public/blocked-stats` $lookup + add `country` compound index.
-- Refactor `server.py` (6300+ lines) into `plan_matrix.py`, `bayi_server.py`,
-  `impersonate.py`, `feature_gate.py`, `plugin_download.py`, `havale.py`.
+- Optimize `public/blocked-stats` $lookup + country compound index.
+- Refactor `server.py` (6600+ lines) into modules.
 
 ### P3 — Nice-to-have
-- SHA256 checksum in `version_manifest` for tar.gz integrity verification.
-- Landing ticker → SSE (server-sent events) instead of polling.
+- SSE/WebSocket for push toasts (replace 10sn polling).
+- Delta package updates (rsync-style) for faster upgrades.
 
 ## Testing Credentials
-See `/app/memory/test_credentials.md` for master license & sample bayi keys.
+See `/app/memory/test_credentials.md`.

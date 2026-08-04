@@ -2757,6 +2757,29 @@ async def admin_resellers_live(request: Request, license_key: Optional[str] = No
         })
     # Sort by activity: online first, then by mails desc
     out.sort(key=lambda x: (not x["online"], -x["counters"]["mails"]))
+    # Sağlık rengi — her bayi için son heartbeat'e göre.
+    #   green : son 5 dakika (aktif)
+    #   yellow: 5-30 dakika (yavaşlamış)
+    #   red   : 30+ dakika veya hiç yok (kopuk)
+    now2 = datetime.now(timezone.utc)
+    for x in out:
+        ls = x.get("last_seen_at") or ""
+        health = "red"
+        minutes_since = None
+        if ls:
+            try:
+                d = datetime.fromisoformat(str(ls).replace("Z", "+00:00"))
+                minutes_since = int((now2 - d).total_seconds() // 60)
+                if minutes_since < 5:
+                    health = "green"
+                elif minutes_since < 30:
+                    health = "yellow"
+                else:
+                    health = "red"
+            except Exception:
+                pass
+        x["health"] = health
+        x["minutes_since_seen"] = minutes_since
     return {
         "hours": hours,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -5099,11 +5122,26 @@ async def bayi_register_server(payload: BayiServerIn, request: Request,
     if existing:
         await db.bayi_servers.update_one({"owner_license_key": owner}, {"$set": doc})
         doc["id"] = existing.get("id")
+        is_new = False
     else:
         doc["id"] = str(uuid.uuid4())
         doc["created_at"] = _iso()
         await db.bayi_servers.insert_one(doc)
+        is_new = True
     doc.pop("_id", None)
+    # Master'a canlı bildirim yalnızca yeni kayıtta
+    if is_new:
+        lic = await db.licenses.find_one({"license_key": owner}, {"_id": 0}) or {}
+        await _push_master_toast(
+            kind="bayi_registered",
+            title="🎉 Yeni bayi sunucusu bağlandı",
+            body=(f"{lic.get('customer_name') or lic.get('customer_email') or 'Bayi'} "
+                  f"({doc.get('hostname','?')} · {doc.get('primary_ip','?')}) "
+                  f"sunucusunu tanıttı. Doğrulamak ister misiniz?"),
+            link=f"/panel/resellers-admin?highlight={doc['id']}",
+            meta={"server_id": doc["id"], "owner_license_key": owner,
+                  "hostname": doc.get("hostname",""), "primary_ip": doc.get("primary_ip","")},
+        )
     return {"ok": True, "server": doc}
 
 
@@ -5852,6 +5890,35 @@ async def admin_payment_havale_mark_paid(request: Request, ref: str,
         "gateway": "havale",
     }
     await _finalize_purchase(ref, metadata)
+    # Müşteriye onay maili
+    cust_email = doc.get("email") or ""
+    if cust_email and "@" in cust_email:
+        try:
+            body = (
+                f"Merhaba{(' ' + doc.get('user_name')) if doc.get('user_name') else ''},\n\n"
+                f"Havale ödemeniz doğrulandı, teşekkür ederiz! 🎉\n\n"
+                f"────────────────────────────────────────────\n"
+                f"  ÖDEME DETAYLARI\n"
+                f"────────────────────────────────────────────\n"
+                f"  Referans     : {ref}\n"
+                f"  Plan         : {doc.get('plan_code')} ({doc.get('billing_period')})\n"
+                f"  Tutar        : {doc.get('amount')} {doc.get('currency','TRY')}\n"
+                f"  Onay tarihi  : {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+                f"Lisansınız otomatik olarak {'uzatıldı' if doc.get('is_renewal') else 'oluşturuldu'}. "
+                f"Panele girmek için: https://{MASTER_HOST}/panel/subscription\n\n"
+                f"GökyüzüWebSpam ekibi"
+            )
+            await _send_email(cust_email, "GökyüzüWebSpam · Havale Ödemeniz Onaylandı", body)
+        except Exception:
+            pass
+    # Master için toast (dashboard'a bilgi düşsün)
+    await _push_master_toast(
+        kind="payment_confirmed",
+        title="💸 Havale ödemesi onaylandı",
+        body=f"{cust_email or 'Müşteri'} · {doc.get('plan_code','')}/{doc.get('billing_period','')} · {doc.get('amount')} {doc.get('currency','TRY')}",
+        link="/panel/payments-admin",
+        meta={"reference": ref},
+    )
     await db.logs.insert_one(ActivityLog(
         source="payment", level="info",
         message=f"HAVALE ONAY: {ref} · {doc.get('email','')} · {doc.get('plan_code','')}/{doc.get('billing_period','')} · {doc.get('amount')} {doc.get('currency','TRY')}",
@@ -5883,6 +5950,153 @@ async def bayi_test_ping(request: Request, license_key: Optional[str] = None):
     }
     await db.mail_events.insert_one(ev)
     return {"ok": True, "event_id": ev["id"], "ts": ev["ts"]}
+
+
+# ================== BAYİ SAĞLIK & HAVALE PANOSU & PUSH ==================
+@api.get("/admin/bayi-health")
+async def admin_bayi_health(request: Request, license_key: Optional[str] = None):
+    """Master-only. Tüm bayilerin panel bağlantı sağlık durumunu döner.
+    Heartbeat kaynağı: `licenses.last_heartbeat_at` (plugin/status her istekte
+    günceller). Renk kuralı:
+       - green  : < 5 dk
+       - yellow : 5-30 dk (yavaşlamış)
+       - red    : > 30 dk veya hiç heartbeat yok
+    """
+    await _require_master(request, license_key)
+    now = datetime.now(timezone.utc)
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    out = []
+    async for l in db.licenses.find({"active": True}, {"_id": 0}):
+        lk = l.get("license_key") or ""
+        if not lk or lk == master_env:
+            continue
+        ls = l.get("last_heartbeat_at") or ""
+        health = "red"
+        minutes = None
+        if ls:
+            try:
+                d = datetime.fromisoformat(str(ls).replace("Z", "+00:00"))
+                minutes = int((now - d).total_seconds() // 60)
+                if minutes < 5:
+                    health = "green"
+                elif minutes < 30:
+                    health = "yellow"
+                else:
+                    health = "red"
+            except Exception:
+                pass
+        out.append({
+            "license_key": lk,
+            "customer_name": l.get("customer_name", "") or l.get("customer_email", ""),
+            "plan": l.get("plan", "starter"),
+            "health": health,
+            "minutes_since_heartbeat": minutes,
+            "last_heartbeat_at": ls or None,
+            "last_heartbeat_ip": l.get("last_heartbeat_ip") or "",
+            "last_heartbeat_version": l.get("last_heartbeat_version") or "",
+        })
+    # Sağlık ordering: red > yellow > green (dikkat çekmesi için önce sorunlular)
+    order = {"red": 0, "yellow": 1, "green": 2}
+    out.sort(key=lambda x: (order.get(x["health"], 3), (x.get("minutes_since_heartbeat") or 9999) * -1))
+    totals = {"green": 0, "yellow": 0, "red": 0}
+    for x in out:
+        totals[x["health"]] = totals.get(x["health"], 0) + 1
+    return {
+        "total": len(out),
+        "totals": totals,
+        "generated_at": now.isoformat(),
+        "bayis": out,
+    }
+
+
+@api.get("/admin/payments/pending-havale")
+async def admin_payments_pending_havale(request: Request, license_key: Optional[str] = None):
+    """Master-only. `awaiting_transfer` durumundaki tüm havale ödemelerini
+    listeler — Master Ödeme Panosu 'Havale Bekleyen' sekmesi için."""
+    await _require_master(request, license_key)
+    items = []
+    async for p in db.payments.find(
+        {"provider": "havale", "status": "awaiting_transfer"}, {"_id": 0}
+    ).sort("created_at", -1).limit(200):
+        items.append({
+            "reference": p.get("merchant_oid"),
+            "customer_email": p.get("email"),
+            "customer_name": p.get("user_name") or "",
+            "plan_code": p.get("plan_code"),
+            "billing_period": p.get("billing_period"),
+            "amount": p.get("amount"),
+            "currency": p.get("currency", "TRY"),
+            "is_renewal": bool(p.get("is_renewal")),
+            "renewal_license_key": p.get("renewal_license_key") or "",
+            "created_at": p.get("created_at"),
+            "age_hours": _hours_since(p.get("created_at")),
+        })
+    return {"total": len(items), "items": items}
+
+
+def _hours_since(iso_str: Optional[str]) -> Optional[float]:
+    if not iso_str:
+        return None
+    try:
+        d = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+        return round((datetime.now(timezone.utc) - d).total_seconds() / 3600, 1)
+    except Exception:
+        return None
+
+
+@api.post("/admin/payments/reject-havale")
+async def admin_payments_reject_havale(request: Request, ref: str,
+                                        license_key: Optional[str] = None,
+                                        reason: Optional[str] = ""):
+    """Master-only. Bekleyen bir havale ödemesini iptal eder (müşteri banka
+    üzerinden geri iade almalı; sadece sistemde durumu 'failed' yap)."""
+    await _require_master(request, license_key)
+    r = await db.payments.update_one(
+        {"merchant_oid": ref, "status": "awaiting_transfer"},
+        {"$set": {"status": "failed", "failed_at": _iso(),
+                  "failed_reason": reason or "master_rejected"}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "Bekleyen ödeme bulunamadı")
+    await db.logs.insert_one(ActivityLog(
+        source="payment", level="warning",
+        message=f"HAVALE İPTAL: {ref} · sebep: {reason or 'master_rejected'}",
+    ).model_dump())
+    return {"ok": True, "reference": ref}
+
+
+@api.get("/push/toasts")
+async def push_toasts(request: Request, license_key: Optional[str] = None,
+                       since: Optional[str] = None):
+    """Master-only. Son toast bildirimlerini döner. Frontend `ThreatAlertBell`
+    yanında sessizce polling yapıp yeni event'lerde tarayıcı bildirimi gösterir.
+
+    Kaynak: `db.master_toasts` (yeni bayi kurulum, havale ödeme, tehdit alerti).
+    """
+    await _require_master(request, license_key)
+    q = {}
+    if since:
+        q["created_at"] = {"$gt": since}
+    items = []
+    async for t in db.master_toasts.find(q, {"_id": 0}).sort("created_at", -1).limit(50):
+        items.append(t)
+    return {"total": len(items), "items": items,
+            "server_time": datetime.now(timezone.utc).isoformat()}
+
+
+async def _push_master_toast(kind: str, title: str, body: str,
+                              link: Optional[str] = None, meta: Optional[dict] = None):
+    """Yardımcı: master için yeni bir toast bildirim yaratır."""
+    try:
+        await db.master_toasts.insert_one({
+            "id": str(uuid.uuid4()),
+            "kind": kind, "title": title, "body": body,
+            "link": link or "", "meta": meta or {},
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "seen": False,
+        })
+    except Exception:
+        pass
 
 
 @api.post("/admin/stripe-config")
