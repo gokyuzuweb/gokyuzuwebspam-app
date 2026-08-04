@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
+import { geoEqualEarth } from "d3-geo";
+import { useMemo } from "react";
 import { api } from "@/lib/api";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { Globe2, Activity, MapPin } from "lucide-react";
@@ -43,6 +45,15 @@ export default function AttackMap({ onIpClick }) {
   const total = items.reduce((s, it) => s + (it.count || 0), 0);
   const maxCount = Math.max(1, ...items.map(i => i.count || 0));
 
+  // Türkiye hedefi (sunucu konumu) — kavisli saldırı yayları için
+  const TARGET = { lon: 35.24, lat: 38.96, name: "Türkiye · WHM" };
+  // ComposableMap width=980 height=480 ile senkron projeksiyon
+  const projection = useMemo(
+    () => geoEqualEarth().scale(180).translate([490, 240]),
+    []
+  );
+  const topAttackers = items.slice(0, 8);
+
   return (
     <Card data-testid="attack-map-card">
       <CardHeader
@@ -69,6 +80,54 @@ export default function AttackMap({ onIpClick }) {
                 />
               ))}
             </Geographies>
+            {/* Kavisli saldırı yayları + hareketli mermi */}
+            <defs>
+              <linearGradient id="am-attack-gradient" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0%" stopColor="#f43f5e" stopOpacity="0"/>
+                <stop offset="100%" stopColor="#f43f5e" stopOpacity="0.85"/>
+              </linearGradient>
+              <radialGradient id="am-impact-flash">
+                <stop offset="0%" stopColor="#fef3c7" stopOpacity="1"/>
+                <stop offset="40%" stopColor="#f97316" stopOpacity="0.8"/>
+                <stop offset="100%" stopColor="#f43f5e" stopOpacity="0"/>
+              </radialGradient>
+            </defs>
+            {(() => {
+              const tp = projection([TARGET.lon, TARGET.lat]);
+              if (!tp) return null;
+              return (
+                <g style={{ pointerEvents: "none" }}>
+                  {topAttackers.map((atk, i) => {
+                    const sp = projection([atk.lon, atk.lat]);
+                    if (!sp) return null;
+                    const [x1, y1] = sp;
+                    const [x2, y2] = tp;
+                    const dx = x2 - x1;
+                    const dy = y2 - y1;
+                    const dist = Math.hypot(dx, dy);
+                    const cx = (x1 + x2) / 2 + dy * 0.15;
+                    const cy = (y1 + y2) / 2 - dx * 0.15 - dist * 0.15;
+                    const d = `M ${x1},${y1} Q ${cx},${cy} ${x2},${y2}`;
+                    const dur = 1.6 + i * 0.2;
+                    const delay = -i * 0.3;
+                    return (
+                      <g key={atk.country}>
+                        <path d={d} fill="none" stroke="url(#am-attack-gradient)" strokeWidth={1.2} strokeLinecap="round" opacity={0.4}/>
+                        <circle r="2" fill="#fecdd3" stroke="#f43f5e" strokeWidth="0.5">
+                          <animateMotion dur={`${dur}s`} repeatCount="indefinite" begin={`${delay}s`} path={d}/>
+                          <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.85;1" dur={`${dur}s`} repeatCount="indefinite" begin={`${delay}s`}/>
+                        </circle>
+                      </g>
+                    );
+                  })}
+                  <circle cx={tp[0]} cy={tp[1]} r="6" fill="url(#am-impact-flash)">
+                    <animate attributeName="r" values="4;20;4" dur="1.6s" repeatCount="indefinite"/>
+                    <animate attributeName="opacity" values="0;0.9;0" dur="1.6s" repeatCount="indefinite"/>
+                  </circle>
+                  <circle cx={tp[0]} cy={tp[1]} r="3" fill="#10b981"/>
+                </g>
+              );
+            })()}
             {items.map((it) => {
               const isHigh = (it.high_spam || 0) > (it.spam || 0);
               const rad = 4 + Math.round((it.count / maxCount) * 14);

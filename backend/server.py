@@ -1213,12 +1213,25 @@ async def quarantine_report(action: BulkAction):
 
 # ----- Lists (white/black) -----
 @api.get("/lists")
-async def lists_get(list_type: Optional[str] = None, scope: Optional[str] = None):
+async def lists_get(request: Request, list_type: Optional[str] = None,
+                    scope: Optional[str] = None, license_key: Optional[str] = None):
+    """Whitelist/Blacklist listesi — bayi/master scope'a göre izole.
+    • Master: tüm kayıtlar veya `?license_key=X` ile bir bayinin.
+    • Bayi: sadece kendi lisansının kayıtları (owner_license_key eşleşmesi).
+    """
+    sc = await _tenant_scope(request, license_key)
     q: dict = {}
     if list_type:
         q["list_type"] = list_type
     if scope:
         q["scope"] = scope
+    if sc["is_master"]:
+        if sc["owner_license_key"]:
+            q["owner_license_key"] = sc["owner_license_key"]
+        # aksi halde tüm kayıtlar (drill-down yok)
+    else:
+        # Bayi kendi verisini görür — owner_license_key eşleşmeli
+        q["owner_license_key"] = sc["owner_license_key"] or "__none__"
     return await db.lists.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
 
 
@@ -1232,18 +1245,53 @@ class ListEntryIn(BaseModel):
 
 
 @api.post("/lists")
-async def lists_add(entry: ListEntryIn):
+async def lists_add(entry: ListEntryIn, request: Request, license_key: Optional[str] = None):
+    """Whitelist/Blacklist kayıt ekleme — plan bazlı feature gate:
+    • black → `blacklist_manage`
+    • white → `whitelist_manage`
+    Bayi kendi lisansına atanır (`owner_license_key`)."""
+    scope = await _tenant_scope(request, license_key)
+    if not scope["is_master"] and not scope["owner_license_key"]:
+        raise HTTPException(403, "Bu işlem için aktif bir lisans gerekli")
+    feature = "blacklist_manage" if entry.list_type == "black" else "whitelist_manage"
+    await _require_feature(scope, feature)
     obj = ListEntry(**entry.model_dump())
-    await db.lists.insert_one(obj.model_dump())
-    return obj.model_dump()
+    doc = obj.model_dump()
+    doc["owner_license_key"] = scope["owner_license_key"]
+    await db.lists.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def _authorize_list_action(entry_id: str, request: Request,
+                                  license_key_arg: Optional[str]) -> dict:
+    """Kayıt sahipliği kontrolü. Master hepsine, bayi sadece kendisine erişebilir."""
+    scope = await _tenant_scope(request, license_key_arg)
+    doc = await db.lists.find_one({"id": entry_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Kayıt yok")
+    if not scope["is_master"]:
+        if not scope["owner_license_key"] or doc.get("owner_license_key") != scope["owner_license_key"]:
+            raise HTTPException(403, "Bu kayıt sizin lisansınıza ait değil")
+        # Bayi silmek istiyorsa yine feature kontrolü — plan kapalıysa engel
+        feature = "blacklist_manage" if doc.get("list_type") == "black" else "whitelist_manage"
+        await _require_feature(scope, feature)
+    return doc
 
 
 @api.delete("/lists/{entry_id}")
-async def lists_delete(entry_id: str):
+async def lists_delete(entry_id: str, request: Request, license_key: Optional[str] = None):
+    await _authorize_list_action(entry_id, request, license_key)
     r = await db.lists.delete_one({"id": entry_id})
     if r.deleted_count == 0:
         raise HTTPException(404, "Kayıt yok")
     return {"deleted": True}
+
+
+# Apache/cPanel DELETE bloğu için POST alternatifi
+@api.post("/lists/{entry_id}/delete")
+async def lists_delete_post(entry_id: str, request: Request, license_key: Optional[str] = None):
+    return await lists_delete(entry_id, request, license_key)
 
 
 # ----- Rules -----
@@ -1368,7 +1416,8 @@ async def rules_add(rule: RuleIn, request: Request, license_key: Optional[str] =
 
 async def _authorize_rule_action(rule_id: str, request: Request, license_key: Optional[str]) -> dict:
     """Kural sahibi mi kontrol et. Master hepsine erişebilir; bayi sadece
-    `owner_license_key == kendi lisansı` olanlara. Bulamazsa 404, izin yoksa 403."""
+    `owner_license_key == kendi lisansı` olanlara. Bulamazsa 404, izin yoksa 403.
+    Ayrıca plan bazlı `custom_rules` kapalı ise 403."""
     scope = await _tenant_scope(request, license_key)
     rule = await db.rules.find_one({"id": rule_id}, {"_id": 0})
     if not rule:
@@ -1377,6 +1426,8 @@ async def _authorize_rule_action(rule_id: str, request: Request, license_key: Op
         return rule
     if not scope["owner_license_key"] or rule.get("owner_license_key") != scope["owner_license_key"]:
         raise HTTPException(403, "Bu kural sizin lisansınıza ait değil")
+    # Plan matrisi kural düzenlemeyi kapatmış olabilir
+    await _require_feature(scope, "custom_rules")
     return rule
 
 
@@ -4809,6 +4860,7 @@ class SubscriptionRenewIn(BaseModel):
     billing_period: Literal["monthly", "yearly"] = "yearly"
     plan_code: Optional[str] = None  # None → mevcut planla yenile
     origin_url: Optional[str] = None
+    gateway: Optional[Literal["havale", "stripe", "auto"]] = "auto"
 
 
 @api.post("/subscription/renew")
@@ -4829,10 +4881,17 @@ async def subscription_renew(payload: SubscriptionRenewIn, request: Request):
     if not customer_email or "@" not in customer_email:
         raise HTTPException(400, "Lisansta kayıtlı e-posta yok — önce Aboneliğim sayfasından e-posta güncelleyin")
 
-    # Master `payment_settings.default_gateway` = 'havale' (varsayılan) veya 'stripe'.
-    # Havale mode → Stripe API key gerekmez, ücretsiz manual onay akışı.
+    # Ödeme yöntemi: müşteri seçimi > master default > 'havale'
     pay_cfg = await db.settings.find_one({"_key": "payment_settings"}, {"_id": 0}) or {}
-    gateway = (pay_cfg.get("default_gateway") or "havale").lower()
+    requested = (payload.gateway or "auto").lower()
+    if requested in ("stripe", "havale"):
+        if requested == "havale" and pay_cfg.get("havale_enabled", True) is False:
+            raise HTTPException(400, "Havale/EFT şu an devre dışı — kredi kartını deneyin")
+        if requested == "stripe" and pay_cfg.get("stripe_enabled", True) is False:
+            raise HTTPException(400, "Kredi kartı ödemesi şu an devre dışı — havale deneyin")
+        gateway = requested
+    else:
+        gateway = (pay_cfg.get("default_gateway") or "havale").lower()
 
     # Fiyatı çek
     pricing = await _pricing_settings()
@@ -5729,6 +5788,8 @@ class CheckoutCreateIn(BaseModel):
     customer_email: str
     customer_name: Optional[str] = ""
     origin_url: str  # frontend origin for redirect URLs
+    # Müşteri ödeme yöntemi seçimi. None → master default'u.
+    gateway: Optional[Literal["havale", "stripe", "auto"]] = "auto"
 
 
 class PaymentTransaction(BaseModel):
@@ -6165,10 +6226,22 @@ async def checkout_create_session(payload: CheckoutCreateIn):
     currency = plan.get("currency", "USD").lower()
     origin = payload.origin_url.rstrip("/")
 
-    # Master'ın seçtiği default gateway'e göre yönlendir.
-    # `havale` (varsayılan) → Stripe API key gerekmez, banka bilgileri döner.
+    # Ödeme yöntemi öncelik sırası:
+    #   1) Müşteri seçimi (payload.gateway) — 'stripe' veya 'havale'
+    #   2) Master default (payment_settings.default_gateway)
+    #   3) 'havale' (Stripe API key gerekmediği için güvenli fallback)
     pay_cfg = await db.settings.find_one({"_key": "payment_settings"}, {"_id": 0}) or {}
-    gateway = (pay_cfg.get("default_gateway") or "havale").lower()
+    default_gw = (pay_cfg.get("default_gateway") or "havale").lower()
+    requested = (payload.gateway or "auto").lower()
+    if requested in ("stripe", "havale"):
+        # Master ilgili gateway'i devre dışı bıraktıysa (havale_enabled/stripe_enabled=false), müşteri onu seçemez
+        if requested == "havale" and pay_cfg.get("havale_enabled", True) is False:
+            raise HTTPException(400, "Havale/EFT şu an devre dışı — kredi kartını deneyin")
+        if requested == "stripe" and pay_cfg.get("stripe_enabled", True) is False:
+            raise HTTPException(400, "Kredi kartı ödemesi şu an devre dışı — havale deneyin")
+        gateway = requested
+    else:
+        gateway = default_gw
 
     if gateway == "havale":
         import uuid as _uuid

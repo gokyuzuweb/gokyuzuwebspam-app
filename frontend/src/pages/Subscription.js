@@ -41,6 +41,7 @@ export default function Subscription() {
   const isRenewal = sp.get("renew") === "1";
   const initialCycle = (sp.get("cycle") || "yearly").toLowerCase();
   const [cycle, setCycle] = useState(initialCycle === "monthly" ? "monthly" : "yearly");
+  const [gateway, setGateway] = useState("stripe"); // müşteri seçimi: 'stripe' | 'havale'
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [customerFocus, setCustomerFocus] = useState(false);
@@ -66,7 +67,7 @@ export default function Subscription() {
   }, [upgradeTarget, pricing.data]);
 
   const renew = useMutation({
-    mutationFn: () => api.subscriptionRenew({ billing_period: cycle }),
+    mutationFn: () => api.subscriptionRenew({ billing_period: cycle, gateway }),
     onSuccess: (d) => {
       trackPlanEvent("checkout_click", {
         current_plan: status.data?.license_plan,
@@ -88,6 +89,7 @@ export default function Subscription() {
       return api.checkoutCreate({
         plan_code: planCode,
         billing_period: cycle,
+        gateway,
         customer_email: email.trim() || status.data?.license_customer_name || "",
         customer_name: name.trim() || status.data?.license_customer_name || "",
         origin_url: window.location.origin,
@@ -230,6 +232,39 @@ export default function Subscription() {
           <CycleBtn active={cycle === "yearly"} onClick={() => setCycle("yearly")} testid="sub-cycle-yearly">
             Yıllık <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">2 ay hediye</span>
           </CycleBtn>
+        </div>
+      </div>
+
+      {/* Payment gateway selector */}
+      <div className="flex items-center justify-center">
+        <div className="inline-flex items-center gap-2 flex-wrap justify-center">
+          <span className="text-[11px] uppercase tracking-widest text-slate-500">Ödeme Yöntemi:</span>
+          <div className="inline-flex bg-slate-900/60 border border-slate-800 rounded-lg p-1 gap-0.5">
+            <button
+              data-testid="sub-gw-stripe"
+              onClick={() => setGateway("stripe")}
+              className={`px-4 py-1.5 text-xs rounded-md transition-all inline-flex items-center gap-1.5 ${
+                gateway === "stripe"
+                  ? "bg-gradient-to-r from-indigo-500 to-fuchsia-500 text-white shadow"
+                  : "text-slate-400 hover:text-slate-100"
+              }`}
+            >
+              💳 Kredi Kartı
+              {gateway === "stripe" && <span className="text-[9px] px-1 py-0.5 rounded bg-white/20">Stripe</span>}
+            </button>
+            <button
+              data-testid="sub-gw-havale"
+              onClick={() => setGateway("havale")}
+              className={`px-4 py-1.5 text-xs rounded-md transition-all inline-flex items-center gap-1.5 ${
+                gateway === "havale"
+                  ? "bg-gradient-to-r from-emerald-500 to-sky-500 text-white shadow"
+                  : "text-slate-400 hover:text-slate-100"
+              }`}
+            >
+              🏦 Havale / EFT
+              {gateway === "havale" && <span className="text-[9px] px-1 py-0.5 rounded bg-white/20">Manuel</span>}
+            </button>
+          </div>
         </div>
       </div>
 

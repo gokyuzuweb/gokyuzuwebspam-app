@@ -1,8 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
-import { Globe2, Shield, TrendingUp, X, Ban, ShieldCheck } from "lucide-react";
+import { geoMercator } from "d3-geo";
+import { Globe2, Shield, TrendingUp, X, Ban, ShieldCheck, Radio, ShieldAlert, Bug, Fish, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 
 // TopoJSON world atlas
@@ -62,12 +63,19 @@ export default function GeoBlockedHeatmap({ compact = false }) {
         <div className="text-center max-w-2xl mx-auto mb-8">
           <div className="text-xs uppercase tracking-widest text-rose-400 mono mb-2 flex items-center justify-center gap-2">
             <Shield className="w-3.5 h-3.5"/> Canlı Tehdit Haritası
+            <span className="inline-flex items-center gap-1 text-emerald-300">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+              </span>
+              CANLI
+            </span>
           </div>
           <h2 className="text-3xl sm:text-4xl font-bold text-slate-100 mb-3 tracking-tight">
             Bloklanan IP'lerin <span className="text-transparent bg-clip-text bg-gradient-to-r from-rose-400 to-orange-400">coğrafi dağılımı</span>
           </h2>
           <p className="text-slate-400">
-            {total.toLocaleString("tr-TR")} kötü niyetli IP · {items.length} farklı ülke
+            <span className="text-rose-300 font-semibold tabular-nums">{total.toLocaleString("tr-TR")}</span> kötü niyetli IP · <span className="text-orange-300 font-semibold">{items.length}</span> farklı ülke
             <span className="text-slate-500"> · Bir ülkeye tıklayın</span>
           </p>
         </div>
@@ -91,6 +99,11 @@ export default function GeoBlockedHeatmap({ compact = false }) {
                   <radialGradient id="targetPulse">
                     <stop offset="0%" stopColor="#10b981" stopOpacity="0.9"/>
                     <stop offset="100%" stopColor="#10b981" stopOpacity="0"/>
+                  </radialGradient>
+                  <radialGradient id="impactFlash">
+                    <stop offset="0%" stopColor="#fef3c7" stopOpacity="1"/>
+                    <stop offset="30%" stopColor="#f97316" stopOpacity="0.8"/>
+                    <stop offset="100%" stopColor="#f43f5e" stopOpacity="0"/>
                   </radialGradient>
                 </defs>
 
@@ -130,22 +143,8 @@ export default function GeoBlockedHeatmap({ compact = false }) {
                   }
                 </Geographies>
 
-                {/* Saldırı çizgileri — animasyonlu, top attackers → hedef */}
-                {topAttackers.map((atk, idx) => (
-                  <Line
-                    key={atk.country}
-                    from={[atk.lon, atk.lat]}
-                    to={[TARGET.lon, TARGET.lat]}
-                    stroke="url(#attackGradient)"
-                    strokeWidth={1.5}
-                    strokeLinecap="round"
-                    strokeDasharray="4 6"
-                  >
-                    <animate attributeName="stroke-dashoffset"
-                             from="0" to="-20" dur={`${1.2 + idx * 0.2}s`}
-                             repeatCount="indefinite"/>
-                  </Line>
-                ))}
+                {/* Saldırı çizgileri — kavisli yay şeklinde animasyonlu */}
+                <AttackArcs attackers={topAttackers} target={TARGET} />
 
                 {/* Saldıran ülke bubble'ları */}
                 {topAttackers.map((atk) => {
@@ -193,44 +192,73 @@ export default function GeoBlockedHeatmap({ compact = false }) {
                 </div>
               )}
             </div>
-            <div className="text-[10px] text-slate-500 flex items-center justify-between px-3 py-2 border-t border-slate-800">
-              <span>Otomatik yenileme · 30sn</span>
-              <span className="flex items-center gap-3">
-                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 bg-rose-500 rounded-full inline-block"/> saldırgan</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 bg-emerald-500 rounded-full inline-block"/> hedef sunucu</span>
-              </span>
+            <div className="border-t border-slate-800 px-3 py-2">
+              <MapFooterLiveTicker events={q.data?.recent_attacks || []} />
             </div>
           </div>
 
-          {/* Top countries side panel */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-            <div className="text-sm font-semibold text-slate-100 mb-3 flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-rose-400"/> Top Ülkeler
+          {/* Top countries + Live feed side panel */}
+          <div className="space-y-4">
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+              <div className="text-sm font-semibold text-slate-100 mb-3 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-rose-400"/> Top Ülkeler
+                <span className="ml-auto text-[10px] text-slate-500 mono">{items.length} ülke</span>
+              </div>
+              {items.length === 0 ? (
+                <div className="text-center text-xs text-slate-500 py-8">
+                  <Globe2 className="w-10 h-10 text-slate-700 mx-auto mb-2"/>
+                  Henüz bloklanmış IP yok
+                </div>
+              ) : (
+                <div className="space-y-1 max-h-[280px] overflow-y-auto pr-1">
+                  {items.slice(0, 15).map((it, idx) => {
+                    const v = it.verdicts || {};
+                    const spam = (v.spam || 0) + (v.high_spam || 0);
+                    const virus = v.virus || 0;
+                    const phish = (v.phish || 0) + (v.phishing || 0);
+                    return (
+                      <button
+                        key={it.country}
+                        onClick={() => setSelectedCountry(it)}
+                        data-testid={`geo-row-${it.country}`}
+                        className="w-full flex items-center gap-2 text-xs hover:bg-slate-800/40 rounded px-1.5 py-1.5 transition-colors text-left group"
+                      >
+                        <span className="text-slate-600 w-5 text-right mono">#{idx + 1}</span>
+                        <span className="text-lg leading-none">{CC_FLAG(it.country)}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-slate-200 truncate">{it.name}</div>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {spam > 0 && (
+                              <span className="text-[9px] px-1 py-0.5 rounded bg-rose-500/15 text-rose-300 mono" title="Spam">
+                                <ShieldAlert className="w-2 h-2 inline"/> {spam}
+                              </span>
+                            )}
+                            {virus > 0 && (
+                              <span className="text-[9px] px-1 py-0.5 rounded bg-orange-500/15 text-orange-300 mono" title="Virüs">
+                                <Bug className="w-2 h-2 inline"/> {virus}
+                              </span>
+                            )}
+                            {phish > 0 && (
+                              <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/15 text-amber-300 mono" title="Phishing">
+                                <Fish className="w-2 h-2 inline"/> {phish}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="w-16 bg-slate-800 rounded overflow-hidden h-1">
+                          <div className="bg-gradient-to-r from-rose-500 to-orange-500 h-full"
+                               style={{ width: `${(it.count / maxCount) * 100}%` }}/>
+                        </div>
+                        <span className="mono text-slate-100 text-xs font-semibold w-10 text-right">{it.count.toLocaleString("tr-TR")}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            {items.length === 0 ? (
-              <div className="text-center text-xs text-slate-500 py-8">
-                <Globe2 className="w-10 h-10 text-slate-700 mx-auto mb-2"/>
-                Henüz bloklanmış IP yok
-              </div>
-            ) : (
-              <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
-                {items.slice(0, 20).map((it, idx) => (
-                  <button key={it.country}
-                          onClick={() => setSelectedCountry(it)}
-                          data-testid={`geo-row-${it.country}`}
-                          className="w-full flex items-center gap-2 text-xs hover:bg-slate-800/40 rounded px-1.5 py-1 transition-colors text-left">
-                    <span className="text-slate-600 w-5 text-right">#{idx + 1}</span>
-                    <span className="text-lg leading-none">{CC_FLAG(it.country)}</span>
-                    <span className="text-slate-200 flex-1 min-w-0 truncate">{it.name}</span>
-                    <div className="w-20 bg-slate-800 rounded overflow-hidden h-1.5">
-                      <div className="bg-gradient-to-r from-rose-500 to-orange-500 h-full"
-                           style={{ width: `${(it.count / maxCount) * 100}%` }}/>
-                    </div>
-                    <span className="mono text-slate-300 w-10 text-right">{it.count}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+
+            {/* Canlı Saldırı Akışı — son 20 saldırı animasyonlu */}
+            <LiveAttackFeed events={q.data?.recent_attacks || []} />
           </div>
         </div>
       </div>
@@ -279,6 +307,8 @@ function CountryDetailModal({ country, onClose }) {
             <X className="w-5 h-5"/>
           </button>
         </div>
+        {/* Saldırı özet kartları — verdict kırılımı + son saldırı zamanı */}
+        <CountryAttackSummary country={country} />
         <div className="flex-1 overflow-y-auto p-4">
           {detail.isLoading && <div className="text-center text-slate-500 py-8">Yükleniyor...</div>}
           {detail.data && (detail.data.items || []).length === 0 && (
@@ -326,6 +356,245 @@ function CountryDetailModal({ country, onClose }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * LiveAttackFeed — son 20 saldırı olayını canlı akış olarak gösterir.
+ * Her yeni event üstten girer, eski olanlar soluklaşır. Verdict'e göre
+ * renk kodlanır. Landing sayfasında görsel canlılık için.
+ */
+const VERDICT_STYLE = {
+  spam:      { icon: ShieldAlert, color: "text-rose-300",   bg: "bg-rose-500/10 border-rose-500/30",   label: "SPAM"   },
+  high_spam: { icon: ShieldAlert, color: "text-rose-200",   bg: "bg-rose-500/15 border-rose-500/40",   label: "SPAM+"  },
+  virus:     { icon: Bug,         color: "text-orange-300", bg: "bg-orange-500/10 border-orange-500/30", label: "VİRÜS" },
+  phishing:  { icon: Fish,        color: "text-amber-300",  bg: "bg-amber-500/10 border-amber-500/30", label: "PHISH" },
+  phish:     { icon: Fish,        color: "text-amber-300",  bg: "bg-amber-500/10 border-amber-500/30", label: "PHISH" },
+  blocked:   { icon: Ban,         color: "text-slate-300",  bg: "bg-slate-800 border-slate-700",       label: "BLOK"  },
+  block:     { icon: Ban,         color: "text-slate-300",  bg: "bg-slate-800 border-slate-700",       label: "BLOK"  },
+};
+
+/**
+ * CountryAttackSummary — modalın üst kısmında ülke için verdict kırılımı
+ * (spam/virüs/phish/blok sayaçları) ve son saldırı zamanını gösterir.
+ */
+function CountryAttackSummary({ country }) {
+  const v = country.verdicts || {};
+  const spam = (v.spam || 0) + (v.high_spam || 0);
+  const virus = v.virus || 0;
+  const phish = (v.phish || 0) + (v.phishing || 0);
+  const blocked = (v.block || 0) + (v.blocked || 0);
+  const fmtRel = (iso) => {
+    if (!iso) return "—";
+    const sec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    if (sec < 60) return `${sec} saniye önce`;
+    if (sec < 3600) return `${Math.floor(sec / 60)} dakika önce`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)} saat önce`;
+    return `${Math.floor(sec / 86400)} gün önce`;
+  };
+  const cards = [
+    { label: "Spam", value: spam, color: "text-rose-300", bg: "bg-rose-500/10 border-rose-500/30", Icon: ShieldAlert },
+    { label: "Virüs", value: virus, color: "text-orange-300", bg: "bg-orange-500/10 border-orange-500/30", Icon: Bug },
+    { label: "Phishing", value: phish, color: "text-amber-300", bg: "bg-amber-500/10 border-amber-500/30", Icon: Fish },
+    { label: "Blok", value: blocked, color: "text-slate-300", bg: "bg-slate-800 border-slate-700", Icon: Ban },
+  ];
+  return (
+    <div className="px-5 py-3 border-b border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-2" data-testid="country-attack-summary">
+      {cards.map((c) => (
+        <div key={c.label} className={`rounded-md border p-2 ${c.bg}`}>
+          <div className="flex items-center gap-1 text-[10px] uppercase tracking-widest">
+            <c.Icon className={`w-3 h-3 ${c.color}`}/>
+            <span className="text-slate-400">{c.label}</span>
+          </div>
+          <div className={`text-lg font-bold tabular-nums mt-0.5 ${c.color}`}>
+            {c.value.toLocaleString("tr-TR")}
+          </div>
+        </div>
+      ))}
+      <div className="col-span-2 md:col-span-4 text-[11px] text-slate-400 pt-1 flex items-center justify-between flex-wrap gap-2">
+        <span className="inline-flex items-center gap-1">
+          <span className="text-slate-500">Son saldırı:</span>
+          <span className="text-slate-200 font-medium">{fmtRel(country.last_attack_at)}</span>
+          {country.last_attack_at && (
+            <span className="text-slate-600 mono ml-1">· {new Date(country.last_attack_at).toLocaleString("tr-TR")}</span>
+          )}
+        </span>
+        <span className="text-slate-500">
+          Toplam olay: <span className="text-rose-300 font-bold tabular-nums">{country.count.toLocaleString("tr-TR")}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * MapFooterLiveTicker — harita altında yatay olarak kayan canlı saldırı
+ * bandı. Yeni event'ler soldan girip sağa kayar; kayıt canlı görünsün diye
+ * son 6 olay her zaman görünür.
+ */
+function MapFooterLiveTicker({ events = [] }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const fmtRel = (iso) => {
+    if (!iso) return "";
+    const sec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    if (sec < 5) return "az önce";
+    if (sec < 60) return `${sec}sn`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}dk`;
+    return `${Math.floor(sec / 3600)}sa`;
+  };
+  const list = events.slice(0, 6);
+  return (
+    <div className="flex items-center gap-2 flex-wrap justify-center text-[10px]" data-testid="geo-footer-ticker">
+      <span className="inline-flex items-center gap-1 text-emerald-300 mono shrink-0">
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60"></span>
+          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span>
+        </span>
+        CANLI
+      </span>
+      {list.length === 0 ? (
+        <span className="text-slate-500">Şu an aktif saldırı yok</span>
+      ) : list.map((e, i) => {
+        const s = VERDICT_STYLE[e.verdict] || VERDICT_STYLE.blocked;
+        return (
+          <span
+            key={`${e.ts}-${i}`}
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border ${s.bg} ${i === 0 ? "animate-in slide-in-from-left-2 fade-in duration-400" : ""}`}
+            title={new Date(e.ts).toLocaleString("tr-TR")}
+          >
+            <span className="text-sm leading-none">{CC_FLAG(e.country)}</span>
+            <span className={`${s.color} font-semibold`}>{s.label}</span>
+            <span className="text-slate-400">{e.name || e.country}</span>
+            <span className="text-slate-500 mono">· {fmtRel(e.ts)}</span>
+          </span>
+        );
+      })}
+      <span className="ml-auto flex items-center gap-3 text-slate-500 shrink-0">
+        <span className="inline-flex items-center gap-1"><span className="w-1.5 h-1.5 bg-rose-500 rounded-full"/> saldırgan</span>
+        <span className="inline-flex items-center gap-1"><span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"/> hedef</span>
+      </span>
+    </div>
+  );
+}
+
+
+
+function AttackArcs({ attackers = [], target }) {
+  // Kavisli path + hareketli mermi. ComposableMap default (scale:130, center:[15,30]).
+  const projection = useMemo(
+    () => geoMercator().scale(130).translate([400, 250]).center([15, 30]),
+    []
+  );
+  const tp = projection([target.lon, target.lat]);
+  if (!tp) return null;
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {attackers.map((atk, i) => {
+        const sp = projection([atk.lon, atk.lat]);
+        if (!sp) return null;
+        const [x1, y1] = sp;
+        const [x2, y2] = tp;
+        // Kontrol noktası — yayın tepe noktası, mesafeyle orantılı
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const dist = Math.hypot(dx, dy);
+        const cx = (x1 + x2) / 2 + dy * 0.15;
+        const cy = (y1 + y2) / 2 - dx * 0.15 - dist * 0.15;
+        const d = `M ${x1},${y1} Q ${cx},${cy} ${x2},${y2}`;
+        const dur = 1.4 + i * 0.25;
+        const delay = -i * 0.35;
+        return (
+          <g key={atk.country}>
+            {/* Statik yay — soluk arka plan */}
+            <path
+              d={d}
+              fill="none"
+              stroke="url(#attackGradient)"
+              strokeWidth={1.2}
+              strokeLinecap="round"
+              opacity={0.35}
+            />
+            {/* Hareketli mermi — path boyunca ilerler */}
+            <circle r="2.2" fill="#fecdd3" stroke="#f43f5e" strokeWidth="0.5">
+              <animateMotion dur={`${dur}s`} repeatCount="indefinite" begin={`${delay}s`} path={d} rotate="auto" />
+              <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.85;1" dur={`${dur}s`} repeatCount="indefinite" begin={`${delay}s`} />
+            </circle>
+            {/* İkinci daha küçük mermi ofset ile */}
+            <circle r="1.4" fill="#f97316" opacity="0.7">
+              <animateMotion dur={`${dur}s`} repeatCount="indefinite" begin={`${delay - dur * 0.4}s`} path={d} />
+              <animate attributeName="opacity" values="0;0.7;0.7;0" keyTimes="0;0.1;0.85;1" dur={`${dur}s`} repeatCount="indefinite" begin={`${delay - dur * 0.4}s`} />
+            </circle>
+          </g>
+        );
+      })}
+      {/* Hedefte sürekli impact flash — merminin varışını taklit eder */}
+      <circle cx={tp[0]} cy={tp[1]} r="6" fill="url(#impactFlash)">
+        <animate attributeName="r" values="4;22;4" dur="1.6s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0;0.9;0" dur="1.6s" repeatCount="indefinite" />
+      </circle>
+    </g>
+  );
+}
+
+
+function LiveAttackFeed({ events = [] }) {
+  const [tick, setTick] = useState(0);
+  // 1sn'de bir "az önce" göstergesi yenilensin
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const fmtRel = (iso) => {
+    if (!iso) return "";
+    const sec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    if (sec < 5) return "az önce";
+    if (sec < 60) return `${sec}sn`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}dk`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}sa`;
+    return `${Math.floor(sec / 86400)}g`;
+  };
+  return (
+    <div className="rounded-xl border border-rose-500/20 bg-gradient-to-b from-rose-500/5 to-slate-900/40 p-4" data-testid="geo-live-feed">
+      <div className="text-sm font-semibold text-slate-100 mb-3 flex items-center gap-2">
+        <Radio className="w-4 h-4 text-rose-400 animate-pulse"/>
+        Canlı Saldırı Akışı
+        <span className="ml-auto text-[10px] text-slate-500 mono">{events.length} olay</span>
+      </div>
+      {events.length === 0 ? (
+        <div className="text-center text-xs text-slate-500 py-6">
+          <Zap className="w-8 h-8 text-slate-700 mx-auto mb-2"/>
+          Şu an aktif saldırı yok
+        </div>
+      ) : (
+        <div className="space-y-1 max-h-[280px] overflow-y-auto pr-1">
+          {events.slice(0, 20).map((e, idx) => {
+            const style = VERDICT_STYLE[e.verdict] || VERDICT_STYLE.blocked;
+            const Icon = style.icon;
+            return (
+              <div
+                key={`${e.ts}-${e.country}-${idx}`}
+                className={`flex items-center gap-2 text-xs rounded px-2 py-1.5 border ${style.bg} ${idx === 0 ? "animate-in slide-in-from-top-2 fade-in duration-300" : ""}`}
+                style={{ opacity: 1 - idx * 0.03 }}
+                data-testid={`geo-live-event-${idx}`}
+              >
+                <Icon className={`w-3 h-3 ${style.color} shrink-0`}/>
+                <span className="text-base leading-none shrink-0">{CC_FLAG(e.country)}</span>
+                <span className={`text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded font-bold ${style.color} shrink-0`}>
+                  {style.label}
+                </span>
+                <span className="text-slate-300 truncate flex-1 min-w-0">{e.name || e.country}</span>
+                <span className="text-[10px] text-slate-500 mono shrink-0">{fmtRel(e.ts)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

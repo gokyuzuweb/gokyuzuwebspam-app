@@ -142,7 +142,7 @@ export const api = {
 
   lists: (params = {}) => client.get("/lists", { params }).then(r => r.data),
   listAdd: (payload) => client.post("/lists", payload).then(r => r.data),
-  listDel: (id) => client.delete(`/lists/${id}`).then(r => r.data),
+  listDel: (id) => client.post(`/lists/${id}/delete`).then(r => r.data),
 
   rules: () => client.get("/rules").then(r => r.data),
   ruleAdd: (payload) => client.post("/rules", payload).then(r => r.data),

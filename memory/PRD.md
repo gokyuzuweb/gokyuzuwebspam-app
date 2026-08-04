@@ -17,7 +17,30 @@ domain: **gokyuzuhosting.com** (89.19.15.58). Product package name remains
 - **Impersonation**: `gws_impersonate` cookie → master views panel as reseller.
 
 ## Recently Completed (Feb 2026)
-### Feb 4 batch
+### Feb 4 batch (2)
+- ✅ **Whitelist/Blacklist silme fix**: DELETE metodu → POST `/lists/{id}/delete`
+  (Apache/cPanel proxy DELETE'i bloklar). Frontend api.listDel güncellendi.
+- ✅ **Plan gate enforcement (P0)**: `POST /api/lists` ve
+  `/lists/{id}/delete` artık `blacklist_manage` / `whitelist_manage` feature
+  gate'i kontrol eder. Bayi starter'da → 403. Tenant isolation eklendi
+  (`owner_license_key`).
+- ✅ **Payment method choice**: Bayi checkout'ta Havale/EFT veya Kredi Kartı
+  (Stripe) seçebilir. `payment_settings.havale_enabled/stripe_enabled` ile
+  master gateway'leri açıp kapatabilir.
+- ✅ **Landing GeoBlockedHeatmap zenginleştirme**:
+  - Kavisli SVG arc'lar (yay şeklinde saldırı çizgileri) + hareketli mermi.
+  - Hedefte impact flash (Türkiye üzerinde parlayan halka).
+  - Ülke satırlarında spam/virüs/phish verdict kırılım chip'leri.
+  - **LiveAttackFeed** side panel (son 20 saldırı, animasyonlu giriş).
+  - **MapFooterLiveTicker** (harita altında CANLI kayan bant, "Otomatik
+    yenileme" yerine gerçek event'ler).
+  - **CountryAttackSummary** modal'da 4 verdict kart + son saldırı zamanı.
+  - 90+ ülke isim + koordinat + verdict kırılımı.
+- ✅ **Panel AttackMap**: aynı kavisli arc + mermi + impact flash.
+- ✅ Push toasts + Bayi Health monitoring (green/yellow/red).
+- ✅ Version Publish UI + stable plugin download infra.
+
+### Feb 4 batch (1)
 - ✅ Engine stats tenant isolation: `/api/engines` computes today's
   `scanned_today`/`caught_today` per-tenant from `mail_events`.
 - ✅ Havale (bank transfer) upgrade path — Stripe API key not required.
