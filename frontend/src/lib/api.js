@@ -614,6 +614,23 @@ export const api = {
   publicBlockedStats: (region = "all") =>
     client.get("/maintenance/public/blocked-stats", { params: { region } }).then(r => r.data),
   publicLiveTicker: () => client.get("/maintenance/public/live-ticker").then(r => r.data),
+  // Ülke IP detayı + toplu blok (master)
+  geoCountryIps: (cc, licenseKey, limit = 100) =>
+    client.get(`/maintenance/geo/country/${cc}/ips`, {
+      params: { limit, ...(licenseKey ? { license_key: licenseKey } : {}) }
+    }).then(r => r.data),
+  adminGeoBulkBlockCountry: (cc, licenseKey, opts = {}) =>
+    client.post(`/maintenance/admin/geo/bulk-block-country`, null, {
+      params: {
+        cc, limit: opts.limit ?? 200, note: opts.note ?? "",
+        ...(licenseKey ? { license_key: licenseKey } : {}),
+      },
+      withCredentials: true,
+    }).then(r => r.data),
+  geoBlockedHeatmap: (licenseKey) =>
+    client.get(`/maintenance/geo/blocked-heatmap`, {
+      params: licenseKey ? { license_key: licenseKey } : {}
+    }).then(r => r.data),
   publicSalesToday: () =>
     client.get("/maintenance/public/sales-today").then(r => r.data),
 

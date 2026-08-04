@@ -35,15 +35,55 @@ const CC_FLAG = (cc) => cc && cc.length === 2
 export default function GeoBlockedHeatmap({ compact = false }) {
   const [selectedCountry, setSelectedCountry] = useState(null);
   const [hoverCC, setHoverCC] = useState(null);
+  const [bayiFilter, setBayiFilter] = useState(""); // "" = tüm bayiler
+  const [flashCC, setFlashCC] = useState(null); // WS event geldiğinde patlama tetikleyicisi
+  const isMaster = typeof window !== "undefined" && !!localStorage.getItem("gws.master_license");
+
+  // Master ise bayi listesi çek (dropdown için)
+  const bayisQuery = useQuery({
+    queryKey: ["licenses-for-geo-filter"],
+    queryFn: () => api.licenses().catch(() => []),
+    enabled: isMaster,
+    staleTime: 60000,
+  });
+  const bayis = (bayisQuery.data || []).filter((l) =>
+    l.license_key !== (typeof window !== "undefined" ? localStorage.getItem("gws.master_license") : "")
+  );
+
   const q = useQuery({
-    queryKey: ["geo-blocked-heatmap"],
-    queryFn: api.geoBlockedHeatmap,
+    queryKey: ["geo-blocked-heatmap", bayiFilter],
+    queryFn: () => api.geoBlockedHeatmap(bayiFilter || undefined),
     refetchInterval: 30000,
     staleTime: 20000,
   });
   const items = q.data?.items || [];
   const total = q.data?.total || 0;
   const maxCount = Math.max(1, ...items.map((i) => i.count));
+
+  // WebSocket — canlı saldırı akışı (Landing anlık patlama animasyonu)
+  useEffect(() => {
+    const url = (process.env.REACT_APP_BACKEND_URL || window.location.origin)
+      .replace(/^http/, "ws") + "/api/maintenance/ws/attacks";
+    let ws;
+    let closed = false;
+    try {
+      ws = new WebSocket(url);
+      ws.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          if (data.type === "attack" && data.country) {
+            setFlashCC({ cc: data.country, id: Date.now() + Math.random() });
+            setTimeout(() => setFlashCC(null), 2000);
+          }
+        } catch (_) {}
+      };
+      ws.onerror = () => {};
+      ws.onclose = () => { closed = true; };
+    } catch (_) {}
+    return () => {
+      try { if (!closed && ws) ws.close(); } catch (_) {}
+    };
+  }, []);
 
   // CC → count/name/coord lookup
   const byCC = useMemo(() => {
@@ -78,6 +118,34 @@ export default function GeoBlockedHeatmap({ compact = false }) {
             <span className="text-rose-300 font-semibold tabular-nums">{total.toLocaleString("tr-TR")}</span> kötü niyetli IP · <span className="text-orange-300 font-semibold">{items.length}</span> farklı ülke
             <span className="text-slate-500"> · Bir ülkeye tıklayın</span>
           </p>
+          {/* Master için bayi filtresi */}
+          {isMaster && (
+            <div className="mt-4 inline-flex items-center gap-2 text-xs bg-slate-900/70 border border-slate-800 rounded-lg px-3 py-2" data-testid="geo-bayi-filter">
+              <span className="text-slate-500 uppercase tracking-widest text-[10px]">Bayi:</span>
+              <select
+                value={bayiFilter}
+                onChange={(e) => setBayiFilter(e.target.value)}
+                className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 min-w-[220px] focus:border-emerald-500/60 outline-none"
+                data-testid="geo-bayi-filter-select"
+              >
+                <option value="">— Tüm bayiler (birleşik) —</option>
+                {bayis.map((l) => (
+                  <option key={l.license_key} value={l.license_key}>
+                    {(l.customer_name || l.customer_email || l.license_key.slice(0, 12))} · {l.plan}
+                  </option>
+                ))}
+              </select>
+              {bayiFilter && (
+                <button
+                  onClick={() => setBayiFilter("")}
+                  className="text-slate-500 hover:text-slate-100 text-xs"
+                  data-testid="geo-bayi-filter-clear"
+                >
+                  Temizle ✕
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -179,6 +247,19 @@ export default function GeoBlockedHeatmap({ compact = false }) {
                     HEDEF
                   </text>
                 </Marker>
+                {/* Realtime flash — WebSocket event geldiğinde saldıran ülkede patlama */}
+                {flashCC && byCC[flashCC.cc] && byCC[flashCC.cc].lat != null && (
+                  <Marker key={flashCC.id} coordinates={[byCC[flashCC.cc].lon, byCC[flashCC.cc].lat]}>
+                    <circle r="4" fill="#fef3c7" opacity="0.9">
+                      <animate attributeName="r" values="4;28;4" dur="1.6s" repeatCount="1" />
+                      <animate attributeName="opacity" values="1;0.9;0" dur="1.6s" repeatCount="1" />
+                    </circle>
+                    <circle r="2" fill="#f43f5e">
+                      <animate attributeName="r" values="2;18;2" dur="1.6s" repeatCount="1" />
+                      <animate attributeName="opacity" values="1;0.5;0" dur="1.6s" repeatCount="1" />
+                    </circle>
+                  </Marker>
+                )}
               </ComposableMap>
 
               {/* Hover tooltip */}
@@ -264,17 +345,24 @@ export default function GeoBlockedHeatmap({ compact = false }) {
       </div>
 
       {selectedCountry && (
-        <CountryDetailModal country={selectedCountry} onClose={() => setSelectedCountry(null)}/>
+        <CountryDetailModal country={selectedCountry} licenseFilter={bayiFilter} onClose={() => setSelectedCountry(null)}/>
       )}
     </section>
   );
 }
 
-function CountryDetailModal({ country, onClose }) {
+function CountryDetailModal({ country, onClose, licenseFilter }) {
   const qc = useQueryClient();
+  const isMaster = typeof window !== "undefined" && !!localStorage.getItem("gws.master_license");
+  const masterKey = typeof window !== "undefined" ? localStorage.getItem("gws.master_license") : "";
   const detail = useQuery({
     queryKey: ["geo-country-detail", country.country],
     queryFn: () => api.geoCountryDetail(country.country, 100),
+  });
+  // Yeni endpoint: mail_events kaynaklı IP'ler + bayi filtresi destekli
+  const attackers = useQuery({
+    queryKey: ["geo-country-ips", country.country, licenseFilter || ""],
+    queryFn: () => api.geoCountryIps(country.country, licenseFilter || undefined, 100),
   });
   const [whitelisted, setWhitelisted] = useState(new Set());
   const whitelist = useMutation({
@@ -286,6 +374,20 @@ function CountryDetailModal({ country, onClose }) {
       qc.invalidateQueries({ queryKey: ["landing-blocked-stats"] });
     },
     onError: (err) => toast.error(err?.response?.data?.detail || "Whitelist başarısız"),
+  });
+  const bulkBlock = useMutation({
+    mutationFn: () => api.adminGeoBulkBlockCountry(country.country, masterKey, {
+      limit: 200,
+      note: `Toplu ülke bloklama · ${country.name} · Master`,
+    }),
+    onSuccess: (d) => {
+      toast.success(`🛡️ ${country.name}: ${d.added} yeni IP blacklist'e eklendi`, {
+        description: `${d.skipped_already_blocked} IP zaten bloktaydı`,
+      });
+      qc.invalidateQueries({ queryKey: ["geo-blocked-heatmap"] });
+      qc.invalidateQueries({ queryKey: ["geo-country-detail", country.country] });
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Toplu bloklama başarısız"),
   });
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
@@ -309,11 +411,39 @@ function CountryDetailModal({ country, onClose }) {
         </div>
         {/* Saldırı özet kartları — verdict kırılımı + son saldırı zamanı */}
         <CountryAttackSummary country={country} />
-        <div className="flex-1 overflow-y-auto p-4">
-          {detail.isLoading && <div className="text-center text-slate-500 py-8">Yükleniyor...</div>}
-          {detail.data && (detail.data.items || []).length === 0 && (
-            <div className="text-center text-slate-500 py-8">Detay bulunamadı</div>
-          )}
+        {/* Master için toplu bloklama butonu */}
+        {isMaster && (
+          <div className="px-5 py-3 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap bg-rose-500/5">
+            <div className="text-[11px] text-slate-400 leading-relaxed">
+              <b className="text-rose-300">Master işlemi:</b> {country.name}'a ait en aktif saldırgan 200 IP'yi tek tıkla blacklist'e ekle
+              <span className="block text-[10px] text-slate-500 mt-0.5">Zaten blokta olanlar atlanır · geri alınabilir (Whitelist/Blacklist sayfasından)</span>
+            </div>
+            <button
+              onClick={() => {
+                if (confirm(`${country.name}'a ait 200 saldırgan IP'yi blacklist'e eklemek istediğinize emin misiniz?`)) {
+                  bulkBlock.mutate();
+                }
+              }}
+              disabled={bulkBlock.isPending}
+              data-testid="country-bulk-block-btn"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold bg-gradient-to-r from-rose-500 to-orange-500 text-white shadow-lg shadow-rose-500/20 border border-rose-400/40 hover:brightness-110 disabled:opacity-60"
+            >
+              {bulkBlock.isPending ? <Radio className="w-3.5 h-3.5 animate-spin"/> : <Ban className="w-3.5 h-3.5"/>}
+              🛡️ Ülkeyi Toplu Blokla
+            </button>
+          </div>
+        )}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Kalıcı blacklist kayıtları */}
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-1.5">
+              <Ban className="w-3 h-3 text-rose-400"/> Blacklist Kayıtları
+              <span className="ml-1 text-slate-600">({detail.data?.items?.length || 0})</span>
+            </div>
+            {detail.isLoading && <div className="text-center text-slate-500 py-4 text-xs">Yükleniyor...</div>}
+            {detail.data && (detail.data.items || []).length === 0 && (
+              <div className="text-center text-slate-500 py-4 text-xs">Kalıcı blacklist kaydı yok</div>
+            )}
           {detail.data && (
             <div className="space-y-1.5">
               {(detail.data.items || []).map((it) => {
@@ -354,6 +484,47 @@ function CountryDetailModal({ country, onClose }) {
               })}
             </div>
           )}
+          </div>
+          {/* Son saldırgan IP'ler (mail_events) */}
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-1.5">
+              <Zap className="w-3 h-3 text-orange-400"/> Son Saldıran IP'ler (30 gün)
+              <span className="ml-1 text-slate-600">({attackers.data?.total || 0})</span>
+            </div>
+            {attackers.isLoading && <div className="text-center text-slate-500 py-4 text-xs">Yükleniyor...</div>}
+            {attackers.data && (attackers.data.items || []).length === 0 && (
+              <div className="text-center text-slate-500 py-4 text-xs">Bu ülkeden 30 gün içinde saldırı yok</div>
+            )}
+            {attackers.data && (attackers.data.items || []).length > 0 && (
+              <div className="space-y-1" data-testid="country-attackers-list">
+                {attackers.data.items.slice(0, 30).map((it) => {
+                  const wl = whitelisted.has(it.ip);
+                  const style = VERDICT_STYLE[it.verdict] || VERDICT_STYLE.blocked;
+                  return (
+                    <div key={it.ip} className={`flex items-center gap-2 text-xs rounded px-3 py-1.5 border ${
+                      wl ? "bg-emerald-500/10 border-emerald-500/30 opacity-70" : "bg-slate-950 border-slate-800"
+                    }`}>
+                      <span className={`text-[9px] uppercase px-1.5 py-0.5 rounded font-bold ${style.color} shrink-0`}>{style.label}</span>
+                      <span className={`mono flex-1 min-w-0 truncate ${wl ? "text-emerald-200" : "text-orange-200"}`}>{it.ip}</span>
+                      <span className="text-[10px] text-slate-500 mono shrink-0">×{it.count}</span>
+                      <span className="text-[10px] text-slate-500 shrink-0 hidden sm:inline">
+                        {(it.last_seen || "").slice(0, 16).replace("T", " ")}
+                      </span>
+                      {!wl && (
+                        <button
+                          onClick={() => whitelist.mutate(it.ip)}
+                          disabled={whitelist.isPending}
+                          className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/25 disabled:opacity-40 shrink-0"
+                        >
+                          WL
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

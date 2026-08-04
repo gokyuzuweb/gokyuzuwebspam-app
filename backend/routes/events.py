@@ -257,6 +257,30 @@ async def ingest_event(evt: MailEvent, request: Request):
     doc["client_ip"] = sender_ip or doc.get("client_ip")
     doc["sender_ip"] = sender_ip
     await db.mail_events.insert_one(doc)
+    # Canlı akışa yayınla — Landing + Panel WebSocket dinleyicileri anında görsün
+    try:
+        from routes.maintenance import push_attack_event, _GEO_CC_NAME
+        from routes.security_adv import _ip_to_country
+        verdict = (doc.get("verdict") or "").lower()
+        # Sadece kötü verdict'leri broadcast et (spam/virus/phish/blocked)
+        if verdict in {"spam", "high_spam", "virus", "phish", "phishing", "block", "blocked"}:
+            # client_ip önceliği: payload > header > request.client
+            # Test IP (127.0.0.1) yerine payload IP'yi tercih et
+            broadcast_ip = doc.get("client_ip") or sender_ip
+            cc = _ip_to_country(broadcast_ip or "")
+            if cc and cc != "LOCAL":
+                await push_attack_event({
+                    "type": "attack",
+                    "country": cc,
+                    "name": _GEO_CC_NAME.get(cc, cc),
+                    "verdict": verdict,
+                    "ip": broadcast_ip,
+                    "from": doc.get("from_addr") or doc.get("from") or "",
+                    "ts": doc.get("ts") or doc.get("ingested_at"),
+                    "license_key": evt.license_key,
+                })
+    except Exception:
+        pass  # WebSocket sorunu ingest'i bloklamasın
     # Ek olarak license'in son_seen timestamp'ini guncelle
     await db.licenses.update_one(
         {"license_key": evt.license_key},

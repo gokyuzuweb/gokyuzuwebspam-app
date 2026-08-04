@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from deps import db
 
@@ -370,13 +370,14 @@ _GEO_CC_COORD = {
 
 
 @router.get("/geo/blocked-heatmap")
-async def geo_heatmap():
+async def geo_heatmap(license_key: Optional[str] = None):
     """Bloklanan IP'leri ülkeye göre grupla + son saldırı zamanları + kırılım.
     Landing world-map için zenginleştirildi:
       • blacklist + threat_iocs + mail_events (spam/virus/phish/blocked)
       • Her ülke için: count, last_attack_at, top_verdicts
       • ~90 ülke isim + koordinat eşleşmesi
       • Baseline seed düşük veride Landing'i canlı gösterir
+      • `?license_key=X` ile master belirli bir bayinin trafiğini filtreler
     """
     try:
         from routes.security_adv import _ip_to_country, COUNTRY_COORDS
@@ -407,13 +408,15 @@ async def geo_heatmap():
     # 2) Threat intel IOC'ler
     async for it in db.threat_iocs.find({"type": "ip"}, {"value": 1, "created_at": 1, "_id": 0}):
         _bump(_ip_to_country(it.get("value", "")), None, it.get("created_at"))
-    # 3) Son 30 gün gerçek mail_events (canlı saldırılar)
+    # 3) Son 30 gün gerçek mail_events (canlı saldırılar) — bayi filtresi ile
     bad_verdicts = {"$in": ["spam", "high_spam", "virus", "phish", "phishing", "block", "blocked"]}
+    ev_match = {"verdict": bad_verdicts, "ts": {"$gte": day30},
+                "client_ip": {"$exists": True, "$ne": ""}}
+    if license_key:
+        ev_match["license_key"] = license_key
     try:
         async for e in db.mail_events.find(
-            {"verdict": bad_verdicts, "ts": {"$gte": day30},
-             "client_ip": {"$exists": True, "$ne": ""}},
-            {"client_ip": 1, "verdict": 1, "ts": 1, "_id": 0},
+            ev_match, {"client_ip": 1, "verdict": 1, "ts": 1, "_id": 0},
         ).limit(20000):
             _bump(_ip_to_country(e.get("client_ip", "")), (e.get("verdict") or "").lower(), e.get("ts"))
     except Exception:
@@ -835,6 +838,219 @@ async def public_live_ticker():
         "recent_events": recent,
         "generated_at": now.isoformat(),
     }
+
+
+@router.get("/geo/country/{cc}/ips")
+async def geo_country_ips(cc: str, license_key: Optional[str] = None, limit: int = 100):
+    """Belirli bir ülke için bloklu IP'lerin detay listesi (modal için).
+
+    Kaynak: db.lists (blacklist) + son 30 günde saldıran mail_events IP'leri.
+    Master `?license_key=X` ile bayi bazlı filtre uygulayabilir.
+    """
+    try:
+        from routes.security_adv import _ip_to_country
+    except Exception:
+        _ip_to_country = lambda x: None  # noqa: E731
+    cc = cc.upper()
+    limit = max(10, min(int(limit), 500))
+    ips_map: dict = {}  # ip -> {ip, country, last_seen, verdict, source, count}
+
+    # 1) Statik blacklist kayıtları
+    async for it in db.lists.find({"kind": "blacklist", "type": "ip"}, {"_id": 0}):
+        v = it.get("value", "")
+        if _ip_to_country(v) == cc:
+            ips_map[v] = {
+                "ip": v, "country": cc,
+                "verdict": "manual_block", "source": "blacklist",
+                "last_seen": it.get("created_at"),
+                "count": 1,
+                "note": it.get("note") or "",
+                "list_entry_id": it.get("id"),
+            }
+
+    # 2) mail_events (son 30 gün)
+    from datetime import datetime, timezone, timedelta
+    day30 = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    bad = {"$in": ["spam", "high_spam", "virus", "phish", "phishing", "block", "blocked"]}
+    q = {"verdict": bad, "ts": {"$gte": day30}, "client_ip": {"$exists": True, "$ne": ""}}
+    if license_key:
+        q["license_key"] = license_key
+    try:
+        async for e in db.mail_events.find(q, {"_id": 0}).sort("ts", -1).limit(5000):
+            ip = e.get("client_ip", "")
+            if not ip or _ip_to_country(ip) != cc:
+                continue
+            row = ips_map.get(ip)
+            if not row:
+                ips_map[ip] = {
+                    "ip": ip, "country": cc,
+                    "verdict": (e.get("verdict") or "").lower(),
+                    "source": "mail_event",
+                    "last_seen": e.get("ts"),
+                    "count": 1,
+                    "from_addr": e.get("from_addr", ""),
+                }
+            else:
+                row["count"] = row.get("count", 1) + 1
+                if e.get("ts") and (not row.get("last_seen") or e["ts"] > row["last_seen"]):
+                    row["last_seen"] = e["ts"]
+    except Exception:
+        pass
+
+    items = list(ips_map.values())
+    items.sort(key=lambda x: (x.get("last_seen") or ""), reverse=True)
+    return {
+        "country": cc,
+        "total": len(items),
+        "items": items[:limit],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/admin/geo/bulk-block-country")
+async def admin_geo_bulk_block_country(request: Request, cc: str,
+                                         license_key: Optional[str] = None,
+                                         limit: int = 200,
+                                         note: Optional[str] = ""):
+    """Master-only. Bir ülkeye ait TOP N saldırgan IP'yi tek işlemle blacklist'e ekler.
+
+    Kaynak: geo_country_ips ile aynı — son 30 gün mail_events + mevcut blacklist.
+    Zaten blacklist'te olan IP'ler atlanır (duplicate önleme).
+    """
+    # _require_master aynı server.py'deki gibi, burada minimum
+    from server import _require_master
+    await _require_master(request, license_key)
+    cc = cc.upper()
+    limit = max(1, min(int(limit), 1000))
+    try:
+        from routes.security_adv import _ip_to_country
+    except Exception:
+        _ip_to_country = lambda x: None  # noqa: E731
+
+    from datetime import datetime, timezone, timedelta
+    import uuid
+    day30 = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    bad = {"$in": ["spam", "high_spam", "virus", "phish", "phishing", "block", "blocked"]}
+
+    # Zaten blacklist'te olan IP'leri kümele
+    already: set = set()
+    async for it in db.lists.find({"kind": "blacklist", "type": "ip"}, {"value": 1, "_id": 0}):
+        v = it.get("value", "")
+        if v and _ip_to_country(v) == cc:
+            already.add(v)
+
+    # Saldıran IP'leri topla (count sıralı)
+    counters: dict = {}
+    async for e in db.mail_events.find(
+        {"verdict": bad, "ts": {"$gte": day30}, "client_ip": {"$exists": True, "$ne": ""}},
+        {"client_ip": 1, "_id": 0}
+    ).limit(50000):
+        ip = e.get("client_ip", "")
+        if not ip or ip in already or _ip_to_country(ip) != cc:
+            continue
+        counters[ip] = counters.get(ip, 0) + 1
+    sorted_ips = sorted(counters.items(), key=lambda x: x[1], reverse=True)[:limit]
+
+    now = datetime.now(timezone.utc).isoformat()
+    docs = []
+    for ip, cnt in sorted_ips:
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "kind": "blacklist", "type": "ip",
+            "value": ip,
+            "note": note or f"Toplu ülke bloklama · {cc} · {cnt} olay (son 30g)",
+            "created_at": now,
+            "scope": "master",
+            "list_type": "black",
+            "entry_type": "ip",
+        })
+    if docs:
+        await db.lists.insert_many(docs)
+    # Log
+    try:
+        from server import db as _db, ActivityLog
+        await _db.logs.insert_one(ActivityLog(
+            source="geo", level="warning",
+            message=f"TOPLU BLOK · ülke={cc} · eklenen={len(docs)} · atlanan={len(already)}",
+        ).model_dump())
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "country": cc,
+        "added": len(docs),
+        "skipped_already_blocked": len(already),
+        "note": note or f"Toplu ülke bloklama · {cc}",
+    }
+
+
+# ============================================================================
+# WEBSOCKET: Canlı saldırı akışı — Landing/Panel için realtime feed
+# ============================================================================
+from fastapi import WebSocket, WebSocketDisconnect  # noqa: E402
+import asyncio  # noqa: E402
+import json as _json  # noqa: E402
+
+
+class _AttackBroadcaster:
+    """WebSocket connection pool. Her yeni event `broadcast()` ile tüm
+    dinleyicilere JSON olarak yollanır. Landing MapFooter + arcs bunu
+    dinleyerek anlık patlama animasyonu tetikler."""
+    def __init__(self):
+        self.subscribers: set[WebSocket] = set()
+        self._lock = asyncio.Lock()
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        async with self._lock:
+            self.subscribers.add(ws)
+
+    async def disconnect(self, ws: WebSocket):
+        async with self._lock:
+            self.subscribers.discard(ws)
+
+    async def broadcast(self, payload: dict):
+        if not self.subscribers:
+            return
+        msg = _json.dumps(payload, default=str)
+        dead = []
+        for ws in list(self.subscribers):
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            await self.disconnect(ws)
+
+
+_ATTACK_BROADCASTER = _AttackBroadcaster()
+
+
+async def push_attack_event(payload: dict):
+    """Diğer route'lardan (events.py ingest) çağrılır — event geldiğinde
+    tüm WebSocket dinleyicilere yayınlar."""
+    await _ATTACK_BROADCASTER.broadcast(payload)
+
+
+@router.websocket("/ws/attacks")
+async def ws_attacks(ws: WebSocket):
+    """Canlı saldırı akışı. JSON mesaj örneği:
+       {"country":"RU","name":"Rusya","verdict":"spam","ts":"2026-...","ip":"1.2.3.4"}
+    """
+    await _ATTACK_BROADCASTER.connect(ws)
+    try:
+        # Bağlantı sağlıklı kalsın diye ping/pong loop (30sn)
+        while True:
+            try:
+                await asyncio.wait_for(ws.receive_text(), timeout=30)
+            except asyncio.TimeoutError:
+                await ws.send_text('{"type":"ping"}')
+            except WebSocketDisconnect:
+                break
+    except Exception:
+        pass
+    finally:
+        await _ATTACK_BROADCASTER.disconnect(ws)
 
 
 # ============================================================================
