@@ -315,6 +315,12 @@ export const api = {
   quarantinePurgeDemo: () =>
     client.post("/quarantine/purge-demo").then(r => r.data),
 
+  // Havale ödeme
+  paymentHavaleStatus: (ref) =>
+    client.get(`/payment/havale/status`, { params: { ref } }).then(r => r.data),
+  adminPaymentHavaleMarkPaid: (ref, licenseKey) =>
+    client.post(`/admin/payment/havale/mark-paid`, null,
+      { params: { ref, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
   // Licenses
   licenses: () => client.get("/licenses").then(r => r.data),
   licenseAdd: (payload) => client.post("/licenses", payload).then(r => r.data),
@@ -584,6 +590,7 @@ export const api = {
     client.get("/maintenance/trust-score/history", { params: { days } }).then(r => r.data),
   publicBlockedStats: (region = "all") =>
     client.get("/maintenance/public/blocked-stats", { params: { region } }).then(r => r.data),
+  publicLiveTicker: () => client.get("/maintenance/public/live-ticker").then(r => r.data),
   publicSalesToday: () =>
     client.get("/maintenance/public/sales-today").then(r => r.data),
 

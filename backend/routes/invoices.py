@@ -41,7 +41,7 @@ INVOICE_I18N = {
         "paid": "ÖDENDİ",
         "sub_desc": "Sunucu başına, sınırsız e-posta, IP tabanlı doğrulama",
         "footer_note": "Bu fatura elektronik ortamda üretilmiştir; imza gerektirmez.",
-        "support": "Sorularınız için: <b>destek@gokyuzuwebspam.com</b> · Kurulum: <b>gokyuzuwebspam.com/panel/install</b>",
+        "support": "Sorularınız için: <b>destek@gokyuzuhosting.com</b> · Kurulum: <b>gokyuzuhosting.com/panel/install</b>",
         "product_line": "GökyüzüWebSpam — WHM/cPanel için ticari mail güvenliği çözümü.",
         "license_prefix": "Lisans",
     },
@@ -54,7 +54,7 @@ INVOICE_I18N = {
         "paid": "PAID",
         "sub_desc": "Per server, unlimited emails, IP-based verification",
         "footer_note": "This invoice was generated electronically; no signature required.",
-        "support": "Support: <b>support@gokyuzuwebspam.com</b> · Install: <b>gokyuzuwebspam.com/panel/install</b>",
+        "support": "Support: <b>support@gokyuzuhosting.com</b> · Install: <b>gokyuzuhosting.com/panel/install</b>",
         "product_line": "GökyüzüWebSpam — commercial mail security for WHM/cPanel.",
         "license_prefix": "License",
     },
@@ -67,7 +67,7 @@ INVOICE_I18N = {
         "paid": "BEZAHLT",
         "sub_desc": "Pro Server, unbegrenzte E-Mails, IP-basierte Prüfung",
         "footer_note": "Diese Rechnung wurde elektronisch erstellt; keine Unterschrift erforderlich.",
-        "support": "Support: <b>support@gokyuzuwebspam.com</b> · Installation: <b>gokyuzuwebspam.com/panel/install</b>",
+        "support": "Support: <b>support@gokyuzuhosting.com</b> · Installation: <b>gokyuzuhosting.com/panel/install</b>",
         "product_line": "GökyüzüWebSpam — kommerzielle Mail-Sicherheit für WHM/cPanel.",
         "license_prefix": "Lizenz",
     },
@@ -80,7 +80,7 @@ INVOICE_I18N = {
         "paid": "PAYÉE",
         "sub_desc": "Par serveur, e-mails illimités, vérification par IP",
         "footer_note": "Cette facture a été générée électroniquement ; aucune signature requise.",
-        "support": "Support : <b>support@gokyuzuwebspam.com</b> · Installation : <b>gokyuzuwebspam.com/panel/install</b>",
+        "support": "Support : <b>support@gokyuzuhosting.com</b> · Installation : <b>gokyuzuhosting.com/panel/install</b>",
         "product_line": "GökyüzüWebSpam — sécurité e-mail commerciale pour WHM/cPanel.",
         "license_prefix": "Licence",
     },
@@ -93,7 +93,7 @@ INVOICE_I18N = {
         "paid": "PAGADA",
         "sub_desc": "Por servidor, correos ilimitados, verificación por IP",
         "footer_note": "Esta factura se generó electrónicamente; no requiere firma.",
-        "support": "Soporte: <b>support@gokyuzuwebspam.com</b> · Instalación: <b>gokyuzuwebspam.com/panel/install</b>",
+        "support": "Soporte: <b>support@gokyuzuhosting.com</b> · Instalación: <b>gokyuzuhosting.com/panel/install</b>",
         "product_line": "GökyüzüWebSpam — seguridad de correo comercial para WHM/cPanel.",
         "license_prefix": "Licencia",
     },
@@ -220,7 +220,7 @@ async def invoice_pdf(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
     story.append(t)
-    story.append(Paragraph("WHM / cPanel · gokyuzuwebspam.com", small))
+    story.append(Paragraph("WHM / cPanel · gokyuzuhosting.com", small))
     story.append(Spacer(1, 6 * mm))
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cbd5e1")))
     story.append(Spacer(1, 6 * mm))
@@ -230,8 +230,8 @@ async def invoice_pdf(
         Paragraph(
             f"<b>{L['seller']}</b><br/>"
             "GökyüzüWebSpam<br/>"
-            "support@gokyuzuwebspam.com<br/>"
-            "https://gokyuzuwebspam.com",
+            "support@gokyuzuhosting.com<br/>"
+            "https://gokyuzuhosting.com",
             body,
         ),
         Paragraph(

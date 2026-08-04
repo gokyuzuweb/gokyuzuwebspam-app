@@ -203,7 +203,7 @@ class PricingPlan(BaseModel):
 
 class PricingSettings(BaseModel):
     plans: List[PricingPlan] = []
-    contact_email: str = "satis@gokyuzuwebspam.com"
+    contact_email: str = "satis@gokyuzuhosting.com"
     contact_phone: str = ""
     hero_headline: str = "GökyüzüWebSpam · WHM Mail Güvenliği"
     hero_sub: str = "Türkçe destekli, kapsamlı ve modern spam koruma paneli"
@@ -1439,9 +1439,37 @@ async def _engines_for(owner: str) -> list:
 @api.get("/engines")
 async def engines_get(request: Request, license_key: Optional[str] = None):
     """Motor listesi — bayi/master scope'a göre izole edilir. Bayi kendi
-    on/off state'ini görür; toggle diğer bayileri veya master WHM'i etkilemez."""
+    on/off state'ini görür; toggle diğer bayileri veya master WHM'i etkilemez.
+    `scanned_today` / `caught_today` sayaçları bayinin kendi `mail_events`
+    verisinden bugün için canlı hesaplanır — master'ın statik seed'i değil."""
     scope = await _tenant_scope(request, license_key)
-    return await _engines_for(scope["owner_license_key"])
+    owner = scope["owner_license_key"] or ""
+    engines = await _engines_for(owner)
+    # Bugün başlangıcı (UTC)
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    # Owner filter: master (owner boş) → tüm eventler, bayi → sadece kendi lisansı
+    match = {"ts": {"$gte": day_start}}
+    if owner:
+        match["license_key"] = owner
+    # Toplam bugünkü mail sayısı = her motor için "scanned_today"
+    total_scanned = await db.mail_events.count_documents(match)
+    # Motor bazında bugünkü "caught" sayısı (spam/virus/phish/blocked verdict'leri)
+    caught_verdicts = ["spam", "high_spam", "virus", "phish", "phishing", "block", "blocked"]
+    pipeline = [
+        {"$match": {**match, "verdict": {"$in": caught_verdicts}}},
+        {"$group": {"_id": "$engine", "n": {"$sum": 1}}},
+    ]
+    caught_by_engine: dict = {}
+    async for row in db.mail_events.aggregate(pipeline):
+        eng_name = (row.get("_id") or "").lower()
+        caught_by_engine[eng_name] = int(row.get("n") or 0)
+    # Motor dokümanlarına canlı sayaçları overlay et
+    for e in engines:
+        eng_name = (e.get("name") or "").lower()
+        e["scanned_today"] = total_scanned
+        e["caught_today"] = caught_by_engine.get(eng_name, 0)
+    return engines
 
 
 @api.post("/engines/{name}/toggle")
@@ -3478,15 +3506,22 @@ async def version_publish(payload: VersionPublishIn, request: Request):
             installed = await db.settings.find_one({"_key": "version"}, {"_id": 0}) or {}
             version = (installed.get("version") or "1.1.0").lstrip("v")
 
-    dl_host = f"https://{MASTER_HOST}/dist/gokyuzuwebspam-{version}.tar.gz"
-    dl_ip   = f"http://{MASTER_IP}/dist/gokyuzuwebspam-{version}.tar.gz"
+    dl_host = f"https://{MASTER_HOST}/api/plugin/download/{version}"
+    dl_ip   = f"http://{MASTER_IP}/api/plugin/download/{version}"
     release_date = datetime.now(timezone.utc).isoformat()
+
+    # Dist klasöründe bu versiyon dosyasını hazırla (yoksa latest'ten kopyala,
+    # varsa latest → bu versiyon olarak alias'la). Yeni sürüm çıkarıldığında
+    # /api/plugin/download otomatik bu paketi servis edecek.
+    promoted = _promote_dist_version(version)
 
     manifest = {
         "_key": "version_manifest",
         "latest_version": version,
         "download_url": dl_host,
         "download_url_ip": dl_ip,
+        "download_url_generic": f"https://{MASTER_HOST}/api/plugin/download",
+        "package_path": promoted,
         "changelog": payload.changelog or f"Otomatik yayin — v{version} ({MASTER_HOST})",
         "release_date": release_date,
         "published_by_master": True,
@@ -4486,6 +4521,221 @@ async def plugin_status(request: Request):
     return await _plugin_status_payload()
 
 
+# ================== PLUGIN DOWNLOAD (Stabil) ==================
+# Yükleme mimarisi:
+#   1) `dist/` klasörünün konumu: BACKEND_DIST_DIR env veya /app/backend/dist
+#   2) `gokyuzuwebspam-latest.tar.gz` her zaman en son sürümdür.
+#   3) `gokyuzuwebspam-{X.Y.Z}.tar.gz` versiyon-pin edilmiş paketlerdir.
+#   4) `/api/plugin/download` → latest (302 → versioned URL, tarayıcıda dostane isim).
+#   5) `/api/plugin/download/{version}` → belirli sürüm (dosya yoksa 404).
+#   6) version_manifest güncellendiğinde publish akışı otomatik `latest`'i o
+#      versiyon dosyasına linkler (aşağıdaki _promote_dist_version helper).
+BACKEND_DIST_DIR = os.environ.get("BACKEND_DIST_DIR", "/app/backend/dist")
+Path(BACKEND_DIST_DIR).mkdir(parents=True, exist_ok=True)
+
+
+def _dist_path(filename: str) -> Path:
+    """Traversal-safe dist dosya yolu üretir."""
+    safe = "".join(c for c in filename if c.isalnum() or c in "-._")
+    return Path(BACKEND_DIST_DIR) / safe
+
+
+async def _current_version() -> str:
+    mf = await db.settings.find_one({"_key": "version_manifest"}, {"_id": 0}) or {}
+    return str(mf.get("latest_version") or "2.6.0").lstrip("v")
+
+
+def _promote_dist_version(version: str) -> Optional[str]:
+    """`gokyuzuwebspam-{version}.tar.gz` dosyasını `gokyuzuwebspam-latest.tar.gz`
+    olarak alias'lar. Dosya yoksa varsa `latest`'ten kopyalar ve dönüş verir."""
+    ver = version.lstrip("v")
+    versioned = _dist_path(f"gokyuzuwebspam-{ver}.tar.gz")
+    latest = _dist_path("gokyuzuwebspam-latest.tar.gz")
+    if versioned.exists():
+        try:
+            if latest.exists() or latest.is_symlink():
+                latest.unlink()
+            latest.symlink_to(versioned.name)
+        except Exception:
+            # symlink başarısız → dosyayı kopyala
+            try:
+                import shutil
+                shutil.copy2(str(versioned), str(latest))
+            except Exception:
+                return None
+        return str(versioned)
+    if latest.exists():
+        try:
+            import shutil
+            shutil.copy2(str(latest), str(versioned))
+        except Exception:
+            return None
+        return str(versioned)
+    return None
+
+
+@api.get("/plugin/download")
+async def plugin_download_latest(request: Request):
+    """En son plugin paketini indirir. Öncelik:
+      1) BACKEND_DIST_DIR/gokyuzuwebspam-{latest_version}.tar.gz
+      2) BACKEND_DIST_DIR/gokyuzuwebspam-latest.tar.gz
+      3) frontend/public/gokyuzuwebspam-source.tar.gz (son çare fallback)
+    """
+    ver = await _current_version()
+    versioned = _dist_path(f"gokyuzuwebspam-{ver}.tar.gz")
+    latest = _dist_path("gokyuzuwebspam-latest.tar.gz")
+    fallback = Path("/app/frontend/public/gokyuzuwebspam-source.tar.gz")
+    target = versioned if versioned.exists() else (latest if latest.exists() else (fallback if fallback.exists() else None))
+    if not target:
+        raise HTTPException(
+            503,
+            "Plugin paketi henüz build edilmemiş. Master lütfen /api/version/publish çağırıp yeni bir sürüm yayınlasın.",
+        )
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        str(target),
+        media_type="application/gzip",
+        filename=f"gokyuzuwebspam-{ver}.tar.gz",
+        headers={
+            "X-Plugin-Version": ver,
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="gokyuzuwebspam-{ver}.tar.gz"',
+        },
+    )
+
+
+@api.get("/plugin/download/{version}")
+async def plugin_download_versioned(version: str):
+    """Belirli sürümü indir. Örn: /api/plugin/download/2.6.0"""
+    ver = version.lstrip("v")
+    p = _dist_path(f"gokyuzuwebspam-{ver}.tar.gz")
+    if not p.exists():
+        raise HTTPException(404, f"Sürüm bulunamadı: gokyuzuwebspam-{ver}.tar.gz")
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        str(p),
+        media_type="application/gzip",
+        filename=f"gokyuzuwebspam-{ver}.tar.gz",
+        headers={"X-Plugin-Version": ver, "Cache-Control": "no-store"},
+    )
+
+
+@api.get("/plugin/versions")
+async def plugin_versions_list():
+    """Mevcut dist paketlerinin listesi. Master `Version Publish` UI'da dropdown için."""
+    files = []
+    try:
+        for p in sorted(Path(BACKEND_DIST_DIR).glob("gokyuzuwebspam-*.tar.gz")):
+            name = p.name
+            if name == "gokyuzuwebspam-latest.tar.gz":
+                continue
+            ver = name.replace("gokyuzuwebspam-", "").replace(".tar.gz", "")
+            files.append({
+                "version": ver,
+                "filename": name,
+                "size_bytes": p.stat().st_size,
+                "download_url": f"/api/plugin/download/{ver}",
+            })
+    except Exception:
+        pass
+    current = await _current_version()
+    return {"current": current, "versions": files}
+
+
+@api.get("/scripts/install-bayi.sh", response_class=None)
+async def scripts_install_bayi(request: Request):
+    """Bayi tek-satır kurulum akışında kullanılan bash script. Kullanım:
+       curl -sSL https://{MASTER_HOST}/api/scripts/install-bayi.sh | \
+         sudo LICENSE_KEY=MS-XXX MASTER_URL=https://... bash
+
+    Betik: paketi indirir, /opt/gokyuzuwebspam altına açar, systemd unit'i
+    yükler, mailshield-logtail'i enable eder ve durumu kontrol eder."""
+    from fastapi.responses import PlainTextResponse
+    ver = await _current_version()
+    master_url = f"https://{MASTER_HOST}" if MASTER_HOST else str(request.base_url).rstrip("/")
+    script = f'''#!/usr/bin/env bash
+# GokyuzuWebSpam — Bayi WHM/cPanel Kurulum Betigi
+# Kullanim:
+#   curl -sSL {master_url}/api/scripts/install-bayi.sh | \\
+#     sudo LICENSE_KEY=MS-XXXX MASTER_URL={master_url} bash
+set -e
+: "${{LICENSE_KEY:?LICENSE_KEY environment variable is required}}"
+: "${{MASTER_URL:={master_url}}}"
+VERSION="{ver}"
+INSTALL_DIR="/opt/gokyuzuwebspam"
+DOWNLOAD_URL="${{MASTER_URL}}/api/plugin/download"
+
+echo "==> GokyuzuWebSpam v${{VERSION}} kurulumu basliyor"
+echo "    Master        : ${{MASTER_URL}}"
+echo "    Lisans        : ${{LICENSE_KEY:0:16}}..."
+echo "    Install path  : ${{INSTALL_DIR}}"
+
+# 1) Bagimlilik kontrolu
+command -v wget >/dev/null || (echo "wget kurulmali" >&2; exit 1)
+command -v tar  >/dev/null || (echo "tar kurulmali" >&2; exit 1)
+
+# 2) Onceki kurulumu yedekle
+if [ -d "${{INSTALL_DIR}}" ]; then
+  BAK="/opt/gokyuzuwebspam.bak.$(date +%s)"
+  echo "==> Onceki kurulum yedekleniyor -> ${{BAK}}"
+  mv "${{INSTALL_DIR}}" "${{BAK}}"
+fi
+mkdir -p "${{INSTALL_DIR}}"
+
+# 3) Paketi indir + ac
+cd /tmp
+echo "==> Paket indiriliyor: ${{DOWNLOAD_URL}}"
+wget -q -O gws.tar.gz "${{DOWNLOAD_URL}}"
+tar -xzf gws.tar.gz -C "${{INSTALL_DIR}}" --strip-components=1 2>/dev/null || \\
+  tar -xzf gws.tar.gz -C "${{INSTALL_DIR}}"
+rm -f gws.tar.gz
+
+# 4) Lisans + master URL kaydet
+cat > "${{INSTALL_DIR}}/config.env" <<EOF
+LICENSE_KEY=${{LICENSE_KEY}}
+MASTER_URL=${{MASTER_URL}}
+INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION=${{VERSION}}
+EOF
+chmod 600 "${{INSTALL_DIR}}/config.env"
+
+# 5) systemd unit (varsa)
+if [ -f "${{INSTALL_DIR}}/mailshield-logtail.pl" ]; then
+  cat > /etc/systemd/system/gokyuzuwebspam-logtail.service <<EOF
+[Unit]
+Description=GokyuzuWebSpam Mail Log Tail Agent
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=${{INSTALL_DIR}}/config.env
+ExecStart=/usr/bin/perl ${{INSTALL_DIR}}/mailshield-logtail.pl --license=\\${{LICENSE_KEY}} --master=\\${{MASTER_URL}}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now gokyuzuwebspam-logtail
+  echo "==> systemd servisi enable edildi: gokyuzuwebspam-logtail"
+fi
+
+# 6) Baglanti testi
+echo "==> Master ile test ping..."
+curl -sf -X POST "${{MASTER_URL}}/api/events/ingest" \\
+  -H "Content-Type: application/json" \\
+  -d "{{\\"license_key\\":\\"${{LICENSE_KEY}}\\",\\"from_addr\\":\\"install@test.local\\",\\"to_addr\\":\\"you@bayi.local\\",\\"subject\\":\\"Kurulum baglanti testi\\",\\"verdict\\":\\"clean\\"}}" \\
+  && echo || echo "!! Test ping basarisiz — firewall / lisans kontrol edin"
+
+echo ""
+echo "GokyuzuWebSpam kuruldu — v${{VERSION}}"
+echo "  Panel : ${{MASTER_URL}}/panel/my-server"
+echo "  Log   : journalctl -u gokyuzuwebspam-logtail -f"
+'''
+    return PlainTextResponse(script, media_type="text/x-shellscript")
+
+
 @api.get("/plugin/renewal-info")
 async def plugin_renewal_info():
     """Panel içi banner için lisans bitişi bilgisi. Her istekte kalan gün + banner
@@ -4887,7 +5137,7 @@ async def bayi_my_server(request: Request, license_key: Optional[str] = None):
         "master_api_url": master_api,
         "license_key": owner,
         "install_cmd": (
-            f"curl -sSL {master_api}/scripts/install-bayi.sh | "
+            f"curl -sSL {master_api}/api/scripts/install-bayi.sh | "
             f"sudo LICENSE_KEY={owner} MASTER_URL={master_api} bash"
         ),
         "logtail_cmd": (
@@ -5529,6 +5779,86 @@ async def admin_payment_settings_set(payload: PaymentSettingsIn, request: Reques
     return {"ok": True, **payload.model_dump()}
 
 
+@api.get("/payment/havale/status")
+async def payment_havale_status(ref: str):
+    """Havale ödemesinin durumunu döner — HavalePayment.js sayfası 15sn'de
+    bir polling yapar. Ref (merchant_oid) ile eşleşen `db.payments` dokümanı
+    yoksa 404. Doküman `status` alanına göre `awaiting_transfer / paid /
+    failed` durumu döner ve banka bilgileri her istekte tazelenir (master IBAN
+    değişse bile bayi yeniden yükleyince güncel görsün)."""
+    doc = await db.payments.find_one({"merchant_oid": ref}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, f"Ödeme referansı bulunamadı: {ref}")
+    return {
+        "reference": doc.get("merchant_oid") or ref,
+        "status": doc.get("status") or "awaiting_transfer",
+        "amount": doc.get("amount") or 0,
+        "currency": doc.get("currency") or "TRY",
+        "plan": doc.get("plan_code") or "",
+        "billing_period": doc.get("billing_period") or "yearly",
+        "is_renewal": bool(doc.get("is_renewal")),
+        "customer_email": doc.get("email") or "",
+        "customer_name": doc.get("user_name") or "",
+        "created_at": doc.get("created_at"),
+        "paid_at": doc.get("paid_at"),
+        # Master her istekte güncel IBAN'ı görsün
+        "iban": os.environ.get("BANK_IBAN", "TR00 0000 0000 0000 0000 0000 00"),
+        "bank": os.environ.get("BANK_NAME", "Banka Adı"),
+        "beneficiary": os.environ.get("BANK_BENEFICIARY", "Şirket Adı"),
+    }
+
+
+@api.post("/admin/payment/havale/mark-paid")
+async def admin_payment_havale_mark_paid(request: Request, ref: str,
+                                          license_key: Optional[str] = None):
+    """Master-only. Havale ödemesini elle 'ödendi' olarak işaretler ve
+    _finalize_purchase mekanizmasını tetikler (lisans oluştur/uzat)."""
+    await _require_master(request, license_key)
+    doc = await db.payments.find_one({"merchant_oid": ref}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Ödeme bulunamadı")
+    if doc.get("status") == "paid":
+        return {"ok": True, "already_paid": True}
+    await db.payments.update_one(
+        {"merchant_oid": ref},
+        {"$set": {"status": "paid", "paid_at": _iso(), "paid_by": "master_manual"}},
+    )
+    # `_finalize_purchase` PaymentTransaction bekliyor — havale için de aynı
+    # akışa girmek üzere bir PaymentTransaction stub kaydedelim.
+    tx_existing = await db.payment_transactions.find_one({"session_id": ref})
+    if not tx_existing:
+        tx = PaymentTransaction(
+            session_id=ref, plan_code=doc.get("plan_code", "pro"),
+            billing_period=doc.get("billing_period", "yearly"),
+            amount=float(doc.get("amount") or 0),
+            currency=doc.get("currency", "TRY"),
+            customer_email=doc.get("email", ""),
+            customer_name=doc.get("user_name", ""),
+            metadata={
+                "plan_code": doc.get("plan_code", "pro"),
+                "billing_period": doc.get("billing_period", "yearly"),
+                "customer_email": doc.get("email", ""),
+                "customer_name": doc.get("user_name", ""),
+                "gateway": "havale",
+            },
+            origin_url="",
+        ).model_dump()
+        await db.payment_transactions.insert_one(tx)
+    metadata = {
+        "plan_code": doc.get("plan_code", "pro"),
+        "billing_period": doc.get("billing_period", "yearly"),
+        "customer_email": doc.get("email", ""),
+        "customer_name": doc.get("user_name", ""),
+        "gateway": "havale",
+    }
+    await _finalize_purchase(ref, metadata)
+    await db.logs.insert_one(ActivityLog(
+        source="payment", level="info",
+        message=f"HAVALE ONAY: {ref} · {doc.get('email','')} · {doc.get('plan_code','')}/{doc.get('billing_period','')} · {doc.get('amount')} {doc.get('currency','TRY')}",
+    ).model_dump())
+    return {"ok": True, "paid": True, "reference": ref}
+
+
 @api.post("/bayi/test-ping")
 async def bayi_test_ping(request: Request, license_key: Optional[str] = None):
     """Verification widget "🚀 Test Ping" butonu — bayi lisansı ile sahte bir
@@ -5620,6 +5950,57 @@ async def checkout_create_session(payload: CheckoutCreateIn):
         raise HTTPException(400, "Bu plan için ödeme alınamaz — Master fiyatlandırma sayfasından güncelleyin")
     currency = plan.get("currency", "USD").lower()
     origin = payload.origin_url.rstrip("/")
+
+    # Master'ın seçtiği default gateway'e göre yönlendir.
+    # `havale` (varsayılan) → Stripe API key gerekmez, banka bilgileri döner.
+    pay_cfg = await db.settings.find_one({"_key": "payment_settings"}, {"_id": 0}) or {}
+    gateway = (pay_cfg.get("default_gateway") or "havale").lower()
+
+    if gateway == "havale":
+        import uuid as _uuid
+        merchant_oid = f"UPG{_uuid.uuid4().hex[:20].upper()}"
+        bank_iban = os.environ.get("BANK_IBAN", "TR00 0000 0000 0000 0000 0000 00")
+        bank_name = os.environ.get("BANK_NAME", "Banka Adı")
+        bank_beneficiary = os.environ.get("BANK_BENEFICIARY", "Şirket Adı")
+        await db.payments.insert_one({
+            "id": merchant_oid, "merchant_oid": merchant_oid,
+            "provider": "havale", "status": "awaiting_transfer",
+            "email": payload.customer_email, "user_name": payload.customer_name or "",
+            "amount": amount, "currency": plan.get("currency", "TRY"),
+            "plan_code": payload.plan_code, "billing_period": payload.billing_period,
+            "is_renewal": False,
+            "created_at": _iso(),
+        })
+        # Yeni satın alım intent — success sonrası bu email/plan için lisans oluştur
+        await db.settings.update_one(
+            {"_key": f"purchase_intent:{payload.customer_email}:{payload.plan_code}"},
+            {"$set": {
+                "plan_code": payload.plan_code,
+                "billing_period": payload.billing_period,
+                "customer_email": payload.customer_email,
+                "customer_name": payload.customer_name or "",
+                "merchant_oid": merchant_oid,
+                "requested_at": _iso(),
+            }},
+            upsert=True,
+        )
+        await db.logs.insert_one(ActivityLog(
+            source="checkout", level="info",
+            message=f"Havale çıkışı: {payload.plan_code}/{payload.billing_period} · {payload.customer_email} · {amount} {plan.get('currency','TRY')} · ref={merchant_oid}",
+        ).model_dump())
+        return {
+            "gateway": "havale", "session_id": merchant_oid,
+            "url": f"{origin}/panel/payment/havale?ref={merchant_oid}",
+            "amount": amount, "currency": plan.get("currency", "TRY"),
+            "iban": bank_iban, "bank": bank_name, "beneficiary": bank_beneficiary,
+            "reference": merchant_oid, "plan": plan.get("name", payload.plan_code),
+            "instructions": (
+                f"Kayıtlı IBAN'a {amount:.2f} {plan.get('currency','TRY')} havale yapın; "
+                f"AÇIKLAMA alanına '{merchant_oid}' yazmayı unutmayın. "
+                f"Ödemeniz doğrulandıktan sonra lisansınız otomatik oluşturulur (max 24 saat)."
+            ),
+        }
+
     stripe = await _stripe_client_async(origin)
     session_request = CheckoutSessionRequest(
         amount=float(amount), currency=currency,
@@ -5783,8 +6164,8 @@ async def _finalize_purchase(session_id: str, metadata: dict) -> Optional[dict]:
         f"────────────────────────────────────────────────────\n"
         f"  DESTEK\n"
         f"────────────────────────────────────────────────────\n"
-        f"  • Kurulum kılavuzu : {origin or 'https://gokyuzuwebspam.com'}/install\n"
-        f"  • Mail             : destek@gokyuzuwebspam.com\n"
+        f"  • Kurulum kılavuzu : {origin or f'https://{MASTER_HOST}'}/install\n"
+        f"  • Mail             : destek@{MASTER_HOST}\n"
         f"  • Panelden 'Lisansı Sorgula' butonuyla anında doğrulama\n\n"
         f"GökyüzüWebSpam ekibi\n"
     )

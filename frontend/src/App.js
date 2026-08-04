@@ -33,6 +33,7 @@ import Licenses from "@/pages/Licenses";
 import AlertsRules from "@/pages/AlertsRules";
 import Pricing from "@/pages/Pricing";
 import Shop, { CheckoutSuccess } from "@/pages/Shop";
+import HavalePayment from "@/pages/HavalePayment";
 import Blacklist from "@/pages/Blacklist";
 import Reseller from "@/pages/Reseller";
 import Security from "@/pages/Security";
@@ -201,6 +202,7 @@ function Shell() {
             <Route path="/plan-analytics" element={<PlanAnalytics />} />
             <Route path="/plan-config" element={<PlanConfig />} />
             <Route path="/subscription" element={<Subscription />} />
+            <Route path="/payment/havale" element={<HavalePayment />} />
             <Route path="/my-server" element={<BayiServer />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />

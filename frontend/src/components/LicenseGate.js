@@ -354,7 +354,7 @@ export function LicenseGate() {
             <div className="text-xs text-slate-400 mb-2 font-medium">Lisans Alma</div>
             <div className="grid grid-cols-2 gap-2">
               <a
-                href="mailto:satis@gokyuzuwebspam.com?subject=Lisans%20Talebi"
+                href="mailto:satis@gokyuzuhosting.com?subject=Lisans%20Talebi"
                 data-testid="gate-mail-seller"
                 className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700"
               >

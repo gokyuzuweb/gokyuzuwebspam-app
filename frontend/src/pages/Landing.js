@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui-primitives";
 import GeoBlockedHeatmap from "@/components/GeoBlockedHeatmap";
+import LiveTicker from "@/components/LiveTicker";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { useI18n, useT } from "@/i18n";
@@ -610,7 +611,7 @@ function HowItWorks() {
           </div>
           <pre className="p-5 mono text-[12px] text-slate-300 overflow-x-auto leading-relaxed">
 {`# One-line install (60 seconds)
-$ wget -O gws.tar.gz "https://gokyuzuwebspam.com/plugin/download" && \\
+$ wget -O gws.tar.gz "https://gokyuzuhosting.com/api/plugin/download" && \\
   tar -xzf gws.tar.gz && cd gokyuzuwebspam && \\
   chmod +x install.sh && ./install.sh --license=MS-XXXX...
 
@@ -853,7 +854,7 @@ function Footer() {
           <div className="text-xs uppercase tracking-widest text-slate-500 mb-3 font-semibold">{s.footer_company}</div>
           <ul className="space-y-2 text-sm text-slate-400">
             <li><a href="#faq" className="hover:text-slate-100">FAQ</a></li>
-            <li><a href="mailto:destek@gokyuzuwebspam.com" className="hover:text-slate-100">{s.footer_contact}</a></li>
+            <li><a href="mailto:destek@gokyuzuhosting.com" className="hover:text-slate-100">{s.footer_contact}</a></li>
           </ul>
         </div>
       </div>
@@ -1480,6 +1481,7 @@ export default function Landing() {
       <Footer />
       <FloatingPanelButton />
       <LicenseEntryModal />
+      <LiveTicker />
     </div>
   );
 }
