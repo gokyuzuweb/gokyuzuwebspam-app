@@ -3727,6 +3727,8 @@ async def licenses_add(payload: LicenseIn):
 
 @api.put("/licenses/{lid}")
 async def licenses_update(lid: str, payload: LicenseIn):
+    # Önceki plan/state → diff için kaydet
+    prev = await db.licenses.find_one({"id": lid}, {"_id": 0}) or {}
     r = await db.licenses.update_one({"id": lid}, {"$set": payload.model_dump()})
     if r.matched_count == 0:
         raise HTTPException(404, "Lisans bulunamadı")
@@ -3743,6 +3745,27 @@ async def licenses_update(lid: str, payload: LicenseIn):
         or_conds.append({"ip": ip})
     if or_conds and payload.active:
         await db.revoked_licenses.delete_many({"$or": or_conds})
+    # Plan değişimi → bayiye WS bildirim (panel canlı olarak yeni yetkileri görsün)
+    try:
+        old_plan = (prev.get("plan") or "").lower()
+        new_plan = (payload.plan or "").lower()
+        if old_plan != new_plan and new_plan:
+            from routes.maintenance import push_attack_event
+            await push_attack_event({
+                "type": "plan_changed",
+                "license_key": existing.get("license_key"),
+                "old_plan": old_plan or "-",
+                "new_plan": new_plan,
+                "customer_name": prev.get("customer_name") or "",
+                "ts": _iso(),
+            })
+            await db.logs.insert_one(ActivityLog(
+                source="license", level="info",
+                message=f"Plan değişti: {existing.get('license_key','?')[:16]}… "
+                        f"{old_plan or '-'} → {new_plan}",
+            ).model_dump())
+    except Exception:
+        pass
     return {"updated": True}
 
 
@@ -3798,9 +3821,12 @@ async def licenses_delete_post(lid: str):
 
 @api.post("/licenses/{lid}/toggle-active")
 async def licenses_toggle_active(lid: str, request: Request, license_key: Optional[str] = None):
-    """Tek tıkla aktif/pasif — mevcut durumu tersine çevirir. WAF-safe POST."""
+    """Tek tıkla aktif/pasif — mevcut durumu tersine çevirir. WAF-safe POST.
+    Deaktive edildiyse bayinin panelinde bir sonraki `plugin/status` çağrısında
+    `session_expired:true` bayrağı düşer ve panel oturumu otomatik kapanır.
+    Broadcast: `type=license_state_changed` WS mesajı."""
     await _require_master(request, license_key)
-    doc = await db.licenses.find_one({"id": lid}, {"_id": 0, "active": 1})
+    doc = await db.licenses.find_one({"id": lid}, {"_id": 0, "active": 1, "license_key": 1, "plan": 1, "customer_name": 1})
     if not doc:
         raise HTTPException(404, "Lisans bulunamadı")
     new_active = not doc.get("active", True)
@@ -3809,6 +3835,18 @@ async def licenses_toggle_active(lid: str, request: Request, license_key: Option
         source="license", level="info",
         message=f"Lisans {lid[:8]}… → {'aktif' if new_active else 'pasif'}",
     ).model_dump())
+    # WS broadcast — bayi paneli anında yeni durumu görsün
+    try:
+        from routes.maintenance import push_attack_event
+        await push_attack_event({
+            "type": "license_state_changed",
+            "license_key": doc.get("license_key"),
+            "active": new_active,
+            "customer_name": doc.get("customer_name") or "",
+            "ts": _iso(),
+        })
+    except Exception:
+        pass
     return {"ok": True, "id": lid, "active": new_active}
 
 
@@ -4602,12 +4640,15 @@ async def _plugin_status_payload() -> dict:
 @api.get("/plugin/status")
 async def plugin_status(request: Request):
     """Impersonation aktifken bayi lisansı bakış açısını döner (plan_features
-    ve UI gating impersonate edilen bayiye göre çalışsın)."""
+    ve UI gating impersonate edilen bayiye göre çalışsın).
+
+    GÜVENLİK: Aktif olmayan lisanslar için `licensed=False` ve `session_expired`
+    flag'i döner — frontend bu bayrağı görünce oturumu kapatıp login'e yönlendirir.
+    """
     imp = request.cookies.get("gws_impersonate")
     if imp:
         lic = await db.licenses.find_one({"license_key": imp}, {"_id": 0}) or {}
         base = await _plugin_status_payload()
-        # Bayinin görünürlüğü: onun plan/expires/customer_name'i
         base.update({
             "licensed": bool(lic and lic.get("active", True)),
             "license_key": imp,
@@ -4618,7 +4659,24 @@ async def plugin_status(request: Request):
             "impersonated": True,
         })
         return base
-    return await _plugin_status_payload()
+    payload = await _plugin_status_payload()
+    # Bayinin lisansı master tarafından deaktive edildiyse veya süresi dolduysa
+    # frontend "session_expired" bayrağı görüp otomatik oturumu kapatsın.
+    lk = payload.get("license_key")
+    if lk and lk != os.environ.get("MASTER_LICENSE_KEY", ""):
+        lic = await db.licenses.find_one({"license_key": lk}, {"_id": 0})
+        if lic:
+            is_active = bool(lic.get("active", True))
+            valid_until = lic.get("valid_until") or ""
+            now_iso = datetime.now(timezone.utc).isoformat()
+            expired = valid_until and valid_until < now_iso
+            if not is_active or expired:
+                payload["session_expired"] = True
+                payload["session_expired_reason"] = (
+                    "deactivated" if not is_active else "expired"
+                )
+                payload["licensed"] = False
+    return payload
 
 
 # ================== PLUGIN DOWNLOAD (Stabil) ==================
@@ -5247,6 +5305,7 @@ async def admin_bayi_health_ping_all_red(request: Request,
 
     # Wake sinyali kayıtları (5dk TTL, bayi plugin polling ile alacak)
     expires = (now + timedelta(minutes=5)).isoformat()
+    batch_id = str(uuid.uuid4())
     for r in red_licenses:
         await db.bayi_wake_signals.update_one(
             {"license_key": r["license_key"]},
@@ -5255,9 +5314,20 @@ async def admin_bayi_health_ping_all_red(request: Request,
                 "signaled_at": now.isoformat(),
                 "expires_at": expires,
                 "signaled_by": "master_bulk_ping",
+                "batch_id": batch_id,
             }},
             upsert=True,
         )
+    # Kalıcı geçmiş kaydı (wake_history — Master analizi için)
+    if red_licenses:
+        await db.wake_history.insert_one({
+            "id": batch_id,
+            "at": now.isoformat(),
+            "count": len(red_licenses),
+            "licenses": [{"license_key": r["license_key"],
+                          "customer_name": r["customer_name"]} for r in red_licenses],
+            "resulted_green": [],  # daha sonra tamamlayıcı endpoint güncelleyebilir
+        })
     # WS broadcast
     try:
         from routes.maintenance import push_attack_event
@@ -5281,7 +5351,42 @@ async def admin_bayi_health_ping_all_red(request: Request,
         source="bayi_health", level="info",
         message=f"TOPLU CANLAN PİNG · {len(red_licenses)} kırmızı bayi tetiklendi",
     ).model_dump())
-    return {"ok": True, "pinged": len(red_licenses), "licenses": red_licenses}
+    return {"ok": True, "pinged": len(red_licenses), "licenses": red_licenses,
+            "batch_id": batch_id}
+
+
+@api.get("/admin/wake-history")
+async def admin_wake_history(request: Request, license_key: Optional[str] = None,
+                              limit: int = 50):
+    """Master-only. Toplu canlan ping geçmişi — hangi ping'te kaç bayi
+    tetiklendi, sonuç ne oldu. Frontend `/panel/wake-history` sayfası için."""
+    await _require_master(request, license_key)
+    limit = max(10, min(int(limit), 500))
+    items = []
+    # Şu anki aktif kırmızı lisansları hesapla (green_at değerlendirmesi için)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    red_cutoff = (now - timedelta(minutes=30)).isoformat()
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    still_red: set = set()
+    async for l in db.licenses.find({"active": True}, {"_id": 0, "license_key": 1, "last_heartbeat_at": 1}):
+        lk = l.get("license_key") or ""
+        if not lk or lk == master_env:
+            continue
+        ls = l.get("last_heartbeat_at") or ""
+        if not ls or ls < red_cutoff:
+            still_red.add(lk)
+    # Geçmişi topla
+    async for h in db.wake_history.find({}, {"_id": 0}).sort("at", -1).limit(limit):
+        total = h.get("count") or 0
+        ping_licenses = [x.get("license_key") for x in (h.get("licenses") or [])]
+        # ping edilenlerden şu an yeşil olanları hesapla
+        turned_green = [lk for lk in ping_licenses if lk not in still_red]
+        h["turned_green"] = len(turned_green)
+        h["still_red"] = total - len(turned_green)
+        h["success_pct"] = round((len(turned_green) / total) * 100, 1) if total else 0
+        items.append(h)
+    return {"total": len(items), "items": items}
 
 
 @api.get("/plugin/wake-signal")
