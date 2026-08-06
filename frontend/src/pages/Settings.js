@@ -116,10 +116,29 @@ export default function SettingsPage() {
   useEffect(() => { if (settings.data && !state) setState(settings.data); }, [settings.data]); // eslint-disable-line
 
   const save = useMutation({
-    mutationFn: (p) => api.settingsPut(p),
+    mutationFn: async (p) => {
+      // 1) Legacy settings collection'a yaz (global config için)
+      await api.settingsPut(p);
+      // 2) Yeni per-license eşiklere de yaz — ConfigServer paritesi
+      //    ingest_event bu eşikleri okur ve verdict'i yeniden hesaplar
+      try {
+        const spam = Number(p.spam_threshold_low);
+        const high = Number(p.spam_threshold_high);
+        if (Number.isFinite(spam) && Number.isFinite(high) && high >= spam) {
+          await api.setThresholds({
+            spam_threshold: spam,
+            high_spam_threshold: high,
+          });
+        }
+      } catch (_) {
+        // per-license set edilemezse settings save yine başarılı sayılır
+      }
+      return p;
+    },
     onSuccess: () => {
       toast.success(t("settings.saved"));
       qc.invalidateQueries({ queryKey: ["settings"] });
+      qc.invalidateQueries({ queryKey: ["thresholds"] });
       if (state?.ui_language) setUiLang(state.ui_language);
     },
     onError: () => toast.error(t("settings.save_fail")),

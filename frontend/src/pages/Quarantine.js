@@ -311,6 +311,14 @@ function QuarantineKPIBand({ stats }) {
     { label: "Virüs", value: stats?.verdicts?.virus ?? 0, tone: "text-rose-300", testid: "kpi-virus" },
     { label: "Phish", value: stats?.verdicts?.phish ?? 0, tone: "text-fuchsia-300", testid: "kpi-phish" },
   ];
+  const dist = stats?.score_distribution || {};
+  const distMax = Math.max(dist.clean || 0, dist.suspicious || 0, dist.spam || 0, dist.high_spam || 0, 1);
+  const bars = [
+    { label: "0–3", subtitle: "Temiz", value: dist.clean || 0, color: "bg-emerald-500/60", border: "border-emerald-500/40", testid: "hist-clean" },
+    { label: "3–5", subtitle: "Şüpheli", value: dist.suspicious || 0, color: "bg-yellow-500/60", border: "border-yellow-500/40", testid: "hist-suspicious" },
+    { label: "5–10", subtitle: "Spam", value: dist.spam || 0, color: "bg-amber-500/60", border: "border-amber-500/40", testid: "hist-spam" },
+    { label: "10+", subtitle: "Yüksek", value: dist.high_spam || 0, color: "bg-rose-500/60", border: "border-rose-500/40", testid: "hist-high" },
+  ];
   return (
     <Card>
       <CardBody className="p-3">
@@ -323,6 +331,35 @@ function QuarantineKPIBand({ stats }) {
             </div>
           ))}
         </div>
+
+        {/* Skor kırılım histogram — SA skoruna göre 4 bucket (son 7 gün) */}
+        <div className="mt-3 border-t border-slate-800 pt-3" data-testid="score-histogram">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
+              <BarChart3 className="w-3 h-3"/> SA Skor Dağılımı (son 7 gün)
+            </div>
+            <div className="text-[10px] text-slate-500 mono">
+              {bars.reduce((s, b) => s + b.value, 0)} mail
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {bars.map(b => {
+              const pct = distMax ? (b.value / distMax) * 100 : 0;
+              return (
+                <div key={b.label} data-testid={b.testid}
+                     className={`rounded-md border ${b.border} bg-slate-950/60 p-2 flex flex-col justify-end min-h-[70px] relative overflow-hidden`}>
+                  <div className={`absolute inset-x-0 bottom-0 ${b.color} transition-all`}
+                       style={{ height: `${pct}%` }}/>
+                  <div className="relative z-10">
+                    <div className="mono text-sm font-semibold text-slate-100">{b.value}</div>
+                    <div className="text-[10px] text-slate-300">{b.label} · {b.subtitle}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {stats?.top_senders?.length ? (
           <div className="mt-3 flex flex-wrap gap-1.5 items-center text-[11px]">
             <span className="text-slate-500 uppercase tracking-widest text-[10px] mr-1">En sık gönderici:</span>

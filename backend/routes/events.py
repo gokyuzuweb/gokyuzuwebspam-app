@@ -4,7 +4,7 @@ Milter (yerel WHM sunucusu) her taranmis mail icin buraya POST atar,
 panel de buradan license_key'e gore filtreli olarak listeler.
 """
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
@@ -275,15 +275,27 @@ async def ingest_event(evt: MailEvent, request: Request):
         # Sadece SA skoru düşük olduğu halde plugin yüksek verdict yolladıysa
         # düzelt. Virus/phish gibi gerçek tehdit verdict'lerini KORU.
         cur_verdict = (doc.get("verdict") or "").lower()
+        # Per-license eşik: license belgesindeki spam_threshold/high_spam_threshold
+        # (default: 5.0 / 10.0 — ConfigServer varsayılanı ile aynı)
+        lic_doc = await db.licenses.find_one(
+            {"license_key": evt.license_key},
+            {"_id": 0, "spam_threshold": 1, "high_spam_threshold": 1},
+        ) or {}
+        try:
+            th_spam = float(lic_doc.get("spam_threshold") or 5.0)
+            th_high = float(lic_doc.get("high_spam_threshold") or 10.0)
+        except (TypeError, ValueError):
+            th_spam, th_high = 5.0, 10.0
         if cur_verdict not in ("virus", "phish", "phishing", "blocked"):
-            if sa_score >= 10:
+            if sa_score >= th_high:
                 doc["verdict"] = "high_spam"
-            elif sa_score >= 5:
+            elif sa_score >= th_spam:
                 doc["verdict"] = "spam"
             else:
                 doc["verdict"] = "clean"
         doc["score_normalized"] = True
         doc["score_source"] = "spamassassin"
+        doc["thresholds_used"] = {"spam": th_spam, "high_spam": th_high}
     else:
         # SA yok — plugin total_score'a güven ama abartılı değerleri clamp'le
         try:
@@ -728,6 +740,105 @@ async def rescore_events(request: Request, license_key: Optional[str] = None,
         "ok": True, "scanned": scanned,
         "updated": updated, "fixed_verdicts": fixed_verdicts,
         "dry_run": dry_run,
+        "scope": {"is_master": scope["is_master"], "owner": scope["owner_license_key"]},
+    }
+
+
+# ------- Threshold config (per-license) ------------------------------------
+class ThresholdIn(BaseModel):
+    spam_threshold: float = Field(default=5.0, ge=0.0, le=50.0)
+    high_spam_threshold: float = Field(default=10.0, ge=0.0, le=50.0)
+
+
+@router.get("/thresholds")
+async def get_thresholds(request: Request, license_key: Optional[str] = None):
+    """Her lisans için spam/high_spam skor eşiklerini oku. ConfigServer paritesi.
+    Master için: `?license_key=X` ile herhangi bayinin eşiğini görebilir.
+    Bayi için: kendi eşiğini görür."""
+    from tenant import resolve_tenant_scope
+    scope = await resolve_tenant_scope(request, license_key, db)
+    if not scope["is_master"] and scope["owner_license_key"] in ("", "__none__"):
+        raise HTTPException(403, "Geçerli lisans veya master yetkisi gerekli")
+    target = scope["owner_license_key"] if not scope["is_master"] else (scope["owner_license_key"] or license_key or "")
+    if not target and scope["is_master"]:
+        # Master global default'ları döner
+        return {"spam_threshold": 5.0, "high_spam_threshold": 10.0, "scope": "master_default"}
+    lic = await db.licenses.find_one(
+        {"license_key": target},
+        {"_id": 0, "spam_threshold": 1, "high_spam_threshold": 1},
+    ) or {}
+    return {
+        "spam_threshold": float(lic.get("spam_threshold") or 5.0),
+        "high_spam_threshold": float(lic.get("high_spam_threshold") or 10.0),
+        "license_key": target,
+    }
+
+
+@router.post("/thresholds")
+async def set_thresholds(payload: ThresholdIn, request: Request,
+                          license_key: Optional[str] = None):
+    """Eşikleri güncelle. Master herhangi bayinin, bayi sadece kendisininki.
+    high_spam_threshold >= spam_threshold olmalı."""
+    from tenant import resolve_tenant_scope
+    scope = await resolve_tenant_scope(request, license_key, db)
+    if not scope["is_master"] and scope["owner_license_key"] in ("", "__none__"):
+        raise HTTPException(403, "Geçerli lisans veya master yetkisi gerekli")
+    if payload.high_spam_threshold < payload.spam_threshold:
+        raise HTTPException(400, "high_spam_threshold ≥ spam_threshold olmalı")
+    target = (
+        scope["owner_license_key"]
+        if not scope["is_master"]
+        else (scope["owner_license_key"] or license_key or "")
+    )
+    if not target:
+        raise HTTPException(400, "Hedef lisans belirtilmedi (master için ?license_key gerekli)")
+    r = await db.licenses.update_one(
+        {"license_key": target},
+        {"$set": {
+            "spam_threshold": payload.spam_threshold,
+            "high_spam_threshold": payload.high_spam_threshold,
+            "thresholds_updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "Lisans bulunamadı")
+    return {"ok": True, "license_key": target,
+            "spam_threshold": payload.spam_threshold,
+            "high_spam_threshold": payload.high_spam_threshold}
+
+
+# ------- Plugin health metrics (skor normalize sayacı) --------------------
+@router.get("/health/normalization")
+async def normalization_health(request: Request, license_key: Optional[str] = None,
+                                hours: int = 24):
+    """Son N saatte kaç mail'in `score_normalized=True` olduğunu döner.
+    Normalize sayısı >100 ise plugin'de bug var demektir → master'a uyarı.
+
+    Alarm mantığı arka planda `_run_plugin_health_check` ile periyodik olarak
+    çalışır; bu endpoint dashboard/inceleme içindir."""
+    from tenant import resolve_tenant_scope
+    scope = await resolve_tenant_scope(request, license_key, db)
+    q: dict = {}
+    if not scope["is_master"]:
+        if scope["owner_license_key"] in ("", "__none__"):
+            raise HTTPException(403, "Geçerli lisans gerekli")
+        q["license_key"] = scope["owner_license_key"]
+    elif scope["owner_license_key"]:
+        q["license_key"] = scope["owner_license_key"]
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    total = await db.mail_events.count_documents({**q, "ingested_at": {"$gte": since}})
+    normalized = await db.mail_events.count_documents({**q, "ingested_at": {"$gte": since}, "score_normalized": True})
+    clamped = await db.mail_events.count_documents({**q, "ingested_at": {"$gte": since}, "score_clamped": True})
+    ratio = (normalized / total * 100) if total else 0
+    status = "healthy"
+    if normalized > 100:
+        status = "critical"
+    elif ratio > 20 and total >= 20:
+        status = "warning"
+    return {
+        "total": total, "normalized": normalized, "clamped": clamped,
+        "normalized_ratio": round(ratio, 1),
+        "status": status, "hours": hours,
         "scope": {"is_master": scope["is_master"], "owner": scope["owner_license_key"]},
     }
 

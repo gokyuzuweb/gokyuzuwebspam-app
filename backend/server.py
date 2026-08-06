@@ -482,6 +482,7 @@ async def _startup() -> None:
     asyncio.create_task(_pos_health_monitor_task())
     asyncio.create_task(_daily_violations_cleanup_task())
     asyncio.create_task(_threat_ratio_monitor_task())
+    asyncio.create_task(_plugin_normalization_health_task())
 
 
 async def _daily_violations_cleanup_task():
@@ -627,6 +628,103 @@ async def _threat_ratio_scan_once(min_mails: int = 20, threshold: float = 0.30,
                 await _send_email(ns["admin_email"], subj, body)
         except Exception as em:
             log.warning("threat-alert email failed: %s", em)
+    return created
+
+
+async def _plugin_normalization_health_task():
+    """Her 30 dakikada bir tüm bayilerde son 24 saatte skor normalize edilen mail
+    sayısını sayar. >100 ise plugin'de bug var (yanlış `total_score` gönderiyor)
+    → master_alerts'a UNSEEN uyarı ekler + admin e-postasına bildirir.
+
+    Dedup: aynı bayi için son 6 saat içinde normalization_alert varsa tekrar yazmaz."""
+    await asyncio.sleep(300)  # startup'tan 5 dk sonra
+    while True:
+        try:
+            await _plugin_normalization_scan_once()
+        except Exception as ex:
+            log.warning("plugin-normalization-health error: %s", ex)
+        await asyncio.sleep(1800)  # 30 dakika
+
+
+async def _plugin_normalization_scan_once(threshold: int = 100,
+                                            hours: int = 24,
+                                            dedupe_hours: int = 6) -> int:
+    """Bir tarama turu. Kaç yeni uyarı oluşturulduğunu döner."""
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(hours=hours)).isoformat()
+    dedupe_cutoff = (now - timedelta(hours=dedupe_hours)).isoformat()
+    created = 0
+    async for r in db.resellers.find({"active": {"$ne": False}}, {"_id": 0}):
+        lic_key = r.get("license_key") or ""
+        if not lic_key:
+            continue
+        norm_count = await db.mail_events.count_documents({
+            "license_key": lic_key,
+            "score_normalized": True,
+            "ingested_at": {"$gte": since},
+        })
+        if norm_count < threshold:
+            continue
+        # Dedup
+        recent = await db.master_alerts.find_one({
+            "type": "plugin_normalization",
+            "license_key": lic_key,
+            "created_at": {"$gte": dedupe_cutoff},
+        }, {"_id": 0})
+        if recent:
+            continue
+        alert = {
+            "id": str(uuid.uuid4()),
+            "type": "plugin_normalization",
+            "severity": "warning",
+            "license_key": lic_key,
+            "reseller_email": r.get("email"),
+            "reseller_company": r.get("company"),
+            "message": (
+                f"Bayi {r.get('company') or r.get('email')} son {hours} saat "
+                f"içinde {norm_count} mail'de skor normalize etti — plugin'de "
+                f"bug var (yanlış `total_score`). WHM sunucusunda "
+                f"mailshield-logtail.pl güncellenmeli."
+            ),
+            "normalized_count": norm_count,
+            "hours": hours,
+            "seen": False,
+            "created_at": now.isoformat(),
+        }
+        await db.master_alerts.insert_one(alert)
+        created += 1
+        try:
+            await db.logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "source": "plugin_health",
+                "level": "warn",
+                "message": alert["message"],
+                "at": now.isoformat(),
+            })
+        except Exception:
+            pass
+        # E-posta bildirimi
+        try:
+            ns = await _notify_settings()
+            if ns.get("email_enabled") and ns.get("admin_email"):
+                subj = f"[GökyüzüWebSpam] Plugin Skor Bug'ı — {r.get('company') or r.get('email')}"
+                body = (
+                    f"Merhaba,\n\n"
+                    f"Bayi plugin'i yanlış `total_score` gönderiyor. Panel son "
+                    f"{hours} saatte {norm_count} mail'in skorunu SpamAssassin "
+                    f"değeriyle otomatik düzeltti.\n\n"
+                    f"  Bayi   : {r.get('company','')} <{r.get('email','')}>\n"
+                    f"  Lisans : {lic_key}\n"
+                    f"  Normalize sayısı: {norm_count}\n"
+                    f"  Eşik   : {threshold}\n"
+                    f"  Zaman  : {now.isoformat()}\n\n"
+                    f"Aksiyon: Bayiden `install-bayi.sh` üzerinden plugin'i "
+                    f"güncellemesini isteyin.\n\n"
+                    f"— GökyüzüWebSpam Plugin Health Monitor\n"
+                )
+                await _send_email(ns["admin_email"], subj, body)
+        except Exception as em:
+            log.warning("plugin-health email failed: %s", em)
     return created
 
 
@@ -1203,9 +1301,40 @@ async def quarantine_stats(request: Request, license_key: Optional[str] = None):
         {"$limit": 5},
     ]):
         top_senders.append({"sender": row.get("_id") or "?", "count": int(row.get("n") or 0)})
+    # Skor dağılımı histogram — mail_events üzerinden (karantina + akış hepsi)
+    # Bucket'lar: 0-3 clean, 3-5 suspicious, 5-10 spam, 10+ high_spam
+    mail_q: dict = {}
+    if scope["is_master"]:
+        if scope["owner_license_key"]:
+            mail_q["license_key"] = scope["owner_license_key"]
+    else:
+        mail_q["license_key"] = scope["owner_license_key"] or "__none__"
+    since_iso = (now - timedelta(days=7)).isoformat()
+    mail_q["ingested_at"] = {"$gte": since_iso}
+    buckets = {"clean": 0, "suspicious": 0, "spam": 0, "high_spam": 0}
+    async for row in db.mail_events.aggregate([
+        {"$match": mail_q},
+        {"$bucket": {
+            "groupBy": {"$ifNull": ["$total_score", 0]},
+            "boundaries": [-1000, 3, 5, 10, 1000],
+            "default": "other",
+            "output": {"n": {"$sum": 1}},
+        }},
+    ]):
+        b_id = row.get("_id")
+        n = int(row.get("n") or 0)
+        if b_id == -1000:
+            buckets["clean"] = n
+        elif b_id == 3:
+            buckets["suspicious"] = n
+        elif b_id == 5:
+            buckets["spam"] = n
+        elif b_id == 10:
+            buckets["high_spam"] = n
     return {
         "total": total, "today": today, "week": week_count, "released": released,
         "verdicts": verdicts, "top_senders": top_senders,
+        "score_distribution": buckets,
         "generated_at": now.isoformat(),
     }
 
@@ -2985,6 +3114,16 @@ async def admin_resellers_live(request: Request, license_key: Optional[str] = No
         "online_count": sum(1 for x in out if x["online"]),
         "resellers": out,
     }
+
+
+@api.post("/admin/plugin-health/scan")
+async def admin_plugin_health_scan(request: Request, license_key: Optional[str] = None,
+                                    threshold: int = 100, hours: int = 24):
+    """Master-only. Plugin normalization taramasını manuel tetikle.
+    Test için: `threshold=1` yapıp mevcut normalize sayısını uyarı olarak yaz."""
+    await _require_master(request, license_key)
+    created = await _plugin_normalization_scan_once(threshold=threshold, hours=hours, dedupe_hours=0)
+    return {"ok": True, "created": created, "threshold": threshold, "hours": hours}
 
 
 @api.get("/admin/threat-alerts")
