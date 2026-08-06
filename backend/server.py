@@ -1532,9 +1532,15 @@ async def _tenant_scope(request: Request, license_key_arg: Optional[str]) -> dic
     if master_env and (hdr == master_env or cookie == master_env):
         target = license_key_arg if (license_key_arg and license_key_arg != master_env) else ""
         return {"is_master": True, "owner_license_key": target}
-    # 2) Legacy: license_key_arg master ile eşleşiyor
+    # 2) Legacy: license_key_arg master ile eşleşiyor — SECURITY v35: sadece
+    #    MASTER_IP'den gelen çağrılar için geçerli (query-string escalation önlemi)
     if master_env and license_key_arg == master_env:
-        return {"is_master": True, "owner_license_key": ""}
+        master_ip = os.environ.get("MASTER_IP", "")
+        xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        client_ip = xff or (request.client.host if request.client else "")
+        if master_ip and client_ip == master_ip:
+            return {"is_master": True, "owner_license_key": ""}
+        # Master key + yanlış IP → yükseltilmez, bayi olarak devam
     # 3) Bayi
     st = await _plugin_status_payload()
     return {"is_master": False, "owner_license_key": st.get("license_key") or ""}

@@ -24,15 +24,25 @@ router = APIRouter(prefix="/queue", tags=["queue"])
 async def _resolve_tenant(request: Request, license_key_arg: Optional[str]) -> dict:
     """Basit tenant scope: master header/cookie varsa is_master=True (verilen
     license_key'i target olarak kullanır). Aksi halde bayi kabul edilir ve
-    kendi plugin_state'inden license_key okunur; kullanıcı bunu override edemez."""
+    kendi plugin_state'inden license_key okunur; kullanıcı bunu override edemez.
+
+    SECURITY: v35 fix — sadece `license_key_arg == MASTER_KEY` üzerinden master
+    scope veremeyiz (query-string escalation). Legacy fallback için IP kontrolü
+    zorunlu (MASTER_IP env)."""
     master_env = os.environ.get("MASTER_LICENSE_KEY", "")
     hdr = request.headers.get("x-master-key") or ""
     cookie = request.cookies.get("gws_master_session") or ""
     if master_env and (hdr == master_env or cookie == master_env):
         target = license_key_arg if (license_key_arg and license_key_arg != master_env) else None
         return {"is_master": True, "license_key": target}
+    # Legacy WHM plugin (no header/cookie) — güvenlik için MASTER_IP zorunlu
     if master_env and license_key_arg == master_env:
-        return {"is_master": True, "license_key": None}
+        master_ip = os.environ.get("MASTER_IP", "")
+        xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        client_ip = xff or (request.client.host if request.client else "")
+        if master_ip and client_ip == master_ip:
+            return {"is_master": True, "license_key": None}
+        # Master key + wrong IP → reject silently, treat as reseller
     # Bayi: kendi state'inden okur; argümanı yok say (isteğe bağlı override yok)
     st = await db.plugin_state.find_one({"_id": "main"}, {"_id": 0, "license_key": 1}) or {}
     return {"is_master": False, "license_key": st.get("license_key") or ""}
@@ -119,6 +129,7 @@ async def list_queue(
     kullanabilir."""
     scope = await _resolve_tenant(request, license_key)
     effective_lk = scope["license_key"]
+    scope_meta = {"is_master": scope["is_master"], "license_key": effective_lk}
     if _has_exim():
         try:
             args = ["exiqgrep", "-a"]
@@ -127,7 +138,7 @@ async def list_queue(
             r = subprocess.run(args, capture_output=True, timeout=5, text=True)
             if r.returncode == 0:
                 items = _parse_exiqgrep(r.stdout)[:limit]
-                return {"items": items, "source": "exim", "count": len(items)}
+                return {"items": items, "source": "exim", "count": len(items), "scope": scope_meta}
         except Exception:
             pass
     items = await _mock_queue(effective_lk, limit, verdict=verdict, search=search)
@@ -135,7 +146,7 @@ async def list_queue(
         items = [i for i in items if i.get("frozen")]
     return {
         "items": items, "source": "mock", "count": len(items),
-        "scope": {"is_master": scope["is_master"], "license_key": effective_lk},
+        "scope": scope_meta,
     }
 
 
@@ -144,13 +155,14 @@ async def queue_stats(request: Request, license_key: Optional[str] = None):
     """Kuyruk özet: total, frozen, high_spam. Tenant scope zorlanır."""
     scope = await _resolve_tenant(request, license_key)
     effective_lk = scope["license_key"]
+    scope_meta = {"is_master": scope["is_master"], "license_key": effective_lk}
     if _has_exim():
         try:
             r = subprocess.run(["exim", "-bpc"], capture_output=True, timeout=5, text=True)
             total = int((r.stdout or "0").strip() or "0")
             rz = subprocess.run(["exim", "-bpr"], capture_output=True, timeout=5, text=True)
             frozen = sum(1 for _l in (rz.stdout or "").splitlines() if "*** frozen ***" in _l)
-            return {"total": total, "frozen": frozen, "source": "exim"}
+            return {"total": total, "frozen": frozen, "source": "exim", "scope": scope_meta}
         except Exception:
             pass
     items = await _mock_queue(effective_lk, 500)
@@ -161,7 +173,7 @@ async def queue_stats(request: Request, license_key: Optional[str] = None):
         "virus": sum(1 for i in items if i.get("verdict") == "virus"),
         "blocked": sum(1 for i in items if i.get("verdict") == "blocked"),
         "source": "mock",
-        "scope": {"is_master": scope["is_master"], "license_key": effective_lk},
+        "scope": scope_meta,
     }
 
 

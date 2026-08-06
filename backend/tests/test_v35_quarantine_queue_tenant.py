@@ -243,3 +243,122 @@ class TestQueueTenantIsolation:
         """Master with valid header passes license_key=X → scope.is_master True."""
         r = master.get(f"{BASE_URL}/api/queue?license_key=SOME-BAYI-KEY&limit=5")
         assert r.status_code == 200
+
+
+# ---------------- v35 REGRESSION FIX: query-string master escalation --------
+class TestV35TenantBypassFix:
+    """Regression tests for the critical query-string master escalation bug.
+
+    Prior behaviour: /api/queue/stats?license_key=MASTER_KEY (anonymous) →
+    scope.is_master = True. FIX: master privileges must require x-master-key
+    header, gws_master_session cookie, OR X-Forwarded-For == MASTER_IP.
+    """
+
+    def test_anon_query_master_key_on_queue_stats_denied(self):
+        """Anonymous caller passing ?license_key=MASTER_KEY must NOT get master."""
+        r = requests.get(
+            f"{BASE_URL}/api/queue/stats?license_key={MASTER_KEY}",
+            headers={"Content-Type": "application/json"},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        # scope must be present in BOTH exim and mock branches after v35 fix
+        assert "scope" in d, f"scope block missing from queue/stats response: {d}"
+        assert d["scope"].get("is_master") is False, (
+            f"CRITICAL: anonymous query-string master escalation NOT fixed: {d['scope']}"
+        )
+
+    def test_anon_query_master_key_on_queue_list_denied(self):
+        r = requests.get(
+            f"{BASE_URL}/api/queue?license_key={MASTER_KEY}&limit=5",
+            headers={"Content-Type": "application/json"},
+        )
+        assert r.status_code == 200
+        d = r.json()
+        assert "scope" in d, f"scope block missing from queue list: {d}"
+        assert d["scope"].get("is_master") is False, (
+            f"CRITICAL: anonymous query-string master escalation NOT fixed: {d['scope']}"
+        )
+
+    def test_anon_query_master_key_on_quarantine_denied(self):
+        """server.py::_tenant_scope — same fix must apply here too.
+
+        Anonymous caller with ?license_key=MASTER should NOT see master data.
+        A fresh anon caller has no plugin_state license → owner scoping = "".
+        We ensure the response either returns 401/403 OR returns empty list (no
+        master data leaked)."""
+        # First take a master snapshot to see what "master data" looks like
+        master_snap = requests.get(
+            f"{BASE_URL}/api/quarantine?limit=5",
+            headers={"x-master-key": MASTER_KEY, "Content-Type": "application/json"},
+        )
+        master_ids = set()
+        if master_snap.status_code == 200 and isinstance(master_snap.json(), list):
+            master_ids = {row.get("id") for row in master_snap.json()}
+
+        r = requests.get(
+            f"{BASE_URL}/api/quarantine?license_key={MASTER_KEY}&limit=50",
+            headers={"Content-Type": "application/json"},
+        )
+        # Accept 200 with empty/scoped result OR 401/403
+        if r.status_code == 200:
+            rows = r.json()
+            if isinstance(rows, list):
+                leaked = master_ids.intersection({row.get("id") for row in rows})
+                assert not leaked, (
+                    f"CRITICAL: anon query-string master escalation leaked "
+                    f"{len(leaked)} master rows via /api/quarantine"
+                )
+        else:
+            assert r.status_code in (401, 403), r.text
+
+    def test_master_ip_legacy_still_works(self):
+        """Positive path: X-Forwarded-For=MASTER_IP + ?license_key=MASTER
+        must succeed (legacy WHM plugin compatibility)."""
+        r = requests.get(
+            f"{BASE_URL}/api/queue/stats?license_key={MASTER_KEY}",
+            headers={
+                "Content-Type": "application/json",
+                "X-Forwarded-For": "89.19.15.58",
+            },
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert "scope" in d, f"scope block missing: {d}"
+        assert d["scope"].get("is_master") is True, (
+            f"Legacy MASTER_IP fallback broken. scope={d.get('scope')}"
+        )
+
+    def test_master_header_without_query_still_works(self):
+        """x-master-key header alone (no query string) grants master."""
+        r = requests.get(
+            f"{BASE_URL}/api/queue/stats",
+            headers={"x-master-key": MASTER_KEY, "Content-Type": "application/json"},
+        )
+        assert r.status_code == 200
+        d = r.json()
+        assert d.get("scope", {}).get("is_master") is True, d
+
+    def test_master_cookie_without_query_still_works(self):
+        """gws_master_session cookie alone grants master."""
+        s = requests.Session()
+        s.cookies.set("gws_master_session", MASTER_KEY, domain=BASE_URL.split("//")[-1].split("/")[0])
+        r = s.get(f"{BASE_URL}/api/queue/stats")
+        assert r.status_code == 200
+        d = r.json()
+        assert d.get("scope", {}).get("is_master") is True, d
+
+    def test_scope_meta_present_in_exim_branch(self):
+        """v35: scope_meta must be present in BOTH exim and mock branches."""
+        r = requests.get(
+            f"{BASE_URL}/api/queue?limit=1",
+            headers={"x-master-key": MASTER_KEY, "Content-Type": "application/json"},
+        )
+        assert r.status_code == 200
+        d = r.json()
+        assert "scope" in d, (
+            f"scope missing from response (source={d.get('source')}). "
+            f"Must be returned in both exim and mock branches. body={d}"
+        )
+        assert "is_master" in d["scope"]
+        assert "source" in d and d["source"] in ("exim", "mock")

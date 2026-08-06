@@ -1,0 +1,39 @@
+{
+  "summary": "v35 REGRESSION RETEST — Both fixes verified. (1) CRITICAL query-string master escalation is closed in BOTH /app/backend/routes/queue.py::_resolve_tenant AND /app/backend/server.py::_tenant_scope: master privileges now require x-master-key header, gws_master_session cookie, OR X-Forwarded-For==MASTER_IP (89.19.15.58). scope_meta now present in both exim and mock branches of /api/queue and /api/queue/stats. (2) Frontend Purge confirm button [data-testid='q-purge-confirm'] correctly disabled (disabled + aria-disabled + pointer-events-none + opacity-50 + cursor-not-allowed) until user types 'sil' (case-insensitive). Backend: 25/25 pytest passing (17 original + 7 new v35 regression + 1 more). Frontend: purge dialog behaves per spec.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "wss://.../api/maintenance/ws/attacks",
+        "issue": "WebSocket connection still failing on Quarantine page load (carry-over from iteration_29; non-blocking)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v35_quarantine_queue_tenant.py",
+    "/app/test_reports/pytest/v36_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional: investigate /api/maintenance/ws/attacks WS failure (older item)."
+  ],
+  "critical_code_review_comments": [
+    "Fix is correctly mirrored in both _resolve_tenant (queue.py) and _tenant_scope (server.py) with an identical MASTER_IP guard — good.",
+    "Consider adding a lightweight audit log entry when the MASTER_IP legacy fallback is triggered so operators can spot lingering unpatched WHM plugins.",
+    "server.py is still 7290 lines — should be modularised (carry-over)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v35_quarantine_queue_tenant.py (added TestV35TenantBypassFix class — 7 regression tests)"
+  ],
+  "success_rate": {"backend": "100% (25/25)", "frontend": "100% purge dialog spec met"},
+  "test_credentials": "Master license: MS-C02AB012652A4FE692D69676 via x-master-key header, gws_master_session cookie, or X-Forwarded-For=89.19.15.58",
+  "seed_data_creation": "Tests spin up a throwaway reseller (@test-v35.com) via /api/reseller/auth/register with a fresh license created through /api/licenses. Not cleaned up automatically.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Both v35 fixes (tenant isolation bypass + purge dialog gate) verified. Regression suite lives at /app/backend/tests/test_v35_quarantine_queue_tenant.py; new class TestV35TenantBypassFix has 7 tests that specifically guard against re-introduction of the ?license_key=MASTER escalation. Positive-path master auth (header, cookie, MASTER_IP legacy) all validated. Scope meta now returned in both exim and mock branches, so mock-vs-exim gating is not required for the tenant assertion.",
+  "rca of the issue": "PRIOR: Legacy fallback branches in _resolve_tenant / _tenant_scope granted is_master=True whenever license_key_arg matched MASTER_LICENSE_KEY, with NO caller identity check — any unauthenticated caller could escalate by sending ?license_key=MASTER_KEY in the URL. FIX: The legacy branch now additionally requires the caller IP (via X-Forwarded-For or request.client.host) to equal MASTER_IP (89.19.15.58) from env. Header/cookie paths remain unchanged. This preserves legacy WHM-plugin behaviour (WHM box has the fixed public IP) while closing the query-string escalation vector. Frontend purge dialog RCA: PurgeAllDialog previously had button.disabled but no visual/pointer-events state; now uses conditional class with pointer-events-none, opacity-50, cursor-not-allowed and aria-disabled when !canGo (canGo = confirm.toLowerCase() === 'sil')."
+}

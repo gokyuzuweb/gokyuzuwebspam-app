@@ -392,8 +392,13 @@ function PurgeAllDialog({ onClose, onConfirm, pending }) {
           <button onClick={onClose} className="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800">Vazgeç</button>
           <button onClick={() => canGo && onConfirm(verdict, days ? Number(days) : null)}
                   disabled={!canGo || pending}
+                  aria-disabled={!canGo || pending}
                   data-testid="q-purge-confirm"
-                  className="text-xs px-3 py-1.5 rounded border border-rose-500/40 bg-rose-500/20 text-rose-200 hover:bg-rose-500/30 disabled:opacity-40 disabled:cursor-not-allowed">
+                  className={`text-xs px-3 py-1.5 rounded border transition ${
+                    (!canGo || pending)
+                      ? "border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed opacity-50 pointer-events-none"
+                      : "border-rose-500/40 bg-rose-500/20 text-rose-200 hover:bg-rose-500/30"
+                  }`}>
             {pending ? "Siliniyor…" : "Kalıcı Olarak Sil"}
           </button>
         </div>
