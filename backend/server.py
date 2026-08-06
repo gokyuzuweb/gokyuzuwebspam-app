@@ -1093,6 +1093,15 @@ async def quarantine_list(
     if scope["is_master"]:
         if scope["owner_license_key"]:
             q["owner_license_key"] = scope["owner_license_key"]
+        # Master default görünümde: kendi + legacy (owner_license_key olmayan) kayıtları
+        else:
+            master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+            q["$or"] = [
+                {"owner_license_key": master_env},
+                {"owner_license_key": {"$exists": False}},
+                {"owner_license_key": None},
+                {"owner_license_key": ""},
+            ]
     else:
         q["owner_license_key"] = scope["owner_license_key"] or "__none__"
     if verdict and verdict != "all":
@@ -1154,6 +1163,48 @@ _DEMO_DOMAINS = {
 }
 
 
+@api.get("/quarantine/stats")
+async def quarantine_stats(request: Request, license_key: Optional[str] = None):
+    """Kuyruk paneli üst bandında gösterilecek KPI'lar: toplam, bugün,
+    verdict kırılımı, en sık gönderici/domain, en eski/son gelen."""
+    scope = await _tenant_scope(request, license_key)
+    await _require_feature(scope, "quarantine_view")
+    q: dict = {}
+    if scope["is_master"]:
+        if scope["owner_license_key"]:
+            q["owner_license_key"] = scope["owner_license_key"]
+    else:
+        q["owner_license_key"] = scope["owner_license_key"] or "__none__"
+    now = datetime.now(timezone.utc)
+    day = (now - timedelta(days=1)).isoformat()
+    week = (now - timedelta(days=7)).isoformat()
+    total = await db.quarantine.count_documents(q)
+    today = await db.quarantine.count_documents({**q, "received_at": {"$gte": day}})
+    week_count = await db.quarantine.count_documents({**q, "received_at": {"$gte": week}})
+    released = await db.quarantine.count_documents({**q, "released": True})
+    verdicts: dict = {}
+    pipeline = [
+        {"$match": q},
+        {"$group": {"_id": "$verdict", "n": {"$sum": 1}}},
+    ]
+    async for row in db.quarantine.aggregate(pipeline):
+        verdicts[str(row.get("_id") or "unknown")] = int(row.get("n") or 0)
+    # En sık gönderici (top 5)
+    top_senders = []
+    async for row in db.quarantine.aggregate([
+        {"$match": q},
+        {"$group": {"_id": "$sender", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}},
+        {"$limit": 5},
+    ]):
+        top_senders.append({"sender": row.get("_id") or "?", "count": int(row.get("n") or 0)})
+    return {
+        "total": total, "today": today, "week": week_count, "released": released,
+        "verdicts": verdicts, "top_senders": top_senders,
+        "generated_at": now.isoformat(),
+    }
+
+
 @api.get("/quarantine/{item_id}")
 async def quarantine_get(item_id: str):
     doc = await db.quarantine.find_one({"id": item_id}, {"_id": 0})
@@ -1213,18 +1264,90 @@ async def quarantine_release(action: BulkAction, request: Request, license_key: 
 @api.post("/quarantine/delete")
 async def quarantine_delete(action: BulkAction, request: Request, license_key: Optional[str] = None):
     """Karantina toplu silme. Plan gate: `quarantine_delete`. Bayi sadece
-    kendi lisansındaki kayıtları silebilir."""
+    kendi lisansındaki kayıtları silebilir. Master legacy (owner_license_key
+    olmayan) kayıtları da silebilir."""
     scope = await _tenant_scope(request, license_key)
     await _require_feature(scope, "quarantine_delete")
     match = {"id": {"$in": action.ids}}
     if not scope["is_master"]:
         match["owner_license_key"] = scope["owner_license_key"] or "__none__"
     result = await db.quarantine.delete_many(match)
-    await db.logs.insert_one(ActivityLog(
-        source="quarantine", level="warn",
-        message=f"{result.deleted_count} karantina mesajı silindi",
-    ).model_dump())
     return {"deleted": result.deleted_count}
+
+
+@api.post("/quarantine/purge-all")
+async def quarantine_purge_all(request: Request, license_key: Optional[str] = None,
+                                verdict: Optional[str] = None, older_than_days: Optional[int] = None):
+    """Karantinada belirli filtreye uyan TÜM kayıtları temizler. Master için
+    tam veya filtreli purge; bayi için sadece kendi kayıtları. Filtreler:
+      - verdict = 'spam' | 'virus' | 'phish' | 'all'
+      - older_than_days = N (sadece N günden eski olanları sil)
+    """
+    scope = await _tenant_scope(request, license_key)
+    await _require_feature(scope, "quarantine_delete")
+    q: dict = {}
+    if scope["is_master"]:
+        if scope["owner_license_key"]:
+            q["owner_license_key"] = scope["owner_license_key"]
+    else:
+        q["owner_license_key"] = scope["owner_license_key"] or "__none__"
+    if verdict and verdict != "all":
+        q["verdict"] = verdict
+    if older_than_days and older_than_days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat()
+        q["received_at"] = {"$lt": cutoff}
+    result = await db.quarantine.delete_many(q)
+    await db.logs.insert_one(ActivityLog(
+        source="quarantine", level="warning",
+        message=f"PURGE-ALL · silinen: {result.deleted_count} · filter={q}",
+    ).model_dump())
+    return {"deleted": result.deleted_count, "filter": {"verdict": verdict, "older_than_days": older_than_days}}
+
+
+@api.post("/quarantine/forward")
+async def quarantine_forward(payload: dict, request: Request, license_key: Optional[str] = None):
+    """Karantinadaki bir maili farklı bir adrese `forward`. payload:
+       { ids: [...], to: 'admin@example.com' }
+    Plan gate: `quarantine_release` (aynı akış).
+    """
+    scope = await _tenant_scope(request, license_key)
+    await _require_feature(scope, "quarantine_release")
+    ids = payload.get("ids") or []
+    to_addr = (payload.get("to") or "").strip()
+    if not ids or not to_addr or "@" not in to_addr:
+        raise HTTPException(400, "'ids' ve geçerli 'to' e-postası gerekli")
+    match = {"id": {"$in": ids}}
+    if not scope["is_master"]:
+        match["owner_license_key"] = scope["owner_license_key"] or "__none__"
+    docs = await db.quarantine.find(match, {"_id": 0}).to_list(500)
+    forwarded = 0
+    for d in docs:
+        try:
+            subj = f"[FWD-Karantina] {d.get('subject', '(konu yok)')}"
+            body = (
+                f"Karantinada tutulan mail forward edildi\n\n"
+                f"Gönderici: {d.get('sender','?')}\n"
+                f"Alıcı: {d.get('recipient','?')}\n"
+                f"Verdict: {d.get('verdict','?')}\n"
+                f"Alındı: {d.get('received_at','?')}\n\n"
+                f"─── ORİJİNAL MAİL ───\n{d.get('body','')}\n"
+            )
+            ok, _ = await _send_email(to_addr, subj, body)
+            if ok:
+                forwarded += 1
+        except Exception:
+            pass
+    await db.logs.insert_one(ActivityLog(
+        source="quarantine", level="info",
+        message=f"FORWARD · {forwarded}/{len(docs)} mail → {to_addr}",
+    ).model_dump())
+    return {"forwarded": forwarded, "total": len(docs), "to": to_addr}
+
+
+@api.post("/quarantine/delete-orig")
+async def quarantine_delete_orig(action: BulkAction, request: Request, license_key: Optional[str] = None):
+    """Legacy alias — /quarantine/delete ile aynı davranır."""
+    return await quarantine_delete(action, request, license_key)
 
 
 @api.post("/quarantine/report-spam")
