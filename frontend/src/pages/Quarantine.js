@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Trash2, RotateCcw, GraduationCap, X, Mail, Server, Hash, Filter } from "lucide-react";
+import { Search, Trash2, RotateCcw, GraduationCap, X, Mail, Server, Hash, Filter, BarChart3, Flame, Forward, Calendar, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -32,17 +32,31 @@ export default function Quarantine() {
   const [search, setSearch] = useState("");
   const [verdict, setVerdict] = useState("all");
   const [engine, setEngine] = useState("all");
+  const [ageFilter, setAgeFilter] = useState("all"); // all | 1d | 7d | 30d
   const [selected, setSelected] = useState(new Set());
   const [preview, setPreview] = useState(null);
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [fwdOpen, setFwdOpen] = useState(false);
   const locale = { tr: "tr-TR", en: "en-US", de: "de-DE", fr: "fr-FR", es: "es-ES", ar: "ar-SA" }[effective] || "en-US";
 
+  const stats = useQuery({
+    queryKey: ["quarantine-stats"],
+    queryFn: () => api.quarantineStats(),
+    refetchInterval: 30000,
+  });
+
   const list = useQuery({
-    queryKey: ["quarantine", search, verdict, engine],
+    queryKey: ["quarantine", search, verdict, engine, ageFilter],
     queryFn: () => api.quarantine({ search, verdict, engine, limit: 300 }),
     refetchInterval: 30000,
   });
 
-  const rows = list.data || [];
+  const rawRows = list.data || [];
+  const rows = ageFilter === "all" ? rawRows : rawRows.filter(r => {
+    if (!r.received_at) return true;
+    const days = (Date.now() - new Date(r.received_at).getTime()) / (1000 * 60 * 60 * 24);
+    return days <= ({ "1d": 1, "7d": 7, "30d": 30 }[ageFilter] || Infinity);
+  });
   const allChecked = rows.length > 0 && selected.size === rows.length;
 
   const toggle = (id) => {
@@ -68,10 +82,33 @@ export default function Quarantine() {
       else toast.success(t("quarantine.taught_msg", { n }));
       setSelected(new Set());
       qc.invalidateQueries({ queryKey: ["quarantine"] });
+      qc.invalidateQueries({ queryKey: ["quarantine-stats"] });
       qc.invalidateQueries({ queryKey: ["overview"] });
       qc.invalidateQueries({ queryKey: ["lists"] });
     },
     onError: () => toast.error(t("quarantine.fail_msg")),
+  });
+
+  const forwardMut = useMutation({
+    mutationFn: ({ ids, to }) => api.quarantineForward({ ids, to }),
+    onSuccess: (data) => {
+      toast.success(`${data.forwarded}/${data.total} mesaj iletildi → ${data.to}`);
+      setFwdOpen(false);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["quarantine"] });
+    },
+    onError: (e) => toast.error("İletim başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
+
+  const purgeMut = useMutation({
+    mutationFn: ({ v, days }) => api.quarantinePurgeAll({ verdict: v, older_than_days: days }),
+    onSuccess: (data) => {
+      toast.success(`${data.deleted} kayıt kalıcı olarak silindi`);
+      setPurgeOpen(false);
+      qc.invalidateQueries({ queryKey: ["quarantine"] });
+      qc.invalidateQueries({ queryKey: ["quarantine-stats"] });
+    },
+    onError: (e) => toast.error("Toplu temizleme başarısız: " + (e?.response?.data?.detail || e.message)),
   });
 
   const runBulk = (action) => {
@@ -81,6 +118,9 @@ export default function Quarantine() {
 
   return (
     <div className="p-6 space-y-4">
+      {/* KPI band --------------------------------------------------------- */}
+      <QuarantineKPIBand stats={stats.data} />
+
       <Card>
         <CardBody className="p-3 flex flex-wrap items-center gap-3">
           <div className="flex-1 min-w-[240px] relative">
@@ -112,6 +152,14 @@ export default function Quarantine() {
               <option value="razor">Razor</option>
               <option value="ai">AI</option>
             </select>
+            <select data-testid="q-age" value={ageFilter} onChange={(e) => setAgeFilter(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm text-slate-200"
+              title="Tarih filtresi">
+              <option value="all">Tüm tarihler</option>
+              <option value="1d">Son 24 saat</option>
+              <option value="7d">Son 7 gün</option>
+              <option value="30d">Son 30 gün</option>
+            </select>
           </div>
           <div className="flex items-center gap-2 ml-auto">
             <span className="mono text-xs text-slate-500">{rows.length} {t("quarantine.records")}</span>
@@ -120,7 +168,7 @@ export default function Quarantine() {
         </CardBody>
       </Card>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button data-testid="q-release" onClick={() => runBulk("release")}
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm">
           <RotateCcw className="w-3.5 h-3.5" /> {t("quarantine.release_action")}
@@ -133,6 +181,25 @@ export default function Quarantine() {
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm">
           <GraduationCap className="w-3.5 h-3.5" /> {t("quarantine.report_action")}
         </button>
+        <button data-testid="q-forward-open" onClick={() => {
+            if (selected.size === 0) return toast.error(t("quarantine.select_first"));
+            setFwdOpen(true);
+          }}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 text-sm">
+          <Forward className="w-3.5 h-3.5" /> Farklı adrese ilet
+        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button data-testid="q-select-filtered" onClick={() => setSelected(new Set(rows.map(r => r.id)))}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-700 bg-slate-900/60 text-slate-300 hover:bg-slate-800 text-xs"
+            title="Filtreye uyan tüm kayıtları seç">
+            Filtrelenmişleri seç ({rows.length})
+          </button>
+          <button data-testid="q-purge-open" onClick={() => setPurgeOpen(true)}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-sm font-medium"
+            title="Filtreye uyan tümünü kalıcı olarak sil">
+            <Flame className="w-3.5 h-3.5" /> Hepsini Temizle
+          </button>
+        </div>
       </div>
 
       <Card>
@@ -191,6 +258,146 @@ export default function Quarantine() {
           }}
         />
       )}
+
+      {fwdOpen && (
+        <ForwardDialog
+          count={selected.size}
+          onClose={() => setFwdOpen(false)}
+          onConfirm={(to) => forwardMut.mutate({ ids: Array.from(selected), to })}
+          pending={forwardMut.isPending}
+        />
+      )}
+
+      {purgeOpen && (
+        <PurgeAllDialog
+          onClose={() => setPurgeOpen(false)}
+          onConfirm={(v, days) => purgeMut.mutate({ v, days })}
+          pending={purgeMut.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+/* -------- KPI Band ------------------------------------------------------ */
+function QuarantineKPIBand({ stats }) {
+  const items = [
+    { label: "Toplam", value: stats?.total ?? "—", tone: "text-slate-100", testid: "kpi-total" },
+    { label: "Bugün", value: stats?.today ?? "—", tone: "text-indigo-300", testid: "kpi-today" },
+    { label: "Son 7 gün", value: stats?.week ?? "—", tone: "text-sky-300", testid: "kpi-week" },
+    { label: "Teslim", value: stats?.released ?? "—", tone: "text-emerald-300", testid: "kpi-released" },
+    { label: "Spam", value: stats?.verdicts?.spam ?? 0, tone: "text-amber-300", testid: "kpi-spam" },
+    { label: "Virüs", value: stats?.verdicts?.virus ?? 0, tone: "text-rose-300", testid: "kpi-virus" },
+    { label: "Phish", value: stats?.verdicts?.phish ?? 0, tone: "text-fuchsia-300", testid: "kpi-phish" },
+  ];
+  return (
+    <Card>
+      <CardBody className="p-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          {items.map(it => (
+            <div key={it.label} data-testid={it.testid}
+                 className="rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500">{it.label}</div>
+              <div className={`mono text-lg font-semibold ${it.tone}`}>{it.value}</div>
+            </div>
+          ))}
+        </div>
+        {stats?.top_senders?.length ? (
+          <div className="mt-3 flex flex-wrap gap-1.5 items-center text-[11px]">
+            <span className="text-slate-500 uppercase tracking-widest text-[10px] mr-1">En sık gönderici:</span>
+            {stats.top_senders.map(s => (
+              <span key={s.sender} className="mono px-2 py-0.5 rounded border border-slate-700 bg-slate-950 text-slate-300"
+                    data-testid={`kpi-topsender-${s.sender}`}>
+                {s.sender} <span className="text-slate-500">·{s.count}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
+}
+
+/* -------- Forward dialog ------------------------------------------------- */
+function ForwardDialog({ count, onClose, onConfirm, pending }) {
+  const [to, setTo] = useState("");
+  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to);
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" data-testid="q-fwd-dialog">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl p-5 shadow-2xl">
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <h3 className="text-slate-100 font-semibold flex items-center gap-2"><Forward className="w-4 h-4"/> Farklı adrese ilet</h3>
+            <p className="text-xs text-slate-400 mt-1">Seçilen <span className="text-indigo-300 mono">{count}</span> karantina mesajı belirlediğiniz adrese kopyalanır. Orijinal kayıt karantinada kalır.</p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-800 text-slate-400"><X className="w-4 h-4"/></button>
+        </div>
+        <label className="text-xs text-slate-400 uppercase tracking-widest">Hedef e-posta</label>
+        <input value={to} onChange={(e) => setTo(e.target.value)}
+               placeholder="admin@sirketiniz.com"
+               data-testid="q-fwd-to"
+               className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-slate-200 focus:outline-none focus:border-sky-500/60"/>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800">Vazgeç</button>
+          <button onClick={() => valid && onConfirm(to)} disabled={!valid || pending}
+                  data-testid="q-fwd-confirm"
+                  className="text-xs px-3 py-1.5 rounded border border-sky-500/40 bg-sky-500/20 text-sky-200 hover:bg-sky-500/30 disabled:opacity-40 disabled:cursor-not-allowed">
+            {pending ? "İletiliyor…" : "İlet"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------- Purge-All dialog ---------------------------------------------- */
+function PurgeAllDialog({ onClose, onConfirm, pending }) {
+  const [verdict, setVerdict] = useState("all");
+  const [days, setDays] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const canGo = confirm.toLowerCase() === "sil";
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" data-testid="q-purge-dialog">
+      <div className="w-full max-w-md bg-slate-900 border border-rose-500/40 rounded-xl p-5 shadow-2xl">
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <h3 className="text-rose-200 font-semibold flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Karantinayı Toplu Temizle</h3>
+            <p className="text-xs text-slate-400 mt-1">Filtreye uyan <b>TÜM</b> karantina kayıtları kalıcı olarak silinir. Bu işlem geri alınamaz.</p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-800 text-slate-400"><X className="w-4 h-4"/></button>
+        </div>
+
+        <label className="text-xs text-slate-400 uppercase tracking-widest">Verdict filtresi</label>
+        <select value={verdict} onChange={(e) => setVerdict(e.target.value)} data-testid="q-purge-verdict"
+                className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm text-slate-200">
+          <option value="all">Hepsi</option>
+          <option value="spam">Sadece spam</option>
+          <option value="high_spam">Sadece high_spam</option>
+          <option value="virus">Sadece virüs</option>
+          <option value="phish">Sadece phish</option>
+        </select>
+
+        <label className="text-xs text-slate-400 uppercase tracking-widest mt-3 block">Yaş (gün, opsiyonel)</label>
+        <input value={days} onChange={(e) => setDays(e.target.value.replace(/[^0-9]/g, ""))}
+               placeholder="Örn: 30 (30 günden eski)"
+               data-testid="q-purge-days"
+               className="mt-1 w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-slate-200"/>
+
+        <label className="text-xs text-slate-400 uppercase tracking-widest mt-3 block">Onaylamak için &quot;sil&quot; yazın</label>
+        <input value={confirm} onChange={(e) => setConfirm(e.target.value)}
+               data-testid="q-purge-confirm-input"
+               className="mt-1 w-full bg-slate-950 border border-rose-500/30 rounded-md px-3 py-2 text-sm mono text-rose-200"/>
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800">Vazgeç</button>
+          <button onClick={() => canGo && onConfirm(verdict, days ? Number(days) : null)}
+                  disabled={!canGo || pending}
+                  data-testid="q-purge-confirm"
+                  className="text-xs px-3 py-1.5 rounded border border-rose-500/40 bg-rose-500/20 text-rose-200 hover:bg-rose-500/30 disabled:opacity-40 disabled:cursor-not-allowed">
+            {pending ? "Siliniyor…" : "Kalıcı Olarak Sil"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

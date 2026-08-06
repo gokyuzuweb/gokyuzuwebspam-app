@@ -1139,9 +1139,14 @@ async def quarantine_local_domains():
 
 
 @api.post("/quarantine/purge-demo")
-async def quarantine_purge_demo():
+async def quarantine_purge_demo(request: Request):
     """Master-only convenience: karantinada ve event'lerde demo alıcı domain'i
-    olan tüm kayıtları sil. WHM plugin'den gelen gerçek eventler korunur."""
+    olan tüm kayıtları sil. WHM plugin'den gelen gerçek eventler korunur.
+    Sadece master çağırabilir (bayi kendi verilerine dokunmak için normal
+    quarantine/delete akışı vardır)."""
+    scope = await _tenant_scope(request, None)
+    if not scope.get("is_master"):
+        raise HTTPException(403, "Bu işlem sadece master içindir")
     filt = {"$or": [
         {"recipient": {"$regex": r"@(" + "|".join(_DEMO_DOMAINS) + r")$", "$options": "i"}},
         {"to_addr":  {"$regex": r"@(" + "|".join(_DEMO_DOMAINS) + r")$", "$options": "i"}},
@@ -1298,7 +1303,7 @@ async def quarantine_purge_all(request: Request, license_key: Optional[str] = No
         q["received_at"] = {"$lt": cutoff}
     result = await db.quarantine.delete_many(q)
     await db.logs.insert_one(ActivityLog(
-        source="quarantine", level="warning",
+        source="quarantine", level="warn",
         message=f"PURGE-ALL · silinen: {result.deleted_count} · filter={q}",
     ).model_dump())
     return {"deleted": result.deleted_count, "filter": {"verdict": verdict, "older_than_days": older_than_days}}

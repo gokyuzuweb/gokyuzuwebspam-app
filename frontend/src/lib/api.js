@@ -139,6 +139,9 @@ export const api = {
   quarantineRelease: (ids) => client.post("/quarantine/release", { ids }).then(r => r.data),
   quarantineDelete: (ids) => client.post("/quarantine/delete", { ids }).then(r => r.data),
   quarantineReport: (ids) => client.post("/quarantine/report-spam", { ids }).then(r => r.data),
+  quarantineStats: (params = {}) => client.get("/quarantine/stats", { params }).then(r => r.data),
+  quarantinePurgeAll: (params = {}) => client.post("/quarantine/purge-all", null, { params }).then(r => r.data),
+  quarantineForward: (payload) => client.post("/quarantine/forward", payload).then(r => r.data),
 
   lists: (params = {}) => client.get("/lists", { params }).then(r => r.data),
   listAdd: (payload) => client.post("/lists", payload).then(r => r.data),

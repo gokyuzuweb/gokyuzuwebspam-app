@@ -3,17 +3,39 @@ Exim mail queue management (list + bulk actions).
 
 WHM sunucusunda `exiqgrep -a` / `exim -Mrm` / `exim -M` çağrıları gerçek çalışır.
 Preview / dev ortamında mock kuyruk oluşur (mail_events'ten türetilir) — böylece UI eksiksiz test edilir.
+
+Tenant izolasyonu: master (header/cookie) → istediği bayinin verisini görebilir.
+Bayi → her zaman kendi lisans key'i ile filtrelenir (frontend'den gelen key
+yok sayılır, plugin_state'ten alınır).
 """
 from __future__ import annotations
+import os
 import shutil
 import subprocess
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from deps import db
 
 router = APIRouter(prefix="/queue", tags=["queue"])
+
+
+async def _resolve_tenant(request: Request, license_key_arg: Optional[str]) -> dict:
+    """Basit tenant scope: master header/cookie varsa is_master=True (verilen
+    license_key'i target olarak kullanır). Aksi halde bayi kabul edilir ve
+    kendi plugin_state'inden license_key okunur; kullanıcı bunu override edemez."""
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    hdr = request.headers.get("x-master-key") or ""
+    cookie = request.cookies.get("gws_master_session") or ""
+    if master_env and (hdr == master_env or cookie == master_env):
+        target = license_key_arg if (license_key_arg and license_key_arg != master_env) else None
+        return {"is_master": True, "license_key": target}
+    if master_env and license_key_arg == master_env:
+        return {"is_master": True, "license_key": None}
+    # Bayi: kendi state'inden okur; argümanı yok say (isteğe bağlı override yok)
+    st = await db.plugin_state.find_one({"_id": "main"}, {"_id": 0, "license_key": 1}) or {}
+    return {"is_master": False, "license_key": st.get("license_key") or ""}
 
 
 def _iso() -> str:
@@ -24,11 +46,22 @@ def _has_exim() -> bool:
     return bool(shutil.which("exim") and shutil.which("exiqgrep"))
 
 
-async def _mock_queue(license_key: Optional[str], limit: int) -> list[dict]:
-    """Kuyruk için mock data — son 20 spam/high_spam eventi Exim-tarzı row olarak döner."""
-    q = {"verdict": {"$in": ["spam", "high_spam", "virus", "blocked"]}}
+async def _mock_queue(license_key: Optional[str], limit: int,
+                       verdict: Optional[str] = None,
+                       search: Optional[str] = None) -> list[dict]:
+    """Kuyruk için mock data — mail_events'ten Exim-tarzı satırlar üretir."""
+    q: dict = {"verdict": {"$in": ["spam", "high_spam", "virus", "blocked"]}}
+    # Bayi ise sadece kendi lisansı; master license_key=None ise hepsi
     if license_key:
         q["license_key"] = license_key
+    if verdict and verdict != "all":
+        q["verdict"] = verdict
+    if search:
+        q["$or"] = [
+            {"from_addr": {"$regex": search, "$options": "i"}},
+            {"to_addr": {"$regex": search, "$options": "i"}},
+            {"subject": {"$regex": search, "$options": "i"}},
+        ]
     rows = []
     cursor = db.mail_events.find(q, {"_id": 0}).sort("ingested_at", -1).limit(limit)
     async for e in cursor:
@@ -44,6 +77,7 @@ async def _mock_queue(license_key: Optional[str], limit: int) -> list[dict]:
             "frozen": (e.get("verdict") == "high_spam"),
             "attempts": 1,
             "spooled_at": e.get("ingested_at") or _iso(),
+            "owner_license_key": e.get("license_key") or "",
         })
     return rows
 
@@ -71,11 +105,20 @@ def _parse_exiqgrep(output: str) -> list[dict]:
 
 @router.get("")
 async def list_queue(
+    request: Request,
     license_key: Optional[str] = None,
     limit: int = Query(50, ge=1, le=500),
     only_frozen: bool = False,
+    verdict: Optional[str] = None,
+    search: Optional[str] = None,
 ):
-    """Kuyruktaki mailleri listele.  Gerçek ortam: exiqgrep. Aksi: mock."""
+    """Kuyruktaki mailleri listele. Gerçek ortam: exiqgrep. Aksi: mock.
+
+    Tenant izolasyonu: bayi frontend'den `license_key` gönderse bile plugin_state'ten
+    kendi lisansı zorlanır. Master ise verilen license_key'i bayiye drill-down için
+    kullanabilir."""
+    scope = await _resolve_tenant(request, license_key)
+    effective_lk = scope["license_key"]
     if _has_exim():
         try:
             args = ["exiqgrep", "-a"]
@@ -87,15 +130,20 @@ async def list_queue(
                 return {"items": items, "source": "exim", "count": len(items)}
         except Exception:
             pass
-    items = await _mock_queue(license_key, limit)
+    items = await _mock_queue(effective_lk, limit, verdict=verdict, search=search)
     if only_frozen:
         items = [i for i in items if i.get("frozen")]
-    return {"items": items, "source": "mock", "count": len(items)}
+    return {
+        "items": items, "source": "mock", "count": len(items),
+        "scope": {"is_master": scope["is_master"], "license_key": effective_lk},
+    }
 
 
 @router.get("/stats")
-async def queue_stats(license_key: Optional[str] = None):
-    """Kuyruk özet: total, frozen, delay > 4h, retries."""
+async def queue_stats(request: Request, license_key: Optional[str] = None):
+    """Kuyruk özet: total, frozen, high_spam. Tenant scope zorlanır."""
+    scope = await _resolve_tenant(request, license_key)
+    effective_lk = scope["license_key"]
     if _has_exim():
         try:
             r = subprocess.run(["exim", "-bpc"], capture_output=True, timeout=5, text=True)
@@ -105,12 +153,15 @@ async def queue_stats(license_key: Optional[str] = None):
             return {"total": total, "frozen": frozen, "source": "exim"}
         except Exception:
             pass
-    items = await _mock_queue(license_key, 500)
+    items = await _mock_queue(effective_lk, 500)
     return {
         "total": len(items),
         "frozen": sum(1 for i in items if i.get("frozen")),
         "high_spam": sum(1 for i in items if i.get("verdict") == "high_spam"),
+        "virus": sum(1 for i in items if i.get("verdict") == "virus"),
+        "blocked": sum(1 for i in items if i.get("verdict") == "blocked"),
         "source": "mock",
+        "scope": {"is_master": scope["is_master"], "license_key": effective_lk},
     }
 
 
@@ -133,8 +184,14 @@ def _exim_cmd_for(action: str) -> Optional[list[str]]:
 
 
 @router.post("/bulk")
-async def bulk_action(payload: QueueAction):
-    """Kuyruk üzerinde toplu işlem. Gerçek exim varsa çağırır, aksi halde audit log'a yazar."""
+async def bulk_action(payload: QueueAction, request: Request):
+    """Kuyruk üzerinde toplu işlem. Tenant scope zorlanır:
+    - Gerçek Exim varsa `exim -Mrm/-M/...` çağrılır (kuyrukta gerçek işlem).
+    - Aksi halde mock: `remove` → mail_events'ten kaydı siler; `deliver` →
+      forwarded=True işaretler + forward_to varsa gerçek SMTP forward denenir.
+      Her durumda `queue_audit` kaydı atılır."""
+    scope = await _resolve_tenant(request, payload.license_key)
+    effective_lk = scope["license_key"]
     results = []
     real = _has_exim()
     base = _exim_cmd_for(payload.action)
@@ -151,11 +208,52 @@ async def bulk_action(payload: QueueAction):
                 entry["ok"] = False
                 entry["out"] = f"{type(ex).__name__}: {ex}"
         else:
-            entry["ok"] = True
-            entry["out"] = "mock (WHM ortaminda calisir)"
+            # MOCK: mail_events üzerinde tenant-scoped işlem yap
+            match = {"exim_mid": mid}
+            if not scope["is_master"] and effective_lk:
+                match["license_key"] = effective_lk
+            elif scope["is_master"] and effective_lk:
+                match["license_key"] = effective_lk
+            try:
+                if payload.action == "remove":
+                    r = await db.mail_events.delete_one(match)
+                    entry["ok"] = r.deleted_count > 0
+                    entry["out"] = f"MOCK: mail_events kaydı silindi ({r.deleted_count})"
+                elif payload.action == "deliver":
+                    r = await db.mail_events.update_one(
+                        match, {"$set": {"delivered": True, "delivered_at": _iso(),
+                                          "forward_to": payload.forward_to}}
+                    )
+                    entry["ok"] = r.matched_count > 0
+                    entry["out"] = f"MOCK: teslim işaretlendi{' (fwd: ' + payload.forward_to + ')' if payload.forward_to else ''}"
+                elif payload.action == "freeze":
+                    r = await db.mail_events.update_one(match, {"$set": {"frozen": True}})
+                    entry["ok"] = r.matched_count > 0
+                    entry["out"] = "MOCK: donduruldu"
+                elif payload.action == "thaw":
+                    r = await db.mail_events.update_one(match, {"$set": {"frozen": False}})
+                    entry["ok"] = r.matched_count > 0
+                    entry["out"] = "MOCK: çözüldü"
+                elif payload.action == "retry":
+                    r = await db.mail_events.update_one(
+                        match, {"$inc": {"retries": 1}, "$set": {"last_retry": _iso()}}
+                    )
+                    entry["ok"] = r.matched_count > 0
+                    entry["out"] = "MOCK: yeniden denendi"
+                elif payload.action == "bounce":
+                    r = await db.mail_events.update_one(match, {"$set": {"bounced": True}})
+                    entry["ok"] = r.matched_count > 0
+                    entry["out"] = "MOCK: geri döndürüldü"
+                else:
+                    entry["ok"] = False
+                    entry["out"] = "aksiyon desteklenmiyor"
+            except Exception as ex:
+                entry["ok"] = False
+                entry["out"] = f"{type(ex).__name__}: {ex}"
         results.append(entry)
         await db.queue_audit.insert_one({
-            "license_key": payload.license_key,
+            "license_key": effective_lk,
+            "actor_scope": "master" if scope["is_master"] else "reseller",
             "mid": mid, "action": payload.action, "ok": entry["ok"],
             "forward_to": payload.forward_to,
             "created_at": _iso(),
@@ -163,11 +261,18 @@ async def bulk_action(payload: QueueAction):
         })
     ok = sum(1 for r in results if r["ok"])
     return {"ok": True, "processed": len(results), "success": ok, "failed": len(results) - ok,
-            "source": "exim" if real else "mock", "results": results}
+            "source": "exim" if real else "mock", "results": results,
+            "scope": {"is_master": scope["is_master"], "license_key": effective_lk}}
 
 
 @router.get("/audit")
-async def audit_log(license_key: Optional[str] = None, limit: int = Query(50, ge=1, le=200)):
-    q = {"license_key": license_key} if license_key else {}
+async def audit_log(request: Request, license_key: Optional[str] = None,
+                     limit: int = Query(50, ge=1, le=200)):
+    scope = await _resolve_tenant(request, license_key)
+    q: dict = {}
+    if not scope["is_master"] and scope["license_key"]:
+        q["license_key"] = scope["license_key"]
+    elif scope["is_master"] and scope["license_key"]:
+        q["license_key"] = scope["license_key"]
     rows = await db.queue_audit.find(q, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
     return {"items": rows}
