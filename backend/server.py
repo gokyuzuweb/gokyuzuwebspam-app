@@ -1541,9 +1541,24 @@ async def _tenant_scope(request: Request, license_key_arg: Optional[str]) -> dic
         if master_ip and client_ip == master_ip:
             return {"is_master": True, "owner_license_key": ""}
         # Master key + yanlış IP → yükseltilmez, bayi olarak devam
-    # 3) Bayi
+    # 3) Bayi tarafı: frontend'den gelen license_key argümanını VALIDATE et.
+    #    Böylece her bayi kendi lisansı altındaki verileri görür; başka bayinin
+    #    key'ini yazsa dahi o lisans veritabanında yoksa yetkisiz sayılır.
+    if license_key_arg and license_key_arg != master_env:
+        lic_doc = await db.licenses.find_one(
+            {"license_key": license_key_arg},
+            {"_id": 0, "license_key": 1, "status": 1, "license_type": 1},
+        )
+        if lic_doc:  # geçerli bayi lisansı
+            return {"is_master": False, "owner_license_key": license_key_arg}
+    # 3b) Fallback: WHM plugin'in kendi plugin_state'i (aynı sunucu üzerinde
+    #     çalışan bayi plugin'i için — SaaS master ortamında bu boş olur).
     st = await _plugin_status_payload()
-    return {"is_master": False, "owner_license_key": st.get("license_key") or ""}
+    lk = st.get("license_key") or ""
+    if lk and lk != master_env:
+        return {"is_master": False, "owner_license_key": lk}
+    # Hiçbir eşleşme yok → izole (hiç veri görmez)
+    return {"is_master": False, "owner_license_key": "__none__"}
 
 
 class RuleIn(BaseModel):
@@ -2490,14 +2505,18 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                 key_match = True
     # Key match alone is enough to be master (user's explicit requirement).
     is_master = key_match
-    return {
+    resp = {
         "is_master": is_master,
         "ip_match": ip_match,
         "key_match": key_match,
         "client_ip": client_ip,
-        "master_ip": MASTER_IP,
-        "master_host": MASTER_HOST,
     }
+    # SECURITY: Master IP/host bilgileri BAYIYE SIZMASIN. Sadece master
+    # doğrulanmış çağrılarda döndür — bayi tarafında gizli kalır.
+    if is_master:
+        resp["master_ip"] = MASTER_IP
+        resp["master_host"] = MASTER_HOST
+    return resp
 
 
 @api.get("/admin/whoami")

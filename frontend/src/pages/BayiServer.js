@@ -236,10 +236,12 @@ export default function BayiServer() {
             </div>
           </StepBlock>
 
-          {/* Bağlantı bilgileri */}
+          {/* Bağlantı bilgileri — sadece kendi lisans anahtarınız gösterilir.
+              Master'ın IP/host bilgileri kurulum betiğinin içinde otomatik olarak
+              gömülüdür, ayrıca ekranda gösterilmesine gerek yok. */}
           <div className="mt-1 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-            <MiniInfo label="Master API URL" value={install?.master_api_url} />
-            <MiniInfo label="Lisans Anahtarı" value={install?.license_key} mono />
+            <MiniInfo label="Lisans Anahtarınız" value={install?.license_key} mono />
+            <MiniInfo label="Sunucu Bağlantısı" value={q.data?.status === "connected" ? "Bağlı ✓" : q.data?.status === "waiting" ? "Bekleniyor" : "—"} />
           </div>
 
           {/* Sorun giderme */}
@@ -260,7 +262,8 @@ export default function BayiServer() {
               </li>
               <li>
                 <b className="text-slate-300">3) Firewall kapatmış mı?</b>{" "}
-                <span className="mono text-slate-200">curl -I {install?.master_api_url || "https://gokyuzuhosting.com"}/api/</span> ile 200/404 dönmeli. Timeout dönerse dış çıkış kapalıdır.
+                Adım A'da verilen kurulum komutundaki master adresine{" "}
+                <span className="mono text-slate-200">curl -I</span> yapın, 200/404 dönmeli. Timeout dönerse dış çıkış kapalıdır.
               </li>
               <li>
                 <b className="text-slate-300">4) Lisans doğru mu?</b>{" "}

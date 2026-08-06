@@ -210,7 +210,7 @@ class TestQueue:
         d = r.json()
         assert d.get("processed") == 1
         assert isinstance(d.get("results"), list) and len(d["results"]) == 1
-        assert d.get("source") in ("exim", "mock")
+        assert d.get("source") in ("exim", "mock", "db", "exim+db")
 
     def test_queue_bulk_deliver_with_forward(self, master):
         r = master.post(f"{BASE_URL}/api/queue/bulk",

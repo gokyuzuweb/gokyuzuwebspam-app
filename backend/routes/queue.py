@@ -43,9 +43,21 @@ async def _resolve_tenant(request: Request, license_key_arg: Optional[str]) -> d
         if master_ip and client_ip == master_ip:
             return {"is_master": True, "license_key": None}
         # Master key + wrong IP → reject silently, treat as reseller
-    # Bayi: kendi state'inden okur; argümanı yok say (isteğe bağlı override yok)
+    # Bayi: frontend'den gelen license_key argümanını licenses tablosunda
+    # DOĞRULA — böylece her bayi sadece kendi lisansı altındaki verileri görür.
+    if license_key_arg and license_key_arg != master_env:
+        lic_doc = await db.licenses.find_one(
+            {"license_key": license_key_arg},
+            {"_id": 0, "license_key": 1, "status": 1},
+        )
+        if lic_doc:
+            return {"is_master": False, "license_key": license_key_arg}
+    # Fallback: WHM plugin ortamındaki kendi plugin_state
     st = await db.plugin_state.find_one({"_id": "main"}, {"_id": 0, "license_key": 1}) or {}
-    return {"is_master": False, "license_key": st.get("license_key") or ""}
+    lk = st.get("license_key") or ""
+    if lk and lk != master_env:
+        return {"is_master": False, "license_key": lk}
+    return {"is_master": False, "license_key": "__none__"}
 
 
 def _iso() -> str:

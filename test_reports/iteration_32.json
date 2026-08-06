@@ -1,0 +1,26 @@
+{
+  "summary": "v37 — Tenant isolation & master-info leak fix fully verified. All 19 new v37 backend tests PASS (queue/quarantine tenant scope with validated license_key, whoami no-leak for bayi/anon/fake keys, cross-tenant delete denial, purge-demo master-only guard). Regression: 31/32 previous v35+v36 tests still pass; the single failing case was a stale assertion in v35 that predates v36's source='db' change — fixed inline (allowed test-only edit). Frontend /panel/my-server verified: Master API URL card removed, Lisans Anahtarınız + Sunucu Bağlantısı MiniInfos shown, troubleshoot step 3 no longer contains hardcoded gokyuzuhosting.com curl (says 'Adım A'da verilen kurulum komutundaki master adresine curl -I yapın').",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v37_tenant_isolation_master_leak.py",
+    "/app/test_reports/pytest/v37_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py::_tenant_scope + routes/queue.py::_resolve_tenant now both correctly validate frontend license_key against db.licenses — logic is duplicated across two files; consider extracting a shared helper (single source of truth) to prevent future drift.",
+    "Adım A install command block still shows the master install URL (https://gokyuzuhosting.com/api/scripts/install-bayi.sh + MASTER_URL=https://gokyuzuhosting.com) to the bayi. This is architecturally necessary (the bayi must fetch the installer from somewhere) but if 'master bilgileri asla gözükmemeli' is meant literally, this URL is also master info. Consider whether to proxy via a per-bayi endpoint (/api/scripts/install/{license_key}) to obscure master hostname. Currently OUT OF SCOPE for this fix — request only targeted the MiniInfo card + troubleshoot step 3, both of which are fixed.",
+    "test_v35_quarantine_queue_tenant.py had a stale source assertion (('exim','mock')); v36 introduced 'db' / 'exim+db' but the v35 test wasn't updated. Fixed inline. Recommend a shared constant QUEUE_SOURCE_VALUES."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v37_tenant_isolation_master_leak.py (new, 19 tests)",
+    "/app/backend/tests/test_v35_quarantine_queue_tenant.py (relaxed source assertion to include 'db','exim+db')"
+  ],
+  "success_rate": {"backend": "100% (19/19 v37 + 31/32 legacy after fix; 32/32 after fix)", "frontend": "100% (3/3 UI checks)"},
+  "test_credentials": "MASTER: MS-C02AB012652A4FE692D69676 via x-master-key header; BAYI: MS-D85BE8E63A64478786361F54 (valid reseller in db.licenses); FAKE: MS-FAKE-NON-EXISTENT-KEY-XYZ (returns __none__ scope).",
+  "seed_data_creation": "Ephemeral TEST_v37_* mail_events ingested via /api/events/ingest and cleaned up per-test via bulk remove.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "v37 fully verified. Key invariants now enforced: (1) frontend-supplied license_key MUST exist in db.licenses to grant reseller scope; unknown key → owner_license_key='__none__' (sees zero data). (2) /api/admin/whoami returns master_ip/master_host/master_key ONLY when caller is authenticated master (via x-master-key header or gws_master_session cookie or valid XFF=MASTER_IP+MASTER_KEY). (3) bayi cannot delete another tenant's mail_events (db_deleted=0 on cross-tenant mid). Regression tests in /app/backend/tests/test_v37_* + test_v36_* + test_v35_* all pass together.",
+  "rca of the issue": "Before v37: _tenant_scope trusted frontend license_key blindly if it matched plugin_state.main.license_key — but plugin_state.main was set to the MASTER key on the SaaS host, so every reseller (whose browser sent their own bayi key) fell through to the same plugin_state fallback and got scope={is_master:false, owner_license_key:MASTER_KEY} → same records as master. Fix: validate license_key against db.licenses first; only fall through to plugin_state if the arg was empty. Similarly _is_master returned master_ip/master_host in every response — leaking master coordinates. Fix: gate those fields behind is_master=True and only add master_key when authenticated. Reproduction (verified): GET /api/queue/stats?license_key=<bayi> from anon browser used to return the master's counter; now returns 0 and scope.license_key==<bayi>."
+}
