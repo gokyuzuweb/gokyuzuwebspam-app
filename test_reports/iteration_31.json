@@ -1,0 +1,30 @@
+{
+  "summary": "v36 — verified the user's core bug fix: 'kuyruk yönetimi silmiyor' is FIXED. Bulk remove now actually deletes mail_events records (db_deleted>=1) and the row disappears from the UI after action. Also verified all listed sub-fixes: mid = mail_events.id UUID (not synthetic '1t...-XXX'), default source='mock' (frontend badge shows 'PANEL DB'), deliver marks delivered=True, tenant isolation regressions intact, audit log receives entries. Frontend filter row 2 (from/to/age/min-score/clear) works and client-side filtering hides non-matching rows. 10/10 backend tests pass; 9/9 UI checks pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global", "issues": ["Browser CORS preflight error for Google Fonts because global fetch/context has 'x-master-key' header — harmless (fonts still load via fallback) but fills console with red errors. Consider scoping master-key header only to /api/* requests via axios interceptor rather than global default."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v36_queue_actual_deletion.py",
+    "/app/test_reports/pytest/v36_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/queue.py bulk_action: audit log now correctly stores ok flag reflecting mail_events match; audit entry lacks 'db_deleted' field which could help debugging — consider adding entry.get('db_deleted') to audit doc.",
+    "QueueModal.js: refetchInterval every 6s while modal is open may cause the row to reappear briefly if the ingest pipeline re-injects the same subject — not a bug for this iteration but worth watching."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v36_queue_actual_deletion.py (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (9/9)"},
+  "test_credentials": "Master key MS-C02AB012652A4FE692D69676 via x-master-key header; also verified XFF=89.19.15.58 legacy master path.",
+  "seed_data_creation": "Tests ingest ephemeral TEST_v36_* spam events via /api/events/ingest and clean them up via bulk remove.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "v36 queue delete bug fully verified. Backend tests in /app/backend/tests/test_v36_queue_actual_deletion.py cover all 4 bug fixes + regressions. Frontend flow: open Dashboard → click [data-testid=control-queue] → interact with QueueModal → new filter row 2 has queue-from-filter/queue-to-filter/queue-age-filter/queue-min-score/queue-clear-filters. Badge shows 'PANEL DB' when source=mock. The critical delete flow now truly deletes and the row disappears from list.",
+  "rca of the issue": "Original bug: routes/queue.py bulk_action shelled out to `exim -Mrm <mid>` when _has_exim()=True. Preview container has /usr/sbin/exim installed but no spool matching synthetic mids like '1tXXX-...' → exim returned non-zero → nothing deleted → but UI shown success (frontend didn't check per-item ok). Fix (verified): bulk_action ALWAYS operates on mail_events by matching {id: mid} OR {exim_mid: mid} with tenant scope; USE_REAL_EXIM=1 env additionally invokes exim. _mock_queue now uses mail_events.id (or exim_mid if set) as mid so bulk delete matches by id. Frontend toast now correctly separates success/failure via data.failed count."
+}

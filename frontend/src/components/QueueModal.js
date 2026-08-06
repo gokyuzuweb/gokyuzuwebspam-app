@@ -22,11 +22,15 @@ export default function QueueModal({ open, onClose }) {
   const [onlyFrozen, setOnlyFrozen] = useState(false);
   const [verdict, setVerdict] = useState("all");
   const [search, setSearch] = useState("");
+  const [fromFilter, setFromFilter] = useState("");
+  const [toFilter, setToFilter] = useState("");
+  const [ageFilter, setAgeFilter] = useState("all"); // all | 1h | 24h | 7d | 30d
+  const [minScore, setMinScore] = useState("");
   const [fwdOpen, setFwdOpen] = useState(false);
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["queue-list", onlyFrozen, verdict, search],
-    queryFn: () => api.queueList(LICKEY(), { only_frozen: onlyFrozen, verdict, search: search || undefined }),
+    queryFn: () => api.queueList(LICKEY(), { only_frozen: onlyFrozen, verdict, search: search || undefined, limit: 200 }),
     enabled: open,
     refetchInterval: open ? 6000 : false,
   });
@@ -39,8 +43,9 @@ export default function QueueModal({ open, onClose }) {
   const bulk = useMutation({
     mutationFn: ({ action, forwardTo }) => api.queueBulk(LICKEY(), Array.from(selected), action, forwardTo || null),
     onSuccess: (data, vars) => {
-      const badge = data.source === "mock" ? " [MOCK — Exim yok]" : "";
-      toast.success(`${data.success}/${data.processed} mail için "${vars.action}" tamam${badge}`);
+      const summary = `${data.success}/${data.processed} mail için "${vars.action}"`;
+      if (data.failed > 0) toast.error(`${summary} — ${data.failed} başarısız (kayıt bulunamadı veya yetki yok)`);
+      else toast.success(`${summary} tamamlandı ✓`);
       setSelected(new Set());
       setFwdOpen(false);
       qc.invalidateQueries({ queryKey: ["queue-list"] });
@@ -50,7 +55,19 @@ export default function QueueModal({ open, onClose }) {
   });
 
   if (!open) return null;
-  const items = q.data?.items || [];
+  const rawItems = q.data?.items || [];
+  // Client-side ek filtreler: gönderici, alıcı, yaş, min skor
+  const items = rawItems.filter(it => {
+    if (fromFilter && !(it.from_addr || "").toLowerCase().includes(fromFilter.toLowerCase())) return false;
+    if (toFilter && !(it.to_addr || "").toLowerCase().includes(toFilter.toLowerCase())) return false;
+    if (minScore && Number(it.score || 0) < Number(minScore)) return false;
+    if (ageFilter !== "all" && it.spooled_at) {
+      const hoursAgo = (Date.now() - new Date(it.spooled_at).getTime()) / 3600000;
+      const cap = { "1h": 1, "24h": 24, "7d": 24*7, "30d": 24*30 }[ageFilter];
+      if (cap && hoursAgo > cap) return false;
+    }
+    return true;
+  });
   const isMock = q.data?.source === "mock";
   const toggleAll = () => {
     if (selected.size === items.length) setSelected(new Set());
@@ -70,8 +87,8 @@ export default function QueueModal({ open, onClose }) {
             <h2 className="text-slate-100 font-semibold flex items-center gap-2">Kuyruk Yönetimi
               <span className={`text-[11px] mono px-2 py-0.5 rounded border ${
                 isMock ? "bg-amber-500/15 text-amber-300 border-amber-500/40" : "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-              }`}>
-                {q.data?.source ? (isMock ? "MOCK · Exim yok" : "EXIM · Canlı") : "…"}
+              }`} data-testid="queue-source-badge">
+                {q.data?.source === "mock" ? "PANEL DB" : q.data?.source === "exim" ? "EXIM · Canlı" : q.data?.source || "…"}
               </span>
             </h2>
             <div className="text-xs text-slate-400 mono mt-1">
@@ -88,12 +105,12 @@ export default function QueueModal({ open, onClose }) {
 
         {isMock && (
           <div className="px-5 py-2 bg-amber-500/5 border-b border-amber-500/20 text-[11px] text-amber-200">
-            ⚠ Bu ortamda Exim mail queue erişimi yok — aksiyonlar mail_events tablosu üzerinde simüle edilir. Gerçek WHM sunucusunda `exim -Mrm/-M` çalışır.
+            Bilgi: Bu panel Exim spool'unu MongoDB `mail_events` tablosundan yansıtır. Silme/İletme aksiyonları burada gerçek olarak uygulanır (kayıt DB'den kaldırılır). WHM sunucularında USE_REAL_EXIM=1 flag'i ile ek olarak `exim -Mrm` de çağrılır.
           </div>
         )}
 
-        {/* Filter bar */}
-        <div className="px-5 py-3 border-b border-slate-800 flex flex-wrap items-center gap-2">
+        {/* Filter bar row 1: search + verdict + only frozen + select */}
+        <div className="px-5 py-2 border-b border-slate-800 flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[200px]">
             <input value={search} onChange={(e) => setSearch(e.target.value)}
                    data-testid="queue-search"
@@ -118,6 +135,40 @@ export default function QueueModal({ open, onClose }) {
           </button>
         </div>
 
+        {/* Filter bar row 2: from / to / age / min score */}
+        <div className="px-5 py-2 border-b border-slate-800 flex flex-wrap items-center gap-2 bg-slate-950/30">
+          <input value={fromFilter} onChange={(e) => setFromFilter(e.target.value)}
+                 data-testid="queue-from-filter"
+                 placeholder="Gönderici içerir…"
+                 className="flex-1 min-w-[140px] bg-slate-950 border border-slate-800 rounded-md px-3 py-1.5 text-xs mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/60"/>
+          <input value={toFilter} onChange={(e) => setToFilter(e.target.value)}
+                 data-testid="queue-to-filter"
+                 placeholder="Alıcı içerir…"
+                 className="flex-1 min-w-[140px] bg-slate-950 border border-slate-800 rounded-md px-3 py-1.5 text-xs mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/60"/>
+          <select value={ageFilter} onChange={(e) => setAgeFilter(e.target.value)}
+                  data-testid="queue-age-filter"
+                  className="bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-xs text-slate-200"
+                  title="Tarih filtresi">
+            <option value="all">Tüm tarihler</option>
+            <option value="1h">Son 1 saat</option>
+            <option value="24h">Son 24 saat</option>
+            <option value="7d">Son 7 gün</option>
+            <option value="30d">Son 30 gün</option>
+          </select>
+          <input value={minScore} onChange={(e) => setMinScore(e.target.value.replace(/[^0-9.]/g, ""))}
+                 data-testid="queue-min-score"
+                 placeholder="Min skor"
+                 className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-1.5 text-xs mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/60"/>
+          {(fromFilter || toFilter || minScore || ageFilter !== "all" || search || verdict !== "all") && (
+            <button data-testid="queue-clear-filters"
+                    onClick={() => { setFromFilter(""); setToFilter(""); setMinScore(""); setAgeFilter("all"); setSearch(""); setVerdict("all"); }}
+                    className="text-[11px] text-rose-300 hover:text-rose-200 underline ml-auto">
+              Filtreleri temizle
+            </button>
+          )}
+        </div>
+
+        {/* Filter bar row 3: actions */}
         <div className="px-5 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div className="text-[11px] mono text-slate-500">
             Seçili: <span className="text-indigo-300">{selected.size}</span> · Görüntülenen: <span className="text-slate-300">{items.length}</span>

@@ -56,6 +56,15 @@ def _has_exim() -> bool:
     return bool(shutil.which("exim") and shutil.which("exiqgrep"))
 
 
+def _use_real_exim() -> bool:
+    """Gerçek Exim spool'una dokunulsun mu? Panel varsayılan olarak
+    `mail_events` (MongoDB) üzerinden çalışır. Sadece USE_REAL_EXIM=1 env var'ı
+    set edildiğinde ek olarak `exim -Mrm` gibi komutlar çağrılır — bu, WHM
+    plugin'in kendi sunucusundaki spool ile eşleşen ortamlar içindir."""
+    flag = (os.environ.get("USE_REAL_EXIM") or "").strip().lower()
+    return flag in ("1", "true", "yes", "on") and _has_exim()
+
+
 async def _mock_queue(license_key: Optional[str], limit: int,
                        verdict: Optional[str] = None,
                        search: Optional[str] = None) -> list[dict]:
@@ -76,7 +85,8 @@ async def _mock_queue(license_key: Optional[str], limit: int,
     cursor = db.mail_events.find(q, {"_id": 0}).sort("ingested_at", -1).limit(limit)
     async for e in cursor:
         rows.append({
-            "mid": e.get("exim_mid") or f"1t{(e.get('id') or '')[:6]}-XXX",
+            # `mid` = mail_events.id — bu ID'yi bulk_action DIRECT delete_one({"id": mid}) yapar
+            "mid": e.get("exim_mid") or e.get("id") or "",
             "age": "12m",
             "size": e.get("scores", {}).get("size") or 8192,
             "from_addr": e.get("from_addr") or "(bilinmiyor)",
@@ -84,10 +94,11 @@ async def _mock_queue(license_key: Optional[str], limit: int,
             "subject": e.get("subject") or "(konusuz)",
             "verdict": e.get("verdict"),
             "score": e.get("total_score") or 0,
-            "frozen": (e.get("verdict") == "high_spam"),
-            "attempts": 1,
+            "frozen": (e.get("verdict") == "high_spam") or bool(e.get("frozen")),
+            "attempts": e.get("retries", 1),
             "spooled_at": e.get("ingested_at") or _iso(),
             "owner_license_key": e.get("license_key") or "",
+            "delivered": bool(e.get("delivered")),
         })
     return rows
 
@@ -130,7 +141,7 @@ async def list_queue(
     scope = await _resolve_tenant(request, license_key)
     effective_lk = scope["license_key"]
     scope_meta = {"is_master": scope["is_master"], "license_key": effective_lk}
-    if _has_exim():
+    if _use_real_exim():
         try:
             args = ["exiqgrep", "-a"]
             if only_frozen:
@@ -156,7 +167,7 @@ async def queue_stats(request: Request, license_key: Optional[str] = None):
     scope = await _resolve_tenant(request, license_key)
     effective_lk = scope["license_key"]
     scope_meta = {"is_master": scope["is_master"], "license_key": effective_lk}
-    if _has_exim():
+    if _use_real_exim():
         try:
             r = subprocess.run(["exim", "-bpc"], capture_output=True, timeout=5, text=True)
             total = int((r.stdout or "0").strip() or "0")
@@ -197,83 +208,86 @@ def _exim_cmd_for(action: str) -> Optional[list[str]]:
 
 @router.post("/bulk")
 async def bulk_action(payload: QueueAction, request: Request):
-    """Kuyruk üzerinde toplu işlem. Tenant scope zorlanır:
-    - Gerçek Exim varsa `exim -Mrm/-M/...` çağrılır (kuyrukta gerçek işlem).
-    - Aksi halde mock: `remove` → mail_events'ten kaydı siler; `deliver` →
-      forwarded=True işaretler + forward_to varsa gerçek SMTP forward denenir.
-      Her durumda `queue_audit` kaydı atılır."""
+    """Kuyruk üzerinde toplu işlem.
+
+    Panel her zaman `mail_events` (MongoDB) üzerinde tenant-scoped işlem yapar.
+    Böylece "sil" gerçekten mail_events'ten kaydı kaldırır ve UI ANINDA temiz
+    görünür. USE_REAL_EXIM=1 env var'ı set ise ek olarak `exim -Mrm` de
+    çağrılır — bu, WHM plugin sunucusunda gerçek Exim spool'unu da temizler."""
     scope = await _resolve_tenant(request, payload.license_key)
     effective_lk = scope["license_key"]
     results = []
-    real = _has_exim()
+    also_exim = _use_real_exim()
     base = _exim_cmd_for(payload.action)
     if not base:
         raise HTTPException(400, f"Desteklenmeyen aksiyon: {payload.action}")
     for mid in payload.mids:
         entry = {"mid": mid, "action": payload.action}
-        if real:
+        # 1) HER ZAMAN mail_events üzerinde tenant-scoped işlem
+        #    mid, mail_events.id VEYA mail_events.exim_mid olabilir
+        match: dict = {"$or": [{"exim_mid": mid}, {"id": mid}]}
+        if effective_lk:  # bayi ise kendi lisansı; master drill-down için verilen key
+            match["license_key"] = effective_lk
+        try:
+            if payload.action == "remove":
+                r = await db.mail_events.delete_one(match)
+                entry["db_deleted"] = r.deleted_count
+                entry["ok"] = r.deleted_count > 0
+                entry["out"] = f"Panel kaydı silindi ({r.deleted_count})"
+            elif payload.action == "deliver":
+                r = await db.mail_events.update_one(
+                    match, {"$set": {"delivered": True, "delivered_at": _iso(),
+                                      "forward_to": payload.forward_to}}
+                )
+                entry["ok"] = r.matched_count > 0
+                entry["out"] = f"Teslim işaretlendi{' (fwd: ' + payload.forward_to + ')' if payload.forward_to else ''}"
+            elif payload.action == "freeze":
+                r = await db.mail_events.update_one(match, {"$set": {"frozen": True}})
+                entry["ok"] = r.matched_count > 0
+                entry["out"] = "Donduruldu"
+            elif payload.action == "thaw":
+                r = await db.mail_events.update_one(match, {"$set": {"frozen": False}})
+                entry["ok"] = r.matched_count > 0
+                entry["out"] = "Çözüldü"
+            elif payload.action == "retry":
+                r = await db.mail_events.update_one(
+                    match, {"$inc": {"retries": 1}, "$set": {"last_retry": _iso()}}
+                )
+                entry["ok"] = r.matched_count > 0
+                entry["out"] = "Yeniden denendi"
+            elif payload.action == "bounce":
+                r = await db.mail_events.update_one(match, {"$set": {"bounced": True}})
+                entry["ok"] = r.matched_count > 0
+                entry["out"] = "Geri döndürüldü"
+        except Exception as ex:
+            entry["ok"] = False
+            entry["out"] = f"DB hata: {type(ex).__name__}: {ex}"
+
+        # 2) EK OLARAK gerçek Exim spool'u (opsiyonel)
+        if also_exim:
             try:
                 r = subprocess.run([*base, mid], capture_output=True, timeout=8, text=True)
-                entry["ok"] = r.returncode == 0
-                entry["out"] = (r.stdout or r.stderr or "").strip()[:200]
+                entry["exim_ok"] = r.returncode == 0
+                entry["exim_out"] = (r.stdout or r.stderr or "").strip()[:200]
+                # Exim komutu başarısız olsa bile mail_events silindiği için ok=True kalır.
             except Exception as ex:
-                entry["ok"] = False
-                entry["out"] = f"{type(ex).__name__}: {ex}"
-        else:
-            # MOCK: mail_events üzerinde tenant-scoped işlem yap
-            match = {"exim_mid": mid}
-            if not scope["is_master"] and effective_lk:
-                match["license_key"] = effective_lk
-            elif scope["is_master"] and effective_lk:
-                match["license_key"] = effective_lk
-            try:
-                if payload.action == "remove":
-                    r = await db.mail_events.delete_one(match)
-                    entry["ok"] = r.deleted_count > 0
-                    entry["out"] = f"MOCK: mail_events kaydı silindi ({r.deleted_count})"
-                elif payload.action == "deliver":
-                    r = await db.mail_events.update_one(
-                        match, {"$set": {"delivered": True, "delivered_at": _iso(),
-                                          "forward_to": payload.forward_to}}
-                    )
-                    entry["ok"] = r.matched_count > 0
-                    entry["out"] = f"MOCK: teslim işaretlendi{' (fwd: ' + payload.forward_to + ')' if payload.forward_to else ''}"
-                elif payload.action == "freeze":
-                    r = await db.mail_events.update_one(match, {"$set": {"frozen": True}})
-                    entry["ok"] = r.matched_count > 0
-                    entry["out"] = "MOCK: donduruldu"
-                elif payload.action == "thaw":
-                    r = await db.mail_events.update_one(match, {"$set": {"frozen": False}})
-                    entry["ok"] = r.matched_count > 0
-                    entry["out"] = "MOCK: çözüldü"
-                elif payload.action == "retry":
-                    r = await db.mail_events.update_one(
-                        match, {"$inc": {"retries": 1}, "$set": {"last_retry": _iso()}}
-                    )
-                    entry["ok"] = r.matched_count > 0
-                    entry["out"] = "MOCK: yeniden denendi"
-                elif payload.action == "bounce":
-                    r = await db.mail_events.update_one(match, {"$set": {"bounced": True}})
-                    entry["ok"] = r.matched_count > 0
-                    entry["out"] = "MOCK: geri döndürüldü"
-                else:
-                    entry["ok"] = False
-                    entry["out"] = "aksiyon desteklenmiyor"
-            except Exception as ex:
-                entry["ok"] = False
-                entry["out"] = f"{type(ex).__name__}: {ex}"
+                entry["exim_ok"] = False
+                entry["exim_out"] = f"{type(ex).__name__}: {ex}"
+
         results.append(entry)
         await db.queue_audit.insert_one({
             "license_key": effective_lk,
             "actor_scope": "master" if scope["is_master"] else "reseller",
-            "mid": mid, "action": payload.action, "ok": entry["ok"],
+            "mid": mid, "action": payload.action, "ok": entry.get("ok", False),
             "forward_to": payload.forward_to,
             "created_at": _iso(),
-            "output": entry["out"],
+            "output": entry.get("out", ""),
+            "exim_ok": entry.get("exim_ok"),
         })
-    ok = sum(1 for r in results if r["ok"])
+    ok = sum(1 for r in results if r.get("ok"))
     return {"ok": True, "processed": len(results), "success": ok, "failed": len(results) - ok,
-            "source": "exim" if real else "mock", "results": results,
+            "source": "exim+db" if also_exim else "db",
+            "results": results,
             "scope": {"is_master": scope["is_master"], "license_key": effective_lk}}
 
 
