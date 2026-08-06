@@ -4945,21 +4945,38 @@ async def scripts_install_bayi(request: Request):
     from fastapi.responses import PlainTextResponse
     ver = await _current_version()
     master_url = f"https://{MASTER_HOST}" if MASTER_HOST else str(request.base_url).rstrip("/")
+    # GitHub release override: master admin bunu Settings > System'da set edebilir
+    github_release_url = os.environ.get("GITHUB_RELEASE_URL", "").strip()
+    # Betikte iki DOWNLOAD_URL kaynağı: master API veya GitHub release
     script = f'''#!/usr/bin/env bash
-# GokyuzuWebSpam — Bayi WHM/cPanel Kurulum Betigi
-# Kullanim:
+# GokyuzuWebSpam — Bayi WHM/cPanel Kurulum & Guncelleme Betigi
+# Kullanim (kurulum ve guncelleme AYNI komuttur):
 #   curl -sSL {master_url}/api/scripts/install-bayi.sh | \\
 #     sudo LICENSE_KEY=MS-XXXX MASTER_URL={master_url} bash
+#
+# Opsiyonel: GITHUB_RELEASE_URL environment var'i ile master API yerine direkt
+# GitHub release'inden cekme:
+#   sudo LICENSE_KEY=MS-XXXX \\
+#        GITHUB_RELEASE_URL=https://github.com/user/repo/releases/latest/download/gokyuzuwebspam.tar.gz \\
+#        MASTER_URL={master_url} bash
 set -e
 : "${{LICENSE_KEY:?LICENSE_KEY environment variable is required}}"
 : "${{MASTER_URL:={master_url}}}"
+: "${{GITHUB_RELEASE_URL:={github_release_url}}}"
 VERSION="{ver}"
 INSTALL_DIR="/opt/gokyuzuwebspam"
-DOWNLOAD_URL="${{MASTER_URL}}/api/plugin/download"
+if [ -n "${{GITHUB_RELEASE_URL}}" ]; then
+  DOWNLOAD_URL="${{GITHUB_RELEASE_URL}}"
+  SRC_LABEL="GitHub Release"
+else
+  DOWNLOAD_URL="${{MASTER_URL}}/api/plugin/download"
+  SRC_LABEL="Master API"
+fi
 
-echo "==> GokyuzuWebSpam v${{VERSION}} kurulumu basliyor"
+echo "==> GokyuzuWebSpam v${{VERSION}} kurulum/guncelleme basliyor"
 echo "    Master        : ${{MASTER_URL}}"
 echo "    Lisans        : ${{LICENSE_KEY:0:16}}..."
+echo "    Kaynak        : ${{SRC_LABEL}}"
 echo "    Install path  : ${{INSTALL_DIR}}"
 
 # 1) Bagimlilik kontrolu
@@ -6306,33 +6323,85 @@ class UpgradeResult(BaseModel):
 
 @api.post("/plugin/upgrade")
 async def plugin_upgrade():
-    """Tek tıkla plugin güncelleme — WHM'de mailshieldctl update çalıştırır.
-    Preview ortamında simüle eder, WHM'de gerçekten tar indirip install.sh --upgrade tetikler."""
+    """Tek tıkla plugin güncelleme — bayi WHM sunucusunda `install-bayi.sh` (auto.sh)
+    betiğini gerçekten çalıştırır:
+        curl -sSL {MASTER_URL}/api/scripts/install-bayi.sh | \\
+           sudo LICENSE_KEY=<key> MASTER_URL=<master> bash
+
+    Bu betik master'dan (veya GitHub release URL'inden, `GITHUB_RELEASE_URL` env
+    var'ı ile) son sürümü indirir, eskisini yedekler, systemd servisini yeniden
+    başlatır. Preview'da subprocess bulunamayabilir → simülasyon yapılır."""
     import subprocess
     cur = await db.settings.find_one({"_key": "version"}, {"_id": 0, "_key": 0}) or {"version": "1.1.0"}
     mf  = await db.settings.find_one({"_key": "version_manifest"}, {"_id": 0, "_key": 0}) or VersionManifest().model_dump()
     old = cur["version"]; new = mf["latest_version"]
     def _parts(v): return tuple(int(x) for x in v.replace("v", "").split(".") if x.isdigit())
     if _parts(new) <= _parts(old):
-        return UpgradeResult(ok=False, message="Zaten güncel — yeni sürüm yok.", old_version=old, new_version=new).model_dump()
-    # In real WHM install, run mailshieldctl update
-    try:
-        proc = subprocess.run(["/usr/local/sbin/mailshieldctl", "update"],
-                              capture_output=True, timeout=120)
-        if proc.returncode == 0:
-            await db.settings.update_one({"_key": "version"}, {"$set": {"version": new, "installed_at": _iso()}}, upsert=True)
-            await db.logs.insert_one(ActivityLog(source="version", level="info",
-                message=f"Plugin güncellendi: {old} → {new}").model_dump())
-            return UpgradeResult(ok=True, message=f"Güncelleme tamamlandı: v{old} → v{new}", old_version=old, new_version=new).model_dump()
-        return UpgradeResult(ok=False, message=f"mailshieldctl hata: {proc.stderr.decode(errors='ignore')[:200]}",
+        return UpgradeResult(ok=False, message="Zaten güncel — yeni sürüm yok.",
                              old_version=old, new_version=new).model_dump()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        # Preview ortamında simüle et
-        await db.settings.update_one({"_key": "version"}, {"$set": {"version": new, "installed_at": _iso()}}, upsert=True)
+
+    # Kendi lisans anahtarımızı ve master URL'ini oku
+    state = await db.plugin_state.find_one({"_id": "main"}, {"_id": 0}) or {}
+    license_key = state.get("license_key") or ""
+    master_url = f"https://{MASTER_HOST}" if MASTER_HOST else ""
+    if not master_url:
+        return UpgradeResult(ok=False, message="MASTER_HOST tanımsız, güncelleme betiği indirilemedi.",
+                             old_version=old, new_version=new).model_dump()
+
+    # Bayi WHM sunucusunda: install-bayi.sh betiğini indir + çalıştır
+    cmd = (
+        f'curl -fsSL {master_url}/api/scripts/install-bayi.sh | '
+        f'sudo LICENSE_KEY={license_key} MASTER_URL={master_url} bash'
+    )
+    await db.logs.insert_one(ActivityLog(source="version", level="info",
+        message=f"Plugin upgrade başlatıldı: {old} → {new} | cmd: install-bayi.sh").model_dump())
+
+    # WHM/cPanel dışı ortamlarda (preview, sandbox) subprocess'i hiç çalıştırma —
+    # 300s timeout + Cloudflare 100s edge timeout birlikte 502'ye yol açar.
+    is_whm = (
+        os.path.exists("/usr/local/cpanel")
+        or os.environ.get("IS_WHM") in ("1", "true", "yes")
+    )
+    if not is_whm:
+        await db.settings.update_one({"_key": "version"},
+            {"$set": {"version": new, "installed_at": _iso()}}, upsert=True)
         await db.logs.insert_one(ActivityLog(source="version", level="info",
-            message=f"[SIMULATED preview] Plugin güncellendi: {old} → {new}").model_dump())
-        return UpgradeResult(ok=True, message=f"[önizleme] Güncelleme simüle edildi: v{old} → v{new}",
-                             old_version=old, new_version=new).model_dump()
+            message=f"[SIMULATED preview] Plugin güncellendi: {old} → {new} (WHM tespit edilmedi)").model_dump())
+        return UpgradeResult(ok=True,
+            message=f"[önizleme] Güncelleme simüle edildi: v{old} → v{new} "
+                    f"(WHM sunucuda install-bayi.sh gerçek çalışır)",
+            old_version=old, new_version=new).model_dump()
+
+    try:
+        proc = subprocess.run(
+            ["bash", "-lc", cmd],
+            capture_output=True, timeout=90, text=True,
+        )
+        if proc.returncode == 0:
+            await db.settings.update_one({"_key": "version"},
+                {"$set": {"version": new, "installed_at": _iso()}}, upsert=True)
+            await db.logs.insert_one(ActivityLog(source="version", level="info",
+                message=f"Plugin güncellendi: {old} → {new}\n{proc.stdout[-500:]}").model_dump())
+            return UpgradeResult(ok=True,
+                message=f"Güncelleme tamamlandı: v{old} → v{new}",
+                old_version=old, new_version=new).model_dump()
+        # Non-zero exit code — betikten gelen hata
+        err = (proc.stderr or proc.stdout or "").strip()[-400:]
+        await db.logs.insert_one(ActivityLog(source="version", level="error",
+            message=f"Plugin upgrade başarısız (exit={proc.returncode}): {err}").model_dump())
+        return UpgradeResult(ok=False,
+            message=f"Güncelleme betiği hata verdi (exit {proc.returncode}): {err[:200]}",
+            old_version=old, new_version=new).model_dump()
+    except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError) as ex:
+        # Preview / sandbox: gerçek WHM yok, simüle et
+        await db.settings.update_one({"_key": "version"},
+            {"$set": {"version": new, "installed_at": _iso()}}, upsert=True)
+        await db.logs.insert_one(ActivityLog(source="version", level="info",
+            message=f"[SIMULATED preview] Plugin güncellendi: {old} → {new} ({type(ex).__name__})").model_dump())
+        return UpgradeResult(ok=True,
+            message=f"[önizleme] Güncelleme simüle edildi: v{old} → v{new} "
+                    f"(WHM sunucuda install-bayi.sh gerçek çalışır)",
+            old_version=old, new_version=new).model_dump()
 
 
 # ----- Pricing (public read, seller-only write) -----
