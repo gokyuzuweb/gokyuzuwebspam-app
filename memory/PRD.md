@@ -13,6 +13,25 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 6, 2026 (Session 7) - v36 Queue Delete Bug Fix + Ek Filtreler
+
+### CRITICAL BUG FIX
+- ✅ **"Kuyruk yönetimi silmiyor" bug'ı ÇÖZÜLDÜ**: `routes/queue.py::bulk_action` artık her zaman `mail_events` (MongoDB) üzerinde tenant-scoped işlem yapar. Silme = kayıt gerçekten kaldırılır. USE_REAL_EXIM=1 env var'ı set ise ek olarak `exim -Mrm` de çağrılır (gerçek WHM sunucusunda spool temizlenmesi için).
+- ✅ **mid alanı** artık `mail_events.id` (UUID) veya `exim_mid` — uydurma `1t...-XXX` yok. Bu yüzden `POST /api/queue/bulk` match query'si `{"$or":[{"exim_mid":mid},{"id":mid}]}` ile eşleşiyor.
+- ✅ **Source badge**: Varsayılan `source='mock'` (frontend'de "PANEL DB" gösterir); real exim ile `source='exim+db'`.
+
+### Ek Filtreler (Kuyruk Yönetimi Modal)
+- ✅ **Gönderici filtresi** (`[data-testid=queue-from-filter]`) — client-side içerir
+- ✅ **Alıcı filtresi** (`[data-testid=queue-to-filter]`) — client-side içerir
+- ✅ **Yaş filtresi** (`[data-testid=queue-age-filter]`) — 1h/24h/7g/30g/tümü
+- ✅ **Min skor** (`[data-testid=queue-min-score]`)
+- ✅ **Filtreleri temizle** butonu (`[data-testid=queue-clear-filters]`)
+- ✅ **Doğru toast**: `data.failed > 0` durumunda hata mesajı; başarılıda "tamamlandı ✓"
+
+### Test Kapsamı
+- Backend 10/10 pytest geçti (`test_v36_queue_actual_deletion.py`)
+- Frontend 9/9 UI check geçti (iteration_31.json)
+
 ## Feb 6, 2026 (Session 7) - v35 Queue/Quarantine Genişletme
 - ✅ **Karantina KPI bandı** (`/api/quarantine/stats`): toplam / bugün / hafta / verdict kırılımı / top gönderici (5). Frontend'de üst band olarak görünür.
 - ✅ **Karantina Purge-All**: `/api/quarantine/purge-all?verdict=X&older_than_days=N` — filtreli toplu temizleme. UI'da onay dialog'u ("sil" yazma zorunluluğu).
