@@ -13,6 +13,18 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 6, 2026 (Session 7) - v38 Threshold Config + Histogram + Plugin Health
+
+### Yeni Özellikler
+- ✅ **Per-license threshold config** (`/api/events/thresholds` GET/POST): Her bayi için `spam_threshold` (default 5) + `high_spam_threshold` (default 10). `ingest_event` bu değerleri okur → verdict yeniden hesaplanır. ConfigServer paritesi. Max cap 30 (SA maks skoru). Settings.js sliderları localStorage'dan license_key alarak per-license API'ye de yazar.
+- ✅ **Skor kırılım histogram**: `/api/quarantine/stats.score_distribution` → 4 bucket (`clean 0-3`, `suspicious 3-5`, `spam 5-10`, `high_spam 10+`) son 7 gün, tenant-scoped. Karantina KPI band'ında görsel bar chart (`data-testid='score-histogram'` + `hist-*`).
+- ✅ **Plugin health alarm**: 30 dk periyodik background task (`_plugin_normalization_health_task`) — bir bayi son 24 saatte >100 mail normalize etmişse `master_alerts`'a `type=plugin_normalization` uyarı yazar + admin_email bildirimi. Dedup 6 saat. Manuel tetikleme: `POST /api/admin/plugin-health/scan?threshold=N&force=true` (master-only). `GET /api/events/health/normalization` → per-bayi sağlık durumu.
+
+### Testing
+- **15/15 yeni v38 pytest**: threshold GET/POST/validation/per-license apply, histogram bucket, plugin health scan+dedup+alert insert.
+- **Regression**: 68/69 (v35+v36+v37+v38, 1 opsiyonel skip).
+- Manuel curl: SA=9+bayi eşik 8/16 → verdict=spam · SA=17 → high_spam · SA=3 → clean · dedup 2. çağrıda 0 · force=true dedup atlar.
+
 ## Feb 6, 2026 (Session 7) - v37 Tenant İzolasyon + Master Info Sızıntı Fix'i
 
 ### CRITICAL (Kullanıcı bildirimi: "bayi ile master aynı kuyruk sayacı, master bilgileri sızıyor")

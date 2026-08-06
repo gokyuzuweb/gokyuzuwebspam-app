@@ -746,8 +746,8 @@ async def rescore_events(request: Request, license_key: Optional[str] = None,
 
 # ------- Threshold config (per-license) ------------------------------------
 class ThresholdIn(BaseModel):
-    spam_threshold: float = Field(default=5.0, ge=0.0, le=50.0)
-    high_spam_threshold: float = Field(default=10.0, ge=0.0, le=50.0)
+    spam_threshold: float = Field(default=5.0, ge=0.0, le=30.0)
+    high_spam_threshold: float = Field(default=10.0, ge=0.0, le=30.0)
 
 
 @router.get("/thresholds")

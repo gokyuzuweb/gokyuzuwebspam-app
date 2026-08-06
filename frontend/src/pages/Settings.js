@@ -120,15 +120,21 @@ export default function SettingsPage() {
       // 1) Legacy settings collection'a yaz (global config için)
       await api.settingsPut(p);
       // 2) Yeni per-license eşiklere de yaz — ConfigServer paritesi
-      //    ingest_event bu eşikleri okur ve verdict'i yeniden hesaplar
+      //    ingest_event bu eşikleri okur ve verdict'i yeniden hesaplar.
+      //    Master session yoksa (bayi tarayıcısı) license_key'i localStorage'dan al.
       try {
         const spam = Number(p.spam_threshold_low);
         const high = Number(p.spam_threshold_high);
         if (Number.isFinite(spam) && Number.isFinite(high) && high >= spam) {
-          await api.setThresholds({
-            spam_threshold: spam,
-            high_spam_threshold: high,
-          });
+          const lk = (typeof window !== "undefined"
+            ? (localStorage.getItem("gws.event_license")
+               || localStorage.getItem("gws.master_license")
+               || "")
+            : "");
+          await api.setThresholds(
+            { spam_threshold: spam, high_spam_threshold: high },
+            lk ? { license_key: lk } : {},
+          );
         }
       } catch (_) {
         // per-license set edilemezse settings save yine başarılı sayılır

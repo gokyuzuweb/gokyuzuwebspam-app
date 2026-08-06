@@ -3118,12 +3118,18 @@ async def admin_resellers_live(request: Request, license_key: Optional[str] = No
 
 @api.post("/admin/plugin-health/scan")
 async def admin_plugin_health_scan(request: Request, license_key: Optional[str] = None,
-                                    threshold: int = 100, hours: int = 24):
+                                    threshold: int = 100, hours: int = 24,
+                                    force: bool = False):
     """Master-only. Plugin normalization taramasını manuel tetikle.
-    Test için: `threshold=1` yapıp mevcut normalize sayısını uyarı olarak yaz."""
+    Test için: `threshold=1` yapıp mevcut normalize sayısını uyarı olarak yaz.
+    `force=true` ile dedup'u atlar; aksi halde 1 saat dedup uygulanır."""
     await _require_master(request, license_key)
-    created = await _plugin_normalization_scan_once(threshold=threshold, hours=hours, dedupe_hours=0)
-    return {"ok": True, "created": created, "threshold": threshold, "hours": hours}
+    dedupe = 0 if force else 1
+    created = await _plugin_normalization_scan_once(
+        threshold=threshold, hours=hours, dedupe_hours=dedupe
+    )
+    return {"ok": True, "created": created, "threshold": threshold,
+            "hours": hours, "dedupe_hours": dedupe}
 
 
 @api.get("/admin/threat-alerts")
