@@ -22,42 +22,14 @@ router = APIRouter(prefix="/queue", tags=["queue"])
 
 
 async def _resolve_tenant(request: Request, license_key_arg: Optional[str]) -> dict:
-    """Basit tenant scope: master header/cookie varsa is_master=True (verilen
-    license_key'i target olarak kullanır). Aksi halde bayi kabul edilir ve
-    kendi plugin_state'inden license_key okunur; kullanıcı bunu override edemez.
-
-    SECURITY: v35 fix — sadece `license_key_arg == MASTER_KEY` üzerinden master
-    scope veremeyiz (query-string escalation). Legacy fallback için IP kontrolü
-    zorunlu (MASTER_IP env)."""
-    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
-    hdr = request.headers.get("x-master-key") or ""
-    cookie = request.cookies.get("gws_master_session") or ""
-    if master_env and (hdr == master_env or cookie == master_env):
-        target = license_key_arg if (license_key_arg and license_key_arg != master_env) else None
-        return {"is_master": True, "license_key": target}
-    # Legacy WHM plugin (no header/cookie) — güvenlik için MASTER_IP zorunlu
-    if master_env and license_key_arg == master_env:
-        master_ip = os.environ.get("MASTER_IP", "")
-        xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-        client_ip = xff or (request.client.host if request.client else "")
-        if master_ip and client_ip == master_ip:
-            return {"is_master": True, "license_key": None}
-        # Master key + wrong IP → reject silently, treat as reseller
-    # Bayi: frontend'den gelen license_key argümanını licenses tablosunda
-    # DOĞRULA — böylece her bayi sadece kendi lisansı altındaki verileri görür.
-    if license_key_arg and license_key_arg != master_env:
-        lic_doc = await db.licenses.find_one(
-            {"license_key": license_key_arg},
-            {"_id": 0, "license_key": 1, "status": 1},
-        )
-        if lic_doc:
-            return {"is_master": False, "license_key": license_key_arg}
-    # Fallback: WHM plugin ortamındaki kendi plugin_state
-    st = await db.plugin_state.find_one({"_id": "main"}, {"_id": 0, "license_key": 1}) or {}
-    lk = st.get("license_key") or ""
-    if lk and lk != master_env:
-        return {"is_master": False, "license_key": lk}
-    return {"is_master": False, "license_key": "__none__"}
+    """Ortak `tenant.resolve_tenant_scope`'a delege eder — queue-specific dönüş
+    şemasına uyarla: {is_master, license_key}."""
+    from tenant import resolve_tenant_scope
+    scope = await resolve_tenant_scope(request, license_key_arg, db)
+    return {
+        "is_master": scope["is_master"],
+        "license_key": scope["owner_license_key"] or "",
+    }
 
 
 def _iso() -> str:

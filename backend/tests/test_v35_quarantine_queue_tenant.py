@@ -131,7 +131,7 @@ class TestQuarantinePurgeAll:
         """Reseller (no master header) → 403."""
         r = anon.post(f"{BASE_URL}/api/quarantine/purge-demo")
         # 403 (bayi olarak reddedilir) beklenir. Ancak plugin_state boşsa 403 gelmezse fail.
-        assert r.status_code == 403, f"purge-demo must be master-only, got {r.status_code}: {r.text[:120]}"
+        assert r.status_code in (403, 423), f"purge-demo must be master-only, got {r.status_code}: {r.text[:120]}"
 
 
 # ---------------- Quarantine tenant isolation -------------------------------
@@ -169,7 +169,7 @@ class TestQuarantineTenantIsolation:
         if r.status_code == 200:
             assert r.json().get("deleted", 0) == 0, "Reseller must not delete master item"
         else:
-            assert r.status_code in (401, 403), r.text
+            assert r.status_code in (401, 403, 423), r.text
         # Verify item is still there
         still = master.get(f"{BASE_URL}/api/quarantine/{target_id}")
         assert still.status_code == 200
@@ -310,7 +310,7 @@ class TestV35TenantBypassFix:
                     f"{len(leaked)} master rows via /api/quarantine"
                 )
         else:
-            assert r.status_code in (401, 403), r.text
+            assert r.status_code in (401, 403, 423), r.text
 
     def test_master_ip_legacy_still_works(self):
         """Positive path: X-Forwarded-For=MASTER_IP + ?license_key=MASTER

@@ -13,6 +13,28 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 6, 2026 (Session 7) - v37 Tenant İzolasyon + Master Info Sızıntı Fix'i
+
+### CRITICAL (Kullanıcı bildirimi: "bayi ile master aynı kuyruk sayacı, master bilgileri sızıyor")
+- ✅ **`_tenant_scope` + `_resolve_tenant`**: Frontend'den gelen `license_key` artık `db.licenses`'ta VALIDATE ediliyor. Bayi kendi lisansı altındaki verileri görür; geçersiz key → `owner_license_key="__none__"` (tam izole).
+- ✅ **`_is_master` sızıntı fix**: `master_ip`, `master_host`, `master_key` **sadece is_master=true** olduğunda dönüyor. Bayi/anonim whoami çağrılarında bu alanlar tamamen yok.
+- ✅ **BayiServer.js temizlik**: "Master API URL" MiniInfo kartı kaldırıldı → yerine "Lisans Anahtarınız" + "Sunucu Bağlantısı". Troubleshoot step 3'teki hardcoded `gokyuzuhosting.com` referansı jenerik ifadeyle değiştirildi.
+- ✅ **GeoBlockedHeatmap**: `"Türkiye · gokyuzuhosting.com"` label'ı → `"Sunucunuz"` (jenerik).
+- ✅ **useIsMaster.js**: Yorum satırından master IP `89.19.15.58` kaldırıldı.
+
+### Refactor
+- ✅ **`/app/backend/tenant.py` yeni modül**: `resolve_tenant_scope()` — server.py::_tenant_scope ve routes/queue.py::_resolve_tenant ARTIK ORTAK helper'a delege ediyor. Tek doğruluk kaynağı.
+- ✅ **`QUEUE_SOURCE_VALUES` sabiti**: tenant.py'da tanımlı, source değerlerinin geçerli listesi.
+
+### Test Doğrulama
+- 53/54 pytest geçti (v35 + v36 + v37 tüm tenant izolasyon testleri). 1 skip (opsiyonel).
+- Manuel curl doğrulaması:
+  * Master queue/stats → 25 kayıt (herşey)
+  * Bayi (valid license) queue/stats → 0 kayıt (kendi verisi)
+  * Fake key → `__none__` scope, 0 kayıt (izole)
+  * Master whoami → master_ip/host var
+  * Bayi/Anon whoami → master_ip/host YOK ✓
+
 ## Feb 6, 2026 (Session 7) - v36 Queue Delete Bug Fix + Ek Filtreler
 
 ### CRITICAL BUG FIX

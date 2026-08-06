@@ -158,7 +158,7 @@ export default function BayiServer() {
             <ul className="list-disc list-inside space-y-0.5 marker:text-amber-400/60">
               <li>Sunucunuz <b>CentOS 7/8, AlmaLinux 8/9 veya Ubuntu 20/22</b> olmalı ve <b>root</b> erişiminiz bulunmalı.</li>
               <li>WHM/cPanel + Exim (veya MailScanner) aktif olmalı — log yolları otomatik tespit edilir.</li>
-              <li>Sunucu <b>internet çıkışı</b> yapabilmeli (giden 443 portu). Firewall'da <span className="mono">gokyuzuhosting.com</span> üzerine kısıtlama olmamalı.</li>
+              <li>Sunucu <b>internet çıkışı</b> yapabilmeli (giden 443 portu). Aşağıdaki kurulum komutundaki master adresine dış bağlantı açık olmalı.</li>
               <li>Yukarıdaki <b>1. Sunucu Bilgileri</b> kartını doldurup kaydettiğinizden emin olun — aksi halde master doğrulama başarısız olur.</li>
             </ul>
           </div>

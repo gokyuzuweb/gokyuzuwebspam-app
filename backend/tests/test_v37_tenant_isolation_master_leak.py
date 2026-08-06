@@ -199,7 +199,13 @@ class TestV37QueueDeleteRegression:
         assert all(i["mid"] != mid for i in r2.json()["items"])
 
     def test_bayi_cannot_delete_master_record(self, anon, master):
-        """Cross-tenant delete guard: bayi tries to remove master's mid → db_deleted=0"""
+        """Cross-tenant delete guard: bayi tries to remove master's mid.
+
+        Two acceptable outcomes:
+          (a) 423 Demo Guard blocks the write entirely (no master session cookie).
+          (b) 200 with db_deleted=0 (tenant scope filter matched nothing).
+        Either way master's record remains — that's the invariant we assert.
+        """
         subj = _ingest(MASTER_KEY)
         time.sleep(0.4)
         r = master.get(f"{BASE_URL}/api/queue?limit=200&search={subj}")
@@ -209,11 +215,15 @@ class TestV37QueueDeleteRegression:
         # bayi attempts remove
         rb = anon.post(f"{BASE_URL}/api/queue/bulk",
                        json={"license_key": BAYI_KEY, "action": "remove", "mids": [mid]})
-        assert rb.status_code == 200
-        d = rb.json()
-        # bayi doesn't own this mid → db_deleted must be 0
-        assert d["results"][0]["db_deleted"] == 0, \
-            f"bayi should NOT be able to delete master's record: {d}"
+        assert rb.status_code in (200, 403, 423), f"unexpected status: {rb.status_code}"
+        if rb.status_code == 200:
+            d = rb.json()
+            assert d["results"][0]["db_deleted"] == 0, \
+                f"bayi should NOT be able to delete master's record: {d}"
+        # Master's record must still exist regardless of which guard fired
+        r2 = master.get(f"{BASE_URL}/api/queue?limit=200&search={subj}")
+        still_there = any(i["mid"] == mid for i in r2.json()["items"])
+        assert still_there, "master's record was deleted by bayi request!"
         # cleanup
         master.post(f"{BASE_URL}/api/queue/bulk",
                     json={"action": "remove", "mids": [mid]})
@@ -223,11 +233,12 @@ class TestV37QueueDeleteRegression:
 class TestV37PurgeDemoMasterOnly:
     def test_reseller_forbidden(self, anon):
         r = anon.post(f"{BASE_URL}/api/quarantine/purge-demo?license_key={BAYI_KEY}")
-        assert r.status_code == 403, f"bayi must not purge-demo: {r.status_code} {r.text[:120]}"
+        # 403 (tenant scope master-only) veya 423 (demo write guard) — ikisi de yasaklı
+        assert r.status_code in (403, 423), f"bayi must not purge-demo: {r.status_code} {r.text[:120]}"
 
     def test_anon_forbidden(self, anon):
         r = anon.post(f"{BASE_URL}/api/quarantine/purge-demo")
-        assert r.status_code == 403
+        assert r.status_code in (403, 423)
 
     def test_master_allowed(self, master):
         r = master.post(f"{BASE_URL}/api/quarantine/purge-demo")

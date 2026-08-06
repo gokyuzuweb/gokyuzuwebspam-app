@@ -1510,55 +1510,23 @@ async def _require_feature(scope: dict, feature: str) -> None:
 
 
 async def _tenant_scope(request: Request, license_key_arg: Optional[str]) -> dict:
-    """Multi-tenant izolasyon scope helper. Master ve bayi arasında yazma/okuma
-    ayrımı için tüm koleksiyonlarda kullanılır.
+    """Multi-tenant izolasyon scope helper — `tenant.resolve_tenant_scope`'a delege eder.
 
-    Öncelik sırası (auth ayrımını 'target tenant'tan ayır):
-      1) `x-master-key` header VEYA `gws_master_session` cookie master ise →
-         is_master=True. `license_key_arg` varsa hedef bayi olarak kullanılır
-         (master başkası adına işlem yapmak istiyor demektir).
-      2) `license_key_arg` master anahtarına eşitse → is_master=True (legacy).
-      3) Aksi halde bayi kabul edilir; hedef `plugin_state.license_key`.
+    Impersonation (master bayi görünümüne geçme) kontrolü sadece burada kalır çünkü
+    IMPERSONATE_COOKIE server.py'a özel bir konsepttir.
     """
+    from tenant import resolve_tenant_scope
     master_env = os.environ.get("MASTER_LICENSE_KEY", "")
     hdr = request.headers.get("x-master-key") or ""
     cookie = request.cookies.get("gws_master_session") or ""
-    # 0) Impersonation aktifse — master bayi görünümüne geçmiş olur; scope bayidir
-    #    (ama is_master=True kalır, çünkü altta yatan yetkisi master'dır).
-    impersonate = request.cookies.get(IMPERSONATE_COOKIE) if 'IMPERSONATE_COOKIE' in globals() else request.cookies.get("gws_impersonate")
+    impersonate = (
+        request.cookies.get(IMPERSONATE_COOKIE)
+        if "IMPERSONATE_COOKIE" in globals()
+        else request.cookies.get("gws_impersonate")
+    )
     if impersonate and master_env and (hdr == master_env or cookie == master_env or license_key_arg == master_env):
         return {"is_master": False, "owner_license_key": impersonate, "impersonated": True}
-    # 1) Auth: master header/cookie via
-    if master_env and (hdr == master_env or cookie == master_env):
-        target = license_key_arg if (license_key_arg and license_key_arg != master_env) else ""
-        return {"is_master": True, "owner_license_key": target}
-    # 2) Legacy: license_key_arg master ile eşleşiyor — SECURITY v35: sadece
-    #    MASTER_IP'den gelen çağrılar için geçerli (query-string escalation önlemi)
-    if master_env and license_key_arg == master_env:
-        master_ip = os.environ.get("MASTER_IP", "")
-        xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-        client_ip = xff or (request.client.host if request.client else "")
-        if master_ip and client_ip == master_ip:
-            return {"is_master": True, "owner_license_key": ""}
-        # Master key + yanlış IP → yükseltilmez, bayi olarak devam
-    # 3) Bayi tarafı: frontend'den gelen license_key argümanını VALIDATE et.
-    #    Böylece her bayi kendi lisansı altındaki verileri görür; başka bayinin
-    #    key'ini yazsa dahi o lisans veritabanında yoksa yetkisiz sayılır.
-    if license_key_arg and license_key_arg != master_env:
-        lic_doc = await db.licenses.find_one(
-            {"license_key": license_key_arg},
-            {"_id": 0, "license_key": 1, "status": 1, "license_type": 1},
-        )
-        if lic_doc:  # geçerli bayi lisansı
-            return {"is_master": False, "owner_license_key": license_key_arg}
-    # 3b) Fallback: WHM plugin'in kendi plugin_state'i (aynı sunucu üzerinde
-    #     çalışan bayi plugin'i için — SaaS master ortamında bu boş olur).
-    st = await _plugin_status_payload()
-    lk = st.get("license_key") or ""
-    if lk and lk != master_env:
-        return {"is_master": False, "owner_license_key": lk}
-    # Hiçbir eşleşme yok → izole (hiç veri görmez)
-    return {"is_master": False, "owner_license_key": "__none__"}
+    return await resolve_tenant_scope(request, license_key_arg, db)
 
 
 class RuleIn(BaseModel):

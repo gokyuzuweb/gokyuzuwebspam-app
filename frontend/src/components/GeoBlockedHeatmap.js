@@ -9,8 +9,9 @@ import { api } from "@/lib/api";
 // TopoJSON world atlas
 const GEO_URL = "/geo/countries-110m.json";
 
-// Türkiye = hedef (89.19.15.58 sunucusu — İstanbul yaklaşık)
-const TARGET = { name: "Türkiye · gokyuzuhosting.com", lat: 41.0, lon: 29.0 };
+// Hedef marker konumu (İstanbul merkez). Master için hedef master sunucusu,
+// bayi için kendi sunucusudur — jenerik "Sizin Sunucunuz" etiketi kullanılır.
+const TARGET = { name: "Sunucunuz", lat: 41.0, lon: 29.0 };
 
 // TopoJSON'daki numeric ISO code → 2-letter mapping (kritik ülkeler için)
 const ISO_NUM_TO_ALPHA2 = {

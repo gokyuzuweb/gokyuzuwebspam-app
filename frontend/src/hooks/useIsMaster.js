@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 
 /**
  * useIsMaster — returns true only when this browser is authenticated as the
- * "master admin" (server IP `89.19.15.58` + master license key).
+ * master admin (via master license key + MASTER_IP allowlist, verified server-side).
  *
  * Frontend gating is *UX-only*; backend enforces authoritatively via
  * `_require_master()` on mutating endpoints.
