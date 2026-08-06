@@ -142,6 +142,7 @@ export const api = {
   quarantineStats: (params = {}) => client.get("/quarantine/stats", { params }).then(r => r.data),
   quarantinePurgeAll: (params = {}) => client.post("/quarantine/purge-all", null, { params }).then(r => r.data),
   quarantineForward: (payload) => client.post("/quarantine/forward", payload).then(r => r.data),
+  eventsRescore: (params = {}) => client.post("/events/rescore", null, { params }).then(r => r.data),
 
   lists: (params = {}) => client.get("/lists", { params }).then(r => r.data),
   listAdd: (payload) => client.post("/lists", payload).then(r => r.data),

@@ -256,6 +256,45 @@ async def ingest_event(evt: MailEvent, request: Request):
         sender_ip = request.client.host
     doc["client_ip"] = sender_ip or doc.get("client_ip")
     doc["sender_ip"] = sender_ip
+
+    # ---- SKOR & VERDICT NORMALIZATION -----------------------------------
+    # ConfigServer MailScanner Front-End ile parite: gerçek SA skoru
+    # `scores.spamassassin` içindedir (Perl script bunu her zaman ekler).
+    # `total_score` bazı plugin sürümlerinde yanlış toplam (motor kural
+    # numaraları, byte size vb.) döndürüyor → panelde 81 gibi anormal
+    # değerler görülüyordu. SA skoru varsa onu tek doğru kaynak olarak al
+    # ve verdict'i standart SA eşikleriyle yeniden hesapla.
+    try:
+        scores_map = doc.get("scores") or {}
+        sa_raw = scores_map.get("spamassassin")
+        sa_score = float(sa_raw) if sa_raw is not None else None
+    except (TypeError, ValueError):
+        sa_score = None
+    if sa_score is not None:
+        doc["total_score"] = sa_score
+        # Sadece SA skoru düşük olduğu halde plugin yüksek verdict yolladıysa
+        # düzelt. Virus/phish gibi gerçek tehdit verdict'lerini KORU.
+        cur_verdict = (doc.get("verdict") or "").lower()
+        if cur_verdict not in ("virus", "phish", "phishing", "blocked"):
+            if sa_score >= 10:
+                doc["verdict"] = "high_spam"
+            elif sa_score >= 5:
+                doc["verdict"] = "spam"
+            else:
+                doc["verdict"] = "clean"
+        doc["score_normalized"] = True
+        doc["score_source"] = "spamassassin"
+    else:
+        # SA yok — plugin total_score'a güven ama abartılı değerleri clamp'le
+        try:
+            ts = float(doc.get("total_score") or 0)
+            if ts > 30:  # gerçek SA maks ~30; yukarısı plugin bug'ı
+                doc["total_score_original"] = ts
+                doc["total_score"] = 30.0
+                doc["score_clamped"] = True
+        except (TypeError, ValueError):
+            doc["total_score"] = 0
+    # ---------------------------------------------------------------------
     await db.mail_events.insert_one(doc)
     # Canlı akışa yayınla — Landing + Panel WebSocket dinleyicileri anında görsün
     try:
@@ -625,6 +664,72 @@ async def ingest_batch(events: list[MailEvent]):
         {"$set": {"last_event_at": now}, "$inc": {"total_events": len(docs)}}
     )
     return {"ok": True, "inserted": len(docs)}
+
+
+@router.post("/rescore")
+async def rescore_events(request: Request, license_key: Optional[str] = None,
+                          dry_run: bool = False):
+    """Mevcut mail_events kayıtlarında `total_score`'u `scores.spamassassin`
+    üzerinden yeniden hesapla ve verdict'i standart SA eşikleriyle düzelt.
+
+    Kullanım: Plugin `total_score` alanına yanlış değer yollamış (ör: motor
+    kural numaralarını toplamış) → panelde 27, 81 gibi anormal skorlar +
+    tüm mailler high_spam olarak görünüyorsa.
+
+    - Master (header/cookie) → tüm bayilerinki (opsiyonel `license_key` ile drill-down)
+    - Bayi lisansı → sadece kendi kayıtları
+    - `dry_run=true` → sadece kaç kayıt etkileneceğini sayar, değiştirmez"""
+    from tenant import resolve_tenant_scope
+    scope = await resolve_tenant_scope(request, license_key, db)
+    if not scope["is_master"] and scope["owner_license_key"] == "__none__":
+        raise HTTPException(403, "Geçerli lisans veya master yetkisi gerekli")
+
+    q: dict = {}
+    if not scope["is_master"]:
+        q["license_key"] = scope["owner_license_key"]
+    elif scope["owner_license_key"]:
+        q["license_key"] = scope["owner_license_key"]
+
+    updated = 0
+    fixed_verdicts = 0
+    scanned = 0
+    async for ev in db.mail_events.find(q, {"_id": 0, "id": 1, "scores": 1, "total_score": 1, "verdict": 1}).limit(50000):
+        scanned += 1
+        try:
+            sa = (ev.get("scores") or {}).get("spamassassin")
+            sa = float(sa) if sa is not None else None
+        except (TypeError, ValueError):
+            sa = None
+        if sa is None:
+            continue
+        cur_total = ev.get("total_score") or 0
+        cur_verdict = (ev.get("verdict") or "").lower()
+        target_verdict = cur_verdict
+        if cur_verdict not in ("virus", "phish", "phishing", "blocked"):
+            if sa >= 10: target_verdict = "high_spam"
+            elif sa >= 5: target_verdict = "spam"
+            else: target_verdict = "clean"
+        if abs(float(cur_total) - sa) > 0.01 or target_verdict != cur_verdict:
+            updated += 1
+            if target_verdict != cur_verdict:
+                fixed_verdicts += 1
+            if not dry_run:
+                await db.mail_events.update_one(
+                    {"id": ev["id"]},
+                    {"$set": {
+                        "total_score": sa,
+                        "verdict": target_verdict,
+                        "score_normalized": True,
+                        "score_source": "spamassassin",
+                        "total_score_original": cur_total,
+                    }},
+                )
+    return {
+        "ok": True, "scanned": scanned,
+        "updated": updated, "fixed_verdicts": fixed_verdicts,
+        "dry_run": dry_run,
+        "scope": {"is_master": scope["is_master"], "owner": scope["owner_license_key"]},
+    }
 
 
 @router.get("")

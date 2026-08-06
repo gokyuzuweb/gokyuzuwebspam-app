@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Trash2, RotateCcw, GraduationCap, X, Mail, Server, Hash, Filter, BarChart3, Flame, Forward, Calendar, AlertTriangle } from "lucide-react";
+import { Search, Trash2, RotateCcw, GraduationCap, X, Mail, Server, Hash, Filter, BarChart3, Flame, Forward, Calendar, AlertTriangle, Calculator } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -111,6 +111,18 @@ export default function Quarantine() {
     onError: (e) => toast.error("Toplu temizleme başarısız: " + (e?.response?.data?.detail || e.message)),
   });
 
+  const rescoreMut = useMutation({
+    mutationFn: () => api.eventsRescore(),
+    onSuccess: (data) => {
+      toast.success(`Skorlar yeniden hesaplandı: ${data.updated}/${data.scanned} kayıt düzeltildi (${data.fixed_verdicts} verdict değişti)`);
+      qc.invalidateQueries({ queryKey: ["quarantine"] });
+      qc.invalidateQueries({ queryKey: ["quarantine-stats"] });
+      qc.invalidateQueries({ queryKey: ["queue-list"] });
+      qc.invalidateQueries({ queryKey: ["queue-stats"] });
+    },
+    onError: (e) => toast.error("Yeniden hesaplama hatası: " + (e?.response?.data?.detail || e.message)),
+  });
+
   const runBulk = (action) => {
     if (selected.size === 0) return toast.error(t("quarantine.select_first"));
     bulk.mutate({ action, ids: Array.from(selected) });
@@ -198,6 +210,15 @@ export default function Quarantine() {
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-sm font-medium"
             title="Filtreye uyan tümünü kalıcı olarak sil">
             <Flame className="w-3.5 h-3.5" /> Hepsini Temizle
+          </button>
+          <button data-testid="q-rescore" onClick={() => {
+              if (!confirm("Tüm mail_events kayıtlarında SpamAssassin skoru üzerinden verdict yeniden hesaplanır. Devam edilsin mi?")) return;
+              rescoreMut.mutate();
+            }}
+            disabled={rescoreMut.isPending}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-sm disabled:opacity-50"
+            title="Plugin yanlış skorlar yolladıysa SA skoruna göre otomatik düzelt (ConfigServer Front-End paritesi)">
+            <Calculator className="w-3.5 h-3.5" /> {rescoreMut.isPending ? "Hesaplanıyor…" : "Skorları Yeniden Hesapla"}
           </button>
         </div>
       </div>
