@@ -437,9 +437,40 @@ sub _poll_and_execute_actions {
 
     for my $act (@$items) {
         my $action_id = $act->{id}       or next;
-        my $event_id  = $act->{event_id} or next;
-        my $op        = $act->{action}   or next;
+        my $op        = $act->{action} || $act->{action_type} or next;
 
+        # === plugin_update: bayi WHM sunucusunda install-bayi.sh koş, 3 kez retry ===
+        if ($op eq 'plugin_update') {
+            my $cmd = $act->{command};
+            if (!$cmd) {
+                _post_action_complete($action_id, 0, 'fail', 'command yok');
+                next;
+            }
+            my $ok = 0;
+            my $last_out = '';
+            my $attempts = 0;
+            for my $try (1..3) {
+                $attempts = $try;
+                warn "[GWS-logtail] plugin_update deneme $try/3 action=$action_id\n";
+                my $out = qx($cmd 2>&1);
+                my $rc  = $? >> 8;
+                $last_out = substr(($out // ''), 0, 2000);
+                if ($rc == 0) {
+                    $ok = 1;
+                    warn "[GWS-logtail] plugin_update basarili (deneme $try)\n";
+                    last;
+                }
+                warn "[GWS-logtail] plugin_update deneme $try basarisiz (rc=$rc), " . ($try < 3 ? "yeniden denenecek" : "vazgeciliyor") . "\n";
+                # Kısa bekleme (5sn * try) sonra tekrar dene
+                sleep(5 * $try) if $try < 3;
+            }
+            my $msg = "attempts=$attempts | " . ($ok ? "ok" : "failed after $attempts tries") . "\n$last_out";
+            _post_action_complete($action_id, $ok, ($ok ? 'ok' : 'fail'), $msg);
+            next;
+        }
+
+        # === Exim spool işlemleri: delete / release / report_spam ===
+        my $event_id  = $act->{event_id} or next;
         # Event detayini al - exim_mid gerekli
         my $ev_url = "$server/api/events?license_key=$license&limit=1";
         # Backend list endpoint filter by id yok — daha basit: /event/{id} olsa iyi olur.
@@ -474,6 +505,23 @@ sub _poll_and_execute_actions {
             message     => $msg,
         });
     }
+}
+
+# plugin_update tamamlama endpoint'i — hem legacy hem master notification path
+sub _post_action_complete {
+    my ($action_id, $ok, $result, $msg) = @_;
+    # 1) Legacy path — bayi daemon complete-action (result string)
+    _post_json("$server/api/events/complete-action", {
+        license_key => $license,
+        action_id   => $action_id,
+        result      => $result,
+        message     => $msg,
+    });
+    # 2) Master notification path — pending-actions/{id}/complete (ok bool + master_alerts insert)
+    _post_json(
+        "$server/api/events/pending-actions/$action_id/complete?license_key=$license",
+        { ok => ($ok ? JSON::PP::true : JSON::PP::false), result => $result, output => $msg }
+    );
 }
 
 # event_id -> exim_mid map, sonradan lookup icin diske yaz

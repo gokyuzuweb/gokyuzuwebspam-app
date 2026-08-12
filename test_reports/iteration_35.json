@@ -1,0 +1,30 @@
+{
+  "summary": "v40 testing complete: (1) Backend /api/events/saved-filters GET/POST/{sid}/delete + module isolation + invalid-module 422 — 4/4 tests passed. (2) /api/events/pending-actions/{id}/complete with ok=true writes master_alerts type=plugin_update_complete severity=info, with ok=false writes severity=warning, and both are retrievable via GET /api/admin/threat-alerts — 3/3 tests passed. (3) Frontend Quarantine: SavedFiltersBar renders (saved-filters-quarantine), 'Yeni Kaydet' button opens name input, save creates chip (saved-filter-load-<id>), load applies filter (toast 'uygulandı'), delete removes with confirm dialog + 'Silindi' toast. Regression: 64 quarantine rows render without console errors (score.toFixed fallback working). (4) Frontend Dashboard Canlı tab: saved-filters-live_events bar + Yeni Kaydet button visible, filter saved with adv fields (from_search+min_score) persists as chip. (5) Threat Bell: opens panel, badge shows 12 with animate-pulse, icons rendered correctly — plugin_update_complete (3 CheckCircle2 emerald + XCircle rose for failed), plugin_normalization (9 Activity amber), threat_ratio (1 AlertTriangle rose); plugin_update_complete link href = /panel/plugin-health ✓. (6) Perl static review: mailshield-logtail.pl:438-510 _poll_and_execute_actions has plugin_update branch with for(1..3) retry loop, sleep(5 * try) between failed attempts, _post_action_complete POSTs to both /api/events/complete-action (legacy) and /api/events/pending-actions/{id}/complete?license_key=... (master path). Structure verified.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "LiveMailEvents verdict-select", "issues": ["Pre-existing React hydration warning '<span> cannot be child of <option>' from emergent visual editor injected spans — noted in iteration_34, no functional impact."]},
+      {"screen": "Panel Dashboard console", "issues": ["Pre-existing 500 responses in browser console during dashtab-live network idle; already observed in v39. Non-blocking; UI still renders and saved filter creates + threat bell functions correctly."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v40_saved_filters_notifications.py",
+    "/app/test_reports/pytest/v40_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SavedFiltersBar.js uses window.confirm() for delete — acceptable but not consistent with rest of the app which uses shadcn AlertDialog elsewhere. Consider replacing with AlertDialog for design consistency.",
+    "ThreatAlertBell.js alertMeta() is well-factored; if more alert types are added it can move to a config map to keep the component lean.",
+    "Perl _poll_and_execute_actions plugin_update branch mixes `warn` (STDERR) with returning after retries — consider structured logging (e.g. syslog) since bayi ops teams may not always tail STDERR."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (all 6 flows)"},
+  "test_credentials": "Master: MS-C02AB012652A4FE692D69676 (via localStorage.gws.master_license + X-Master-Key header)",
+  "seed_data_creation": "During test runs created several TEST_-prefixed saved_filters and pending_quarantine_actions; test file cleans up saved_filters (both quarantine + live_events) explicitly. master_alerts rows created by plugin-update-complete tests are left in place (used by frontend threat-bell verification).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_v40_saved_filters_notifications.py covers saved-filters CRUD + plugin_update_complete + threat-alerts feed. Master session works via X-Master-Key header. Frontend SavedFiltersBar data-testid convention: saved-filters-<module>, saved-filter-new-<module>, saved-filter-name-input-<module>, saved-filter-save-confirm-<module>, saved-filter-load-<id>, saved-filter-del-<id>. Threat bell icon testid: threat-alert-icon-<type>. Do not delete master_alerts rows manually as they are used to verify frontend bell rendering.",
+  "rca of the issue": "No issue found."
+}

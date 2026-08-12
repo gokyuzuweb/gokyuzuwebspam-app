@@ -6,6 +6,7 @@ import { Send, ShieldCheck, ShieldAlert, Bug, Ban, AlertTriangle, Crown, Refresh
 import { toast } from "sonner";
 import { useIsMaster } from "@/hooks/useIsMaster";
 import MailEventDetail from "@/components/MailEventDetail";
+import SavedFiltersBar from "@/components/SavedFiltersBar";
 
 // Küçük inline debounce hook'u — adv arama alanlarında her tuş vuruşunda
 // backend'e istek gitmesin diye 350ms bekletir.
@@ -613,6 +614,32 @@ export default function LiveMailEvents() {
                 )}
               </div>
             )}
+
+            {/* Kayıtlı filtreler barı — kompleks filtre kombinasyonları için */}
+            <div className="mb-3 p-2 rounded border border-slate-800/60 bg-slate-950/40">
+              <SavedFiltersBar
+                module="live_events"
+                currentFilters={{
+                  search, verdictFilter, limit, fromSearch, toSearch, subjectSearch,
+                  ipSearch, minScore, maxScore, hoursFilter,
+                }}
+                onLoad={(f) => {
+                  setSearch(f.search ?? "");
+                  setVerdictFilter(f.verdictFilter ?? "all");
+                  if (f.limit && Number.isFinite(Number(f.limit))) setLimit(Number(f.limit));
+                  setFromSearch(f.fromSearch ?? "");
+                  setToSearch(f.toSearch ?? "");
+                  setSubjectSearch(f.subjectSearch ?? "");
+                  setIpSearch(f.ipSearch ?? "");
+                  setMinScore(f.minScore ?? "");
+                  setMaxScore(f.maxScore ?? "");
+                  setHoursFilter(f.hoursFilter ?? "");
+                  if (f.fromSearch || f.toSearch || f.subjectSearch || f.ipSearch || f.minScore || f.maxScore || f.hoursFilter) {
+                    setAdvOpen(true);
+                  }
+                }}
+              />
+            </div>
           </>
         )}
 

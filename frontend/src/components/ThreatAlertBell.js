@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, X, Check, AlertTriangle, ExternalLink } from "lucide-react";
+import { Bell, X, Check, AlertTriangle, ExternalLink, CheckCircle2, XCircle, Activity } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useIsMaster } from "@/hooks/useIsMaster";
@@ -18,6 +18,39 @@ const fmtRel = (iso) => {
   if (diff < 86400) return `${Math.floor(diff / 3600)}sa önce`;
   return `${Math.floor(diff / 86400)}g önce`;
 };
+
+// Alert tipine göre ikon + renk + tıklanınca gidilecek route
+function alertMeta(a) {
+  const type = a?.type || "threat";
+  const sev = a?.severity;
+  // Plugin update complete (success/fail)
+  if (type === "plugin_update_complete") {
+    const ok = a?.ok !== false && sev !== "warning" && sev !== "error";
+    return {
+      Icon: ok ? CheckCircle2 : XCircle,
+      iconCls: ok ? "text-emerald-400" : "text-rose-400",
+      linkHref: "/panel/plugin-health",
+      linkTitle: "Plugin Health'e git",
+    };
+  }
+  // Plugin normalization health warning
+  if (type === "plugin_normalization") {
+    return {
+      Icon: Activity,
+      iconCls: "text-amber-400",
+      linkHref: "/panel/plugin-health",
+      linkTitle: "Plugin Health'e git",
+    };
+  }
+  // Reseller-based threat (default)
+  const rid = a?.reseller_id ? `?rid=${encodeURIComponent(a.reseller_id)}` : "";
+  return {
+    Icon: AlertTriangle,
+    iconCls: "text-rose-400",
+    linkHref: `/panel/resellers-admin${rid}`,
+    linkTitle: "Bayi detayı",
+  };
+}
 
 /**
  * ThreatAlertBell — Master-only bildirim zili. 20sn'de bir polling yapar;
@@ -58,11 +91,23 @@ export default function ThreatAlertBell() {
     if (unseen > prevUnseenRef.current && prevUnseenRef.current !== 0) {
       const newest = items.find((a) => !a.seen);
       if (newest) {
-        toast.warning("⚠️ Yeni Tehdit Uyarısı", {
+        const meta = alertMeta(newest);
+        const isSuccess = newest.type === "plugin_update_complete" && newest.ok !== false && newest.severity !== "warning";
+        const fn = isSuccess ? toast.success : toast.warning;
+        const title = newest.type === "plugin_update_complete"
+          ? (isSuccess ? "✓ Plugin Güncellendi" : "✗ Plugin Güncelleme Başarısız")
+          : "⚠️ Yeni Tehdit Uyarısı";
+        fn(title, {
           description: newest.message,
           action: {
-            label: "Görüntüle",
-            onClick: () => setOpen(true),
+            label: meta.linkHref.includes("plugin-health") ? "Plugin Health" : "Görüntüle",
+            onClick: () => {
+              if (meta.linkHref.includes("plugin-health")) {
+                window.location.href = meta.linkHref;
+              } else {
+                setOpen(true);
+              }
+            },
           },
           duration: 10000,
         });
@@ -146,29 +191,53 @@ export default function ThreatAlertBell() {
                 </div>
               ) : (
                 <ul className="divide-y divide-slate-800/60">
-                  {items.map((a) => (
+                  {items.map((a) => {
+                    const meta = alertMeta(a);
+                    const TypeIcon = meta.Icon;
+                    return (
                     <li
                       key={a.id}
                       data-testid={`threat-alert-${a.id}`}
+                      data-alert-type={a.type || "threat"}
                       className={`p-3 hover:bg-slate-900/60 transition-colors ${
                         !a.seen ? "bg-rose-500/[0.03] border-l-2 border-rose-500" : ""
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs text-slate-200 leading-relaxed">
-                            {a.message}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-500">
-                            <span className="mono">{fmtRel(a.created_at)}</span>
-                            <span>·</span>
-                            <span className="mono">{a.mails} mail</span>
-                            <span>·</span>
-                            <span className={`mono font-semibold ${
-                              a.ratio_pct >= 60 ? "text-rose-400" : "text-amber-400"
-                            }`}>
-                              %{a.ratio_pct}
-                            </span>
+                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                          <TypeIcon
+                            data-testid={`threat-alert-icon-${a.type || "threat"}`}
+                            className={`w-4 h-4 shrink-0 mt-0.5 ${meta.iconCls}`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs text-slate-200 leading-relaxed">
+                              {a.message}
+                            </div>
+                            <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-500">
+                              <span className="mono">{fmtRel(a.created_at)}</span>
+                              {typeof a.mails !== "undefined" && (
+                                <>
+                                  <span>·</span>
+                                  <span className="mono">{a.mails} mail</span>
+                                </>
+                              )}
+                              {typeof a.ratio_pct !== "undefined" && (
+                                <>
+                                  <span>·</span>
+                                  <span className={`mono font-semibold ${
+                                    a.ratio_pct >= 60 ? "text-rose-400" : "text-amber-400"
+                                  }`}>
+                                    %{a.ratio_pct}
+                                  </span>
+                                </>
+                              )}
+                              {a.type && a.type !== "threat" && (
+                                <>
+                                  <span>·</span>
+                                  <span className="mono text-slate-500 uppercase tracking-widest">{a.type.replace(/_/g, " ")}</span>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1 shrink-0">
@@ -183,16 +252,19 @@ export default function ThreatAlertBell() {
                             </button>
                           )}
                           <a
-                            href={`/panel/resellers-admin?rid=${encodeURIComponent(a.reseller_id)}`}
+                            data-testid={`threat-link-${a.id}`}
+                            href={meta.linkHref}
+                            onClick={() => { if (!a.seen) { try { ack.mutate(a.id); } catch (_) {} } setOpen(false); }}
                             className="p-1 rounded hover:bg-slate-800 text-indigo-400"
-                            title="Detay"
+                            title={meta.linkTitle}
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
                           </a>
                         </div>
                       </div>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
             </div>

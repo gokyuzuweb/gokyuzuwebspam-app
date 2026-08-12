@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Card, CardBody, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { useT, useI18n } from "@/i18n";
+import SavedFiltersBar from "@/components/SavedFiltersBar";
 
 function useVerdictBadge() {
   const t = useT();
@@ -188,6 +189,18 @@ export default function Quarantine() {
             <span className="mono text-xs text-indigo-400">{selected.size} {t("quarantine.selected")}</span>
           </div>
         </CardBody>
+        <div className="px-3 pb-3 border-t border-slate-800 pt-2">
+          <SavedFiltersBar
+            module="quarantine"
+            currentFilters={{ search, verdict, engine, ageFilter }}
+            onLoad={(f) => {
+              setSearch(f.search ?? "");
+              setVerdict(f.verdict ?? "all");
+              setEngine(f.engine ?? "all");
+              setAgeFilter(f.ageFilter ?? "all");
+            }}
+          />
+        </div>
       </Card>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -283,7 +296,7 @@ export default function Quarantine() {
                   </td>
                   <td className="px-4 py-2.5 text-slate-300 truncate max-w-[180px]">{r.recipient}</td>
                   <td className="px-4 py-2.5 text-slate-200 truncate max-w-[380px]">{r.subject}</td>
-                  <td className="px-4 py-2.5 text-right mono text-amber-300">{r.score.toFixed(2)}</td>
+                  <td className="px-4 py-2.5 text-right mono text-amber-300">{(r.score ?? r.total_score ?? 0).toFixed ? (r.score ?? r.total_score ?? 0).toFixed(2) : Number(r.score ?? r.total_score ?? 0).toFixed(2)}</td>
                   <td className="px-4 py-2.5">{verdictBadge(r.verdict)}</td>
                   <td className="px-4 py-2.5 mono text-xs text-slate-400 uppercase">{r.engine}</td>
                 </tr>

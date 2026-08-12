@@ -13,7 +13,31 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 12, 2026 (Session 8) - v40 Saved Filters UI + Notification Icons + Plugin Auto-Retry
+
+### Yeni Özellikler
+- ✅ **SavedFiltersBar** (`/app/frontend/src/components/SavedFiltersBar.js`) — Karantina ve Canlı Mail sekmelerine `data-testid='saved-filters-quarantine'` ve `'saved-filters-live_events'` olarak entegre edildi. "Yeni Kaydet" → inline input → chip (yükle/sil), Enter/Escape klavye kısayolları.
+- ✅ **ThreatAlertBell type icons + redirection** (`ThreatAlertBell.js::alertMeta()`):
+  * `plugin_update_complete` (ok) → **yeşil CheckCircle2** ikonu → tık: `/panel/plugin-health`
+  * `plugin_update_complete` (fail) → **kırmızı XCircle** ikonu → tık: `/panel/plugin-health`
+  * `plugin_normalization` → **amber Activity** ikonu → tık: `/panel/plugin-health`
+  * Diğer (threat_ratio) → kırmızı AlertTriangle → tık: `/panel/resellers-admin?rid=...`
+  * Yeni toast başlığı tipe göre değişir (✓ Plugin Güncellendi / ✗ Başarısız / ⚠️ Tehdit)
+  * Link tıklandığında alert otomatik olarak seen=true işaretlenir
+- ✅ **Plugin Auto-Retry (Perl WHM)** (`mailshield-logtail.pl::_poll_and_execute_actions`):
+  * `action_type='plugin_update'` için 3 denemelik retry loop
+  * Başarısız denemeler arasında 5s × deneme numarası bekletir (5s, 10s)
+  * Sonucu hem legacy `/api/events/complete-action` hem de master path `/api/events/pending-actions/{id}/complete` endpoint'ine bildirir (master_alerts otomatik oluşur)
+- ✅ **Regression fix**: `Quarantine.js` `r.score.toFixed(2)` çağrısında bazı backfilled kayıtların `score` alanı yokken oluşan crash düzeltildi (`r.score ?? r.total_score ?? 0` fallback).
+
+### Testing
+- **7/7 backend pytest** (saved-filters endpoints + pending-actions completion → master_alerts insertion, tests report iteration_35.json)
+- **Frontend e2e**: Karantina + Canlı sekme SavedFiltersBar tam akışı, ThreatBell tipli ikonlar + link doğrulaması yeşil
+- **Perl statik doğrulama**: retry yapısı & çift endpoint POST doğrulandı
+- Full regression: 64 karantina satırı hata olmadan render + bell 12 alert (3 update-complete, 9 normalization, 1 threat) doğru ikonlar
+
 ## Feb 12, 2026 (Session 7) - v39 Canlı Mail Trafik: Limit + Detaylı Arama
+
 
 - ✅ **Ayarlanabilir limit**: LiveMailEvents 100 sabit yerine dropdown (50/100/250/500/1000/2500/**5000 = sınırsız**). Backend `list_events` cap 500→5000. localStorage'da kalıcı (`gws.live_limit`).
 - ✅ **Detaylı arama paneli** (`data-testid='live-events-adv-panel'`, toggle: `adv-toggle`):
