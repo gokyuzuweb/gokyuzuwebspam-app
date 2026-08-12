@@ -3168,8 +3168,17 @@ async def admin_plugin_health_queue_update(lic_key: str, request: Request,
 async def admin_plugin_health_list(request: Request, license_key: Optional[str] = None,
                                      hours: int = 24):
     """Master-only. Tüm bayilerin son N saatteki plugin normalize sağlığı listesi.
-    Dashboard için: kim ne kadar normalize etmiş, son alert zamanı, status."""
+    Dashboard için: kim ne kadar normalize etmiş, son alert zamanı, status.
+
+    v42: Redis cache 15sn TTL (Plugin Health 30sn polling → ~%50 cache hit,
+    ~5 count × N bayi hesaplamasını atlar)."""
     await _require_master(request, license_key)
+    # Cache lookup — master-only endpoint, key global
+    from cache import cache as _pcache
+    _ck = f"plugin_health_list:h{int(hours)}"
+    cached = await _pcache.get(_ck)
+    if cached is not None:
+        return cached
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     items = []
     async for r in db.resellers.find({}, {"_id": 0}):
@@ -3226,12 +3235,14 @@ async def admin_plugin_health_list(request: Request, license_key: Optional[str] 
     total_bayi = len(items)
     critical = sum(1 for i in items if i["status"] == "critical")
     warning = sum(1 for i in items if i["status"] == "warning")
-    return {
+    result = {
         "items": items, "total_bayi": total_bayi,
         "critical": critical, "warning": warning,
         "healthy": total_bayi - critical - warning,
         "hours": hours,
     }
+    await _pcache.set(_ck, result, 15.0)
+    return result
 
 
 @api.post("/admin/plugin-health/scan")

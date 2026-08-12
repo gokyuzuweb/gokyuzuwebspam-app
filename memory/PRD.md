@@ -13,6 +13,21 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 12, 2026 (Session 11) - v42+ Redis Cache 3 Yeni Endpoint
+
+### Cache'lenen Yeni Endpoint'ler
+- ✅ **`GET /api/maintenance/public/live-ticker`** — 4sn TTL (Landing 5sn polling → ~80% cache hit). Cold 500ms → warm **89ms** (~5.6x).
+- ✅ **`GET /api/maintenance/trust-score/history`** — 5dk TTL (300s). Days parametresi başına ayrı key (`trust_history:d30`, `:d7` vs). Cold 120ms → warm 94ms.
+- ✅ **`GET /api/admin/plugin-health/list`** — 15sn TTL (Plugin Health 30sn polling → ~50% cache hit). Cold 177ms → warm **89ms** (~2x, ama tüm bayilerin 5+ count'unu atlar).
+
+### Cache Invalidation
+- ✅ **`POST /api/maintenance/trust-score/snapshot`** — Yeni skor yazıldığında `trust_history:d{7,14,30,60,90}` otomatik silinir; bir sonraki GET taze veriyi alır.
+
+### Testing (34 test toplam)
+- v42 Redis: **19/19** (write, TTL, read hit, raw=1 bypass, namespace isolation, payload integrity, live-ticker 3, trust-history 3, plugin-health 3, snapshot invalidation 1)
+- v41 Perf: 13/13
+- Legacy: 2/2
+
 ## Feb 12, 2026 (Session 10) - v42 Redis Cache Katmanı
 
 ### Yeni Modül

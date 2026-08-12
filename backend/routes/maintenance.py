@@ -595,6 +595,9 @@ async def trust_score_snapshot(score: int, findings: int = 0, rbl_listed: int = 
         }},
         upsert=True,
     )
+    # Cache invalidation — history endpoint'i freshly rebuild olsun
+    for d in (7, 14, 30, 60, 90):
+        await _cache.delete(f"trust_history:d{d}")
     # Uyarı tetikle: skor 60 altına yeni düştüyse
     alert_fired = False
     if score < 60 and (prev_score is None or prev_score >= 60):
@@ -631,7 +634,15 @@ async def trust_score_snapshot(score: int, findings: int = 0, rbl_listed: int = 
 
 @router.get("/trust-score/history")
 async def trust_score_history(days: int = 30):
-    """Son N günün skor trendi. Boş günleri interpolate etmez (gap = null)."""
+    """Son N günün skor trendi. Boş günleri interpolate etmez (gap = null).
+    v42: Redis cache 5dk TTL — günlük snapshot bir kere yazılır, tekrar
+    hesaplamaya değmez."""
+    # Cache key days parametresine göre; genelde 30 (dashboard default)
+    cache_key = f"trust_history:d{int(days)}"
+    cached = await _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     from datetime import date, timedelta
     end = date.today()
     start = end - timedelta(days=days - 1)
@@ -647,7 +658,7 @@ async def trust_score_history(days: int = 30):
         series.append({"date": d, "score": r["score"] if r else None,
                        "findings": r.get("findings") if r else None})
     scores = [s["score"] for s in series if s["score"] is not None]
-    return {
+    result = {
         "days": days, "series": series,
         "min": min(scores) if scores else None,
         "max": max(scores) if scores else None,
@@ -655,6 +666,12 @@ async def trust_score_history(days: int = 30):
         "delta": (series[-1]["score"] - series[0]["score"])
                  if series[-1]["score"] is not None and series[0]["score"] is not None else None,
     }
+    await _cache.set(cache_key, result, 300.0)  # 5dk
+    return result
+
+
+# NOTE: /trust-score/snapshot yazımı cache'i invalidate etmeli — POST snapshot
+# handler'ında `await _cache.delete("trust_history:d30")` çağrılıyor.
 
 
 # ============================================================================
@@ -914,7 +931,13 @@ async def public_live_ticker():
     """Landing canlı sayaç — son 1 dakika / son 1 saat bloklama sayıları,
     aktif bayi sayısı ve tur atacak son 5 event özeti (anonimleştirilmiş).
 
-    Cache HTTP 200 · Rate limit yok · lisans gerekmez · 15-20ms hedefi."""
+    Cache HTTP 200 · Rate limit yok · lisans gerekmez · 15-20ms hedefi.
+    v42: Redis cache 4sn TTL (Landing 5sn polling → ~90% cache hit)."""
+    # Cache 4sn — 5sn polling ile ~%80-90 cache hit oranı
+    cached = await _cache.get("live_ticker:public")
+    if cached is not None:
+        return cached
+
     from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc)
     m1 = (now - timedelta(minutes=1)).isoformat()
@@ -963,7 +986,7 @@ async def public_live_ticker():
         })
 
     active_bayi = await db.licenses.count_documents({"active": True})
-    return {
+    result = {
         "blocked_last_minute": blocked_1m,
         "blocked_last_hour": blocked_1h,
         "blocked_last_24h": blocked_24h,
@@ -971,6 +994,8 @@ async def public_live_ticker():
         "recent_events": recent,
         "generated_at": now.isoformat(),
     }
+    await _cache.set("live_ticker:public", result, 4.0)
+    return result
 
 
 @router.get("/geo/country/{cc}/ips")

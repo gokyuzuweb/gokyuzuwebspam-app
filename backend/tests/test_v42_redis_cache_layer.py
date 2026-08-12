@@ -165,3 +165,104 @@ class TestPayloadIntegrity:
         # Recent attacks should have country, verdict, ts
         for a in r2["recent_attacks"][:3]:
             assert "country" in a and "verdict" in a
+
+
+# ============================================================================
+# v42+ EXTENDED CACHE: live-ticker, trust-score/history, plugin-health/list
+# ============================================================================
+MASTER_KEY = os.environ.get("MASTER_LICENSE_KEY", "MS-C02AB012652A4FE692D69676")
+
+
+class TestLiveTickerCache:
+    """Landing 5sn polling — 4sn TTL."""
+
+    @needs_redis
+    def test_live_ticker_writes_redis_key_4s_ttl(self):
+        _R.delete("gws:cache:live_ticker:public")
+        r = requests.get(f"{BASE}/maintenance/public/live-ticker", timeout=15)
+        assert r.status_code == 200
+        ttl = _R.ttl("gws:cache:live_ticker:public")
+        assert 1 <= ttl <= 4, f"live-ticker TTL {ttl}s not in [1,4]"
+
+    @needs_redis
+    def test_live_ticker_cache_hit_returns_identical(self):
+        _R.delete("gws:cache:live_ticker:public")
+        r1 = requests.get(f"{BASE}/maintenance/public/live-ticker", timeout=15).json()
+        r2 = requests.get(f"{BASE}/maintenance/public/live-ticker", timeout=15).json()
+        assert r1["generated_at"] == r2["generated_at"]
+        assert r1["blocked_last_minute"] == r2["blocked_last_minute"]
+
+    @needs_redis
+    def test_live_ticker_schema_preserved(self):
+        _R.delete("gws:cache:live_ticker:public")
+        r = requests.get(f"{BASE}/maintenance/public/live-ticker", timeout=15).json()
+        for key in ("blocked_last_minute", "blocked_last_hour", "blocked_last_24h",
+                    "active_resellers", "recent_events", "generated_at"):
+            assert key in r
+        assert isinstance(r["recent_events"], list)
+
+
+class TestTrustScoreHistoryCache:
+    """Skor trend endpoint'i — 5dk TTL, snapshot POST'ta invalidate."""
+
+    @needs_redis
+    def test_trust_history_writes_redis_key_300s_ttl(self):
+        _R.delete("gws:cache:trust_history:d30")
+        r = requests.get(f"{BASE}/maintenance/trust-score/history?days=30", timeout=15)
+        assert r.status_code == 200
+        ttl = _R.ttl("gws:cache:trust_history:d30")
+        assert 290 <= ttl <= 300, f"trust-history TTL {ttl}s not in [290,300]"
+
+    @needs_redis
+    def test_trust_history_different_days_separate_keys(self):
+        # d30 ve d7 farklı key olmalı
+        _R.delete("gws:cache:trust_history:d30")
+        _R.delete("gws:cache:trust_history:d7")
+        requests.get(f"{BASE}/maintenance/trust-score/history?days=30", timeout=15)
+        requests.get(f"{BASE}/maintenance/trust-score/history?days=7", timeout=15)
+        assert _R.exists("gws:cache:trust_history:d30")
+        assert _R.exists("gws:cache:trust_history:d7")
+
+    @needs_redis
+    def test_snapshot_invalidates_history_cache(self):
+        # Cache'i doldur
+        requests.get(f"{BASE}/maintenance/trust-score/history?days=30", timeout=15)
+        assert _R.exists("gws:cache:trust_history:d30")
+        # Snapshot POST (master auth gerekli — demo mode değil)
+        r = requests.post(f"{BASE}/maintenance/trust-score/snapshot?score=85&findings=2",
+                          headers={"X-Master-Key": MASTER_KEY}, timeout=15)
+        assert r.status_code == 200, r.text[:200]
+        # Cache silinmiş olmalı
+        assert not _R.exists("gws:cache:trust_history:d30"), "snapshot must invalidate history cache"
+
+
+class TestPluginHealthListCache:
+    """Master-only, 15sn TTL."""
+
+    @needs_redis
+    def test_plugin_health_writes_redis_key_15s_ttl(self):
+        _R.delete("gws:cache:plugin_health_list:h24")
+        r = requests.get(f"{BASE}/admin/plugin-health/list?hours=24",
+                         headers={"X-Master-Key": MASTER_KEY}, timeout=20)
+        assert r.status_code == 200, r.text[:200]
+        ttl = _R.ttl("gws:cache:plugin_health_list:h24")
+        assert 1 <= ttl <= 15, f"plugin-health TTL {ttl}s not in [1,15]"
+
+    @needs_redis
+    def test_plugin_health_cache_hit_identical(self):
+        _R.delete("gws:cache:plugin_health_list:h24")
+        hdrs = {"X-Master-Key": MASTER_KEY}
+        r1 = requests.get(f"{BASE}/admin/plugin-health/list?hours=24", headers=hdrs, timeout=20).json()
+        r2 = requests.get(f"{BASE}/admin/plugin-health/list?hours=24", headers=hdrs, timeout=20).json()
+        assert r1.get("total_bayi") == r2.get("total_bayi")
+        assert len(r1.get("items", [])) == len(r2.get("items", []))
+
+    @needs_redis
+    def test_plugin_health_different_hours_separate_keys(self):
+        _R.delete("gws:cache:plugin_health_list:h24")
+        _R.delete("gws:cache:plugin_health_list:h1")
+        hdrs = {"X-Master-Key": MASTER_KEY}
+        requests.get(f"{BASE}/admin/plugin-health/list?hours=24", headers=hdrs, timeout=20)
+        requests.get(f"{BASE}/admin/plugin-health/list?hours=1", headers=hdrs, timeout=20)
+        assert _R.exists("gws:cache:plugin_health_list:h24")
+        assert _R.exists("gws:cache:plugin_health_list:h1")
