@@ -1,20 +1,12 @@
 """
-Redis-backed TTL cache with in-memory fallback.
+Redis-backed TTL cache with in-memory fallback + hit/miss metrics.
 
 Kullanım:
     from cache import cache
     await cache.set("mykey", {"foo": 1}, ttl_sec=45)
     val = await cache.get("mykey")   # dict veya None
     await cache.delete("mykey")
-
-Backend seçimi:
-- REDIS_URL env varsa (örn. `redis://localhost:6379/0`), async Redis kullanılır.
-  JSON serialization (dict/list/str/int/float/bool/None). Namespace: `gws:cache:`.
-- Yoksa in-memory dict fallback. Bu mod tek-instance dev/preview için uygundur.
-- Redis erişilemezse (bağlantı reddi vb) transparan olarak in-memory'ye düşer,
-  arkaplan health-check her 30sn'de bir tekrar dener.
-
-Bu API sync `_cache_get`/`_cache_set` API'sinin yerini alır (async).
+    stats = cache.stats()             # {"hits": .., "misses": .., "backend": ..}
 """
 from __future__ import annotations
 
@@ -23,13 +15,26 @@ import json
 import logging
 import os
 import time
+from collections import defaultdict
 from typing import Any, Optional
 
 log = logging.getLogger("gws.cache")
 
 _NAMESPACE = "gws:cache:"
 _HEALTH_RETRY_SEC = 30.0
-_LOCAL_MAX = 500  # in-memory fallback eviction bound
+_LOCAL_MAX = 500
+
+# v43.4 Cache hit/miss metrikleri — endpoint bazında istatistik
+# Key: "cache_key_prefix" (örn "blocked_stats", "live_ticker") → {hits, misses}
+_METRICS: dict[str, dict[str, int]] = defaultdict(lambda: {"hits": 0, "misses": 0})
+
+def _record_hit(key: str):
+    prefix = key.split(":", 1)[0] if ":" in key else key
+    _METRICS[prefix]["hits"] += 1
+
+def _record_miss(key: str):
+    prefix = key.split(":", 1)[0] if ":" in key else key
+    _METRICS[prefix]["misses"] += 1
 
 
 class _InMemory:
@@ -41,14 +46,18 @@ class _InMemory:
     async def get(self, key: str) -> Optional[Any]:
         hit = self._d.get(key)
         if not hit:
+            _record_miss(key)
             return None
         exp, raw = hit
         if time.time() > exp:
             self._d.pop(key, None)
+            _record_miss(key)
             return None
         try:
+            _record_hit(key)
             return json.loads(raw)
         except Exception:
+            _record_miss(key)
             return None
 
     async def set(self, key: str, val: Any, ttl_sec: float) -> None:
@@ -71,6 +80,28 @@ class _InMemory:
     @property
     def backend(self) -> str:
         return "memory"
+
+    def stats(self) -> dict:
+        by_prefix = {}
+        total_hits = 0
+        total_misses = 0
+        for prefix, m in _METRICS.items():
+            h, ms = m["hits"], m["misses"]
+            total = h + ms
+            by_prefix[prefix] = {"hits": h, "misses": ms, "total": total,
+                                 "hit_rate_pct": round(h * 100 / max(1, total), 1)}
+            total_hits += h
+            total_misses += ms
+        return {
+            "backend": self.backend,
+            "total": {"hits": total_hits, "misses": total_misses,
+                      "total": total_hits + total_misses,
+                      "hit_rate_pct": round(total_hits * 100 / max(1, total_hits + total_misses), 1)},
+            "by_prefix": by_prefix,
+        }
+
+    def reset_stats(self) -> None:
+        _METRICS.clear()
 
 
 class _RedisBackend:
@@ -118,11 +149,13 @@ class _RedisBackend:
             try:
                 raw = await self._client.get(_NAMESPACE + key)
                 if raw is None:
+                    _record_miss(key)
                     return None
+                _record_hit(key)
                 return json.loads(raw)
             except Exception:
                 self._alive = False
-                # Bu isteği fallback ile servisle
+                # Bu isteği fallback ile servisle (fallback kendi metric'ini kaydeder)
         return await self._fallback.get(key)
 
     async def set(self, key: str, val: Any, ttl_sec: float) -> None:
@@ -152,6 +185,36 @@ class _RedisBackend:
     @property
     def backend(self) -> str:
         return "redis" if self._alive else "memory-fallback"
+
+    def stats(self) -> dict:
+        """v43.4 — Endpoint bazında hit/miss + toplam. Master dashboard için."""
+        by_prefix = {}
+        total_hits = 0
+        total_misses = 0
+        for prefix, m in _METRICS.items():
+            h, ms = m["hits"], m["misses"]
+            total = h + ms
+            by_prefix[prefix] = {
+                "hits": h,
+                "misses": ms,
+                "total": total,
+                "hit_rate_pct": round(h * 100 / max(1, total), 1),
+            }
+            total_hits += h
+            total_misses += ms
+        return {
+            "backend": self.backend,
+            "total": {
+                "hits": total_hits,
+                "misses": total_misses,
+                "total": total_hits + total_misses,
+                "hit_rate_pct": round(total_hits * 100 / max(1, total_hits + total_misses), 1),
+            },
+            "by_prefix": by_prefix,
+        }
+
+    def reset_stats(self) -> None:
+        _METRICS.clear()
 
 
 def _build() -> _InMemory | _RedisBackend:

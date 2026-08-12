@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpRight, MailWarning, Ban, ClipboardList, Users, AlertTriangle,
-  Search, RotateCcw, Trash2, ShieldOff, ShieldCheck, X, Download,
+  Search, RotateCcw, Trash2, ShieldOff, ShieldCheck, X, Download, Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
@@ -56,6 +56,13 @@ export default function Outbound() {
   const [advOpen, setAdvOpen] = useState(false);
   const [throttleModalOpen, setThrottleModalOpen] = useState(false);
   const [throttleUser, setThrottleUser] = useState("");
+  // v43.4 Mail içeriği okuma modal state
+  const [contentEventId, setContentEventId] = useState(null);
+  const contentQuery = useQuery({
+    queryKey: ["outbound-content", contentEventId],
+    queryFn: () => api.outboundEventContent(contentEventId, { license_key: LICKEY() }),
+    enabled: !!contentEventId,
+  });
 
   const dSearch = useDebounced(search);
   const dTo = useDebounced(toSearch);
@@ -292,6 +299,9 @@ export default function Outbound() {
                     <td className="px-3 py-2 text-right mono text-amber-300">{Number(e.total_score ?? 0).toFixed(1)}</td>
                     <td className="px-3 py-2 text-center"><Badge tone={vt.tone}>{vt.label}</Badge></td>
                     <td className="px-3 py-2 text-center whitespace-nowrap">
+                      <button title="Mail içeriğini oku" data-testid={`ob-read-${e.id}`}
+                              onClick={() => setContentEventId(e.id)}
+                              className="p-1 rounded hover:bg-cyan-500/10 text-cyan-300 mr-1"><Eye className="w-3.5 h-3.5" /></button>
                       <button title="Karantinaya al" data-testid={`ob-quar-${e.id}`}
                               onClick={() => actionMut.mutate({ id: e.id, action: "quarantine" })}
                               className="p-1 rounded hover:bg-amber-500/10 text-amber-300 mr-1"><MailWarning className="w-3.5 h-3.5" /></button>
@@ -391,6 +401,122 @@ export default function Outbound() {
           </table>
         </div>
       </Card>
+
+      {/* v43.4 Mail İçeriği Oku Modal ------------------------------ */}
+      {contentEventId && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-start justify-center p-4 overflow-y-auto"
+             onClick={() => setContentEventId(null)}>
+          <div className="bg-slate-900 border border-slate-700 rounded-lg max-w-4xl w-full my-8"
+               onClick={(e) => e.stopPropagation()}
+               data-testid="ob-content-modal">
+            <div className="flex items-center justify-between p-4 border-b border-slate-800">
+              <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                <Eye className="w-4 h-4 text-cyan-400" /> Mail İçeriği
+              </h3>
+              <button onClick={() => setContentEventId(null)}
+                      className="p-1 rounded hover:bg-slate-800 text-slate-400" aria-label="close">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {contentQuery.isLoading && (
+              <div className="p-8 text-center text-slate-400 text-sm">Yükleniyor…</div>
+            )}
+            {contentQuery.isError && (
+              <div className="p-8 text-center text-rose-400 text-sm" data-testid="ob-content-error">
+                {contentQuery.error?.response?.data?.detail || "İçerik alınamadı"}
+              </div>
+            )}
+            {contentQuery.data && (() => {
+              const c = contentQuery.data;
+              return (
+                <div className="p-4 space-y-3">
+                  {/* Zarf bilgisi */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div><span className="text-slate-500">Zaman:</span> <span className="mono text-slate-200 ml-1">{fmtTime(c.ts)}</span></div>
+                    <div><span className="text-slate-500">Skor:</span> <span className="mono text-amber-300 ml-1">{Number(c.total_score ?? 0).toFixed(1)}</span></div>
+                    <div><span className="text-slate-500">Gönderen:</span> <span className="mono text-slate-100 ml-1">{c.from_addr || "—"}</span></div>
+                    <div><span className="text-slate-500">Alıcı:</span> <span className="mono text-slate-100 ml-1">{c.to_addr || "—"}</span></div>
+                    <div><span className="text-slate-500">User:</span> <span className="mono text-slate-300 ml-1">{c.from_user || "—"}</span></div>
+                    <div><span className="text-slate-500">IP:</span> <span className="mono text-slate-300 ml-1">{c.sender_ip || "—"}</span></div>
+                    <div className="col-span-2"><span className="text-slate-500">Konu:</span> <span className="text-slate-200 ml-1">{c.subject || "(konusuz)"}</span></div>
+                  </div>
+
+                  {/* Motor skorları */}
+                  {c.scores && Object.keys(c.scores).length > 0 && (
+                    <div className="text-xs">
+                      <div className="text-slate-500 mb-1 uppercase tracking-widest">Motor Skorları</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {Object.entries(c.scores).map(([k, v]) => (
+                          <span key={k} className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 mono">
+                            {k}: {String(v)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ekler */}
+                  {c.attachments && c.attachments.length > 0 && (
+                    <div className="text-xs">
+                      <div className="text-slate-500 mb-1 uppercase tracking-widest">Ekler ({c.attachments.length})</div>
+                      <ul className="space-y-1">
+                        {c.attachments.map((a, i) => (
+                          <li key={i} className="mono text-slate-300 text-[11px]">
+                            📎 {a.filename || "(isimsiz)"} · {a.content_type || "?"} · {a.size ? `${(a.size/1024).toFixed(1)}KB` : ""} {a.sha256 && <span className="text-slate-500">sha256={a.sha256.slice(0,12)}...</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Headers */}
+                  {c.headers_full && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-slate-400 hover:text-slate-200 py-1 select-none">
+                        📋 SMTP Headers (aç/kapat)
+                      </summary>
+                      <pre data-testid="ob-content-headers"
+                           className="mt-1 p-3 bg-slate-950 border border-slate-800 rounded max-h-56 overflow-auto text-[11px] mono text-slate-300 whitespace-pre-wrap">{c.headers_full}</pre>
+                    </details>
+                  )}
+
+                  {/* Body (plain text) */}
+                  {c.body_preview && (
+                    <div className="text-xs">
+                      <div className="text-slate-500 mb-1 uppercase tracking-widest">Metin Gövde (preview)</div>
+                      <pre data-testid="ob-content-body"
+                           className="p-3 bg-slate-950 border border-slate-800 rounded max-h-72 overflow-auto text-[11px] text-slate-200 whitespace-pre-wrap">{c.body_preview}</pre>
+                    </div>
+                  )}
+
+                  {/* HTML body render — sandboxed iframe */}
+                  {c.body_html && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-slate-400 hover:text-slate-200 py-1 select-none">
+                        🎨 HTML Gövde (aç/kapat) — sandbox'ta güvenli
+                      </summary>
+                      <iframe
+                        data-testid="ob-content-html"
+                        srcDoc={c.body_html}
+                        sandbox=""
+                        title="mail-html"
+                        className="mt-1 w-full h-80 bg-white rounded border border-slate-800"
+                      />
+                    </details>
+                  )}
+
+                  {!c.body_preview && !c.body_html && !c.headers_full && (
+                    <div className="text-center py-6 text-slate-500 text-xs italic">
+                      Bu maildeki body/headers Perl daemon tarafından ingest edilmemiş.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
       {throttleModalOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setThrottleModalOpen(false)}>

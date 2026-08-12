@@ -926,6 +926,30 @@ async def public_blocked_stats(region: str = "all", raw: int = 0):
 # PUBLIC LIVE TICKER — Landing sayfası "son dakika X saldırı engellendi" bandı.
 # Amaç: ziyaretçilere sosyal ispat + canlı sistem hissi vermek. 5sn polling.
 # ============================================================================
+# v43.4 Cache Hit-Rate Admin Endpoint
+from fastapi import Header
+
+
+@router.get("/cache/stats")
+async def cache_stats_endpoint(x_master_key: Optional[str] = Header(default=None)):
+    """Master-only. Redis cache hit/miss metrikleri (endpoint bazında).
+    Frontend Master paneli /admin/cache-stats sayfası bu endpoint'i kullanır."""
+    import os as _os
+    if x_master_key != _os.environ.get("MASTER_LICENSE_KEY", ""):
+        raise HTTPException(status_code=403, detail="Master authentication required")
+    return _cache.stats()
+
+
+@router.post("/cache/reset-stats")
+async def cache_reset_stats(x_master_key: Optional[str] = Header(default=None)):
+    """Master-only. Metrik sayaçlarını sıfırla (uptime hesabı için)."""
+    import os as _os
+    if x_master_key != _os.environ.get("MASTER_LICENSE_KEY", ""):
+        raise HTTPException(status_code=403, detail="Master authentication required")
+    _cache.reset_stats()
+    return {"ok": True, "message": "Cache stats reset"}
+
+
 @router.get("/public/live-ticker")
 async def public_live_ticker():
     """Landing canlı sayaç — son 1 dakika / son 1 saat bloklama sayıları,

@@ -183,6 +183,7 @@ export const api = {
   outboundThrottleAdd: (body) => client.post("/outbound/throttle", body).then(r => r.data),
   outboundThrottleRemove: (body) => client.post("/outbound/throttle/remove", body).then(r => r.data),
   outboundEventAction: (event_id, body) => client.post(`/outbound/event/${event_id}/action`, body).then(r => r.data),
+  outboundEventContent: (event_id, params = {}) => client.get(`/outbound/event/${event_id}/content`, { params }).then(r => r.data),
   outboundMigrateDirection: (license_key) => client.post("/outbound/migrate-direction", null, { params: { license_key } }).then(r => r.data),
 
   notifications: () => client.get("/notifications").then(r => r.data),
