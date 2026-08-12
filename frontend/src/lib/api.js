@@ -175,6 +175,15 @@ export const api = {
   users: () => client.get("/users").then(r => r.data),
   logs: (params = {}) => client.get("/logs", { params }).then(r => r.data),
   outbound: () => client.get("/outbound").then(r => r.data),
+  // v43 Outbound Filtering + Bulk Detection
+  outboundStats: (params = {}) => client.get("/outbound/stats", { params }).then(r => r.data),
+  outboundEvents: (params = {}) => client.get("/outbound/events", { params }).then(r => r.data),
+  outboundBulkAlerts: (params = {}) => client.get("/outbound/bulk-alerts", { params }).then(r => r.data),
+  outboundThrottles: (params = {}) => client.get("/outbound/throttles", { params }).then(r => r.data),
+  outboundThrottleAdd: (body) => client.post("/outbound/throttle", body).then(r => r.data),
+  outboundThrottleRemove: (body) => client.post("/outbound/throttle/remove", body).then(r => r.data),
+  outboundEventAction: (event_id, body) => client.post(`/outbound/event/${event_id}/action`, body).then(r => r.data),
+  outboundMigrateDirection: (license_key) => client.post("/outbound/migrate-direction", null, { params: { license_key } }).then(r => r.data),
 
   notifications: () => client.get("/notifications").then(r => r.data),
   notificationsPut: (payload) => client.put("/notifications", payload).then(r => r.data),

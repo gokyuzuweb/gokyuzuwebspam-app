@@ -37,6 +37,12 @@ class MailEvent(BaseModel):
     body_html: Optional[str] = None         # HTML body if available
     attachments: Optional[list[dict]] = None  # [{filename, content_type, size, sha256}]
     ts: Optional[str] = None  # ISO ts, milter tarafinda uretilirse
+    # v43 Outbound tracking — WHM Perl script logtail-mainlog.pl outbound
+    # mail'leri direction="out" ile gönderir (from_addr sistem kullanıcısı).
+    # Backward compatible: default "in" (gelen), boş bırakılırsa "in" varsayılır.
+    direction: Optional[str] = Field(default="in", pattern="^(in|out)$")
+    # Outbound için gönderen sistem kullanıcısı (Exim'de "$originator_login")
+    from_user: Optional[str] = None
 
 
 async def _validate_license(license_key: str) -> dict:
@@ -311,6 +317,62 @@ async def ingest_event(evt: MailEvent, request: Request):
             doc["total_score"] = 0
     # ---------------------------------------------------------------------
     await db.mail_events.insert_one(doc)
+
+    # ---- OUTBOUND BULK DETECTION (v43) ----------------------------------
+    # Aynı `from_user` (Exim originator_login) 1 saatte threshold'u aşarsa:
+    #   1) master_alerts'a "outbound_bulk" tipi alert yaz (throttle uygula)
+    #   2) `outbound_throttles` koleksiyonuna user throttle kaydı ekle
+    # Threshold: policy.outbound_limit_per_hour (varsayılan 200).
+    if doc.get("direction") == "out":
+        from_user = (doc.get("from_user") or "").strip().lower()
+        if from_user:
+            try:
+                from datetime import timedelta
+                since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+                policy = await db.settings.find_one({"_key": "policy"}, {"_id": 0}) or {}
+                limit_hour = int(policy.get("outbound_limit_per_hour", 200))
+                sent_count = await db.mail_events.count_documents({
+                    "license_key": evt.license_key,
+                    "direction": "out",
+                    "from_user": from_user,
+                    "ts": {"$gte": since},
+                })
+                if sent_count >= limit_hour:
+                    # Idempotent alert — aynı user aynı saat için birden fazla alert oluşturma
+                    hour_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+                    alert_key = f"outbound_bulk:{evt.license_key}:{from_user}:{hour_bucket}"
+                    exists = await db.master_alerts.find_one({"dedupe_key": alert_key}, {"_id": 1})
+                    if not exists:
+                        await db.master_alerts.insert_one({
+                            "id": str(uuid.uuid4()),
+                            "type": "outbound_bulk",
+                            "severity": "warning",
+                            "license_key": evt.license_key,
+                            "from_user": from_user,
+                            "sent_count": sent_count,
+                            "limit": limit_hour,
+                            "message": f"Toplu giden mail: {from_user} son 1 saatte {sent_count} mail atmış (limit: {limit_hour})",
+                            "dedupe_key": alert_key,
+                            "seen": False,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        })
+                        # Auto-throttle: kullanıcıyı bloka al
+                        await db.outbound_throttles.update_one(
+                            {"license_key": evt.license_key, "from_user": from_user},
+                            {"$set": {
+                                "license_key": evt.license_key,
+                                "from_user": from_user,
+                                "throttled": True,
+                                "sent_count": sent_count,
+                                "limit": limit_hour,
+                                "reason": "auto_bulk_detect",
+                                "throttled_at": datetime.now(timezone.utc).isoformat(),
+                            }},
+                            upsert=True,
+                        )
+            except Exception as ex:
+                log.warning("outbound bulk detect failed: %s", ex)
+    # ---------------------------------------------------------------------
 
     # ---- KARANTİNAYA OTOMATİK YAZ (spam/high_spam/virus/phish/blocked) ----
     # `mail_events` = tüm mail feed; `quarantine` = sadece yakalanan mailler

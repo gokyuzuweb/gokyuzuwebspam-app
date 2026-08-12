@@ -7471,6 +7471,7 @@ from routes.payments import router as _payments_router  # noqa: E402
 from routes.maintenance import router as _maintenance_router  # noqa: E402
 from routes.master import router as _master_router  # noqa: E402
 from routes.smart_pos import router as _smart_pos_router  # noqa: E402
+from routes.outbound import router as _outbound_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -7487,6 +7488,7 @@ app.include_router(_payments_router, prefix="/api")
 app.include_router(_maintenance_router, prefix="/api")
 app.include_router(_master_router, prefix="/api")
 app.include_router(_smart_pos_router, prefix="/api")
+app.include_router(_outbound_router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Demo mode write-guard middleware

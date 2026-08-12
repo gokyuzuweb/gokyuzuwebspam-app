@@ -13,6 +13,43 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 12, 2026 (Session 12) - v43 Outbound Filtering + Bulk Detection
+
+Kullanıcı isteği: "Giden Posta aktif değil gibi. bunu da tüm sistemler filtreleme toplu mail algılama sistemi gibi sistem yap."
+
+### Data Model
+- ✅ `MailEvent` modeline **`direction: "in"|"out"`** ve **`from_user`** alanları eklendi (backward compat: default "in")
+- ✅ `outbound_throttles` yeni koleksiyon: `{license_key, from_user, throttled, sent_count, limit, reason, throttled_at}`
+- ✅ Backfill endpoint: `POST /api/outbound/migrate-direction` — mevcut docs'a `direction:"in"` (idempotent). Preview'da 1248 doc güncellendi.
+
+### Yeni Router `/app/backend/routes/outbound.py`
+- ✅ `GET /api/outbound/stats` — `$facet` aggregation (today_total/spam/blocked + top_users). Redis cache 15sn.
+- ✅ `GET /api/outbound/events` — filtreli liste (search/to_search/subject_search/ip_search/min_score/max_score/hours/verdict/limit). Karantina/Canlı ile aynı semantik.
+- ✅ `GET /api/outbound/bulk-alerts` — son 24 saatteki `outbound_bulk` uyarıları
+- ✅ `GET /api/outbound/throttles` + `POST /throttle` + `POST /throttle/remove` — user throttle yönetimi
+- ✅ `POST /api/outbound/event/{id}/action` — 4 aksiyon: `delete` / `quarantine` / `whitelist_sender` / `throttle_sender`
+
+### Bulk Detection (ingest hook)
+- ✅ Her ingest'te `direction=="out"` ise: son 1sa'te aynı `from_user`'dan `policy.outbound_limit_per_hour` (default 200) mail geçtiyse:
+  1. `master_alerts` type=`outbound_bulk` (hour-bucket dedupe key ile duplicate önlenir)
+  2. `outbound_throttles` otomatik `throttled:true` + `reason:"auto_bulk_detect"`
+
+### Frontend
+- ✅ **Outbound.js** yeniden yazıldı (60 → 400+ satır, LiveMailEvents pattern):
+  * 5 StatCard: Bugün Giden / Spam / Bloklu / Throttled User / Saatlik Limit
+  * Bulk Alerts Banner (yeşil chip'ler ile ilk 6 anormal user)
+  * Filter bar + Advanced panel (regex to/subject/ip + min/max score + hours) + verdict + limit
+  * SavedFiltersBar entegrasyonu (module="outbound_events")
+  * Events tablosu — her satırda 4 aksiyon butonu (quarantine/whitelist/throttle/delete)
+  * Sınırlandırılmış Kullanıcılar tablosu + tek tıkla kaldır
+  * Bugün en çok mail atan user'lar + kullanım %'si
+  * Manuel throttle modal + CSV export
+- ✅ `api.js`: 8 yeni method (`outboundStats/Events/BulkAlerts/Throttles/ThrottleAdd/ThrottleRemove/EventAction/MigrateDirection`)
+
+### Testing (iteration_37.json — 11/11 backend + tam frontend E2E)
+- Backend pytest v43 (11/11): ingest with direction, backward compat, migrate idempotency, stats schema, filtered events, bulk detection + auto-throttle + hour-bucket dedupe, manual throttle CRUD, all 4 event actions, legacy /outbound regression
+- Frontend Playwright: /panel/outbound renders, 5 stat cards + filter bar + adv panel + saved filters + events tbody (34 rows) + throttle modal flow (open→submit→row visible→unthrottle removes), all data-testids verified
+
 ## Feb 12, 2026 (Session 11) - v42+ Redis Cache 3 Yeni Endpoint
 
 ### Cache'lenen Yeni Endpoint'ler
