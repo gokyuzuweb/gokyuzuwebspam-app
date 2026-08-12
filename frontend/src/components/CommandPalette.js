@@ -1,3 +1,5 @@
+import { toast } from "sonner";
+import { api } from "@/lib/api";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -51,6 +53,83 @@ const ITEMS = [
   { path: "/panel/docs",              icon: BookOpen,     title: "Dokümantasyon",      keywords: "docs help" },
 ];
 
+/**
+ * v43.12 Global Aksiyonlar — router yerine bir fonksiyon çalıştıran komutlar.
+ * `type: "action"` işaretli, `run({ navigate, toast })` alır.
+ */
+const ACTIONS = [
+  {
+    id: "quarantine-latest-10",
+    type: "action",
+    icon: Inbox, title: "Son 10 Karantinayı Göster",
+    keywords: "quarantine son 10 filtre son mail",
+    run: ({ navigate }) => navigate("/panel/quarantine?sort=recent&limit=10"),
+  },
+  {
+    id: "landing-toggle-theme",
+    type: "action",
+    icon: Palette, title: "Landing Tema Değiştir (Dark ↔ Light)",
+    keywords: "landing theme dark light tema toggle",
+    run: async ({ toast, api }) => {
+      try {
+        const cur = await api.landingGet();
+        const next = (cur.theme === "light") ? "dark" : "light";
+        await api.landingPut({ theme: next });
+        toast.success(`Landing teması ${next.toUpperCase()} yapıldı`, {
+          description: "Sayfayı yenilediğinizde değişiklik görünür",
+        });
+      } catch (e) {
+        toast.error("Tema değiştirilemedi", { description: String(e?.response?.data?.detail || e) });
+      }
+    },
+  },
+  {
+    id: "copy-master-key",
+    type: "action",
+    icon: Key, title: "Master Anahtarı Kopyala",
+    keywords: "copy master key clipboard lisans",
+    run: async ({ toast }) => {
+      const key = localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license");
+      if (!key) { toast.error("Master anahtar bulunamadı"); return; }
+      try {
+        await navigator.clipboard.writeText(key);
+        toast.success("Master anahtar kopyalandı", { description: `${key.slice(0, 8)}...` });
+      } catch {
+        toast.error("Kopyalama başarısız", { description: "Tarayıcı izin vermedi" });
+      }
+    },
+  },
+  {
+    id: "cache-refresh",
+    type: "action",
+    icon: Sparkles, title: "Sayfayı Sert Yenile (Cache Temizle)",
+    keywords: "cache refresh hard reload yenile",
+    run: () => { window.location.reload(); },
+  },
+  {
+    id: "toggle-lang-en",
+    type: "action",
+    icon: Globe, title: "Dili Değiştir → English",
+    keywords: "language english en dil değiştir",
+    run: ({ toast }) => {
+      localStorage.setItem("gws.lang", "en");
+      toast.success("Dil İngilizce olarak ayarlandı", { description: "Sayfa 1sn içinde yenilenecek" });
+      setTimeout(() => window.location.reload(), 900);
+    },
+  },
+  {
+    id: "toggle-lang-tr",
+    type: "action",
+    icon: Globe, title: "Dili Değiştir → Türkçe",
+    keywords: "language turkish tr dil değiştir turkce",
+    run: ({ toast }) => {
+      localStorage.setItem("gws.lang", "tr");
+      toast.success("Dil Türkçe olarak ayarlandı", { description: "Sayfa 1sn içinde yenilenecek" });
+      setTimeout(() => window.location.reload(), 900);
+    },
+  },
+];
+
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -102,11 +181,21 @@ export default function CommandPalette() {
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return ITEMS.slice(0, 12);
-    return ITEMS.filter((it) => {
+    // ACTIONS her zaman aranan sözle eşleşiyorsa listelenir; query boşsa üstte 3 popüler action
+    const items = q ? ITEMS : ITEMS.slice(0, 12);
+    if (!q) {
+      // Boş sorgu: top 3 action + top 12 route
+      return [...ACTIONS.slice(0, 3), ...items];
+    }
+    const filteredItems = items.filter((it) => {
       const hay = `${it.title} ${it.keywords} ${it.path}`.toLowerCase();
       return q.split(/\s+/).every((tok) => hay.includes(tok));
-    }).slice(0, 20);
+    });
+    const filteredActions = ACTIONS.filter((a) => {
+      const hay = `${a.title} ${a.keywords}`.toLowerCase();
+      return q.split(/\s+/).every((tok) => hay.includes(tok));
+    });
+    return [...filteredActions, ...filteredItems].slice(0, 25);
   }, [query]);
 
   // Sadece query boşken ve geçmiş varken göster
@@ -125,7 +214,13 @@ export default function CommandPalette() {
 
   const submit = (item) => {
     setOpen(false);
-    if (item) navigate(item.path);
+    if (!item) return;
+    if (item.type === "action" && typeof item.run === "function") {
+      // Global aksiyon — 100ms delay ki palette önce fade-out olsun
+      setTimeout(() => item.run({ navigate, toast, api }), 60);
+      return;
+    }
+    if (item.path) navigate(item.path);
   };
 
   const onKey = (e) => {
@@ -230,22 +325,32 @@ export default function CommandPalette() {
           {results.map((it, i) => {
             const combinedIdx = recentItems.length + i;
             const active = combinedIdx === idx;
+            const isAction = it.type === "action";
             return (
-              <button key={it.path}
+              <button key={isAction ? `act-${it.id}` : it.path}
                       data-idx={combinedIdx}
-                      data-testid={`cmdk-item-${it.path.replace(/\//g, "-")}`}
+                      data-testid={isAction ? `cmdk-action-${it.id}` : `cmdk-item-${it.path.replace(/\//g, "-")}`}
                       onMouseEnter={() => setIdx(combinedIdx)}
                       onClick={() => submit(it)}
                       className={`w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors
                                  ${active ? "bg-indigo-500/20 text-white" : "text-slate-300 hover:bg-slate-800/50"}`}>
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0
-                                ${active ? "bg-indigo-500/40 border border-indigo-400/60" : "bg-slate-800 border border-slate-700"}`}>
-                  <it.icon className={`w-4 h-4 ${active ? "text-white" : "text-slate-400"}`}/>
+                                ${isAction
+                                  ? (active ? "bg-fuchsia-500/40 border border-fuchsia-400/60" : "bg-fuchsia-500/15 border border-fuchsia-500/30")
+                                  : (active ? "bg-indigo-500/40 border border-indigo-400/60" : "bg-slate-800 border border-slate-700")}`}>
+                  <it.icon className={`w-4 h-4 ${active ? "text-white" : (isAction ? "text-fuchsia-300" : "text-slate-400")}`}/>
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className={`font-medium truncate ${active ? "text-white" : "text-slate-100"}`}>{it.title}</div>
-                  <div className="text-[11px] mono text-slate-500 truncate">{it.path}</div>
+                  <div className="text-[11px] mono text-slate-500 truncate">
+                    {isAction ? "aksiyon · çalıştır" : it.path}
+                  </div>
                 </div>
+                {isAction && (
+                  <span className={`text-[9px] mono uppercase tracking-widest px-1.5 py-0.5 rounded shrink-0 ${active ? "bg-fuchsia-500/30 text-fuchsia-100" : "bg-fuchsia-500/15 text-fuchsia-300"}`}>
+                    ⚡ AKSİYON
+                  </span>
+                )}
                 {active && <ArrowRight className="w-4 h-4 text-indigo-300 shrink-0"/>}
               </button>
             );

@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import {
   Trophy, Award, Shield, Flame, Rocket, Star, Zap, Globe, Target, Sparkles,
 } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/lib/api";
 
 /**
@@ -96,6 +98,47 @@ export default function AchievementBadges() {
     pct: Math.round(b.progress(d) * 100),
   }));
   const unlockedCount = badges.filter((b) => b.unlocked).length;
+
+  // v43.12 Yeni rozet bildirimi — kullanıcı bu tarayıcıda görmediği bir rozet açıldıysa toast fırlat.
+  const firedRef = useRef(false);
+  useEffect(() => {
+    if (!q.data) return;
+    // İlk mount'ta: mevcut açık rozetleri "seen" olarak kaydet, toast atma (spam engelle).
+    // Sonraki her data güncellemesinde: yeni açık rozetler için toast + backend notification.
+    let seen;
+    try { seen = new Set(JSON.parse(localStorage.getItem("gws.badges.seen") || "[]")); }
+    catch { seen = new Set(); }
+    const nowUnlocked = badges.filter(b => b.unlocked).map(b => b.id);
+    if (!firedRef.current) {
+      // İlk mount — silently persist current state, no toast
+      try { localStorage.setItem("gws.badges.seen", JSON.stringify(nowUnlocked)); } catch {}
+      firedRef.current = true;
+      return;
+    }
+    const fresh = nowUnlocked.filter(id => !seen.has(id));
+    if (fresh.length === 0) return;
+    fresh.forEach((id) => {
+      const b = badges.find(x => x.id === id);
+      if (!b) return;
+      toast.success(`🏆 Yeni Rozet: ${b.title}`, {
+        description: b.desc,
+        duration: 6000,
+        action: {
+          label: "Göster",
+          onClick: () => {
+            const el = document.querySelector(`[data-testid="ach-${id}"]`);
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+          },
+        },
+      });
+      // Backend bildirim inbox'una da async ekle (silent fail — panel dışında da olabilir)
+      try {
+        api.notifyPushBadge?.({ badge_id: id, title: b.title, desc: b.desc });
+      } catch {}
+    });
+    try { localStorage.setItem("gws.badges.seen", JSON.stringify(nowUnlocked)); } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data]);
 
   return (
     <section className="py-16 border-t border-slate-800/60 relative overflow-hidden" data-testid="landing-achievements">

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Palette, Save, RotateCcw, ExternalLink, Sun, Moon, Sparkles, Languages } from "lucide-react";
+import { Palette, Save, RotateCcw, ExternalLink, Sun, Moon, Sparkles, Languages, Copy, FlaskConical, BarChart3 } from "lucide-react";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
@@ -34,6 +34,7 @@ const EMPTY_BLOCK = {
 
 const buildInitialState = (data) => {
   const contentByLang = {};
+  const variantBByLang = {};
   SUPPORTED.forEach(({ code }) => {
     const stored = (data?.content_by_lang && data.content_by_lang[code]) || {};
     contentByLang[code] = {
@@ -41,10 +42,15 @@ const buildInitialState = (data) => {
       ...stored,
       hero: { ...EMPTY_HERO, ...(stored.hero || {}) },
     };
+    const vb = (data?.variant_b_hero_by_lang && data.variant_b_hero_by_lang[code]) || {};
+    variantBByLang[code] = { ...EMPTY_HERO, ...vb };
   });
   return {
     theme: (data?.theme === "light" || data?.theme === "dark") ? data.theme : "dark",
     content_by_lang: contentByLang,
+    // v43.12 A/B
+    ab_test_enabled: !!data?.ab_test_enabled,
+    variant_b_hero_by_lang: variantBByLang,
   };
 };
 
@@ -95,6 +101,26 @@ export default function LandingCMS() {
     if (!q.data) return;
     setForm(buildInitialState(q.data));
     setDirty(false);
+  };
+  // v43.12 — Bir dilden aktif dile içerik kopyala (deep clone hero + section titles)
+  const copyFrom = (srcLang) => {
+    if (srcLang === activeLang) return;
+    const src = form.content_by_lang[srcLang];
+    if (!src) return;
+    setDirty(true);
+    setForm((prev) => {
+      const cbl = { ...prev.content_by_lang };
+      cbl[activeLang] = {
+        ...src,
+        hero: { ...(src.hero || EMPTY_HERO) },
+      };
+      return { ...prev, content_by_lang: cbl };
+    });
+    toast.success(
+      `${SUPPORTED.find(x => x.code === srcLang)?.label} dilinden ` +
+      `${SUPPORTED.find(x => x.code === activeLang)?.label} diline kopyalandı`,
+      { description: "Şimdi çevirebilir veya doğrudan kaydedebilirsiniz." }
+    );
   };
   const filled = useMemo(() => {
     // Her dil için "kaç alan dolu" hesapla → tab üzerinde küçük göstergesi
@@ -192,6 +218,31 @@ export default function LandingCMS() {
             })}
           </div>
 
+          {/* v43.12 Copy-From-Lang bar — kaynak dilden aktif dile hızlı klonlama */}
+          <div className="flex items-center gap-2 flex-wrap" data-testid="cms-copy-from-bar">
+            <span className="text-[10px] uppercase tracking-widest text-slate-500 mono flex items-center gap-1.5">
+              <Copy className="w-3 h-3"/> Bu dile içerik kopyala:
+            </span>
+            {SUPPORTED.filter(x => x.code !== activeLang).map(({ code, label, flag }) => {
+              const src = form.content_by_lang[code];
+              const hasContent = (filled[code] || 0) > 0;
+              return (
+                <button key={code}
+                        data-testid={`cms-copy-from-${code}`}
+                        onClick={() => copyFrom(code)}
+                        disabled={!hasContent}
+                        className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md border transition-all
+                                   ${hasContent
+                                    ? "border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-200 hover:bg-fuchsia-500/20 hover:border-fuchsia-500/60"
+                                    : "border-slate-800 bg-slate-900/40 text-slate-600 cursor-not-allowed"}`}>
+                  <span>{flag}</span>
+                  <span>{label}</span>
+                  {hasContent && <span className="text-[9px] mono opacity-70">→ kopyala</span>}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Hero düzenleyicisi */}
           <div className="pt-2">
             <div className="text-[10px] uppercase tracking-widest text-slate-500 mono mb-2">
@@ -242,21 +293,129 @@ export default function LandingCMS() {
         </CardBody>
       </Card>
 
+      {/* v43.12 A/B Testing Card */}
+      <AbTestingCard form={form} setForm={setForm} setDirty={setDirty} activeLang={activeLang}/>
+
       <ModuleFooter
-        title="Landing CMS — v43.11 Multi-Language"
-        howItWorks="Landing sayfası her açıldığında /api/settings/landing çağrılır. Ziyaretçinin aktif diline göre content_by_lang[lang] bloğu uygulanır; alan boşsa i18n LANG_STRINGS varsayılanına düşer. TR/EN/DE/FR/ES/AR bağımsız yönetilir."
+        title="Landing CMS — v43.12 Multi-Lang + A/B"
+        howItWorks="Landing sayfası her açıldığında /api/settings/landing çağrılır. Ziyaretçinin aktif diline göre content_by_lang[lang] bloğu uygulanır; A/B testi açıksa hero için %50/%50 zar atılır ve variant_b_hero_by_lang'dan alternatif hero seçilir. Alan boşsa i18n LANG_STRINGS varsayılanına düşer."
         technical={[
-          "Backend: GET/PUT /api/settings/landing (PUT master-only)",
-          "MongoDB: db.settings _key=landing_content, content_by_lang: {tr,en,de,fr,es,ar}",
-          "Frontend: useLandingCms() → aktif effective diline göre pick",
-          "Backwards compat: legacy top-level hero → TR bloğuna otomatik map'lenir",
+          "Backend: GET/PUT /api/settings/landing (PUT master-only) · GET /api/landing/ab-stats",
+          "MongoDB: db.settings _key=landing_content, _key=landing_ab_stats",
+          "Frontend: useLandingCms() + useAbVariant() → localStorage 'gws.ab_variant'",
+          "A/B analitik: POST /api/landing/ab-impression (silent, IP-scope'suz global sayaç)",
         ]}
         recommendations={[
-          "Her dil için hero.badge + title_a + title_b + subtitle'ı doldurmak marketing tarafında yüksek dönüşüm getirir",
-          "Türkçe zorunlu; diğer diller opsiyonel — boş bırakırsanız yerleşik strings.js kullanılır",
-          "Light tema warm cream palet ile marketing sayfalarında %8-12 CTR artışı sağlar",
+          "A/B test başlatmadan önce Variant B hero'ya CTA odaklı farklı bir başlık yazın",
+          "Impression sayısı 500-1000'e ulaştığında istatistiklere bakın; anlamlı fark için binlerce ziyaret gerekir",
+          "Copy-From-Lang butonu ile Türkçe içeriği İngilizceye kopyalayıp sadece çeviri değişikliği yapın",
         ]}
       />
+    </div>
+  );
+}
+
+/**
+ * v43.12 A/B Testing Card — Landing hero için ikinci varyant tanımlama +
+ * canlı impression istatistiklerini gösterir.
+ */
+function AbTestingCard({ form, setForm, setDirty, activeLang }) {
+  const setEnabled = (v) => { setDirty(true); setForm((prev) => ({ ...prev, ab_test_enabled: !!v })); };
+  const setVbField = (k, val) => {
+    setDirty(true);
+    setForm((prev) => {
+      const next = { ...prev };
+      const vb = { ...next.variant_b_hero_by_lang };
+      const cur = { ...(vb[activeLang] || EMPTY_HERO) };
+      cur[k] = val;
+      vb[activeLang] = cur;
+      next.variant_b_hero_by_lang = vb;
+      return next;
+    });
+  };
+  const vb = form.variant_b_hero_by_lang[activeLang] || EMPTY_HERO;
+  const langLabel = SUPPORTED.find(x => x.code === activeLang)?.label || activeLang.toUpperCase();
+
+  const stats = useQuery({
+    queryKey: ["landing-ab-stats"],
+    queryFn: () => api.abStats(),
+    enabled: !!form.ab_test_enabled,
+    refetchInterval: 15000,
+  });
+  const s = stats.data || { A_impressions: 0, B_impressions: 0, total: 0, A_pct: 0, B_pct: 0 };
+
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><FlaskConical className="w-5 h-5 text-purple-300"/> A/B Testi (Hero)</span>}
+        subtitle="İki farklı hero varyantı arasında %50/%50 trafik böl. Ziyaretçi ilk gelişte rastgele A veya B atanır ve sonraki ziyaretlerde aynı kalır."
+        right={
+          <div className="flex items-center gap-2">
+            <Badge tone={form.ab_test_enabled ? "success" : "warning"}>
+              {form.ab_test_enabled ? "AKTİF · %50/%50" : "KAPALI"}
+            </Badge>
+            <button
+              data-testid="ab-test-toggle"
+              onClick={() => setEnabled(!form.ab_test_enabled)}
+              className={`text-xs px-3 py-1.5 rounded-md border font-medium transition-colors
+                         ${form.ab_test_enabled
+                           ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                           : "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-600"}`}>
+              {form.ab_test_enabled ? "Kapat" : "Aç"}
+            </button>
+          </div>
+        }
+      />
+      <CardBody className="space-y-4">
+        {form.ab_test_enabled && (
+          <div className="grid grid-cols-3 gap-3" data-testid="ab-stats-grid">
+            <StatBox label="Variant A" value={s.A_impressions} pct={s.A_pct} tone="indigo"/>
+            <StatBox label="Variant B" value={s.B_impressions} pct={s.B_pct} tone="purple"/>
+            <StatBox label="Toplam Gösterim" value={s.total} icon={BarChart3} tone="emerald"/>
+          </div>
+        )}
+        <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">
+          Variant B — Hero ({langLabel})
+        </div>
+        <FieldRow label="Alternatif Rozet" hint="Örn: WHM için %60 daha hızlı mail güvenliği"
+                  value={vb.badge} onChange={(v) => setVbField("badge", v)} testid={`vb-badge-${activeLang}`}/>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <FieldRow label="Alternatif Başlık — 1. satır" value={vb.title_a}
+                    onChange={(v) => setVbField("title_a", v)} testid={`vb-title-a-${activeLang}`}/>
+          <FieldRow label="Alternatif Başlık — 2. satır" value={vb.title_b}
+                    onChange={(v) => setVbField("title_b", v)} testid={`vb-title-b-${activeLang}`}/>
+        </div>
+        <FieldRow label="Alternatif Alt Metin" multiline value={vb.subtitle}
+                  onChange={(v) => setVbField("subtitle", v)} testid={`vb-subtitle-${activeLang}`}/>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <FieldRow label="Alternatif CTA (primary)" value={vb.cta_primary}
+                    onChange={(v) => setVbField("cta_primary", v)} testid={`vb-cta-primary-${activeLang}`}/>
+          <FieldRow label="Alternatif CTA (secondary)" value={vb.cta_secondary}
+                    onChange={(v) => setVbField("cta_secondary", v)} testid={`vb-cta-secondary-${activeLang}`}/>
+        </div>
+        <p className="text-[10px] mono text-slate-500 italic">
+          İpucu: Variant B'de boş bıraktığınız alanlar Variant A değerine düşer — partial override.
+        </p>
+      </CardBody>
+    </Card>
+  );
+}
+
+function StatBox({ label, value, pct, tone = "indigo", icon: Icon }) {
+  const TONE = {
+    indigo:  "border-indigo-500/40 bg-indigo-500/10 text-indigo-200",
+    purple:  "border-purple-500/40 bg-purple-500/10 text-purple-200",
+    emerald: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+  }[tone];
+  return (
+    <div className={`rounded-lg border p-3 ${TONE}`}>
+      <div className="text-[9px] uppercase tracking-widest mono opacity-80 flex items-center gap-1.5">
+        {Icon && <Icon className="w-3 h-3"/>} {label}
+      </div>
+      <div className="text-2xl font-black tabular-nums mt-1 text-slate-100">{value}</div>
+      {pct !== undefined && (
+        <div className="text-[10px] mono opacity-70 mt-0.5">%{pct}</div>
+      )}
     </div>
   );
 }

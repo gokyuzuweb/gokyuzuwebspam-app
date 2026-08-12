@@ -196,6 +196,11 @@ export const api = {
   // v43.9 Landing CMS
   landingGet: () => client.get("/settings/landing").then(r => r.data),
   landingPut: (payload) => client.put("/settings/landing", payload).then(r => r.data),
+  // v43.12 Badge unlock notification
+  notifyPushBadge: (payload) => client.post("/notifications/badge", payload).then(r => r.data),
+  // v43.12 A/B test impression tracking (silent)
+  abTrackImpression: (payload) => client.post("/landing/ab-impression", payload).then(r => r.data).catch(() => null),
+  abStats: () => client.get("/landing/ab-stats").then(r => r.data),
   mailTest: (payload) => client.post("/mail/test", payload).then(r => r.data),
 
   reportDownload: () => `${API}/reports/weekly`,

@@ -2222,6 +2222,79 @@ class TestAlertPayload(BaseModel):
     channel: Literal["email", "slack", "telegram", "all"] = "email"
 
 
+class BadgeUnlockPayload(BaseModel):
+    badge_id: str
+    title: str
+    desc: Optional[str] = ""
+
+
+class AbImpressionPayload(BaseModel):
+    variant: Literal["A", "B"]
+
+
+@api.post("/notifications/badge")
+async def push_badge_notification(payload: BadgeUnlockPayload):
+    """v43.12 — Client-side achievement unlock'unu bildirim inbox'una kaydeder.
+    Idempotent: aynı badge_id son 24 saat içinde tekrar yazılmaz."""
+    badge_id = payload.badge_id.strip()
+    title = payload.title.strip()[:80]
+    desc = (payload.desc or "").strip()[:200]
+    if not badge_id or not title:
+        raise HTTPException(400, "badge_id ve title zorunlu")
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    exists = await db.notifications_inbox.find_one({
+        "kind": "badge_unlocked", "badge_id": badge_id,
+        "created_at": {"$gte": since},
+    })
+    if exists:
+        return {"ok": True, "duplicate": True}
+    doc = {
+        "id": str(uuid.uuid4()),
+        "kind": "badge_unlocked",
+        "badge_id": badge_id,
+        "title": f"Rozet Açıldı — {title}",
+        "message": desc or "Yeni rozet açıldı",
+        "created_at": _iso(),
+        "read": False,
+        "severity": "info",
+    }
+    await db.notifications_inbox.insert_one(doc)
+    return {"ok": True}
+
+
+@api.post("/landing/ab-impression")
+async def landing_ab_impression(payload: AbImpressionPayload):
+    """v43.12 — Anonim A/B variant impression sayacı. IP scope'suz global toplama.
+    Sonuçlar: db.settings _key=landing_ab_stats { A_impressions, B_impressions }."""
+    field = f"{payload.variant}_impressions"
+    await db.settings.update_one(
+        {"_key": "landing_ab_stats"},
+        {"$inc": {field: 1}, "$set": {"updated_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True, "variant": payload.variant}
+
+
+@api.get("/landing/ab-stats")
+async def landing_ab_stats(request: Request):
+    """v43.12 — Master-only A/B impression istatistikleri."""
+    await _require_master(request, None)
+    doc = await db.settings.find_one({"_key": "landing_ab_stats"}, {"_id": 0, "_key": 0}) or {}
+    a = int(doc.get("A_impressions") or 0)
+    b = int(doc.get("B_impressions") or 0)
+    total = a + b
+    return {
+        "A_impressions": a,
+        "B_impressions": b,
+        "total": total,
+        "A_pct": round((a / total) * 100, 1) if total else 0,
+        "B_pct": round((b / total) * 100, 1) if total else 0,
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+
+
 @api.post("/notifications/test")
 async def notifications_test(payload: TestAlertPayload):
     ns = await _notify_settings()
@@ -2331,10 +2404,14 @@ class LandingLangBlock(BaseModel):
 
 class LandingContentIn(BaseModel):
     """v43.11 — tema tek; content her dil için ayrı.
+    v43.12 — Optional A/B testing: `ab_test_enabled` + `variant_b_hero_by_lang`.
     Geriye uyumluluk: eğer hero + top-level alanlar gönderilirse, "tr" diline yazılır."""
     theme: Optional[str] = "dark"   # "dark" | "light"
     # Yeni: dil bazlı içerik map
     content_by_lang: Optional[Dict[str, LandingLangBlock]] = None
+    # v43.12 A/B testing (Variant A = ana içerik; Variant B sadece hero override)
+    ab_test_enabled: Optional[bool] = False
+    variant_b_hero_by_lang: Optional[Dict[str, LandingHeroBlock]] = None
     # Legacy top-level fields (backwards compat — otomatik "tr"'ye map'lenir)
     hero: Optional[LandingHeroBlock] = None
     features_title: Optional[str] = ""
@@ -2394,6 +2471,15 @@ async def get_landing_settings():
     for lang in _SUPPORTED_LANDING_LANGS:
         content_by_lang[lang] = _merge_lang_block(cbl_raw.get(lang) or {})
 
+    # v43.12 A/B — variant_b_hero_by_lang normalize
+    ab_enabled = bool(doc.get("ab_test_enabled", False))
+    vb_raw = doc.get("variant_b_hero_by_lang") or {}
+    variant_b_hero_by_lang = {}
+    empty_hero = {"badge": "", "title_a": "", "title_b": "", "subtitle": "", "cta_primary": "", "cta_secondary": ""}
+    for lang in _SUPPORTED_LANDING_LANGS:
+        stored = vb_raw.get(lang) or {}
+        variant_b_hero_by_lang[lang] = {**empty_hero, **{k: v for k, v in stored.items() if v is not None}}
+
     # Legacy top-level içerik varsa TR'ye map'le (backwards compat, override ile)
     legacy = {k: doc.get(k, "") for k in _empty_lang_block().keys() if k != "hero"}
     legacy_hero = doc.get("hero") or {}
@@ -2412,6 +2498,9 @@ async def get_landing_settings():
     return {
         "theme": theme,
         "content_by_lang": content_by_lang,
+        # v43.12 A/B testing
+        "ab_test_enabled": ab_enabled,
+        "variant_b_hero_by_lang": variant_b_hero_by_lang,
         # Legacy flat (frontend backward-compat)
         "hero": tr_block["hero"],
         "features_title":   tr_block["features_title"],
@@ -2423,6 +2512,18 @@ async def get_landing_settings():
         "cta_bottom_sub":   tr_block["cta_bottom_sub"],
         "footer_copyright": tr_block["footer_copyright"],
     }
+
+
+def _normalize_variant_b(vb_in: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """v43.12 — Variant B hero_by_lang'ı normalize eder (her destekli dil için boş block'a düşer)."""
+    empty = {"badge": "", "title_a": "", "title_b": "", "subtitle": "", "cta_primary": "", "cta_secondary": ""}
+    out = {}
+    for lang in _SUPPORTED_LANDING_LANGS:
+        stored = vb_in.get(lang) or {}
+        if not isinstance(stored, dict):
+            stored = {}
+        out[lang] = {**empty, **{k: v for k, v in stored.items() if v is not None}}
+    return out
 
 
 @api.put("/settings/landing")
@@ -2458,12 +2559,15 @@ async def put_landing_settings(payload: LandingContentIn, request: Request):
         "_key": "landing_content",
         "theme": theme,
         "content_by_lang": content_by_lang,
+        # v43.12 A/B testing
+        "ab_test_enabled": bool(raw.get("ab_test_enabled", False)),
+        "variant_b_hero_by_lang": _normalize_variant_b(raw.get("variant_b_hero_by_lang") or {}),
         "updated_at": _iso(),
     }
     await db.settings.update_one(
         {"_key": "landing_content"}, {"$set": doc}, upsert=True
     )
-    return {"ok": True, "theme": theme, "languages": _SUPPORTED_LANDING_LANGS}
+    return {"ok": True, "theme": theme, "languages": _SUPPORTED_LANDING_LANGS, "ab_test_enabled": doc["ab_test_enabled"]}
 
 
 @api.post("/mail/test")
@@ -7851,6 +7955,8 @@ _DEMO_ALLOW_PREFIXES = (
                                # ve kendi delist takibi; demo yazma kilidi uygulanmaz)
     "/api/plan/features",      # plan matris sorgusu (ziyaretçi de görebilir)
     "/api/analytics/plan-event", # PlanGate funnel tracking (ziyaretçi de yazabilir)
+    "/api/landing/ab-impression", # v43.12 anonim A/B variant sayaç
+    "/api/notifications/badge",   # v43.12 client achievement unlock notification
 )
 
 

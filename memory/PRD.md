@@ -437,3 +437,57 @@ tabidir.
 - Screenshot: Features TR, Achievements 7/9 unlocked, CMS lang tabs (TR 4/EN 4/DE 2/FR 0),
   Cmd+K recent 3-item + Tüm Sayfalar.
 
+
+## Feb 12, 2026 (Session 14c) — v43.12 · 4 Next Action Items #2
+
+### 1. Rozet Bildirimi
+- `AchievementBadges.js` `useEffect` — `localStorage.gws.badges.seen` ile yeni açılan rozetleri diff eder,
+  her yeni rozet için `toast.success` + "Göster" aksiyonu (scroll-into-view) fırlatır.
+- Backend: `POST /api/notifications/badge` — `BadgeUnlockPayload` alır, 24 saatlik idempotency check,
+  `db.notifications_inbox`'a `kind=badge_unlocked` doc insert eder.
+- İlk mount sessiz (mevcut rozetler seen olarak kaydedilir, toast atmaz — spam engelle).
+
+### 2. CMS Copy-From-Lang
+- `LandingCMS.js` `copyFrom(srcLang)` — kaynak dilden aktif dile deep clone (hero + section titles).
+- UI: Language tab bar altında "BU DİLE İÇERİK KOPYALA:" bar, her diğer dil için buton.
+  hasContent gating (kaynak dilde 0 alan varsa disabled/grayscale).
+- Toast: "TR dilinden EN diline kopyalandı — şimdi çevirebilir veya doğrudan kaydedebilirsiniz."
+
+### 3. Cmd+K Global Aksiyon
+- `CommandPalette.js` `ACTIONS` array — `type: "action"` + `run({ navigate, toast, api })`.
+- 6 aksiyon:
+  * "Son 10 Karantinayı Göster" → /panel/quarantine?sort=recent&limit=10
+  * "Landing Tema Değiştir (Dark ↔ Light)" → api.landingGet + landingPut
+  * "Master Anahtarı Kopyala" → navigator.clipboard
+  * "Sayfayı Sert Yenile" → window.location.reload
+  * "Dili Değiştir → English/Türkçe" → localStorage + reload
+- Görsel: fuchsia icon + "⚡ AKSİYON" badge; route item'lardan ayırt edilir.
+- Boş query'de: top 3 aksiyon + top 12 route; query dolu → filtrelenmiş aksiyonlar + route'lar birleşik.
+
+### 4. Landing A/B Test
+- **Backend**: `LandingContentIn` genişletildi — `ab_test_enabled: bool`,
+  `variant_b_hero_by_lang: Dict[lang, LandingHeroBlock]`. GET + PUT eş zamanlı destek.
+  Yeni endpoint'ler:
+  * `POST /api/landing/ab-impression` (anonim, IP-scope'suz, `A_impressions/B_impressions` atomic $inc)
+  * `GET /api/landing/ab-stats` (master-only, canlı istatistik)
+- Demo write guard whitelist'ine `ab-impression` + `notifications/badge` eklendi.
+- **Frontend `Landing.js` `useAbVariant()`**: `ab_test_enabled=true` ise ilk ziyarette
+  Math.random < 0.5 ile "A" veya "B" seçilir, `localStorage.gws.ab_variant`'a kaydedilir.
+  Silent impression track (`api.abTrackImpression`).
+- **`useLandingStrings()`**: Variant B seçildiyse hero için `variant_b_hero_by_lang[effective]`
+  partial override; boş alan → Variant A'ya düşer.
+- **Master UI `LandingCMS.js`**: Yeni `<AbTestingCard>` component — Aktif/Kapat toggle + canlı
+  3-kutulu stats grid (Variant A / Variant B / Toplam) + Variant B hero form 6 alan.
+  Aktif dilin variant B'si düzenlenir.
+
+### Backend Verified
+- PUT ab_test_enabled=true + variant_b payload → 200 OK
+- POST /landing/ab-impression x3 → A_impressions=2, B_impressions=1, total=3, %66.7/%33.3
+- POST /notifications/badge → 200, idempotent 24h
+
+### Screenshots
+- CMS A/B card: "AKTİF · %50/%50" badge, canlı 3 stat box (2/1/3), Variant B hero editor
+- CMS Copy-From-Lang bar: her dil için buton, hasContent gating aktif
+- Cmd+K empty query: SON ZİYARETLER + TÜM SAYFALAR (3 fuchsia ⚡ AKSİYON üstte + routes altta)
+- Cmd+K "tema" arama: "Landing Tema Değiştir" aksiyonu ⚡ AKSİYON badge ile aktif
+

@@ -380,12 +380,26 @@ function useLandingStrings() {
   const { effective } = useI18n();
   const base = LANG_STRINGS[effective] || LANG_STRINGS.en;
   const cms = useLandingCms();
+  const variant = useAbVariant(cms);
   // v43.11 Multi-lang: content_by_lang varsa aktif dile göre override çek.
-  // Yoksa (legacy kayıt) top-level hero/features_title vs. kullan (TR olarak muamele).
+  // v43.12 A/B: seçilen variant B ise hero override'ını variant_b_hero_by_lang'dan al.
   const langBlock = (cms?.content_by_lang && cms.content_by_lang[effective]) || null;
-  const hero = (langBlock?.hero) || (effective === "tr" ? cms?.hero : null) || {};
+  const heroA = (langBlock?.hero) || (effective === "tr" ? cms?.hero : null) || {};
+  const heroB = variant === "B"
+    ? ((cms?.variant_b_hero_by_lang && cms.variant_b_hero_by_lang[effective]) || {})
+    : {};
+  // Variant B alanı doluysa üstüne yazar, boşsa Variant A kullanılır (partial override)
+  const hero = variant === "B"
+    ? {
+        badge:        heroB.badge        || heroA.badge,
+        title_a:      heroB.title_a      || heroA.title_a,
+        title_b:      heroB.title_b      || heroA.title_b,
+        subtitle:     heroB.subtitle     || heroA.subtitle,
+        cta_primary:  heroB.cta_primary  || heroA.cta_primary,
+        cta_secondary:heroB.cta_secondary|| heroA.cta_secondary,
+      }
+    : heroA;
   const pick = (k) => {
-    // Öncelik: langBlock[k] → (TR ise) cms[k] → base[k]
     if (langBlock && langBlock[k]) return langBlock[k];
     if (effective === "tr" && cms && cms[k]) return cms[k];
     return base[k];
@@ -403,7 +417,30 @@ function useLandingStrings() {
     pricing_title:    pick("pricing_title"),
     pricing_sub:      pick("pricing_sub"),
     footer_copyright: pick("footer_copyright"),
+    // Meta — debug için exposed
+    _ab_variant: variant,
   };
+}
+
+/**
+ * v43.12 A/B variant seçici — ilk ziyarette localStorage'a %50/%50 zar atarak
+ * "A" veya "B" saklar; sonraki ziyaretlerde aynı variant görünür. AB test kapalıysa
+ * her zaman "A" döner.
+ */
+function useAbVariant(cms) {
+  if (!cms?.ab_test_enabled) return "A";
+  try {
+    let v = localStorage.getItem("gws.ab_variant");
+    if (v !== "A" && v !== "B") {
+      v = Math.random() < 0.5 ? "A" : "B";
+      localStorage.setItem("gws.ab_variant", v);
+      // Analitik (silent fail — endpoint yoksa sorun değil)
+      try { api.abTrackImpression?.({ variant: v }); } catch {}
+    }
+    return v;
+  } catch {
+    return "A";
+  }
 }
 
 /**
