@@ -1206,12 +1206,42 @@ class _AttackBroadcaster:
 
 
 _ATTACK_BROADCASTER = _AttackBroadcaster()
+# v43.5 Outbound broadcaster — bulk alert + yeni outbound event canlı feed
+_OUTBOUND_BROADCASTER = _AttackBroadcaster()
 
 
 async def push_attack_event(payload: dict):
     """Diğer route'lardan (events.py ingest) çağrılır — event geldiğinde
     tüm WebSocket dinleyicilere yayınlar."""
     await _ATTACK_BROADCASTER.broadcast(payload)
+
+
+async def push_outbound_event(payload: dict):
+    """v43.5 — Yeni outbound event veya bulk alert için tüm ws/outbound
+    dinleyicilere yayınlar. events.py ingest hook'undan çağrılır."""
+    await _OUTBOUND_BROADCASTER.broadcast(payload)
+
+
+@router.websocket("/ws/outbound")
+async def ws_outbound(ws: WebSocket):
+    """Canlı outbound feed. Mesaj tipleri:
+       {"type":"event", "from_user":"kobi", "to_addr":"x@y.com", "verdict":"spam", "ts":"..."}
+       {"type":"bulk_alert", "from_user":"spammer", "sent_count":205, "limit":200}
+       {"type":"ping"}
+    """
+    await _OUTBOUND_BROADCASTER.connect(ws)
+    try:
+        while True:
+            try:
+                await asyncio.wait_for(ws.receive_text(), timeout=30)
+            except asyncio.TimeoutError:
+                await ws.send_text('{"type":"ping"}')
+            except WebSocketDisconnect:
+                break
+    except Exception:
+        pass
+    finally:
+        await _OUTBOUND_BROADCASTER.disconnect(ws)
 
 
 @router.websocket("/ws/attacks")

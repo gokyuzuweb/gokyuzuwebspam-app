@@ -64,6 +64,51 @@ export default function Outbound() {
     enabled: !!contentEventId,
   });
 
+  // v43.5 WebSocket canlı outbound feed — yeni event ve bulk alert için toast + live counter
+  const [liveCount, setLiveCount] = useState(0);
+  useEffect(() => {
+    const backend = process.env.REACT_APP_BACKEND_URL || "";
+    const wsUrl = backend.replace(/^http/, "ws") + "/api/maintenance/ws/outbound";
+    let ws;
+    let reconnectTimer;
+    const connect = () => {
+      try {
+        ws = new WebSocket(wsUrl);
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === "bulk_alert") {
+              toast.warning(`⚠️ Toplu Mail Uyarısı`, {
+                description: `${msg.from_user} son 1 saatte ${msg.sent_count} mail atmış (limit: ${msg.limit}). Otomatik throttle uygulandı.`,
+                duration: 12000,
+              });
+              qc.invalidateQueries({ queryKey: ["outbound-bulk-alerts"] });
+              qc.invalidateQueries({ queryKey: ["outbound-throttles"] });
+              qc.invalidateQueries({ queryKey: ["outbound-stats"] });
+            } else if (msg.type === "event") {
+              setLiveCount((c) => c + 1);
+              // İlk ekran yenilenene kadar yeni event canlı sayaçta görünsün
+              if (liveCount === 0) {
+                qc.invalidateQueries({ queryKey: ["outbound-events"] });
+              }
+            }
+            // "ping" mesajları görmezden gel
+          } catch (_) {}
+        };
+        ws.onclose = () => {
+          reconnectTimer = setTimeout(connect, 3000);
+        };
+        ws.onerror = () => { try { ws.close(); } catch (_) {} };
+      } catch (_) {}
+    };
+    connect();
+    return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) try { ws.close(); } catch (_) {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const dSearch = useDebounced(search);
   const dTo = useDebounced(toSearch);
   const dSubj = useDebounced(subjectSearch);
@@ -261,7 +306,22 @@ export default function Outbound() {
 
       <Card>
         <CardHeader
-          title="Giden Mail Trafiği"
+          title={
+            <span className="flex items-center gap-2" data-testid="ob-live-header">
+              Giden Mail Trafiği
+              <span data-testid="ob-live-indicator" className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-emerald-400 mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> canlı
+              </span>
+              {liveCount > 0 && (
+                <button
+                  data-testid="ob-live-count"
+                  onClick={() => { qc.invalidateQueries({ queryKey: ["outbound-events"] }); setLiveCount(0); }}
+                  className="text-[10px] mono px-1.5 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30 animate-pulse">
+                  +{liveCount} yeni · tıkla yenile
+                </button>
+              )}
+            </span>
+          }
           subtitle={eventsQuery.isFetching ? "Yükleniyor…" : `${events.length} kayıt (limit: ${limit})`}
           right={<Badge tone="brand">v43 Filtering</Badge>}
         />

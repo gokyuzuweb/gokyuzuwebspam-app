@@ -337,6 +337,22 @@ async def ingest_event(evt: MailEvent, request: Request):
     # Threshold: policy.outbound_limit_per_hour (varsayılan 200).
     if doc.get("direction") == "out":
         from_user = (doc.get("from_user") or "").strip().lower()
+        # v43.5 Broadcast every outbound event to ws/outbound listeners
+        try:
+            from routes.maintenance import push_outbound_event
+            await push_outbound_event({
+                "type": "event",
+                "id": doc.get("id"),
+                "from_addr": doc.get("from_addr"),
+                "from_user": from_user or None,
+                "to_addr": doc.get("to_addr"),
+                "subject": doc.get("subject"),
+                "verdict": doc.get("verdict"),
+                "total_score": doc.get("total_score"),
+                "ts": doc.get("ts"),
+            })
+        except Exception:
+            pass
         if from_user:
             try:
                 from datetime import timedelta
@@ -382,6 +398,19 @@ async def ingest_event(evt: MailEvent, request: Request):
                             }},
                             upsert=True,
                         )
+                        # v43.5 WebSocket broadcast — Frontend anında toast görsün
+                        try:
+                            from routes.maintenance import push_outbound_event
+                            await push_outbound_event({
+                                "type": "bulk_alert",
+                                "from_user": from_user,
+                                "sent_count": sent_count,
+                                "limit": limit_hour,
+                                "license_key": evt.license_key,
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                            })
+                        except Exception:
+                            pass
             except Exception as ex:
                 log.warning("outbound bulk detect failed: %s", ex)
     # ---------------------------------------------------------------------
