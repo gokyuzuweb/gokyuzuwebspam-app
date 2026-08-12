@@ -486,6 +486,34 @@ async def _startup() -> None:
     except Exception as ex:
         log.warning("v40 perf indexes skipped: %s", ex)
 
+    # v43.3 Kritik güvenlik yaması — plugin_state global lisans binding'i temizle.
+    # Eskiden bir bayi lisansını doğruladığında `plugin_state.licensed=true,
+    # license_key=X` yazılıyordu; panel.gokyuzuhosting.com'a giren HERKES o
+    # lisans altında görünüyordu. Startup'ta bir kez temizlenir (idempotent).
+    # `_key: plugin_state_reset_v43_3` flag'i tekrar çalıştırılmayı önler.
+    try:
+        flag = await db.settings.find_one({"_key": "plugin_state_reset_v43_3"}, {"_id": 1})
+        if not flag:
+            r = await db.settings.update_one(
+                {"_key": "plugin_state"},
+                {"$set": {
+                    "licensed": False,
+                    "license_key": "",
+                    "license_expires": "",
+                    "auto_reset_at": datetime.now(timezone.utc).isoformat(),
+                    "auto_reset_reason": "v43.3_security_startup_cleanup",
+                }},
+                upsert=False,
+            )
+            await db.settings.insert_one({
+                "_key": "plugin_state_reset_v43_3",
+                "done_at": datetime.now(timezone.utc).isoformat(),
+                "modified": r.modified_count,
+            })
+            log.info("v43.3 plugin_state global binding auto-cleaned (modified=%d)", r.modified_count)
+    except Exception as ex:
+        log.warning("v43.3 plugin_state cleanup skipped: %s", ex)
+
     # Kick off background housekeeping tasks
     asyncio.create_task(_auto_suspend_daily_task())
     asyncio.create_task(_weekly_ai_report_task())

@@ -159,6 +159,19 @@ async def outbound_events(
     match: dict = {"direction": "out"}
     if lic_key:
         match["license_key"] = lic_key
+    # v43.3: `<>` envelope sender (bounce/DSN) veya sistem pseudo-user'ları
+    # outbound listesinden çıkar — bunlar gerçek user-initiated outbound değil.
+    match["$and"] = [
+        {"from_addr": {"$nin": ["", "<>", None]}},
+        {"from_addr": {"$exists": True}},
+        {"$or": [
+            {"from_user": {"$exists": False}},
+            {"from_user": None},
+            {"from_user": {"$nin": ["mailnull", "Debian-exim", "exim", "root", "nobody",
+                                     "mail", "mailman", "apache", "www-data",
+                                     "debian-exim"]}},
+        ]},
+    ]
     if hours and hours > 0:
         match["ts"] = {"$gte": (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()}
     if verdict and verdict != "all":
@@ -367,6 +380,39 @@ async def outbound_event_action(event_id: str, payload: EventActionIn, request: 
 # ============================================================================
 # MIGRATION: mevcut mail_events dokümanlarına direction:"in" backfill
 # ============================================================================
+@router.get("/event/{event_id}/content")
+async def outbound_event_content(event_id: str, request: Request,
+                                   license_key: Optional[str] = None):
+    """Tek outbound event'in tam içeriği — headers + body + attachments.
+    Frontend'de "Mail İçeriği Oku" modal'ını besler."""
+    scope = await resolve_tenant_scope(request, license_key, db)
+    lic_key = scope.get("owner_license_key") or ""
+    q: dict = {"id": event_id, "direction": "out"}
+    if lic_key:
+        q["license_key"] = lic_key
+    ev = await db.mail_events.find_one(q, {"_id": 0})
+    if not ev:
+        raise HTTPException(404, "Mail bulunamadı veya yetkiniz yok")
+    return {
+        "id": ev.get("id"),
+        "ts": ev.get("ts") or ev.get("ingested_at"),
+        "from_addr": ev.get("from_addr"),
+        "from_user": ev.get("from_user"),
+        "to_addr": ev.get("to_addr"),
+        "subject": ev.get("subject"),
+        "verdict": ev.get("verdict"),
+        "total_score": ev.get("total_score"),
+        "scores": ev.get("scores") or {},
+        "sender_ip": ev.get("sender_ip") or ev.get("client_ip"),
+        "size_bytes": ev.get("size_bytes"),
+        "headers_full": ev.get("headers_full") or ev.get("headers_preview") or "",
+        "body_preview": ev.get("body_preview") or "",
+        "body_html": ev.get("body_html") or "",
+        "attachments": ev.get("attachments") or [],
+        "action": ev.get("action"),
+    }
+
+
 @router.post("/migrate-direction")
 async def outbound_migrate_direction(request: Request, license_key: Optional[str] = None):
     """Master-only. Mevcut `mail_events`'ta `direction` alanı olmayan dokümanlara
