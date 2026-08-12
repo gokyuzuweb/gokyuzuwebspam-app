@@ -423,18 +423,44 @@ function useLandingStrings() {
 }
 
 /**
- * v43.12 A/B variant seçici — ilk ziyarette localStorage'a %50/%50 zar atarak
- * "A" veya "B" saklar; sonraki ziyaretlerde aynı variant görünür. AB test kapalıysa
- * her zaman "A" döner.
+ * v43.12 A/B variant seçici + v43.13 geo scope.
+ * - `ab_geo_scope`:
+ *   * "global": herkes A/B randomize
+ *   * "TR_only": sadece Türkiye ziyaretçileri B'yi görebilir (dışarısı hep A)
+ *   * "TR_exclude": Türkiye ziyaretçileri hep A, dışarısı A/B randomize
+ * - Ziyaretçi ülkesi ipapi.co/country üzerinden ~ilk 200ms içinde tespit edilir,
+ *   sonuç localStorage'a yazılır (bir kez, sonrası cache'lidir).
  */
 function useAbVariant(cms) {
   if (!cms?.ab_test_enabled) return "A";
+  const scope = (cms?.ab_geo_scope || "global").toString();
+  // Ziyaretçi ülkesi (localStorage cache; ilk ziyarette async doldurulur)
+  let visitorCountry = "";
+  try { visitorCountry = (localStorage.getItem("gws.visitor_country") || "").toUpperCase(); } catch {}
+  // İlk ziyaret ve ülke bilinmiyorsa: async fetch başlat, ama şimdilik conservative
+  // fallback → geo scope'a bakıp default davran.
+  if (!visitorCountry && scope !== "global") {
+    // Async country lookup — sonraki ziyaretlerde uygulanır
+    try {
+      fetch("https://ipapi.co/country/", { cache: "force-cache" })
+        .then(r => r.text())
+        .then(cc => {
+          if (cc && cc.length === 2) localStorage.setItem("gws.visitor_country", cc.toUpperCase());
+        })
+        .catch(() => {});
+    } catch {}
+  }
+  // Geo scope kısıtlaması
+  const isTR = visitorCountry === "TR";
+  let allowedForB = true;
+  if (scope === "TR_only" && !isTR) allowedForB = false;
+  else if (scope === "TR_exclude" && isTR) allowedForB = false;
+  if (!allowedForB) return "A";
   try {
     let v = localStorage.getItem("gws.ab_variant");
     if (v !== "A" && v !== "B") {
       v = Math.random() < 0.5 ? "A" : "B";
       localStorage.setItem("gws.ab_variant", v);
-      // Analitik (silent fail — endpoint yoksa sorun değil)
       try { api.abTrackImpression?.({ variant: v }); } catch {}
     }
     return v;
@@ -543,10 +569,25 @@ function Hero() {
             {s.hero_sub}
           </p>
           <div className="flex flex-wrap gap-3 mb-8">
-            <Link to="/shop" data-testid="hero-cta-buy" className="group inline-flex items-center gap-2 px-5 py-3 rounded-md bg-gradient-to-br from-indigo-500 to-indigo-600 text-white font-medium shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5">
+            <Link to="/shop" data-testid="hero-cta-buy"
+                  onClick={() => {
+                    // v43.13 A/B conversion tracking — CTA primary click = kondisyonlu conversion
+                    try {
+                      const v = localStorage.getItem("gws.ab_variant");
+                      if (v === "A" || v === "B") api.abTrackConversion?.({ variant: v, kind: "cta_primary" });
+                    } catch {}
+                  }}
+                  className="group inline-flex items-center gap-2 px-5 py-3 rounded-md bg-gradient-to-br from-indigo-500 to-indigo-600 text-white font-medium shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5">
               {s.cta_primary} <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform"/>
             </Link>
-            <Link to="/panel" data-testid="hero-cta-demo" className="inline-flex items-center gap-2 px-5 py-3 rounded-md border border-slate-700 bg-slate-900/60 text-slate-100 hover:border-slate-600 hover:bg-slate-800/60 transition-all">
+            <Link to="/panel" data-testid="hero-cta-demo"
+                  onClick={() => {
+                    try {
+                      const v = localStorage.getItem("gws.ab_variant");
+                      if (v === "A" || v === "B") api.abTrackConversion?.({ variant: v, kind: "cta_secondary" });
+                    } catch {}
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-md border border-slate-700 bg-slate-900/60 text-slate-100 hover:border-slate-600 hover:bg-slate-800/60 transition-all">
               <Rocket className="w-4 h-4" /> {s.cta_secondary}
             </Link>
             <Link to="/install" data-testid="hero-cta-install" className="inline-flex items-center gap-2 px-5 py-3 rounded-md border border-amber-500/30 bg-amber-500/5 text-amber-200 hover:border-amber-500/60 hover:bg-amber-500/10 transition-all">

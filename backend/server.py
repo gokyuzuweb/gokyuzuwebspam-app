@@ -2232,6 +2232,11 @@ class AbImpressionPayload(BaseModel):
     variant: Literal["A", "B"]
 
 
+class AbConversionPayload(BaseModel):
+    variant: Literal["A", "B"]
+    kind: Optional[str] = "cta_primary"   # "cta_primary" | "cta_secondary" | "signup"
+
+
 @api.post("/notifications/badge")
 async def push_badge_notification(payload: BadgeUnlockPayload):
     """v43.12 — Client-side achievement unlock'unu bildirim inbox'una kaydeder.
@@ -2275,20 +2280,82 @@ async def landing_ab_impression(payload: AbImpressionPayload):
     return {"ok": True, "variant": payload.variant}
 
 
+@api.post("/landing/ab-conversion")
+async def landing_ab_conversion(payload: AbConversionPayload):
+    """v43.13 — A/B conversion tracker. Ziyaretçi CTA'ya tıkladığında sayılır.
+    p-value hesabı için impression ile birlikte kullanılır."""
+    field = f"{payload.variant}_conversions"
+    await db.settings.update_one(
+        {"_key": "landing_ab_stats"},
+        {"$inc": {field: 1}, "$set": {"updated_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True, "variant": payload.variant, "kind": payload.kind}
+
+
+def _ab_pvalue_zscore(a_conv: int, a_imp: int, b_conv: int, b_imp: int):
+    """v43.13 İki oran z-testi (two-proportion z-test).
+    Dönüş: (p_value_two_tailed, z_score, confidence_pct).
+    Yetersiz veri (impression < 30) durumunda None dönüş."""
+    import math
+    if a_imp < 30 or b_imp < 30:
+        return None, None, None
+    p_a = a_conv / a_imp
+    p_b = b_conv / b_imp
+    p_pool = (a_conv + b_conv) / (a_imp + b_imp)
+    denom = p_pool * (1 - p_pool) * (1 / a_imp + 1 / b_imp)
+    if denom <= 0:
+        return None, None, None
+    se = math.sqrt(denom)
+    if se == 0:
+        return None, None, None
+    z = (p_a - p_b) / se
+    # İki taraflı p-value: 2 * (1 - Φ(|z|))
+    # erf-based normal CDF
+    phi = 0.5 * (1 + math.erf(abs(z) / math.sqrt(2)))
+    p_value = 2 * (1 - phi)
+    confidence = (1 - p_value) * 100
+    return round(p_value, 4), round(z, 3), round(confidence, 1)
+
+
 @api.get("/landing/ab-stats")
 async def landing_ab_stats(request: Request):
-    """v43.12 — Master-only A/B impression istatistikleri."""
+    """v43.13 — Master-only A/B istatistikleri + p-value + confidence score."""
     await _require_master(request, None)
     doc = await db.settings.find_one({"_key": "landing_ab_stats"}, {"_id": 0, "_key": 0}) or {}
-    a = int(doc.get("A_impressions") or 0)
-    b = int(doc.get("B_impressions") or 0)
-    total = a + b
+    a_imp = int(doc.get("A_impressions") or 0)
+    b_imp = int(doc.get("B_impressions") or 0)
+    a_conv = int(doc.get("A_conversions") or 0)
+    b_conv = int(doc.get("B_conversions") or 0)
+    total = a_imp + b_imp
+    # Conversion oranları
+    a_cr = round((a_conv / a_imp) * 100, 2) if a_imp else 0
+    b_cr = round((b_conv / b_imp) * 100, 2) if b_imp else 0
+    # p-value / confidence
+    p_value, z_score, confidence = _ab_pvalue_zscore(a_conv, a_imp, b_conv, b_imp)
+    # Anlamlılık eşiği: 500+ toplam impression + p < 0.05
+    ready_for_significance = total >= 500
+    is_significant = (p_value is not None) and (p_value < 0.05) and ready_for_significance
+    winner = None
+    if is_significant:
+        winner = "A" if a_cr > b_cr else "B"
     return {
-        "A_impressions": a,
-        "B_impressions": b,
+        "A_impressions": a_imp,
+        "B_impressions": b_imp,
         "total": total,
-        "A_pct": round((a / total) * 100, 1) if total else 0,
-        "B_pct": round((b / total) * 100, 1) if total else 0,
+        "A_pct": round((a_imp / total) * 100, 1) if total else 0,
+        "B_pct": round((b_imp / total) * 100, 1) if total else 0,
+        # v43.13 conversion + significance
+        "A_conversions": a_conv,
+        "B_conversions": b_conv,
+        "A_cr": a_cr,   # conversion rate %
+        "B_cr": b_cr,
+        "p_value": p_value,
+        "z_score": z_score,
+        "confidence": confidence,
+        "ready_for_significance": ready_for_significance,
+        "is_significant": is_significant,
+        "winner": winner,
         "updated_at": doc.get("updated_at"),
     }
 
@@ -2412,6 +2479,9 @@ class LandingContentIn(BaseModel):
     # v43.12 A/B testing (Variant A = ana içerik; Variant B sadece hero override)
     ab_test_enabled: Optional[bool] = False
     variant_b_hero_by_lang: Optional[Dict[str, LandingHeroBlock]] = None
+    # v43.13 A/B geo scope: "global" (herkes), "TR_only" (sadece TR ziyaretçiler B görür),
+    # "TR_exclude" (TR dışı herkes B görür), veya bir dizi ülke kodu (comma-separated).
+    ab_geo_scope: Optional[str] = "global"
     # Legacy top-level fields (backwards compat — otomatik "tr"'ye map'lenir)
     hero: Optional[LandingHeroBlock] = None
     features_title: Optional[str] = ""
@@ -2473,6 +2543,7 @@ async def get_landing_settings():
 
     # v43.12 A/B — variant_b_hero_by_lang normalize
     ab_enabled = bool(doc.get("ab_test_enabled", False))
+    ab_geo_scope = str(doc.get("ab_geo_scope") or "global")
     vb_raw = doc.get("variant_b_hero_by_lang") or {}
     variant_b_hero_by_lang = {}
     empty_hero = {"badge": "", "title_a": "", "title_b": "", "subtitle": "", "cta_primary": "", "cta_secondary": ""}
@@ -2500,6 +2571,7 @@ async def get_landing_settings():
         "content_by_lang": content_by_lang,
         # v43.12 A/B testing
         "ab_test_enabled": ab_enabled,
+        "ab_geo_scope": ab_geo_scope,
         "variant_b_hero_by_lang": variant_b_hero_by_lang,
         # Legacy flat (frontend backward-compat)
         "hero": tr_block["hero"],
@@ -2561,6 +2633,7 @@ async def put_landing_settings(payload: LandingContentIn, request: Request):
         "content_by_lang": content_by_lang,
         # v43.12 A/B testing
         "ab_test_enabled": bool(raw.get("ab_test_enabled", False)),
+        "ab_geo_scope": str(raw.get("ab_geo_scope") or "global"),
         "variant_b_hero_by_lang": _normalize_variant_b(raw.get("variant_b_hero_by_lang") or {}),
         "updated_at": _iso(),
     }
@@ -7956,6 +8029,7 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/plan/features",      # plan matris sorgusu (ziyaretçi de görebilir)
     "/api/analytics/plan-event", # PlanGate funnel tracking (ziyaretçi de yazabilir)
     "/api/landing/ab-impression", # v43.12 anonim A/B variant sayaç
+    "/api/landing/ab-conversion", # v43.13 anonim A/B conversion tracker
     "/api/notifications/badge",   # v43.12 client achievement unlock notification
 )
 

@@ -130,6 +130,44 @@ const ACTIONS = [
   },
 ];
 
+/**
+ * v43.13 Türkçe-aware fuzzy match.
+ * - Diakritik normalize (ı→i, ğ→g, ü→u, ş→s, ö→o, ç→c)
+ * - Lowercase + boşluk normalize
+ * - "krntn" gibi kısaltmaları hedef içinde subsequence olarak arar
+ *   → "karantina" içinde k...r...n...t...n bulunursa eşleşir.
+ * - Ayrıca kelime-token bazlı includes fallback'i.
+ */
+function normalizeTr(s) {
+  return (s || "").toString().toLowerCase()
+    .replace(/ı/g, "i").replace(/ğ/g, "g").replace(/ü/g, "u")
+    .replace(/ş/g, "s").replace(/ö/g, "o").replace(/ç/g, "c")
+    .replace(/i̇/g, "i");
+}
+function fuzzyMatch(query, haystack) {
+  const q = normalizeTr(query.trim());
+  if (!q) return true;
+  const h = normalizeTr(haystack);
+  // 1) Tam substring — hızlı yol
+  if (h.includes(q)) return true;
+  // 2) Boşluk-ayırmalı token includes (tüm token'lar geçmeli)
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1 && tokens.every((t) => h.includes(t))) return true;
+  // 3) Subsequence (kısaltma) — "krntn" → "karantina"
+  //    Her sorgu karakterini haystack içinde sıralı bulmaya çalış
+  //    Sadece boşluksuz tek token için (aksi halde noise)
+  if (tokens.length === 1 && q.length >= 3 && q.length <= 8) {
+    let hi = 0;
+    for (const c of q) {
+      const found = h.indexOf(c, hi);
+      if (found === -1) return false;
+      hi = found + 1;
+    }
+    return true;
+  }
+  return false;
+}
+
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -187,13 +225,14 @@ export default function CommandPalette() {
       // Boş sorgu: top 3 action + top 12 route
       return [...ACTIONS.slice(0, 3), ...items];
     }
+    // v43.13 Türkçe-aware fuzzy filter — kısaltma + diakritik toleranslı
     const filteredItems = items.filter((it) => {
-      const hay = `${it.title} ${it.keywords} ${it.path}`.toLowerCase();
-      return q.split(/\s+/).every((tok) => hay.includes(tok));
+      const hay = `${it.title} ${it.keywords} ${it.path}`;
+      return fuzzyMatch(q, hay);
     });
     const filteredActions = ACTIONS.filter((a) => {
-      const hay = `${a.title} ${a.keywords}`.toLowerCase();
-      return q.split(/\s+/).every((tok) => hay.includes(tok));
+      const hay = `${a.title} ${a.keywords}`;
+      return fuzzyMatch(q, hay);
     });
     return [...filteredActions, ...filteredItems].slice(0, 25);
   }, [query]);

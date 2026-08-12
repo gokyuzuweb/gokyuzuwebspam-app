@@ -1,10 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import {
-  Trophy, Award, Shield, Flame, Rocket, Star, Zap, Globe, Target, Sparkles,
+  Trophy, Award, Shield, Flame, Rocket, Star, Zap, Globe, Target, Sparkles, Twitter, Share2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+
+/**
+ * v43.13 — Twitter/X paylaşım deep-link üretici.
+ * Kullanıcının aynı domaine dönüşünü sağlar (referral tracking).
+ */
+function buildTwitterShareUrl(badge, all_time_blocked) {
+  const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
+  const text =
+    `🏆 GökyüzüWebSpam ile yeni rozet açtım: ${badge.title}\n\n` +
+    `Toplam engellenen tehdit: ${nfmt(all_time_blocked)}\n` +
+    `Modern WHM / cPanel mail güvenlik paneli — 60 saniyede kurulum.\n\n` +
+    `#gokyuzuwebspam #mailsecurity`;
+  const url = "https://gokyuzuhosting.com/?utm_source=twitter&utm_medium=badge-share&utm_campaign=" + badge.id;
+  return `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`;
+}
 
 /**
  * v43.11 Başarı Rozetleri — Panel'in tüm zaman içindeki başarımlarını
@@ -120,15 +135,13 @@ export default function AchievementBadges() {
     fresh.forEach((id) => {
       const b = badges.find(x => x.id === id);
       if (!b) return;
+      const shareUrl = buildTwitterShareUrl(b, d.all_time_blocked);
       toast.success(`🏆 Yeni Rozet: ${b.title}`, {
         description: b.desc,
-        duration: 6000,
+        duration: 8000,
         action: {
-          label: "Göster",
-          onClick: () => {
-            const el = document.querySelector(`[data-testid="ach-${id}"]`);
-            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-          },
+          label: "🐦 Paylaş",
+          onClick: () => window.open(shareUrl, "_blank", "noopener,noreferrer"),
         },
       });
       // Backend bildirim inbox'una da async ekle (silent fail — panel dışında da olabilir)
@@ -175,6 +188,26 @@ export default function AchievementBadges() {
             <div className="text-[10px] mono text-slate-500 mt-1.5 gws-ach-progress-hint">
               %{Math.round((unlockedCount / badges.length) * 100)} — bir sonraki rozete devam
             </div>
+            {/* v43.13 En yüksek unlocked rozet için tek tık Twitter paylaş */}
+            {unlockedCount > 0 && (() => {
+              const highest = [...badges].reverse().find(x => x.unlocked);
+              if (!highest) return null;
+              const url = buildTwitterShareUrl(highest, d.all_time_blocked);
+              return (
+                <button
+                  data-testid="ach-share-top"
+                  onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+                  className="mt-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg
+                             bg-gradient-to-br from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500
+                             text-white text-xs font-semibold
+                             shadow-[0_6px_16px_-4px_rgba(14,165,233,0.5),inset_0_1px_0_0_rgba(255,255,255,0.2)]
+                             hover:scale-[1.02] transition-transform">
+                  <Twitter className="w-3.5 h-3.5"/>
+                  En Yüksek Rozeti Paylaş
+                  <Share2 className="w-3 h-3 opacity-70"/>
+                </button>
+              );
+            })()}
           </div>
         </div>
 
@@ -224,6 +257,24 @@ export default function AchievementBadges() {
                 <div className={`text-[9px] mono text-center mt-1 gws-ach-pct ${b.unlocked ? tone.text : "text-slate-600"}`}>
                   {b.unlocked ? "AÇILDI" : `%${b.pct}`}
                 </div>
+                {/* v43.13 Twitter share — sadece açılmış rozetler için */}
+                {b.unlocked && (
+                  <button
+                    data-testid={`ach-share-${b.id}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const url = buildTwitterShareUrl(b, d.all_time_blocked);
+                      window.open(url, "_blank", "noopener,noreferrer");
+                    }}
+                    title="Twitter'da paylaş"
+                    aria-label="Twitter'da paylaş"
+                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-slate-900/80 border border-slate-700
+                               flex items-center justify-center opacity-0 group-hover:opacity-100
+                               hover:bg-sky-500 hover:border-sky-400 hover:scale-110
+                               transition-all duration-200 z-10 gws-ach-share">
+                    <Twitter className="w-3.5 h-3.5 text-slate-300 group-hover:text-white"/>
+                  </button>
+                )}
               </div>
             );
           })}

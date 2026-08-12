@@ -491,3 +491,54 @@ tabidir.
 - Cmd+K empty query: SON ZİYARETLER + TÜM SAYFALAR (3 fuchsia ⚡ AKSİYON üstte + routes altta)
 - Cmd+K "tema" arama: "Landing Tema Değiştir" aksiyonu ⚡ AKSİYON badge ile aktif
 
+
+## Feb 12, 2026 (Session 14d) — v43.13 · 4 Next Action Items #3
+
+### 1. Rozet Twitter Paylaşım
+- `AchievementBadges.js` `buildTwitterShareUrl()` helper — badge title + all_time_blocked
+  + UTM tracking (utm_source=twitter, utm_medium=badge-share, utm_campaign={badge_id}).
+- Yeni rozet toast'ında "🐦 Paylaş" action → `window.open(twitter.com/intent/tweet)`.
+- Her unlocked badge card'ında sağ üstte küçük Twitter icon (opacity-0 → group-hover:opacity-100).
+- Toplam İlerleme kartında "En Yüksek Rozeti Paylaş" büyük CTA butonu (sky gradient + Share2 icon).
+
+### 2. A/B Confidence Score (p-value)
+- Backend `_ab_pvalue_zscore()` — two-proportion z-test:
+  * p_pooled = (a_conv + b_conv) / (a_imp + b_imp)
+  * SE = sqrt(p_pooled × (1 - p_pooled) × (1/a_imp + 1/b_imp))
+  * z = (p_a - p_b) / SE
+  * p_value = 2 × (1 - Φ(|z|)) (iki taraflı erf-based normal CDF)
+  * confidence = (1 - p_value) × 100
+- Yetersiz veri koruması: her variant < 30 impression → None
+- Anlamlılık eşiği: total ≥ 500 AND p_value < 0.05 → is_significant + winner ("A"|"B")
+- Yeni endpoint `POST /api/landing/ab-conversion` — CTA click tracking
+- Frontend Landing hero primary + secondary CTA'lar → localStorage.gws.ab_variant okur,
+  `api.abTrackConversion({variant, kind})` fire eder.
+- LandingCMS AbTestingCard içinde **CONFIDENCE** row:
+  * "🏆 Kazanan: Variant B · Güven %99.9" (emerald badge) — anlamlıysa
+  * "Henüz anlamlı değil · Güven %..." (warning) — ready ama p ≥ 0.05
+  * "Yetersiz veri · X gösterim daha gerekli" (info) — total < 500 progress bar
+  * p-value + z-score mono chip'ler
+- Stats grid 3→4 kutuya çıkarıldı: Variant A/B (CR + conv), Toplam Gösterim, Toplam Conversion.
+
+### 3. Cmd+K Fuzzy Turkish
+- `normalizeTr(s)` — diakritik strip (ı→i, ğ→g, ü→u, ş→s, ö→o, ç→c) + lowercase.
+- `fuzzyMatch(query, hay)` üçlü kademe:
+  1. Tam substring (hızlı yol)
+  2. Boşluk-ayrımlı token includes (tüm token'lar geçmeli)
+  3. Subsequence (3-8 karakter tek token) — "krntn" → h[0]=k, h[1]=r ... h[i]=n sıralı bulma
+- Test: "krntn" → matches "Son 10 Karantinayı Göster" (AKSİYON) + "Karantina" route + ilgili sayfalar.
+
+### 4. Landing Ülke Segmentasyonu
+- Backend `LandingContentIn.ab_geo_scope`: "global" | "TR_only" | "TR_exclude"
+- Frontend `useAbVariant(cms)` genişletildi:
+  * `localStorage.gws.visitor_country` cache (ipapi.co/country üzerinden ilk ziyarette async)
+  * `TR_only` + visitor≠TR → sadece Variant A göster
+  * `TR_exclude` + visitor=TR → sadece Variant A göster
+- LandingCMS AbTestingCard'da **COĞRAFİ KAPSAM** section — 3 buton kartı (🌍 Herkes,
+  🇹🇷 Sadece TR, 🌐 TR Hariç), aktif olan purple ring ile vurgulu.
+- İpucu: "Kapsam dışı ziyaretçiler her zaman Variant A görür — ipapi.co ile ilk açılışta tespit + tarayıcı cache."
+
+### Verified & Deployed
+- Backend seed testi: 600/600 impression + 30/60 conv → p=0.001, z=-3.288, güven %99.9, winner=B
+- Screenshot: A/B confidence + geo, Cmd+K "krntn" fuzzy match, Achievement Twitter share button + big CTA
+

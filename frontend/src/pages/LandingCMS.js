@@ -50,6 +50,8 @@ const buildInitialState = (data) => {
     content_by_lang: contentByLang,
     // v43.12 A/B
     ab_test_enabled: !!data?.ab_test_enabled,
+    // v43.13 Geo scope
+    ab_geo_scope: data?.ab_geo_scope || "global",
     variant_b_hero_by_lang: variantBByLang,
   };
 };
@@ -321,6 +323,7 @@ export default function LandingCMS() {
  */
 function AbTestingCard({ form, setForm, setDirty, activeLang }) {
   const setEnabled = (v) => { setDirty(true); setForm((prev) => ({ ...prev, ab_test_enabled: !!v })); };
+  const setGeoScope = (v) => { setDirty(true); setForm((prev) => ({ ...prev, ab_geo_scope: v })); };
   const setVbField = (k, val) => {
     setDirty(true);
     setForm((prev) => {
@@ -368,11 +371,95 @@ function AbTestingCard({ form, setForm, setDirty, activeLang }) {
       />
       <CardBody className="space-y-4">
         {form.ab_test_enabled && (
-          <div className="grid grid-cols-3 gap-3" data-testid="ab-stats-grid">
-            <StatBox label="Variant A" value={s.A_impressions} pct={s.A_pct} tone="indigo"/>
-            <StatBox label="Variant B" value={s.B_impressions} pct={s.B_pct} tone="purple"/>
-            <StatBox label="Toplam Gösterim" value={s.total} icon={BarChart3} tone="emerald"/>
-          </div>
+          <>
+            {/* v43.13 Geo Segmentasyonu */}
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 gws-ab-geo" data-testid="ab-geo-scope">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 mono mb-2 flex items-center gap-1.5">
+                🌍 Coğrafi Kapsam
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                {[
+                  { v: "global",     label: "Herkes",     desc: "Tüm ziyaretçiler A/B",   flag: "🌍" },
+                  { v: "TR_only",    label: "Sadece TR",  desc: "Yalnız Türkiye A/B",     flag: "🇹🇷" },
+                  { v: "TR_exclude", label: "TR Hariç",   desc: "Türkiye dışı A/B",       flag: "🌐" },
+                ].map(({ v, label, desc, flag }) => {
+                  const active = form.ab_geo_scope === v;
+                  return (
+                    <button key={v}
+                            data-testid={`ab-geo-${v}`}
+                            onClick={() => setGeoScope(v)}
+                            className={`text-left rounded-lg border p-2.5 transition-all
+                                       ${active
+                                         ? "border-purple-500/60 bg-purple-500/15 ring-1 ring-purple-500/40"
+                                         : "border-slate-800 bg-slate-900/40 hover:border-slate-600"}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl leading-none">{flag}</span>
+                        <div className="flex-1">
+                          <div className={`text-xs font-semibold ${active ? "text-purple-100" : "text-slate-100"}`}>{label}</div>
+                          <div className="text-[9px] mono text-slate-500 mt-0.5">{desc}</div>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="text-[9px] mono text-slate-500 mt-2 italic">
+                Kapsam dışı ziyaretçiler her zaman Variant A görür — ziyaretçi ülkesi ipapi.co ile ilk açılışta tespit edilir ve tarayıcıda cache'lenir.
+              </div>
+            </div>
+
+            {/* v43.13 Confidence Score + Winner Badge */}
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 gws-ab-confidence" data-testid="ab-confidence">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-widest text-slate-500 mono">İstatistiksel Anlamlılık</span>
+                  {s.is_significant ? (
+                    <Badge tone="success">
+                      🏆 Kazanan: Variant {s.winner} · Güven %{s.confidence}
+                    </Badge>
+                  ) : s.ready_for_significance ? (
+                    <Badge tone="warning">
+                      Henüz anlamlı değil · Güven %{s.confidence ?? 0}
+                    </Badge>
+                  ) : (
+                    <Badge tone="info">
+                      Yetersiz veri · {500 - s.total} gösterim daha gerekli
+                    </Badge>
+                  )}
+                </div>
+                <div className="text-[10px] mono text-slate-500 flex items-center gap-3">
+                  {s.p_value !== null && s.p_value !== undefined && (
+                    <span>p-value: <b className={s.p_value < 0.05 ? "text-emerald-300" : "text-slate-300"}>{s.p_value}</b></span>
+                  )}
+                  {s.z_score !== null && s.z_score !== undefined && (
+                    <span>z: <b className="text-slate-300">{s.z_score}</b></span>
+                  )}
+                </div>
+              </div>
+              {/* Progress bar toward 500 */}
+              {!s.ready_for_significance && (
+                <div className="mt-2">
+                  <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
+                         style={{ width: `${Math.min(100, (s.total / 500) * 100)}%` }}/>
+                  </div>
+                  <div className="text-[9px] mono text-slate-500 mt-1">
+                    {s.total} / 500 gösterim — anlamlı test için minimum 500 gerekli
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-4 gap-3" data-testid="ab-stats-grid">
+              <StatBox label="Variant A" value={s.A_impressions} pct={s.A_pct} tone="indigo"
+                       sub={`CR %${s.A_cr} · ${s.A_conversions} conv`}/>
+              <StatBox label="Variant B" value={s.B_impressions} pct={s.B_pct} tone="purple"
+                       sub={`CR %${s.B_cr} · ${s.B_conversions} conv`}/>
+              <StatBox label="Toplam Gösterim" value={s.total} icon={BarChart3} tone="emerald"/>
+              <StatBox label="Toplam Conversion" value={s.A_conversions + s.B_conversions} tone="amber"
+                       sub={s.total > 0 ? `CR ortalama %${((s.A_conversions + s.B_conversions) / s.total * 100).toFixed(2)}` : ""}/>
+            </div>
+          </>
         )}
         <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">
           Variant B — Hero ({langLabel})
@@ -401,11 +488,12 @@ function AbTestingCard({ form, setForm, setDirty, activeLang }) {
   );
 }
 
-function StatBox({ label, value, pct, tone = "indigo", icon: Icon }) {
+function StatBox({ label, value, pct, sub, tone = "indigo", icon: Icon }) {
   const TONE = {
     indigo:  "border-indigo-500/40 bg-indigo-500/10 text-indigo-200",
     purple:  "border-purple-500/40 bg-purple-500/10 text-purple-200",
     emerald: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+    amber:   "border-amber-500/40 bg-amber-500/10 text-amber-200",
   }[tone];
   return (
     <div className={`rounded-lg border p-3 ${TONE}`}>
@@ -415,6 +503,9 @@ function StatBox({ label, value, pct, tone = "indigo", icon: Icon }) {
       <div className="text-2xl font-black tabular-nums mt-1 text-slate-100">{value}</div>
       {pct !== undefined && (
         <div className="text-[10px] mono opacity-70 mt-0.5">%{pct}</div>
+      )}
+      {sub && (
+        <div className="text-[9px] mono opacity-70 mt-0.5 truncate">{sub}</div>
       )}
     </div>
   );
