@@ -13,6 +13,39 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 12, 2026 (Session 13) - v43+ Threat Intel Auto-Sync + DMARC Demo + Karantina Direction Tab
+
+### Kullanıcı istekleri
+1. "Global Tehdit Zekası boş" → Auto-sync toggle + otomatik çalışan feed loop
+2. "DMARC boş" → Demo seed butonu (5 domain × 45 rapor idempotent)
+3. "Otomatik başlat/başlatma seçeneği" → Feeds tab'ında panel
+
+### Yeni Endpoint'ler (`routes/threat_intel.py`)
+- ✅ `GET /api/threat-intel/auto-sync` — mevcut ayarlar
+- ✅ `POST /api/threat-intel/auto-sync` — `{enabled:bool, interval_min:15-1440}`
+- ✅ `POST /api/threat-intel/auto-sync/run-now` — anında tüm feed'leri senkronize et
+- ✅ `POST /api/threat-intel/dmarc/seed-demo` — idempotent 45 sample DMARC report
+- ✅ Background: `_threat_intel_auto_sync_loop` server startup'ında schedule ediliyor; her 60sn kontrol, enabled ise interval_min bekleyip tüm feed'leri sync eder
+
+### Frontend
+- ✅ **FeedsTab** — Otomatik Senkronizasyon paneli (`[data-testid='ti-auto-sync-panel']`):
+  * Aktif/kapalı gösterge (yeşil pulse) + son çalışma + eklenen IOC
+  * Interval selector (15dk/30dk/1sa/3sa/6sa/12sa/24sa)
+  * "Şimdi Tümünü Senkronize Et" butonu (6 feed sıralı)
+  * "Otomatik Başlat" / "Durdur" toggle
+- ✅ **DmarcTab** — Boş state'te "Demo Rapor Yükle (5 domain × 45 rapor)" butonu
+
+### Karantina Direction Tabs (kullanıcı Outbound sistemi ile beraber istedi)
+- ✅ Quarantine.js'e "Tümü / Gelen / Giden" tab bar eklendi (`[data-testid='q-direction-tabs']`)
+- ✅ Backend `GET /api/quarantine` `direction=in|out` filter (legacy `direction` alanı olmayan kayıtlar `in` sayılır)
+
+### WHM Perl Script v43
+- ✅ `mailshield-logtail.pl` outbound tespiti: Exim `<= ...` satırında `U=<user>` regex → `direction:"out"` + `from_user:$user`. Next `gws-update`'de bayi'ye gidecek.
+
+### Testing
+- Manual API smoke: auto-sync GET/POST/run-now (32 IOC eklendi), DMARC seed (45 rapor), Karantina direction=out (0 giden karantina = beklenen)
+- Frontend smoke: Feeds tab tam UI verified (panel + 6 card + butonlar), DMARC seed butonu görünür
+
 ## Feb 12, 2026 (Session 12) - v43 Outbound Filtering + Bulk Detection
 
 Kullanıcı isteği: "Giden Posta aktif değil gibi. bunu da tüm sistemler filtreleme toplu mail algılama sistemi gibi sistem yap."

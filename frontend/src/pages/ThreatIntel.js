@@ -131,7 +131,13 @@ function IocTab() {
 }
 
 function DmarcTab() {
+  const qc = useQueryClient();
   const q = useQuery({ queryKey: ["dmarc-summary"], queryFn: () => api.tiDmarcSummary(30) });
+  const seed = useMutation({
+    mutationFn: () => api.tiDmarcSeedDemo(),
+    onSuccess: (d) => { toast.success(`+${d.seeded} demo rapor eklendi (${d.domains} domain)`); qc.invalidateQueries({ queryKey: ["dmarc-summary"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
   const domains = q.data?.domains || [];
   return (
     <Card>
@@ -142,10 +148,23 @@ function DmarcTab() {
       />
       <CardBody>
         {domains.length === 0 ? (
-          <div className="text-center py-10">
+          <div className="text-center py-10" data-testid="dmarc-empty">
             <FileCheck2 className="w-10 h-10 mx-auto text-slate-600 mb-3"/>
             <p className="text-sm text-slate-400">Henüz DMARC raporu alınmadı</p>
             <p className="text-xs text-slate-500 mt-1">DMARC rua= adresinizi <span className="mono text-indigo-400">mailto:dmarc@sizindomain.com</span> olarak ayarlayın</p>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <button
+                data-testid="dmarc-seed-demo"
+                onClick={() => seed.mutate()}
+                disabled={seed.isPending}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-300 hover:bg-fuchsia-500/20 text-xs disabled:opacity-40">
+                <Zap className="w-3.5 h-3.5" />
+                {seed.isPending ? "Yükleniyor…" : "Demo Rapor Yükle (5 domain × 45 rapor)"}
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-600 mt-2">
+              Demo veri, DMARC dashboard'unuzun nasıl görüneceğini önizlemek içindir. Gerçek raporlar geldiğinde otomatik gösterilir.
+            </p>
           </div>
         ) : (
           <table className="w-full text-sm">
@@ -161,7 +180,7 @@ function DmarcTab() {
             </thead>
             <tbody className="divide-y divide-slate-800">
               {domains.map(d => (
-                <tr key={d.domain} className="hover:bg-slate-800/40">
+                <tr key={d.domain} data-testid={`dmarc-row-${d.domain}`} className="hover:bg-slate-800/40">
                   <td className="px-3 py-2 mono text-slate-100">{d.domain}</td>
                   <td className="px-3 py-2 text-right mono">{d.reports}</td>
                   <td className="px-3 py-2 text-right mono text-slate-300">{d.total_msgs.toLocaleString()}</td>
@@ -181,13 +200,78 @@ function DmarcTab() {
 function FeedsTab() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["ti-feeds"], queryFn: () => api.tiFeeds(), refetchInterval: 30000 });
+  const autoSyncQ = useQuery({ queryKey: ["ti-auto-sync"], queryFn: () => api.tiAutoSyncGet(), refetchInterval: 30000 });
   const sync = useMutation({
     mutationFn: (key) => api.tiFeedSync(key),
     onSuccess: (d) => { toast.success(`${d.feed} · +${d.added} IOC senkronize edildi`); qc.invalidateQueries({ queryKey: ["ti-feeds"] }); qc.invalidateQueries({ queryKey: ["ti-ioc"] }); },
     onError: (e) => toast.error(e?.response?.data?.detail || e.message),
   });
+  const syncAll = useMutation({
+    mutationFn: () => api.tiAutoSyncRunNow(),
+    onSuccess: (d) => { toast.success(`Tüm feed'ler senkronize edildi · +${d.total_added} yeni IOC`); qc.invalidateQueries({ queryKey: ["ti-feeds"] }); qc.invalidateQueries({ queryKey: ["ti-ioc"] }); qc.invalidateQueries({ queryKey: ["ti-auto-sync"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const setAuto = useMutation({
+    mutationFn: (cfg) => api.tiAutoSyncSet(cfg),
+    onSuccess: (d) => { toast.success(d.enabled ? "Otomatik senkronizasyon başlatıldı" : "Otomatik senkronizasyon durduruldu"); qc.invalidateQueries({ queryKey: ["ti-auto-sync"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const auto = autoSyncQ.data || { enabled: false, interval_min: 60 };
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+    <div className="space-y-3">
+      {/* Auto-Sync Kontrol Paneli */}
+      <div data-testid="ti-auto-sync-panel"
+           className="border border-slate-800 bg-slate-900/40 rounded-lg p-4 flex flex-wrap items-center gap-4">
+        <div className="flex-1 min-w-[220px]">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-100 mb-1">
+            <span className={`w-2 h-2 rounded-full ${auto.enabled ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`}></span>
+            Otomatik Senkronizasyon
+          </div>
+          <div className="text-[11px] text-slate-500">
+            {auto.enabled
+              ? `Aktif — her ${auto.interval_min} dk'da tüm feed'ler otomatik güncellenir`
+              : "Kapalı — manuel senkronizasyon gerekli"}
+            {auto.last_run_at && (
+              <span className="ml-2">· Son çalışma: <span className="mono text-slate-400">{new Date(auto.last_run_at).toLocaleString("tr-TR")}</span> · +{auto.last_added || 0} IOC</span>
+            )}
+          </div>
+        </div>
+        <select
+          data-testid="ti-auto-sync-interval"
+          value={auto.interval_min}
+          onChange={(e) => setAuto.mutate({ enabled: auto.enabled, interval_min: Number(e.target.value) })}
+          className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-slate-200">
+          <option value={15}>Her 15 dk</option>
+          <option value={30}>Her 30 dk</option>
+          <option value={60}>Her 1 saat</option>
+          <option value={180}>Her 3 saat</option>
+          <option value={360}>Her 6 saat</option>
+          <option value={720}>Her 12 saat</option>
+          <option value={1440}>Her 24 saat</option>
+        </select>
+        <button
+          data-testid="ti-sync-all-now"
+          onClick={() => syncAll.mutate()}
+          disabled={syncAll.isPending}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-xs disabled:opacity-40">
+          <Zap className="w-3.5 h-3.5" />
+          {syncAll.isPending ? "Senkronize ediliyor…" : "Şimdi Tümünü Senkronize Et"}
+        </button>
+        <button
+          data-testid="ti-auto-sync-toggle"
+          onClick={() => setAuto.mutate({ enabled: !auto.enabled, interval_min: auto.interval_min })}
+          disabled={setAuto.isPending}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition ${
+            auto.enabled
+              ? "border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+              : "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+          } disabled:opacity-40`}>
+          {auto.enabled ? "Durdur" : "Otomatik Başlat"}
+        </button>
+      </div>
+
+      {/* Feed Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
       {(q.data?.items || []).map(f => (
         <div key={f.key} data-testid={`feed-${f.key}`} className="border border-slate-800 bg-slate-900/40 rounded-lg p-4 hover:border-indigo-500/40 transition-colors">
           <div className="flex items-start justify-between mb-2">
@@ -210,6 +294,7 @@ function FeedsTab() {
           </button>
         </div>
       ))}
+      </div>
     </div>
   );
 }

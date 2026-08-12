@@ -583,6 +583,11 @@ export const api = {
   tiDmarcIngest: (payload) => client.post("/threat-intel/dmarc/ingest", payload).then(r => r.data),
   tiFeeds: () => client.get("/threat-intel/feeds").then(r => r.data),
   tiFeedSync: (key) => client.post(`/threat-intel/feeds/${key}/sync`).then(r => r.data),
+  // v43 Auto-sync + DMARC demo seed
+  tiAutoSyncGet: () => client.get("/threat-intel/auto-sync").then(r => r.data),
+  tiAutoSyncSet: (cfg) => client.post("/threat-intel/auto-sync", cfg).then(r => r.data),
+  tiAutoSyncRunNow: () => client.post("/threat-intel/auto-sync/run-now").then(r => r.data),
+  tiDmarcSeedDemo: () => client.post("/threat-intel/dmarc/seed-demo").then(r => r.data),
   tiCompliance: () => client.get("/threat-intel/compliance").then(r => r.data),
   tiComplianceToggle: (payload) => client.post("/threat-intel/compliance/toggle", payload).then(r => r.data),
 

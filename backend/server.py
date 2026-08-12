@@ -496,6 +496,12 @@ async def _startup() -> None:
     asyncio.create_task(_daily_violations_cleanup_task())
     asyncio.create_task(_threat_ratio_monitor_task())
     asyncio.create_task(_plugin_normalization_health_task())
+    # v43 Global Threat Intel auto-sync (opt-in via settings.threat_intel_auto_sync.enabled)
+    try:
+        from routes.threat_intel import _threat_intel_auto_sync_loop
+        asyncio.create_task(_threat_intel_auto_sync_loop())
+    except Exception as _ex:
+        log.warning("threat_intel auto-sync task not scheduled: %s", _ex)
 
 
 async def _daily_violations_cleanup_task():
@@ -1192,11 +1198,15 @@ async def quarantine_list(
     search: Optional[str] = None,
     verdict: Optional[str] = None,
     engine: Optional[str] = None,
+    direction: Optional[str] = None,   # v43: in | out | all (default all)
     limit: int = 200,
     license_key: Optional[str] = None,
 ):
     """Karantina listesi — bayi/master scope izole. Bayi kendi lisansına ait
-    kayıtları görür; master hepsini veya `?license_key=X` ile bir bayinin."""
+    kayıtları görür; master hepsini veya `?license_key=X` ile bir bayinin.
+
+    v43: `direction=in|out` — Gelen/Giden ayrımı için filtre. Boş/all → hepsi
+    (backward compat: direction alanı olmayan legacy kayıtlar `in` sayılır)."""
     scope = await _tenant_scope(request, license_key)
     # Plan gate: karantina görüntüleme özelliği kapalıysa 403
     await _require_feature(scope, "quarantine_view")
@@ -1219,6 +1229,18 @@ async def quarantine_list(
         q["verdict"] = verdict
     if engine and engine != "all":
         q["engine"] = engine
+    # v43 direction filter
+    if direction == "out":
+        q["direction"] = "out"
+    elif direction == "in":
+        # Legacy (direction alanı yok) + explicit "in"
+        q["$and"] = q.get("$and", []) + [
+            {"$or": [
+                {"direction": "in"},
+                {"direction": {"$exists": False}},
+                {"direction": None},
+            ]}
+        ]
     if search:
         q["$or"] = [
             {"sender": {"$regex": search, "$options": "i"}},

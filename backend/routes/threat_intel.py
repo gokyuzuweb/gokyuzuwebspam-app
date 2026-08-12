@@ -257,6 +257,140 @@ async def trigger_sync(feed_key: str):
     return {"ok": True, "feed": feed_key, "added": added, "errors": errors}
 
 
+# ============================================================================
+# v43 AUTO-SYNC: feed'leri otomatik periyodik senkronize et
+# ============================================================================
+class AutoSyncCfg(BaseModel):
+    enabled: bool = False
+    interval_min: int = Field(60, ge=15, le=1440)  # 15dk - 24sa arası
+    last_run_at: Optional[str] = None
+    last_added: int = 0
+
+
+@router.get("/auto-sync")
+async def get_auto_sync():
+    """Global Threat Intel auto-sync ayarlarını döner."""
+    doc = await db.settings.find_one({"_key": "threat_intel_auto_sync"}, {"_id": 0}) or {}
+    doc.pop("_key", None)
+    if not doc:
+        doc = AutoSyncCfg().model_dump()
+    return doc
+
+
+@router.post("/auto-sync")
+async def set_auto_sync(cfg: AutoSyncCfg):
+    """Auto-sync aç/kapat + periyot belirle."""
+    await db.settings.update_one(
+        {"_key": "threat_intel_auto_sync"},
+        {"$set": {"_key": "threat_intel_auto_sync", **cfg.model_dump()}},
+        upsert=True,
+    )
+    return {"ok": True, "enabled": cfg.enabled, "interval_min": cfg.interval_min}
+
+
+@router.post("/auto-sync/run-now")
+async def auto_sync_run_now():
+    """Tüm feed'leri sıralı olarak senkronize et (arka planı beklemeden).
+    Feeds tab'ının 'Tüm Feed'leri Şimdi Senkronize Et' butonu bunu çağırır."""
+    total_added = 0
+    results: list[dict] = []
+    for f in GLOBAL_FEEDS:
+        try:
+            r = await trigger_sync(f["key"])
+            total_added += r.get("added", 0)
+            results.append({"feed": f["key"], "added": r.get("added", 0), "errors": r.get("errors", [])})
+        except Exception as ex:
+            results.append({"feed": f["key"], "error": str(ex)[:100]})
+    # Update last_run_at metadata
+    await db.settings.update_one(
+        {"_key": "threat_intel_auto_sync"},
+        {"$set": {"last_run_at": _iso(), "last_added": total_added}},
+    )
+    return {"ok": True, "total_added": total_added, "feeds": len(results), "results": results}
+
+
+async def _threat_intel_auto_sync_loop():
+    """Background task — settings.threat_intel_auto_sync.enabled=true iken
+    her interval_min dakikada tüm feed'leri senkronize eder. server.py'nin
+    startup task listesine eklenmesi gerekir."""
+    import asyncio as _asyncio
+    while True:
+        try:
+            cfg = await db.settings.find_one({"_key": "threat_intel_auto_sync"}, {"_id": 0}) or {}
+            if cfg.get("enabled"):
+                # Interval kontrolü — son run üzerinden interval_min geçti mi?
+                interval_min = int(cfg.get("interval_min", 60))
+                last_run = cfg.get("last_run_at")
+                should_run = True
+                if last_run:
+                    try:
+                        last_dt = datetime.fromisoformat(last_run.replace("Z", "+00:00"))
+                        if (datetime.now(timezone.utc) - last_dt).total_seconds() < interval_min * 60:
+                            should_run = False
+                    except Exception:
+                        pass
+                if should_run:
+                    total = 0
+                    for f in GLOBAL_FEEDS:
+                        try:
+                            r = await trigger_sync(f["key"])
+                            total += r.get("added", 0)
+                        except Exception:
+                            pass
+                    await db.settings.update_one(
+                        {"_key": "threat_intel_auto_sync"},
+                        {"$set": {"last_run_at": _iso(), "last_added": total}},
+                    )
+        except Exception:
+            pass
+        # Her 60sn'de check (her interval_min dakikada sync)
+        await _asyncio.sleep(60)
+
+
+# ============================================================================
+# DMARC DEMO SEED — DB boşsa örnek raporlar ekle (preview/dev için)
+# ============================================================================
+@router.post("/dmarc/seed-demo")
+async def dmarc_seed_demo():
+    """Preview/geliştirme için — DMARC koleksiyonuna örnek raporlar ekler.
+    Zaten kayıt varsa dokunmaz (idempotent)."""
+    existing = await db.dmarc_reports.count_documents({})
+    if existing > 0:
+        return {"ok": True, "seeded": 0, "existing": existing, "note": "Zaten kayıt var"}
+    import random
+    from datetime import timedelta as _td
+    domains = ["gokyuzuhosting.com", "example.com", "mail.testdomain.tr", "demo-shop.com", "haberler.tr"]
+    orgs = ["Google", "Microsoft", "Yahoo", "AOL", "Proofpoint"]
+    now = datetime.now(timezone.utc)
+    docs = []
+    for i in range(45):
+        d = random.choice(domains)
+        org = random.choice(orgs)
+        total = random.randint(50, 8000)
+        dkim = int(total * random.uniform(0.75, 0.98))
+        spf = int(total * random.uniform(0.72, 0.96))
+        dmarc = int(total * random.uniform(0.65, 0.94))
+        rep_time = now - _td(days=random.randint(0, 29))
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "domain": d,
+            "org_name": org,
+            "date_range_begin": (rep_time - _td(days=1)).isoformat(),
+            "date_range_end": rep_time.isoformat(),
+            "total_msgs": total,
+            "dkim_pass": dkim,
+            "spf_pass": spf,
+            "dmarc_pass": dmarc,
+            "failures": [],
+            "received_at": rep_time.isoformat(),
+            "dmarc_pct": round((dmarc / max(1, total)) * 100, 1),
+            "seeded": True,
+        })
+    if docs:
+        await db.dmarc_reports.insert_many(docs)
+    return {"ok": True, "seeded": len(docs), "domains": len(set(d["domain"] for d in docs))}
+
+
 # ---------- 4) Compliance Center ----------
 COMPLIANCE_CHECKS = [
     {"key": "kvkk", "name": "KVKK (Türkiye)", "framework": "TR",

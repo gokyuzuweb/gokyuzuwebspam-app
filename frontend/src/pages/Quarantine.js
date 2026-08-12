@@ -34,6 +34,7 @@ export default function Quarantine() {
   const [verdict, setVerdict] = useState("all");
   const [engine, setEngine] = useState("all");
   const [ageFilter, setAgeFilter] = useState("all"); // all | 1d | 7d | 30d
+  const [direction, setDirection] = useState("all"); // v43: all | in | out
   const [selected, setSelected] = useState(new Set());
   const [preview, setPreview] = useState(null);
   const [purgeOpen, setPurgeOpen] = useState(false);
@@ -47,8 +48,11 @@ export default function Quarantine() {
   });
 
   const list = useQuery({
-    queryKey: ["quarantine", search, verdict, engine, ageFilter],
-    queryFn: () => api.quarantine({ search, verdict, engine, limit: 300 }),
+    queryKey: ["quarantine", search, verdict, engine, ageFilter, direction],
+    queryFn: () => api.quarantine({
+      search, verdict, engine, limit: 300,
+      ...(direction !== "all" ? { direction } : {}),
+    }),
     refetchInterval: 30000,
   });
 
@@ -143,6 +147,31 @@ export default function Quarantine() {
     <div className="p-6 space-y-4">
       {/* KPI band --------------------------------------------------------- */}
       <QuarantineKPIBand stats={stats.data} />
+
+      {/* Direction tabs (v43) — Gelen / Giden / Tümü ---------------------- */}
+      <div className="flex items-center gap-1 border-b border-slate-800" data-testid="q-direction-tabs">
+        {[
+          { key: "all", label: "Tümü", tone: "text-slate-300", active: "border-indigo-500 text-indigo-300" },
+          { key: "in", label: "Gelen", tone: "text-slate-300", active: "border-emerald-500 text-emerald-300" },
+          { key: "out", label: "Giden", tone: "text-slate-300", active: "border-amber-500 text-amber-300" },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            data-testid={`q-direction-${tab.key}`}
+            onClick={() => setDirection(tab.key)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
+              direction === tab.key
+                ? tab.active
+                : `border-transparent ${tab.tone} hover:text-slate-100`
+            }`}
+          >
+            {tab.label}
+            {direction === tab.key && (
+              <span className="ml-1.5 mono text-[10px] opacity-70">({rows.length})</span>
+            )}
+          </button>
+        ))}
+      </div>
 
       <Card>
         <CardBody className="p-3 flex flex-wrap items-center gap-3">

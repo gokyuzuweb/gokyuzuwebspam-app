@@ -163,6 +163,11 @@ sub _process_line {
 
         my ($client_ip) = $mid_part =~ /\[([\d.:a-f]+)\]/i;
         my ($subject)   = $mid_part =~ /\sT="((?:\\.|[^"\\])*)"/;
+        # v43 OUTBOUND DETECTION: Exim `<= ...` arrival satırında `U=<cpanel_user>`
+        # varsa, mail LOCAL cPanel kullanıcısı tarafından gönderilmiş (outbound).
+        # Yoksa dışarıdan gelen (inbound) mail. from_user = Exim originator_login.
+        my ($from_user) = $mid_part =~ /\sU=(\S+)/;
+        my $direction = defined $from_user ? "out" : "in";
         $subject //= '';
         # Exim octal escapes -> byte
         $subject =~ s/\\(\d{3})/chr(oct($1))/ge;
@@ -227,6 +232,8 @@ sub _process_line {
             server_ip       => $client_ip,
             exim_mid        => $mid,
             from_addr       => $from,
+            from_user       => $from_user,
+            direction       => $direction,
             to_addr         => $to || undef,
             subject         => $subject || undef,
             verdict         => $verdict,
