@@ -846,10 +846,17 @@ async def normalization_health(request: Request, license_key: Optional[str] = No
 @router.get("")
 async def list_events(
     license_key: str = Query(..., min_length=8),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=5000),
     verdict: Optional[str] = Query(None),
     since: Optional[str] = Query(None),
     scope_user: Optional[str] = Query(None),
+    from_search: Optional[str] = Query(None, description="Gönderici içerir"),
+    to_search: Optional[str] = Query(None, description="Alıcı içerir"),
+    subject_search: Optional[str] = Query(None, description="Konu içerir"),
+    ip_search: Optional[str] = Query(None, description="Gönderici IP içerir"),
+    min_score: Optional[float] = Query(None, description="Toplam skor ≥"),
+    max_score: Optional[float] = Query(None, description="Toplam skor ≤"),
+    hours: Optional[int] = Query(None, ge=1, le=8760, description="Son N saat"),
 ):
     """Panelden cagirilir. Sadece verilen license_key'e ait eventleri doner.
     scope_user verilirse to_addr veya from_addr'ta o cPanel kullanicisi olan mailleri filtreler.
@@ -857,6 +864,9 @@ async def list_events(
       - Kendi lisansıyla gelen (master WHM plugin) eventler
       - AUTO-* lisansı (ns1/ns2.gokyuzuhosting.com bazlı otomatik lisanslı) eventler
       Bayilerin trafiği MASTER'a görünmez (kendi kapsamlarında kalır).
+
+    Ek filtreler (v39): from_search / to_search / subject_search / ip_search
+    (regex contains), min_score / max_score (skor aralığı), hours (son N saat).
     """
     await _validate_license(license_key)
     master_key = os.environ.get("MASTER_LICENSE_KEY", "")
@@ -875,15 +885,46 @@ async def list_events(
         q["verdict"] = verdict
     if since:
         q["ts"] = {"$gte": since}
+    if hours and not since:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        q["ts"] = {"$gte": cutoff}
+    # Skor aralığı
+    if min_score is not None or max_score is not None:
+        score_q: dict = {}
+        if min_score is not None: score_q["$gte"] = min_score
+        if max_score is not None: score_q["$lte"] = max_score
+        q["total_score"] = score_q
+    # Detaylı arama — regex $and ile birleşir
+    import re as _re
+    contains_filters: list[dict] = []
+    if from_search:
+        contains_filters.append({"from_addr": {"$regex": _re.escape(from_search), "$options": "i"}})
+    if to_search:
+        contains_filters.append({"to_addr": {"$regex": _re.escape(to_search), "$options": "i"}})
+    if subject_search:
+        contains_filters.append({"subject": {"$regex": _re.escape(subject_search), "$options": "i"}})
+    if ip_search:
+        contains_filters.append({"$or": [
+            {"sender_ip":   {"$regex": _re.escape(ip_search), "$options": "i"}},
+            {"client_ip":   {"$regex": _re.escape(ip_search), "$options": "i"}},
+            {"server_ip":   {"$regex": _re.escape(ip_search), "$options": "i"}},
+        ]})
+    if contains_filters:
+        base_ands: list[dict] = []
+        if "$or" in q and "$and" not in q:
+            base_ands = [{"$or": q.pop("$or")}]
+        base_ands.extend(contains_filters)
+        base_ands.extend([{k: v} for k, v in q.items() if k != "$and"])
+        q = {"$and": base_ands}
     if scope_user:
-        import re
-        safe = re.escape(scope_user)
+        safe = _re.escape(scope_user)
         scope_or = [
             {"to_addr":   {"$regex": safe, "$options": "i"}},
             {"from_addr": {"$regex": safe, "$options": "i"}},
         ]
-        if "$or" in q:
-            # master modu $or ile birleşiyor — $and'e sarmalayarak koru
+        if "$and" in q:
+            q["$and"].append({"$or": scope_or})
+        elif "$or" in q:
             q = {"$and": [{"$or": q["$or"]}, {"$or": scope_or}]}
             if verdict: q["$and"].append({"verdict": verdict})
             if since:   q["$and"].append({"ts": {"$gte": since}})
@@ -891,7 +932,7 @@ async def list_events(
             q["$or"] = scope_or
     cursor = db.mail_events.find(q, {"_id": 0}).sort([("ts", -1), ("ingested_at", -1)]).limit(limit)
     items = await cursor.to_list(length=limit)
-    return {"items": items, "count": len(items)}
+    return {"items": items, "count": len(items), "limit_applied": limit}
 
 
 @router.get("/summary")

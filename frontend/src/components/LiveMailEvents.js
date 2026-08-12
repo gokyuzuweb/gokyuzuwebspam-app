@@ -7,6 +7,17 @@ import { toast } from "sonner";
 import { useIsMaster } from "@/hooks/useIsMaster";
 import MailEventDetail from "@/components/MailEventDetail";
 
+// Küçük inline debounce hook'u — adv arama alanlarında her tuş vuruşunda
+// backend'e istek gitmesin diye 350ms bekletir.
+function useDebouncedValue(value, delayMs = 350) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
+
 const VERDICT_META = {
   clean:       { tone: "success", label: "CLEAN",     Icon: ShieldCheck,   row: "" },
   whitelisted: { tone: "success", label: "WHITELIST", Icon: ShieldCheck,   row: "" },
@@ -169,10 +180,32 @@ export default function LiveMailEvents() {
   const [draft, setDraft] = useState(licenseKey);
   const [search, setSearch] = useState("");
   const [verdictFilter, setVerdictFilter] = useState("all");
+  const [limit, setLimit] = useState(() => {
+    const v = Number(localStorage.getItem("gws.live_limit") || 100);
+    return Number.isFinite(v) && v > 0 ? v : 100;
+  });
+  const [advOpen, setAdvOpen] = useState(false);
+  const [fromSearch, setFromSearch] = useState("");
+  const [toSearch, setToSearch] = useState("");
+  const [subjectSearch, setSubjectSearch] = useState("");
+  const [ipSearch, setIpSearch] = useState("");
+  const [minScore, setMinScore] = useState("");
+  const [maxScore, setMaxScore] = useState("");
+  const [hoursFilter, setHoursFilter] = useState("");
   const [newIds, setNewIds] = useState(new Set());
   const [detailEvent, setDetailEvent] = useState(null);
   const seenIdsRef = useRef(new Set());
   const qc = useQueryClient();
+
+  useEffect(() => { localStorage.setItem("gws.live_limit", String(limit)); }, [limit]);
+
+  // Adv fields'ı 350ms debounce et — useQuery deps'e debounced değerler girer
+  const debFromSearch = useDebouncedValue(fromSearch);
+  const debToSearch = useDebouncedValue(toSearch);
+  const debSubjectSearch = useDebouncedValue(subjectSearch);
+  const debIpSearch = useDebouncedValue(ipSearch);
+  const debMinScore = useDebouncedValue(minScore);
+  const debMaxScore = useDebouncedValue(maxScore);
 
   async function handleAction(action, evt) {
     try {
@@ -190,8 +223,17 @@ export default function LiveMailEvents() {
   const [refreshRate, setRefreshRate] = useState(5000); // 5 saniye default
 
   const events = useQuery({
-    queryKey: ["live-events", licenseKey, scopeUser, verdictFilter],
-    queryFn: () => api.liveEvents(licenseKey, 100, scopeUser, verdictFilter),
+    queryKey: ["live-events", licenseKey, scopeUser, verdictFilter, limit,
+                debFromSearch, debToSearch, debSubjectSearch, debIpSearch, debMinScore, debMaxScore, hoursFilter],
+    queryFn: () => api.liveEvents(licenseKey, limit, scopeUser, verdictFilter, {
+      ...(debFromSearch ? { from_search: debFromSearch } : {}),
+      ...(debToSearch ? { to_search: debToSearch } : {}),
+      ...(debSubjectSearch ? { subject_search: debSubjectSearch } : {}),
+      ...(debIpSearch ? { ip_search: debIpSearch } : {}),
+      ...(debMinScore !== "" && !Number.isNaN(Number(debMinScore)) ? { min_score: Number(debMinScore) } : {}),
+      ...(debMaxScore !== "" && !Number.isNaN(Number(debMaxScore)) ? { max_score: Number(debMaxScore) } : {}),
+      ...(hoursFilter && Number(hoursFilter) > 0 ? { hours: Number(hoursFilter) } : {}),
+    }),
     refetchInterval: autoRefresh ? refreshRate : false,
     enabled: !!licenseKey && licenseKey.length >= 8,
     retry: false,
@@ -446,7 +488,7 @@ export default function LiveMailEvents() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Ara: from / to / subject"
+                placeholder="Ara: from / to / subject (istemci)"
                 className="flex-1 min-w-[220px] bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                 data-testid="live-events-search-input"
               />
@@ -463,6 +505,36 @@ export default function LiveMailEvents() {
                 <option value="virus">Virüs ({summary.data?.by_verdict?.virus || 0})</option>
                 <option value="blocked">Blocked ({summary.data?.by_verdict?.blocked || 0})</option>
               </select>
+              <select
+                value={limit}
+                onChange={(e) => setLimit(Number(e.target.value))}
+                className="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                data-testid="live-events-limit-select"
+                title="Kaç kayıt yüklensin"
+              >
+                <option value={50}>Son 50</option>
+                <option value={100}>Son 100</option>
+                <option value={250}>Son 250</option>
+                <option value={500}>Son 500</option>
+                <option value={1000}>Son 1000</option>
+                <option value={2500}>Son 2500</option>
+                <option value={5000}>Sınırsız (5000)</option>
+              </select>
+              <button
+                onClick={() => setAdvOpen(v => !v)}
+                data-testid="live-events-adv-toggle"
+                className={`text-xs px-3 py-1.5 rounded border transition ${
+                  advOpen || fromSearch || toSearch || subjectSearch || ipSearch || minScore || maxScore || hoursFilter
+                    ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-300"
+                    : "border-slate-700 text-slate-400 hover:bg-slate-800"
+                }`}
+                title="Gelişmiş filtreler (backend)"
+              >
+                {advOpen ? "▲ Gelişmiş" : "▼ Gelişmiş"}
+                {(fromSearch || toSearch || subjectSearch || ipSearch || minScore || maxScore || hoursFilter) && (
+                  <span className="ml-1 text-[10px] px-1.5 rounded bg-indigo-500/40 text-indigo-100">aktif</span>
+                )}
+              </button>
               {(search || verdictFilter !== "all") && (
                 <button
                   onClick={() => { setSearch(""); setVerdictFilter("all"); }}
@@ -472,8 +544,59 @@ export default function LiveMailEvents() {
               )}
               <span className="text-xs text-slate-500 self-center" data-testid="live-events-filter-count">
                 Gösterilen: <span className="mono text-slate-300">{filtered.length}</span> / {items.length}
+                {events.data?.limit_applied && (
+                  <span className="ml-1 text-slate-600">(limit: {events.data.limit_applied})</span>
+                )}
               </span>
             </div>
+
+            {/* Gelişmiş filtre paneli — backend filter'ları */}
+            {advOpen && (
+              <div data-testid="live-events-adv-panel"
+                   className="mb-3 p-3 rounded border border-indigo-500/20 bg-indigo-500/5 grid grid-cols-1 md:grid-cols-3 gap-2">
+                <input value={fromSearch} onChange={(e) => setFromSearch(e.target.value)}
+                       data-testid="adv-from-search"
+                       placeholder="Gönderici içerir (from)"
+                       className="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"/>
+                <input value={toSearch} onChange={(e) => setToSearch(e.target.value)}
+                       data-testid="adv-to-search"
+                       placeholder="Alıcı içerir (to)"
+                       className="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"/>
+                <input value={subjectSearch} onChange={(e) => setSubjectSearch(e.target.value)}
+                       data-testid="adv-subject-search"
+                       placeholder="Mail konusu içerir (subject)"
+                       className="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"/>
+                <input value={ipSearch} onChange={(e) => setIpSearch(e.target.value)}
+                       data-testid="adv-ip-search"
+                       placeholder="Gönderici / server IP içerir"
+                       className="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"/>
+                <div className="flex gap-1">
+                  <input value={minScore} onChange={(e) => setMinScore(e.target.value.replace(/[^0-9.]/g,''))}
+                         data-testid="adv-min-score" placeholder="Min skor"
+                         className="w-1/2 bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"/>
+                  <input value={maxScore} onChange={(e) => setMaxScore(e.target.value.replace(/[^0-9.]/g,''))}
+                         data-testid="adv-max-score" placeholder="Max skor"
+                         className="w-1/2 bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"/>
+                </div>
+                <select value={hoursFilter} onChange={(e) => setHoursFilter(e.target.value)}
+                        data-testid="adv-hours-filter"
+                        className="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500">
+                  <option value="">Tüm tarihler</option>
+                  <option value="1">Son 1 saat</option>
+                  <option value="6">Son 6 saat</option>
+                  <option value="24">Son 24 saat</option>
+                  <option value="168">Son 7 gün</option>
+                  <option value="720">Son 30 gün</option>
+                </select>
+                {(fromSearch || toSearch || subjectSearch || ipSearch || minScore || maxScore || hoursFilter) && (
+                  <button onClick={() => { setFromSearch(""); setToSearch(""); setSubjectSearch(""); setIpSearch(""); setMinScore(""); setMaxScore(""); setHoursFilter(""); }}
+                          data-testid="adv-reset"
+                          className="text-xs text-rose-300 hover:text-rose-200 underline md:col-span-3 text-right">
+                    Gelişmiş filtreleri temizle
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
 

@@ -13,6 +13,18 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 12, 2026 (Session 7) - v39 Canlı Mail Trafik: Limit + Detaylı Arama
+
+- ✅ **Ayarlanabilir limit**: LiveMailEvents 100 sabit yerine dropdown (50/100/250/500/1000/2500/**5000 = sınırsız**). Backend `list_events` cap 500→5000. localStorage'da kalıcı (`gws.live_limit`).
+- ✅ **Detaylı arama paneli** (`data-testid='live-events-adv-panel'`, toggle: `adv-toggle`):
+  * `from_search`, `to_search`, `subject_search`, `ip_search` (backend regex contains)
+  * `min_score` / `max_score` (skor aralığı)
+  * `hours` (son 1s/6s/24s/7g/30g)
+  * 350ms debounce ile her tuş vuruşunda backend'e istek gitmez
+  * Aktif filtre varsa toggle butonunda badge; tek tıkla temizle
+- ✅ **Filter count**: `Gösterilen: X / Y (limit: N)` — response.limit_applied gösterimi
+- **Test**: 11/11 v39 backend + 6/6 frontend flow · 45/45 tam regression yeşil.
+
 ## Feb 6, 2026 (Session 7) - v38 Threshold Config + Histogram + Plugin Health
 
 ### Yeni Özellikler

@@ -1,0 +1,28 @@
+{
+  "summary": "v39 LiveMailEvents genişletilmiş limit + detaylı arama testi. Backend: 11/11 pytest passed (limit=5000 ok, limit=10000 → 422, subject/from/to/ip search, min/max score, hours, tenant isolation, kombine filtreler). Frontend: dashtab-live'de LiveMailEvents render oluyor; limit-select tüm 7 opsiyonla var; 1000 seçildiğinde useQuery yeniden çalışıp GET /api/events?limit=1000 çağırıyor; localStorage.gws.live_limit=1000 saklanıyor ve sayfa reload sonrası korunuyor; adv-toggle panel açıyor, 7 alanın hepsi mevcut; subject_search debounce sonrası backend'e query param olarak gidiyor; herhangi adv filtre aktifken 'aktif' badge görünüyor; adv-reset alanları temizliyor; filter-count 'Gösterilen: 762/762 (limit: 1000)' formatında limit_applied gösteriyor. Tüm F1-F8 (backend) ve F1-F6 (frontend) senaryoları geçti.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "LiveMailEvents verdict-filter <select>", "issues": ["React hydration warning: <span> içeriği <option> child'ı oluyor (dev-only, functional impact yok — verdictFilter select options label + count kombinasyonu emergent visual editor spans ile sarıldığı için). Console'da error olarak görünüyor ama render bozulmuyor."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v39_events_search_limit.py",
+    "/app/test_reports/pytest/v39_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "LiveMailEvents.js 666 satır — file size limit'ine yakın, gelecekte donut/logtail/adv-panel alt component'lere ayrılabilir.",
+    "adv fields (fromSearch/toSearch/subjectSearch/ipSearch/minScore/maxScore/hoursFilter) doğrudan useQuery deps'e giriyor — her keystroke'ta refetch tetikleniyor (debounce yok, react-query cache tampon görevi görüyor ama yine de arka arkaya 5-6 istek gidebilir). İdeali: 300-500ms useDebounce.",
+    "Backend list_events (events.py:846-935) query builder'ı $and/$or manipülasyonu okumak zor — helper fonksiyona çıkarılabilir; scope_user branch aynı mantığı tekrarlıyor."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (6/6 flows)"},
+  "test_credentials": "Master: MS-C02AB012652A4FE692D69676, Bayi: MS-D85BE8E63A64478786361F54",
+  "seed_data_creation": "None (existing 762 master events + bayi events used).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_v39_events_search_limit.py backend regresyonu için hazır. Frontend'de dashtab-live tab'ı kullan (sidebar 'Canlı Bayi Trafiği' başka sayfa — CanliBayiTrafigi component'i, karıştırılmasın). React 'option cannot be child of span' hydration warning'i emergent visual editor'ın enjekte ettiği spanlardan kaynaklı, kod hatası değil."
+}

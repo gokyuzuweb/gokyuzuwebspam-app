@@ -74,11 +74,12 @@ export const api = {
   topSenders: () => client.get("/stats/top-senders").then(r => r.data),
 
   // SaaS live mail events (from remote milter POST /api/events/ingest)
-  liveEvents: (licenseKey, limit = 60, scopeUser = null, verdict = null) =>
+  liveEvents: (licenseKey, limit = 60, scopeUser = null, verdict = null, extra = {}) =>
     client.get("/events", { params: {
       license_key: licenseKey, limit,
       ...(scopeUser ? { scope_user: scopeUser } : {}),
       ...(verdict && verdict !== "all" ? { verdict } : {}),
+      ...extra,  // from_search, to_search, subject_search, ip_search, min_score, max_score, hours
     }}).then(r => r.data),
   liveEventsSummary: (licenseKey, scopeUser = null) =>
     client.get("/events/summary", { params: {
