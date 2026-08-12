@@ -168,6 +168,17 @@ sub _process_line {
         # Yoksa dışarıdan gelen (inbound) mail. from_user = Exim originator_login.
         my ($from_user) = $mid_part =~ /\sU=(\S+)/;
         my $direction = defined $from_user ? "out" : "in";
+        # v43.1 BOUNCE FIX: `<>` envelope sender (RFC 5321 §4.5.5) her zaman
+        # inbound bounce/DSN'dir — cPanel user ne olursa olsun (Exim bounce'ları
+        # `mailnull` user'ı altında koşar; bu outbound sayılmamalı). Ayrıca
+        # sistem pseudo-user'ları (mailnull, Debian-exim) outbound sayılmaz.
+        if (!$from || $from eq '' || $from eq '<>') {
+            $direction = "in";
+            $from_user = undef;
+        } elsif (defined $from_user && $from_user =~ /^(mailnull|Debian-exim|exim|root|nobody|mail|mailman|apache|www-data|systemd-.*)$/i) {
+            $direction = "in";
+            $from_user = undef;
+        }
         $subject //= '';
         # Exim octal escapes -> byte
         $subject =~ s/\\(\d{3})/chr(oct($1))/ge;

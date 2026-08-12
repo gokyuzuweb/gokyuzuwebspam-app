@@ -370,11 +370,39 @@ async def outbound_event_action(event_id: str, payload: EventActionIn, request: 
 @router.post("/migrate-direction")
 async def outbound_migrate_direction(request: Request, license_key: Optional[str] = None):
     """Master-only. Mevcut `mail_events`'ta `direction` alanı olmayan dokümanlara
-    `direction: "in"` ekler. Idempotent; sadece missing'leri günceller."""
+    `direction: "in"` ekler. Idempotent; sadece missing'leri günceller.
+
+    v43.1: Ayrıca `<>` envelope sender veya sistem pseudo-user (mailnull vb)
+    olan bounce mesajlarını yanlış outbound sınıflandırmasından kurtarır."""
     from server import _require_master
     await _require_master(request, license_key)
-    r = await db.mail_events.update_many(
+
+    # 1) direction eksik olanlara "in" yaz
+    r1 = await db.mail_events.update_many(
         {"direction": {"$exists": False}},
         {"$set": {"direction": "in"}},
     )
-    return {"ok": True, "matched": r.matched_count, "modified": r.modified_count}
+    # 2) Yanlış outbound sınıflandırılmış bounce'ları düzelt (<> sender)
+    r2 = await db.mail_events.update_many(
+        {"direction": "out", "$or": [
+            {"from_addr": "<>"},
+            {"from_addr": ""},
+            {"from_addr": None},
+        ]},
+        {"$set": {"direction": "in"}, "$unset": {"from_user": ""}},
+    )
+    # 3) Sistem pseudo-user'ları düzelt
+    system_users = ["mailnull", "Debian-exim", "exim", "root", "nobody", "mail",
+                    "mailman", "apache", "www-data"]
+    r3 = await db.mail_events.update_many(
+        {"direction": "out",
+         "from_user": {"$in": system_users + [u.lower() for u in system_users]}},
+        {"$set": {"direction": "in"}, "$unset": {"from_user": ""}},
+    )
+    return {
+        "ok": True,
+        "missing_direction_fixed": r1.modified_count,
+        "bounce_null_sender_fixed": r2.modified_count,
+        "system_user_fixed": r3.modified_count,
+        "total_fixed": r1.modified_count + r2.modified_count + r3.modified_count,
+    }

@@ -316,6 +316,18 @@ async def ingest_event(evt: MailEvent, request: Request):
         except (TypeError, ValueError):
             doc["total_score"] = 0
     # ---------------------------------------------------------------------
+    # v43.1 BOUNCE FIX: `<>` (null envelope sender, RFC 5321 §4.5.5) veya
+    # sistem pseudo-user'ları (mailnull, Debian-exim vs) her zaman inbound
+    # olarak sınıflandır. Bunlar Exim'in bounce/DSN mesajları — user gerçek
+    # gönderen değil. Bu güvenlik ağı; Perl script eski sürümdeyse bile
+    # backend'te yakalarız.
+    _fa = (doc.get("from_addr") or "").strip()
+    _fu = (doc.get("from_user") or "").strip().lower()
+    SYSTEM_USERS = {"mailnull", "debian-exim", "exim", "root", "nobody", "mail", "mailman", "apache", "www-data"}
+    if (not _fa or _fa == "<>") or (_fu in SYSTEM_USERS) or _fu.startswith("systemd-"):
+        doc["direction"] = "in"
+        doc.pop("from_user", None)
+    # ---------------------------------------------------------------------
     await db.mail_events.insert_one(doc)
 
     # ---- OUTBOUND BULK DETECTION (v43) ----------------------------------

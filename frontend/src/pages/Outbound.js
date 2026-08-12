@@ -15,6 +15,15 @@ const fmtTime = (iso) => {
   const d = new Date(iso);
   return d.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 };
+// Exim null-sender ("<>") bounce/DSN mesajlarını okunabilir etikete çevir.
+// Bkz. RFC 5321 §4.5.5 — mail server bounce mesajları boş envelope sender ile döner.
+const displaySender = (from_addr) => {
+  const s = (from_addr || "").trim();
+  if (!s || s === "<>" || s === "<>" || s === "<>" || s.toLowerCase() === "mailer-daemon" || /^mailer-daemon@/i.test(s)) {
+    return { label: "MAILER-DAEMON (bounce)", isBounce: true, raw: s };
+  }
+  return { label: s, isBounce: false, raw: s };
+};
 const useDebounced = (val, ms = 300) => {
   const [v, setV] = useState(val);
   useEffect(() => { const t = setTimeout(() => setV(val), ms); return () => clearTimeout(t); }, [val, ms]);
@@ -265,10 +274,19 @@ export default function Outbound() {
             <tbody data-testid="ob-events-tbody">
               {events.map((e) => {
                 const vt = verdictTone(e.verdict);
+                const ds = displaySender(e.from_addr);
                 return (
                   <tr key={e.id} data-testid={`ob-row-${e.id}`} className="border-b border-slate-800/60 hover:bg-slate-900/40">
                     <td className="px-3 py-2 mono text-[11px] text-slate-500 whitespace-nowrap">{fmtTime(e.ts)}</td>
-                    <td className="px-3 py-2 mono text-slate-200 truncate max-w-[180px]" title={e.from_addr}>{e.from_addr}</td>
+                    <td className={`px-3 py-2 mono truncate max-w-[200px] ${ds.isBounce ? "text-slate-500 italic" : "text-slate-200"}`}
+                        title={ds.isBounce ? `Bounce mesajı — envelope sender boş (${ds.raw || "<>"})` : e.from_addr}>
+                      {ds.isBounce ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400 uppercase tracking-widest">bounce</span>
+                          <span className="text-slate-500">MAILER-DAEMON</span>
+                        </span>
+                      ) : ds.label}
+                    </td>
                     <td className="px-3 py-2 mono text-slate-300 truncate max-w-[180px]" title={e.to_addr}>{e.to_addr}</td>
                     <td className="px-3 py-2 text-slate-300 truncate max-w-[240px]" title={e.subject}>{e.subject || "(konusuz)"}</td>
                     <td className="px-3 py-2 text-right mono text-amber-300">{Number(e.total_score ?? 0).toFixed(1)}</td>
