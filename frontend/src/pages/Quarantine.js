@@ -239,6 +239,14 @@ export default function Quarantine() {
             title="Karantina sayfasında görünmüyor gibi görünen eski spam kayıtları buraya taşı">
             <Download className="w-3.5 h-3.5" /> {backfillMut.isPending ? "Dolduruluyor…" : "Karantinayı Doldur"}
           </button>
+          <a data-testid="q-export-csv"
+             href={api.eventsExport({ module: "quarantine", format: "csv",
+               ...(verdict && verdict !== "all" ? { verdict } : {}),
+               ...(search ? { subject_search: search } : {}) })}
+             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm"
+             title="Filtreye uyan tüm kayıtları CSV olarak indir (max 50000)">
+            <Download className="w-3.5 h-3.5" /> CSV İndir
+          </a>
         </div>
       </div>
 
@@ -544,6 +552,7 @@ function QuarantineDetail({ item, onClose, onAction }) {
 
         {/* Skor karşılaştırma bandı — Panel / MailScanner / SA */}
         <ScoreComparisonBand item={item} verdictColor={verdictColor}/>
+        <ScoreTrendMini eventId={item.id}/>
 
         <div className="px-5 pt-3 border-b border-slate-800 flex gap-1 overflow-x-auto">
           {tabs.map((t) => (
@@ -742,3 +751,50 @@ function ScoreComparisonBand({ item, verdictColor }) {
     </div>
   );
 }
+
+/* -------- Skor Trend Mini Chart ---------------------------------------- */
+function ScoreTrendMini({ eventId }) {
+  const { data } = useQuery({
+    queryKey: ["score-trend", eventId],
+    queryFn: () => api.eventsScoreTrend(eventId, 24),
+    enabled: !!eventId,
+    staleTime: 60000,
+  });
+  const points = data?.points || [];
+  if (points.length < 2) return null;
+  const maxV = Math.max(15, ...points.map(p => Math.max(p.panel || 0, p.sa || 0, p.mailscanner || 0)));
+  const W = 480, H = 90, PAD = 4;
+  const toXY = (i, v) => [
+    PAD + (i / (points.length - 1)) * (W - PAD * 2),
+    H - PAD - ((v || 0) / maxV) * (H - PAD * 2),
+  ];
+  const linePath = (key) => points.map((p, i) => {
+    if (p[key] === null || p[key] === undefined) return null;
+    const [x, y] = toXY(i, p[key]);
+    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).filter(Boolean).join(" ");
+  return (
+    <div className="px-5 py-3 border-b border-slate-800 bg-slate-950/40" data-testid="q-score-trend">
+      <div className="text-[9px] uppercase tracking-widest text-slate-500 mb-1 flex items-center justify-between">
+        <span>Skor Trendi — Aynı gönderici · son 24 saat · {points.length} kayıt</span>
+        <span className="flex gap-2 text-[10px]">
+          <span className="flex items-center gap-1"><i className="inline-block w-2 h-2 rounded-full bg-indigo-400"/>Panel</span>
+          <span className="flex items-center gap-1"><i className="inline-block w-2 h-2 rounded-full bg-emerald-400"/>SA</span>
+          <span className="flex items-center gap-1"><i className="inline-block w-2 h-2 rounded-full bg-amber-400"/>MailScanner</span>
+        </span>
+      </div>
+      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block">
+        {/* threshold guide lines (5 = spam, 10 = high_spam) */}
+        {[5, 10].map(v => {
+          const y = H - PAD - (v / maxV) * (H - PAD * 2);
+          return <line key={v} x1={PAD} x2={W - PAD} y1={y} y2={y}
+            stroke="#334155" strokeDasharray="2 3" strokeWidth="0.5"/>;
+        })}
+        <path d={linePath("panel")} fill="none" stroke="#818cf8" strokeWidth="1.5"/>
+        <path d={linePath("sa")} fill="none" stroke="#34d399" strokeWidth="1.5"/>
+        <path d={linePath("mailscanner")} fill="none" stroke="#fbbf24" strokeWidth="1.5"/>
+      </svg>
+    </div>
+  );
+}
+

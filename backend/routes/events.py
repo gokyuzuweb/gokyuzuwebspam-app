@@ -712,6 +712,100 @@ async def ingest_batch(events: list[MailEvent]):
     return {"ok": True, "inserted": len(docs)}
 
 
+class ActionComplete(BaseModel):
+    result: Optional[str] = None
+    ok: bool = True
+    output: Optional[str] = None
+
+
+@router.post("/pending-actions/{action_id}/complete")
+async def complete_pending_action(action_id: str, payload: ActionComplete,
+                                    license_key: str = Query(..., min_length=8)):
+    """Bayi plugin tarafından action tamamlandığında çağrılır. Master paneli
+    Bildirimler drawer'ında real-time toast görür."""
+    action = await db.pending_quarantine_actions.find_one(
+        {"id": action_id, "license_key": license_key},
+        {"_id": 0},
+    )
+    if not action:
+        raise HTTPException(404, "Action bulunamadı")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.pending_quarantine_actions.update_one(
+        {"id": action_id},
+        {"$set": {
+            "completed_at": now, "result": payload.result or ("ok" if payload.ok else "fail"),
+            "ok": payload.ok, "output": (payload.output or "")[:500],
+        }},
+    )
+    # Master notifications için toast ekle
+    lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0, "email": 1})
+    label = (lic or {}).get("email") or license_key[:20]
+    await db.master_alerts.insert_one({
+        "id": str(uuid.uuid4()),
+        "type": "plugin_update_complete",
+        "severity": "info" if payload.ok else "warning",
+        "license_key": license_key,
+        "action_id": action_id,
+        "action_type": action.get("action_type"),
+        "message": (
+            f"{label} plugin güncellemesi {'başarıyla tamamlandı ✓' if payload.ok else 'BAŞARISIZ'}"
+        ),
+        "seen": False,
+        "created_at": now,
+    })
+    return {"ok": True, "completed_at": now}
+
+
+# ------- Kaydedilmiş filtre setleri (per-license) -------------------------
+class SavedFilter(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    module: str = Field(..., pattern="^(quarantine|live_events)$")
+    filters: dict
+
+
+@router.get("/saved-filters")
+async def list_saved_filters(request: Request, license_key: Optional[str] = None,
+                              module: Optional[str] = None):
+    from tenant import resolve_tenant_scope
+    scope = await resolve_tenant_scope(request, license_key, db)
+    owner = scope["owner_license_key"] if not scope["is_master"] else (license_key or "__master__")
+    q = {"owner": owner}
+    if module: q["module"] = module
+    items = await db.saved_filters.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"items": items}
+
+
+@router.post("/saved-filters")
+async def create_saved_filter(payload: SavedFilter, request: Request,
+                               license_key: Optional[str] = None):
+    from tenant import resolve_tenant_scope
+    scope = await resolve_tenant_scope(request, license_key, db)
+    if not scope["is_master"] and scope["owner_license_key"] in ("", "__none__"):
+        raise HTTPException(403, "Geçerli lisans gerekli")
+    owner = scope["owner_license_key"] if not scope["is_master"] else (license_key or "__master__")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "owner": owner,
+        "name": payload.name,
+        "module": payload.module,
+        "filters": payload.filters,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.saved_filters.insert_one(doc)
+    return {"ok": True, "id": doc["id"], "item": {k: v for k, v in doc.items() if k != "_id"}}
+
+
+@router.post("/saved-filters/{sid}/delete")
+async def delete_saved_filter(sid: str, request: Request, license_key: Optional[str] = None):
+    from tenant import resolve_tenant_scope
+    scope = await resolve_tenant_scope(request, license_key, db)
+    owner = scope["owner_license_key"] if not scope["is_master"] else (license_key or "__master__")
+    r = await db.saved_filters.delete_one({"id": sid, "owner": owner})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Filtre bulunamadı")
+    return {"ok": True}
+
+
 @router.post("/backfill-quarantine")
 async def backfill_quarantine(request: Request, license_key: Optional[str] = None,
                                 dry_run: bool = False, limit: int = 50000):
@@ -1271,6 +1365,101 @@ async def request_quarantine_action(req: QuarantineActionReq):
     })
     return {"ok": True, "action_id": action_id, "queued": True}
 
+
+
+@router.get("/export")
+async def export_events(request: Request,
+                        license_key: Optional[str] = None,
+                        format: str = Query("csv", pattern="^(csv|json)$"),
+                        module: str = Query("live_events", pattern="^(live_events|quarantine)$"),
+                        limit: int = Query(5000, ge=1, le=50000),
+                        verdict: Optional[str] = None,
+                        from_search: Optional[str] = None,
+                        to_search: Optional[str] = None,
+                        subject_search: Optional[str] = None,
+                        ip_search: Optional[str] = None,
+                        min_score: Optional[float] = None,
+                        max_score: Optional[float] = None,
+                        hours: Optional[int] = None):
+    """Filtrelenmiş sonuçları CSV veya JSON olarak indir."""
+    from fastapi.responses import StreamingResponse
+    from tenant import resolve_tenant_scope
+    import csv, io, json as _json
+    scope = await resolve_tenant_scope(request, license_key, db)
+    q: dict = {}
+    if module == "quarantine":
+        coll = db.quarantine
+        if not scope["is_master"]:
+            q["owner_license_key"] = scope["owner_license_key"] or "__none__"
+        elif scope["owner_license_key"]:
+            q["owner_license_key"] = scope["owner_license_key"]
+        fields = ["received_at", "sender", "recipient", "subject", "verdict",
+                  "total_score", "sender_ip", "size_bytes", "owner_license_key"]
+    else:
+        coll = db.mail_events
+        if not scope["is_master"]:
+            q["license_key"] = scope["owner_license_key"] or "__none__"
+        elif scope["owner_license_key"]:
+            q["license_key"] = scope["owner_license_key"]
+        fields = ["ts", "from_addr", "to_addr", "subject", "verdict",
+                  "total_score", "sender_ip", "license_key"]
+    if verdict: q["verdict"] = verdict
+    if hours:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        q["ingested_at" if module == "quarantine" else "ts"] = {"$gte": cutoff}
+    if min_score is not None or max_score is not None:
+        s: dict = {}
+        if min_score is not None: s["$gte"] = min_score
+        if max_score is not None: s["$lte"] = max_score
+        q["total_score"] = s
+    import re as _re
+    contains: list[dict] = []
+    if from_search: contains.append({("sender" if module == "quarantine" else "from_addr"): {"$regex": _re.escape(from_search), "$options": "i"}})
+    if to_search: contains.append({("recipient" if module == "quarantine" else "to_addr"): {"$regex": _re.escape(to_search), "$options": "i"}})
+    if subject_search: contains.append({"subject": {"$regex": _re.escape(subject_search), "$options": "i"}})
+    if ip_search: contains.append({"sender_ip": {"$regex": _re.escape(ip_search), "$options": "i"}})
+    if contains:
+        base = [{k: v} for k, v in q.items()]
+        q = {"$and": base + contains}
+    rows = await coll.find(q, {"_id": 0}).sort("ingested_at", -1).limit(limit).to_list(limit)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"gws_{module}_{stamp}.{format}"
+    if format == "json":
+        content = _json.dumps({"count": len(rows), "items": rows}, ensure_ascii=False, indent=2, default=str)
+        return StreamingResponse(iter([content]), media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    w = csv.writer(buf, quoting=csv.QUOTE_MINIMAL)
+    w.writerow(fields)
+    for row in rows:
+        w.writerow([str(row.get(f, "") or "") for f in fields])
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/score-trend/{event_id}")
+async def score_trend(event_id: str, hours: int = Query(24, ge=1, le=720)):
+    """Belirli event ile aynı göndericiden son N saatteki Panel/MailScanner/SA
+    skor zaman serisi (karantina detayında trend line için)."""
+    ev = await db.mail_events.find_one({"id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(404, "Event bulunamadı")
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    q = {"license_key": ev.get("license_key"), "from_addr": ev.get("from_addr"),
+         "ingested_at": {"$gte": since}}
+    points = []
+    async for e in db.mail_events.find(q, {"_id": 0, "ts": 1, "ingested_at": 1, "total_score": 1, "scores": 1}).sort("ts", 1).limit(500):
+        sc = e.get("scores") or {}
+        sa_raw = sc.get("spamassassin") if sc.get("spamassassin") is not None else sc.get("sa")
+        ms_raw = sc.get("mailscanner") if sc.get("mailscanner") is not None else (sc.get("msc") or sc.get("ms"))
+        points.append({
+            "ts": e.get("ts") or e.get("ingested_at"),
+            "panel": float(e.get("total_score") or 0),
+            "sa": float(sa_raw) if sa_raw is not None else None,
+            "mailscanner": float(ms_raw) if ms_raw is not None else None,
+        })
+    return {"sender": ev.get("from_addr"), "hours": hours, "count": len(points), "points": points}
 
 @router.get("/pending-actions")
 async def list_pending_actions(license_key: str = Query(..., min_length=8)):

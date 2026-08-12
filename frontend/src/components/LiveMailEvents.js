@@ -542,6 +542,22 @@ export default function LiveMailEvents() {
                   data-testid="live-events-filters-reset"
                 >Temizle</button>
               )}
+              <a data-testid="live-events-export-csv"
+                 href={api.eventsExport({ module: "live_events", format: "csv", license_key: licenseKey,
+                   limit: Math.min(limit * 10, 50000),
+                   ...(verdictFilter && verdictFilter !== "all" ? { verdict: verdictFilter } : {}),
+                   ...(debFromSearch ? { from_search: debFromSearch } : {}),
+                   ...(debToSearch ? { to_search: debToSearch } : {}),
+                   ...(debSubjectSearch ? { subject_search: debSubjectSearch } : {}),
+                   ...(debIpSearch ? { ip_search: debIpSearch } : {}),
+                   ...(debMinScore ? { min_score: debMinScore } : {}),
+                   ...(debMaxScore ? { max_score: debMaxScore } : {}),
+                   ...(hoursFilter ? { hours: hoursFilter } : {}),
+                 })}
+                 className="text-xs px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                 title="Filtreye uyan tüm mail'leri CSV olarak indir">
+                CSV
+              </a>
               <span className="text-xs text-slate-500 self-center" data-testid="live-events-filter-count">
                 Gösterilen: <span className="mono text-slate-300">{filtered.length}</span> / {items.length}
                 {events.data?.limit_applied && (

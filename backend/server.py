@@ -7488,6 +7488,7 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/events/ingest-batch",# batch ingest
     "/api/events/action",      # milter/logtail action reporting
     "/api/events/complete-action", # logtail aksiyon tamamlama callback
+    "/api/events/pending-actions/", # plugin action tamamlama callback (bayi WHM sunucusundan)
     "/api/events/logtail-heartbeat", # logtail script canlılık heartbeat
     "/api/events/admin/migrate-ts-tz", # master timezone migration
     "/api/mail/ingest",        # alternatif mail ingest
