@@ -136,19 +136,32 @@ GLOBAL_FEEDS = [
 
 @router.get("/feeds")
 async def list_feeds():
-    """Global feed sync durumu. Preview'da mock last_synced doner."""
+    """Global feed sync durumu — gerçek DB'den IOC sayısı okunur."""
     now = datetime.now(timezone.utc)
     items = []
     for f in GLOBAL_FEEDS:
-        # simulate last sync N minutes ago
-        import random
-        mins = random.randint(1, f["interval_min"] - 1)
+        # Gerçek IOC sayısını threat_iocs koleksiyonundan çek
+        ioc_count = await db.threat_iocs.count_documents({"source": f["key"]})
+        # last_synced_at: bu source için en son eklenen IOC'nin created_at'i
+        last_doc = await db.threat_iocs.find_one(
+            {"source": f["key"]},
+            {"created_at": 1, "_id": 0},
+            sort=[("created_at", -1)],
+        )
+        last_synced = last_doc.get("created_at") if last_doc else None
+        next_sync = None
+        if last_synced:
+            try:
+                last_dt = datetime.fromisoformat(last_synced.replace("Z", "+00:00"))
+                next_sync = (last_dt + timedelta(minutes=f["interval_min"])).isoformat()
+            except Exception:
+                pass
         items.append({
             **f,
-            "last_synced_at": (now - timedelta(minutes=mins)).isoformat(),
-            "next_sync_at": (now + timedelta(minutes=f["interval_min"] - mins)).isoformat(),
-            "status": "ok",
-            "ioc_count": random.randint(10000, 250000),
+            "last_synced_at": last_synced or (now - timedelta(days=999)).isoformat(),
+            "next_sync_at": next_sync or now.isoformat(),
+            "status": "ok" if ioc_count > 0 else "never_synced",
+            "ioc_count": ioc_count,
         })
     return {"items": items, "count": len(items)}
 
@@ -236,22 +249,81 @@ async def trigger_sync(feed_key: str):
                 except Exception as e:
                     errors.append(str(e)[:60])
                     break
+        elif feed_key == "phishtank":
+            # OpenPhish free feed (auth yok) — 302 redirect follow
+            import httpx
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as h:
+                r = await h.get("https://openphish.com/feed.txt")
+                if r.status_code == 200:
+                    urls = [u.strip() for u in r.text.splitlines() if u.strip() and u.startswith("http")]
+                    for url in urls[:40]:
+                        await db.threat_iocs.update_one(
+                            {"type": "url", "value": url},
+                            {"$set": {
+                                "id": str(uuid.uuid4()), "type": "url", "value": url,
+                                "tag": "phishing", "confidence": 92, "source": "phishtank",
+                                "note": "OpenPhish live feed",
+                                "created_at": _iso(),
+                                "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                            }},
+                            upsert=True,
+                        )
+                        added += 1
+                else:
+                    errors.append(f"OpenPhish http {r.status_code}")
+        elif feed_key in ("barracuda", "barracuda_bl", "sorbs", "uceprotect", "uceprotect_l1"):
+            # DNS-based blacklist lookup — Spamhaus pattern ile aynı, farklı domain
+            import socket
+            dnsbl_map = {
+                "barracuda": "b.barracudacentral.org",
+                "barracuda_bl": "b.barracudacentral.org",
+                "sorbs": "dnsbl.sorbs.net",
+                "uceprotect": "dnsbl-1.uceprotect.net",
+                "uceprotect_l1": "dnsbl-1.uceprotect.net",
+            }
+            dnsbl_domain = dnsbl_map[feed_key]
+            confidence_val = {"barracuda": 88, "barracuda_bl": 88, "sorbs": 82,
+                              "uceprotect": 75, "uceprotect_l1": 75}[feed_key]
+            since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            pipeline = [
+                {"$match": {"ingested_at": {"$gte": since},
+                            "verdict": {"$in": ["spam", "high_spam"]},
+                            "client_ip": {"$exists": True, "$nin": ["", None]}}},
+                {"$group": {"_id": "$client_ip", "n": {"$sum": 1}}},
+                {"$sort": {"n": -1}}, {"$limit": 25},
+            ]
+            top_ips = []
+            async for row in db.mail_events.aggregate(pipeline):
+                top_ips.append(row["_id"])
+            for ip in top_ips:
+                try:
+                    parts = ip.split(".")
+                    if len(parts) != 4:
+                        continue
+                    q = ".".join(reversed(parts)) + "." + dnsbl_domain
+                    result = socket.gethostbyname_ex(q)
+                    codes = result[2]
+                    if codes:
+                        await db.threat_iocs.update_one(
+                            {"type": "ip", "value": ip},
+                            {"$set": {
+                                "id": str(uuid.uuid4()), "type": "ip", "value": ip,
+                                "tag": "spam", "confidence": confidence_val,
+                                "source": feed_key,
+                                "note": f"{dnsbl_domain} codes: {','.join(codes)}",
+                                "created_at": _iso(),
+                                "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                            }},
+                            upsert=True,
+                        )
+                        added += 1
+                except socket.gaierror:
+                    pass  # NXDOMAIN — not listed
+                except Exception as e:
+                    errors.append(str(e)[:60])
+                    break
         else:
-            # Diğer kaynaklar (Barracuda, SORBS, UCEPROTECT, PhishTank) — mock IOC üret
-            import random
-            for _ in range(3):
-                ip = f"{random.randint(1,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
-                await db.threat_iocs.update_one(
-                    {"type": "ip", "value": ip},
-                    {"$set": {
-                        "id": str(uuid.uuid4()), "type": "ip", "value": ip,
-                        "tag": "spam", "confidence": 80, "source": feed_key,
-                        "created_at": _iso(),
-                        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-                    }},
-                    upsert=True,
-                )
-                added += 1
+            errors.append(f"Bilinmeyen feed: {feed_key}")
     except Exception as ex:
         errors.append(f"{type(ex).__name__}: {str(ex)[:80]}")
     return {"ok": True, "feed": feed_key, "added": added, "errors": errors}
