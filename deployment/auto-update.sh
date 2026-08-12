@@ -89,12 +89,27 @@ else
     exit 1
 fi
 
-# 5. Health check
-sleep 8
-if curl -sf https://gokyuzuhosting.com/api/version/current > /dev/null; then
-    log "✓ API canlı → https://gokyuzuhosting.com/api/version/current"
-else
-    log "⚠ API yanıt vermiyor — servisleri kontrol edin: docker compose ps"
+# 5. Health check — retry ile (Docker cold-start için sabırlı)
+# Container up olduktan sonra uvicorn'un binding yapması 3-15sn alabilir.
+# Localhost'ta bakıyoruz çünkü SSL/DNS/reverse-proxy gecikmesi olmasın.
+API_URL="http://127.0.0.1:8001/api/stats/overview"
+MAX_TRIES=12         # 12 × 3sn = 36sn max bekleme
+SLEEP_BETWEEN=3
+API_OK=0
+sleep 4              # ilk grace period (uvicorn binding için)
+for i in $(seq 1 $MAX_TRIES); do
+    HTTP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$API_URL" || echo "000")
+    if [ "$HTTP" = "200" ]; then
+        log "✓ API canlı (deneme $i/$MAX_TRIES · HTTP 200)"
+        API_OK=1
+        break
+    fi
+    if [ $i -lt $MAX_TRIES ]; then
+        sleep $SLEEP_BETWEEN
+    fi
+done
+if [ $API_OK -eq 0 ]; then
+    log "⚠ API $((MAX_TRIES * SLEEP_BETWEEN + 4))sn içinde HTTP 200 vermedi — kontrol: docker logs --tail=50 gws-backend"
 fi
 
 # 6. Yayınlanan sürümü bayilere duyur
