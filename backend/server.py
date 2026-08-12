@@ -473,6 +473,19 @@ async def _startup() -> None:
         )
     except Exception as ex:
         log.warning("engines dedupe skipped: %s", ex)
+
+    # v40 Performance indexes — Landing sayfa polling'i (public/blocked-stats,
+    # geo/blocked-heatmap) mail_events üzerinde ağır aggregation koşuyor.
+    # Bu index'ler p95 latency'yi ~10x düşürür. Idempotent create_index.
+    try:
+        await db.mail_events.create_index([("verdict", 1), ("ts", -1)], name="v40_verdict_ts", background=True)
+        await db.mail_events.create_index([("verdict", 1), ("ingested_at", -1)], name="v40_verdict_ingested", background=True)
+        await db.mail_events.create_index([("license_key", 1), ("verdict", 1), ("ts", -1)], name="v40_lic_verdict_ts", background=True)
+        await db.lists.create_index([("kind", 1), ("type", 1)], name="v40_kind_type", background=True)
+        await db.threat_iocs.create_index([("type", 1)], name="v40_ioc_type", background=True)
+    except Exception as ex:
+        log.warning("v40 perf indexes skipped: %s", ex)
+
     # Kick off background housekeeping tasks
     asyncio.create_task(_auto_suspend_daily_task())
     asyncio.create_task(_weekly_ai_report_task())

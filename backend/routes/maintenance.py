@@ -19,6 +19,34 @@ def _iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ============================================================================
+# v40 In-memory TTL cache — Landing polling endpoint'leri için (public/blocked-stats,
+# geo/blocked-heatmap). Sadece process-local; bir bayi başkasının cache'ini görmez
+# çünkü key'e license_key/region dahil ediyoruz. Prod'da process başına yeterli.
+# ============================================================================
+import time as _time
+_TTL_CACHE: dict[str, tuple[float, object]] = {}
+
+def _cache_get(key: str):
+    hit = _TTL_CACHE.get(key)
+    if not hit:
+        return None
+    expires_at, val = hit
+    if _time.time() > expires_at:
+        _TTL_CACHE.pop(key, None)
+        return None
+    return val
+
+def _cache_set(key: str, val, ttl_sec: float):
+    _TTL_CACHE[key] = (_time.time() + ttl_sec, val)
+    # Prevent unbounded growth in worst case
+    if len(_TTL_CACHE) > 200:
+        # Drop expired entries
+        now = _time.time()
+        for k in [k for k, (exp, _) in _TTL_CACHE.items() if exp < now]:
+            _TTL_CACHE.pop(k, None)
+
+
 # ---- Koleksiyon kategorileri ----
 # DATA_COLS: silinecek "veri" koleksiyonları (event/history/log)
 # SETTINGS_COLS: KORUNACAK ayar/config/lisans koleksiyonları
@@ -378,7 +406,16 @@ async def geo_heatmap(license_key: Optional[str] = None):
       • ~90 ülke isim + koordinat eşleşmesi
       • Baseline seed düşük veride Landing'i canlı gösterir
       • `?license_key=X` ile master belirli bir bayinin trafiğini filtreler
+
+    v40 Perf: distinct-IP $group (20k iterasyon → ~500 unique IP);
+    60sn TTL cache (license_key başına ayrı key).
     """
+    # Cache — Landing 5-10sn polling'de ilk çağrı hariç DB'ye hiç gitmez
+    cache_key = f"geo_heatmap:{license_key or 'ALL'}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         from routes.security_adv import _ip_to_country, COUNTRY_COORDS
     except Exception:
@@ -392,13 +429,13 @@ async def geo_heatmap(license_key: Optional[str] = None):
     # cc → {count, last_attack_at, verdicts:{spam,virus,phish,blocked}}
     stats: dict = {}
 
-    def _bump(cc: str, verdict: Optional[str] = None, ts: Optional[str] = None):
+    def _bump(cc: str, verdict: Optional[str] = None, ts: Optional[str] = None, cnt: int = 1):
         if not cc or cc == "LOCAL":
             return
         s = stats.setdefault(cc, {"count": 0, "last_attack_at": "", "verdicts": {}})
-        s["count"] += 1
+        s["count"] += cnt
         if verdict:
-            s["verdicts"][verdict] = s["verdicts"].get(verdict, 0) + 1
+            s["verdicts"][verdict] = s["verdicts"].get(verdict, 0) + cnt
         if ts and ts > (s["last_attack_at"] or ""):
             s["last_attack_at"] = ts
 
@@ -408,17 +445,29 @@ async def geo_heatmap(license_key: Optional[str] = None):
     # 2) Threat intel IOC'ler
     async for it in db.threat_iocs.find({"type": "ip"}, {"value": 1, "created_at": 1, "_id": 0}):
         _bump(_ip_to_country(it.get("value", "")), None, it.get("created_at"))
-    # 3) Son 30 gün gerçek mail_events (canlı saldırılar) — bayi filtresi ile
+    # 3) Son 30 gün mail_events — $group by (client_ip, verdict) ile 20k event yerine ~500 unique IP
     bad_verdicts = {"$in": ["spam", "high_spam", "virus", "phish", "phishing", "block", "blocked"]}
-    ev_match = {"verdict": bad_verdicts, "ts": {"$gte": day30},
-                "client_ip": {"$exists": True, "$ne": ""}}
+    ev_match: dict = {"verdict": bad_verdicts, "ts": {"$gte": day30},
+                      "client_ip": {"$exists": True, "$ne": ""}}
     if license_key:
         ev_match["license_key"] = license_key
     try:
-        async for e in db.mail_events.find(
-            ev_match, {"client_ip": 1, "verdict": 1, "ts": 1, "_id": 0},
-        ).limit(20000):
-            _bump(_ip_to_country(e.get("client_ip", "")), (e.get("verdict") or "").lower(), e.get("ts"))
+        pipeline = [
+            {"$match": ev_match},
+            {"$group": {
+                "_id": {"ip": "$client_ip", "verdict": {"$toLower": "$verdict"}},
+                "count": {"$sum": 1},
+                "last_ts": {"$max": "$ts"},
+            }},
+        ]
+        # Ülke lookup cache — aynı IP birden fazla verdict grubunda olur
+        ip_cc_cache: dict[str, Optional[str]] = {}
+        async for r in db.mail_events.aggregate(pipeline, allowDiskUse=True):
+            gid = r.get("_id") or {}
+            ip = gid.get("ip") or ""
+            if ip not in ip_cc_cache:
+                ip_cc_cache[ip] = _ip_to_country(ip)
+            _bump(ip_cc_cache[ip], gid.get("verdict"), r.get("last_ts"), int(r.get("count") or 0))
     except Exception:
         pass
 
@@ -457,7 +506,7 @@ async def geo_heatmap(license_key: Optional[str] = None):
                 # Son saldırı zamanı: 0-90dk arası rastgele
                 s["last_attack_at"] = (now - timedelta(minutes=_r.randint(0, 90))).isoformat()
 
-    # Son N canlı saldırı (animasyon için)
+    # Son N canlı saldırı (animasyon için) — küçük sort limit, hızlı
     recent_attacks: list = []
     try:
         async for e in db.mail_events.find(
@@ -502,13 +551,15 @@ async def geo_heatmap(license_key: Optional[str] = None):
             "verdicts": s.get("verdicts") or {},
         })
     items.sort(key=lambda x: x["count"], reverse=True)
-    return {
+    result = {
         "items": items,
         "total": sum(s["count"] for s in stats.values()),
         "countries": len(items),
         "recent_attacks": recent_attacks[:20],
         "generated_at": now.isoformat(),
     }
+    _cache_set(cache_key, result, 60.0)
+    return result
 
 
 @router.get("/geo/country-detail")
@@ -630,11 +681,22 @@ async def trust_score_history(days: int = 30):
 # PUBLIC LANDING STATS: bugünkü + 30 gün bloklanan mail sayısı
 # ============================================================================
 @router.get("/public/blocked-stats")
-async def public_blocked_stats(region: str = "all"):
+async def public_blocked_stats(region: str = "all", raw: int = 0):
     """Landing için: bugün bloklanan sayı + son 30 gün bar chart verisi.
     Cache dostu, license gerektirmez.
-    region: 'all' (default) | 'tr' (Türkiye) | 'external' (dış)."""
+    region: 'all' (default) | 'tr' (Türkiye) | 'external' (dış).
+
+    v40 Perf: $facet aggregation ile tek round-trip; 45sn TTL cache;
+    region filter'de distinct-IP $group ile Python loop 100k→~2k'ya iner."""
     from datetime import date, timedelta, datetime as _dt
+
+    # Cache lookup — raw=1 (admin) cache bypass eder ki taze veri görsün
+    cache_key = f"blocked_stats:{region}"
+    if not raw:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
         from routes.security_adv import _ip_to_country
     except Exception:
@@ -643,71 +705,151 @@ async def public_blocked_stats(region: str = "all"):
     today = date.today()
     today_iso = today.isoformat()
     start = today - timedelta(days=29)
-
-    verdict_filter = {"verdict": {"$in": ["spam", "high_spam", "virus"]}}
-
-    def _match_region(ip: str | None) -> bool:
-        if region == "all":
-            return True
-        cc = _ip_to_country(ip or "")
-        if region == "tr":
-            return cc == "TR"
-        if region == "external":
-            return cc is not None and cc != "TR" and cc != "LOCAL"
-        return True
-
-    # Toplam ve bugünü tek geçişte topla
     since_iso = start.isoformat()
+
+    bad_verdicts = ["spam", "high_spam", "virus"]
+
     today_count = 0
     total_events_today = 0
     all_time_blocked = 0
     by_day: dict[str, int] = {}
-    # all-time: sadece region=all için hızlı; region filtreli ise event-scan zorunlu
+    quarantined_today = 0
+    virus_all_time = 0
+    phishing_all_time = 0
+
     if region == "all":
-        all_time_blocked = await db.mail_events.count_documents(verdict_filter)
+        # Tek $facet pipeline: 30 gün spam eventleri üzerinden day-bucket + today + all-time
+        # + today_total + quarantined_today. Bu 5 count'u tek round-trip'te alır.
+        # NOTE: `_ts` alanı `ts` veya `ingested_at`'ten hangisi varsa. Alternate `$or`
+        # yerine `$ifNull` ile canonical timestamp üretiyoruz — pipeline planlaması daha iyi.
+        pipeline_bad = [
+            {"$match": {"verdict": {"$in": bad_verdicts}}},
+            {"$facet": {
+                "all_time": [{"$count": "n"}],
+                "today": [
+                    {"$match": {"$or": [{"ts": {"$gte": today_iso}},
+                                        {"ingested_at": {"$gte": today_iso}}]}},
+                    {"$count": "n"},
+                ],
+                "by_day": [
+                    {"$match": {"$or": [{"ts": {"$gte": since_iso}},
+                                        {"ingested_at": {"$gte": since_iso}}]}},
+                    {"$project": {
+                        "day": {"$substr": [
+                            {"$ifNull": ["$ts", {"$ifNull": ["$ingested_at", ""]}]},
+                            0, 10,
+                        ]},
+                    }},
+                    {"$group": {"_id": "$day", "count": {"$sum": 1}}},
+                ],
+                "virus_all_time": [
+                    {"$match": {"verdict": "virus"}},
+                    {"$count": "n"},
+                ],
+                "phishing_all_time": [
+                    {"$match": {"verdict": "high_spam"}},
+                    {"$count": "n"},
+                ],
+            }},
+        ]
+        try:
+            agg = await db.mail_events.aggregate(pipeline_bad, allowDiskUse=True).to_list(1)
+            r = agg[0] if agg else {}
+            all_time_blocked = (r.get("all_time") or [{}])[0].get("n", 0) if r.get("all_time") else 0
+            today_count = (r.get("today") or [{}])[0].get("n", 0) if r.get("today") else 0
+            virus_all_time = (r.get("virus_all_time") or [{}])[0].get("n", 0) if r.get("virus_all_time") else 0
+            phishing_all_time = (r.get("phishing_all_time") or [{}])[0].get("n", 0) if r.get("phishing_all_time") else 0
+            for row in (r.get("by_day") or []):
+                dk = row.get("_id") or ""
+                if dk:
+                    by_day[dk] = int(row.get("count") or 0)
+        except Exception:
+            # Fallback (index'ler yoksa vb)
+            all_time_blocked = await db.mail_events.count_documents({"verdict": {"$in": bad_verdicts}})
+            today_count = await db.mail_events.count_documents({
+                "verdict": {"$in": bad_verdicts},
+                "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
+            })
+
         total_events_today = await db.mail_events.count_documents({
             "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
         })
-        today_count = await db.mail_events.count_documents({
-            **verdict_filter,
+        quarantined_today = await db.mail_events.count_documents({
+            "action": "quarantine",
             "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
         })
-        # 30 gün
-        async for e in db.mail_events.find(
-            {**verdict_filter,
-             "$or": [{"ts": {"$gte": since_iso}}, {"ingested_at": {"$gte": since_iso}}]},
-            {"ts": 1, "ingested_at": 1, "_id": 0},
-        ).limit(50000):
-            raw = e.get("ts") or e.get("ingested_at") or ""
-            day_key = raw[:10] if raw else None
-            if day_key:
-                by_day[day_key] = by_day.get(day_key, 0) + 1
     else:
-        # Region filter — IP'yi al, ülke bak
-        async for e in db.mail_events.find(
-            {**verdict_filter},
-            {"ts": 1, "ingested_at": 1, "sender_ip": 1, "client_ip": 1, "_id": 0},
-        ).limit(100000):
-            ip = e.get("sender_ip") or e.get("client_ip")
-            if not _match_region(ip):
+        # Region filter: distinct sender_ip $group üzerinden — 100k iterasyon yerine
+        # sadece unique IP başına _ip_to_country çağrısı yapılır (~50-200 IP).
+        pipeline_by_ip = [
+            {"$match": {
+                "verdict": {"$in": bad_verdicts},
+                "$or": [{"sender_ip": {"$exists": True, "$ne": ""}},
+                        {"client_ip": {"$exists": True, "$ne": ""}}],
+            }},
+            {"$project": {
+                "ip": {"$ifNull": ["$sender_ip", "$client_ip"]},
+                "day": {"$substr": [
+                    {"$ifNull": ["$ts", {"$ifNull": ["$ingested_at", ""]}]},
+                    0, 10,
+                ]},
+                "ts_raw": {"$ifNull": ["$ts", "$ingested_at"]},
+            }},
+            {"$group": {
+                "_id": {"ip": "$ip", "day": "$day"},
+                "count": {"$sum": 1},
+                "any_ts": {"$max": "$ts_raw"},
+            }},
+        ]
+        rows = await db.mail_events.aggregate(pipeline_by_ip, allowDiskUse=True).to_list(200000)
+        # Ülke lookup cache — aynı IP birden fazla gün grubunda olabilir
+        ip_country_cache: dict[str, Optional[str]] = {}
+
+        def _cc_of(ip: str | None):
+            if not ip:
+                return None
+            if ip not in ip_country_cache:
+                ip_country_cache[ip] = _ip_to_country(ip)
+            return ip_country_cache[ip]
+
+        def _match_region(cc: Optional[str]) -> bool:
+            if region == "tr":
+                return cc == "TR"
+            if region == "external":
+                return cc is not None and cc != "TR" and cc != "LOCAL"
+            return True
+
+        for r in rows:
+            gid = r.get("_id") or {}
+            ip = gid.get("ip")
+            cc = _cc_of(ip)
+            if not _match_region(cc):
                 continue
-            all_time_blocked += 1
-            raw = e.get("ts") or e.get("ingested_at") or ""
-            if not raw:
-                continue
-            if raw >= today_iso:
-                today_count += 1
-            if raw >= since_iso:
-                day_key = raw[:10]
-                by_day[day_key] = by_day.get(day_key, 0) + 1
-        # today total (region-filtered)
-        async for e in db.mail_events.find(
-            {"$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}]},
-            {"sender_ip": 1, "client_ip": 1, "_id": 0},
-        ).limit(50000):
-            ip = e.get("sender_ip") or e.get("client_ip")
-            if _match_region(ip):
-                total_events_today += 1
+            cnt = int(r.get("count") or 0)
+            all_time_blocked += cnt
+            day_key = gid.get("day") or ""
+            ts_raw = r.get("any_ts") or ""
+            if day_key and day_key >= since_iso:
+                by_day[day_key] = by_day.get(day_key, 0) + cnt
+            if day_key >= today_iso or (ts_raw and ts_raw >= today_iso):
+                today_count += cnt
+
+        # total_events_today (region-filtered): today distinct IPs
+        pipe_today_total = [
+            {"$match": {"$and": [
+                {"$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}]},
+                {"$or": [{"sender_ip": {"$exists": True, "$ne": ""}},
+                         {"client_ip": {"$exists": True, "$ne": ""}}]},
+            ]}},
+            {"$project": {"ip": {"$ifNull": ["$sender_ip", "$client_ip"]}}},
+            {"$group": {"_id": "$ip", "count": {"$sum": 1}}},
+        ]
+        try:
+            async for r in db.mail_events.aggregate(pipe_today_total, allowDiskUse=True):
+                if _match_region(_cc_of(r.get("_id"))):
+                    total_events_today += int(r.get("count") or 0)
+        except Exception:
+            pass
 
     # 30 slot doldur
     series: list[dict] = []
@@ -724,7 +866,7 @@ async def public_blocked_stats(region: str = "all"):
     total_real = sum(s["count"] for s in series)
     seed_cfg = await db.settings.find_one({"_key": "landing_traffic_seed"}, {"_id": 0}) or {}
     seed_enabled = seed_cfg.get("enabled", True)
-    if seed_enabled and total_real < 500:  # ilk kurulum eşiği
+    if seed_enabled and total_real < 500 and not raw:
         import hashlib, random as _rmod
         # İzole RNG instance — global random state'e sızıntı yok
         _r = _rmod.Random(int(hashlib.md5(today_iso.encode()).hexdigest()[:8], 16))
@@ -744,7 +886,16 @@ async def public_blocked_stats(region: str = "all"):
         today_count = max(today_count, series[-1]["count"])
         total_events_today = max(total_events_today, int(today_count / 0.75))
 
-    return {
+    # Ek metrikler — küçük koleksiyonlar, tek count her biri < 5ms
+    if region == "all":
+        # region=all için virus/phishing zaten $facet'ten geldi
+        pass
+    else:
+        # region filter'de bunlar önemli değil (region'la ilgili değil), simple count
+        virus_all_time = await db.mail_events.count_documents({"verdict": "virus"})
+        phishing_all_time = await db.mail_events.count_documents({"verdict": "high_spam"})
+
+    result = {
         "today_blocked": today_count,
         "today_total": total_events_today,
         "block_rate": round(today_count * 100 / max(1, total_events_today), 1),
@@ -753,21 +904,23 @@ async def public_blocked_stats(region: str = "all"):
         "peak_30d": peak,
         "avg_30d": avg,
         "region": region,
-        "seed_applied": seed_enabled and total_real < 500,
+        "seed_applied": seed_enabled and total_real < 500 and not raw,
         # Ek metrikler
         "exploits_caught": await db.exploit_findings.count_documents({}),
         "exploits_critical": await db.exploit_findings.count_documents({"severity": "critical"}),
         "ips_blocked": await db.lists.count_documents({"kind": "blacklist", "type": "ip"}),
-        "quarantined_today": await db.mail_events.count_documents({
-            "action": "quarantine",
-            "$or": [{"ts": {"$gte": today_iso}}, {"ingested_at": {"$gte": today_iso}}],
-        }),
-        "virus_caught_all_time": await db.mail_events.count_documents({"verdict": "virus"}),
-        "phishing_caught_all_time": await db.mail_events.count_documents({"verdict": "high_spam"}),
+        "quarantined_today": quarantined_today,
+        "virus_caught_all_time": virus_all_time,
+        "phishing_caught_all_time": phishing_all_time,
         "iocs_tracked": await db.threat_iocs.count_documents({}),
         "active_licenses": await db.licenses.count_documents({"status": "active"}),
         "last_updated": _iso(),
     }
+
+    # Cache 45sn — Landing 5sn polling'de aynı response servis edilir
+    if not raw:
+        _cache_set(cache_key, result, 45.0)
+    return result
 
 
 

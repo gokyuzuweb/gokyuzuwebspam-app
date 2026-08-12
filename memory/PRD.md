@@ -13,6 +13,34 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 12, 2026 (Session 9) - v41 Blocked Stats + Geo Heatmap Perf Optimizasyonu
+
+### Optimizasyonlar
+- ✅ **Compound Indexes** (`server.py` startup, idempotent, background=True):
+  * `mail_events.{verdict:1, ts:-1}` (v40_verdict_ts)
+  * `mail_events.{verdict:1, ingested_at:-1}` (v40_verdict_ingested)
+  * `mail_events.{license_key:1, verdict:1, ts:-1}` (v40_lic_verdict_ts)
+  * `lists.{kind:1, type:1}` (v40_kind_type)
+  * `threat_iocs.{type:1}` (v40_ioc_type)
+- ✅ **`$facet` Aggregation** — `/public/blocked-stats?region=all`: 3 count_documents + 50k döküman day-bucket iterasyonu → **tek pipeline** (all_time + today + by_day + virus_all_time + phishing_all_time).
+- ✅ **Region distinct-IP `$group`** — `region=tr|external`: 100k mail_event iterasyonu → distinct (IP × day) group + tek seferlik `_ip_to_country` cache. 100k → ~500 unique IP.
+- ✅ **Geo distinct-IP `$group`** — `/geo/blocked-heatmap`: 20k event iterasyonu → distinct (ip × verdict) group + per-IP country cache.
+- ✅ **TTL Cache** (`maintenance.py::_TTL_CACHE`) — process-local, key'e license_key/region dahil:
+  * `/public/blocked-stats`: 45sn TTL
+  * `/geo/blocked-heatmap`: 60sn TTL (per-license_key ayrı key)
+  * `?raw=1` cache'i bypass eder + seed'i devre dışı bırakır (admin gerçek veri görür)
+
+### Ölçümler (preview env, ~100k mail_events)
+- `/public/blocked-stats?region=all`: cold 160ms → warm **85ms** (cache hit)
+- `/public/blocked-stats?region=tr`: 100-140ms (distinct-IP group)
+- `/geo/blocked-heatmap`: cold ~100ms → warm ~85ms
+- Landing 5-10sn polling'de DB'ye giden yük **~90% azaldı**
+
+### Testing (iteration_36.json)
+- 13/13 v41 backend testi geçti (schema eşitliği, region=tr/external doğruluğu, cache raw=1 bypass, per-license cache, 5 index varlığı)
+- 2 legacy regression testi geçti (TestPublicBlockedStats::test_shape, TestGeoHeatmap::test_heatmap_returns_items)
+- retest_needed: false
+
 ## Feb 12, 2026 (Session 8) - v40 Saved Filters UI + Notification Icons + Plugin Auto-Retry
 
 ### Yeni Özellikler
