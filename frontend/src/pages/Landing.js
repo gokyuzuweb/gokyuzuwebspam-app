@@ -5,12 +5,14 @@ import {
   ShieldAlert, ShieldCheck, Zap, Brain, Globe2, Radar, ArrowRight,
   CheckCircle2, Sparkles, Terminal, Server, Lock, Cpu, Mail, Activity,
   BadgeCheck, Rocket, CreditCard, Building2, Copy, HeartPulse, Bug,
-  Globe, Database, Filter, FileText, MailCheck,
+  Globe, Database, Filter, FileText, MailCheck, Inbox,
 } from "lucide-react";
 import { Badge } from "@/components/ui-primitives";
 import GeoBlockedHeatmap from "@/components/GeoBlockedHeatmap";
 import LiveTicker from "@/components/LiveTicker";
 import ModulesShowcase from "@/pages/landing/ModulesShowcase";
+import ActivityHeatmap from "@/components/ActivityHeatmap";
+import CostSavingsWidget from "@/components/CostSavingsWidget";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { useI18n, useT } from "@/i18n";
@@ -375,7 +377,44 @@ const LANG_STRINGS = {
 
 function useLandingStrings() {
   const { effective } = useI18n();
-  return LANG_STRINGS[effective] || LANG_STRINGS.en;
+  const base = LANG_STRINGS[effective] || LANG_STRINGS.en;
+  const cms = useLandingCms();
+  // CMS overrides: only apply non-empty strings; empty means "use i18n default"
+  const hero = cms?.hero || {};
+  const merged = {
+    ...base,
+    hero_badge:    hero.badge     || base.hero_badge,
+    hero_title_a:  hero.title_a   || base.hero_title_a,
+    hero_title_b:  hero.title_b   || base.hero_title_b,
+    hero_sub:      hero.subtitle  || base.hero_sub,
+    cta_primary:   hero.cta_primary   || base.cta_primary,
+    cta_secondary: hero.cta_secondary || base.cta_secondary,
+    features_title:   cms?.features_title   || base.features_title,
+    features_sub:     cms?.features_sub     || base.features_sub,
+    pricing_title:    cms?.pricing_title    || base.pricing_title,
+    pricing_sub:      cms?.pricing_sub      || base.pricing_sub,
+    footer_copyright: cms?.footer_copyright || base.footer_copyright,
+  };
+  return merged;
+}
+
+/**
+ * v43.9 Landing settings hook — fetches theme + CMS text overrides.
+ * Cached across the whole page via react-query.
+ */
+function useLandingCms() {
+  const q = useQuery({
+    queryKey: ["landing-settings"],
+    queryFn: () => api.landingGet(),
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  return q.data || null;
+}
+function useLandingTheme() {
+  const cms = useLandingCms();
+  return (cms?.theme === "light") ? "light" : "dark";
 }
 
 function GridBackdrop() {
@@ -535,24 +574,71 @@ const TONE_MAP = {
 function Features() {
   const s = useLandingStrings();
   return (
-    <section id="features" className="py-24 border-t border-slate-800/60" data-testid="landing-features">
-      <div className="max-w-7xl mx-auto px-6">
+    <section id="features" className="py-24 border-t border-slate-800/60 relative overflow-hidden" data-testid="landing-features">
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-10 left-10 w-72 h-72 rounded-full bg-indigo-500/6 blur-3xl"/>
+        <div className="absolute bottom-10 right-10 w-72 h-72 rounded-full bg-fuchsia-500/6 blur-3xl"/>
+      </div>
+      <div className="max-w-7xl mx-auto px-6 relative">
         <div className="max-w-2xl mb-14">
+          <div className="text-xs uppercase tracking-widest text-indigo-400 mono mb-2">Neden Biz</div>
           <h2 className="text-3xl sm:text-4xl font-bold text-slate-100 mb-3 tracking-tight">{s.features_title}</h2>
           <p className="text-slate-400 leading-relaxed">{s.features_sub}</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {FEATURES.map((f) => (
-            <div key={f.key} className="group relative rounded-xl border border-slate-800 bg-slate-900/40 p-6 hover:border-slate-700 transition-colors">
-              <div className={`w-11 h-11 rounded-md border flex items-center justify-center mb-4 ${TONE_MAP[f.tone]}`}>
-                <f.icon className="w-5 h-5" strokeWidth={1.75} />
+          {FEATURES.map((f, i) => {
+            const iconGrad = {
+              indigo:  "from-indigo-400 to-blue-500",
+              fuchsia: "from-fuchsia-400 to-pink-500",
+              emerald: "from-emerald-400 to-teal-500",
+              amber:   "from-amber-400 to-orange-500",
+              rose:    "from-rose-400 to-red-500",
+              sky:     "from-sky-400 to-cyan-500",
+            }[f.tone];
+            const glow = {
+              indigo:  "rgba(99,102,241,0.35)",
+              fuchsia: "rgba(217,70,239,0.35)",
+              emerald: "rgba(16,185,129,0.35)",
+              amber:   "rgba(251,191,36,0.35)",
+              rose:    "rgba(244,63,94,0.35)",
+              sky:     "rgba(56,189,248,0.35)",
+            }[f.tone];
+            return (
+              <div key={f.key}
+                   style={{ "--glow": glow, "--i": i }}
+                   className="group relative rounded-2xl border border-slate-800 p-6 overflow-hidden
+                              bg-gradient-to-br from-slate-900/70 to-slate-950/50 gws-feature-card
+                              shadow-[0_8px_28px_-10px_rgba(0,0,0,0.5),inset_0_1px_0_0_rgba(255,255,255,0.05)]
+                              hover:-translate-y-1.5 hover:border-slate-700 transition-all duration-300
+                              hover:shadow-[0_16px_40px_-10px_var(--glow),inset_0_1px_0_0_rgba(255,255,255,0.08)]">
+                {/* Corner glow */}
+                <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full opacity-30 blur-3xl group-hover:opacity-70 transition-opacity"
+                     style={{ background: `radial-gradient(circle, var(--glow), transparent 70%)` }}/>
+                {/* 3D Icon */}
+                <div className={`relative w-14 h-14 rounded-2xl bg-gradient-to-br ${iconGrad} flex items-center justify-center mb-5
+                                shadow-[0_10px_20px_-4px_var(--glow),inset_0_1px_0_0_rgba(255,255,255,0.3)]
+                                group-hover:scale-110 group-hover:-rotate-3 transition-transform duration-300`}>
+                  <f.icon className="w-6 h-6 text-white drop-shadow-md" strokeWidth={2.25} />
+                </div>
+                <h3 className="text-lg font-bold text-slate-100 mb-2 tracking-tight">{s[`${f.key}_t`]}</h3>
+                <p className="text-sm text-slate-400 leading-relaxed">{s[`${f.key}_d`]}</p>
+                {/* index badge */}
+                <span className="absolute top-4 right-4 text-[10px] mono text-slate-600 tracking-widest gws-feature-idx">0{i + 1}</span>
               </div>
-              <h3 className="text-lg font-semibold text-slate-100 mb-2">{s[`${f.key}_t`]}</h3>
-              <p className="text-sm text-slate-400 leading-relaxed">{s[`${f.key}_d`]}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
+      <style>{`
+        .gws-landing-light .gws-feature-card {
+          background: rgba(255,255,255,0.9) !important;
+          border-color: #e2e8f0 !important;
+          box-shadow: 0 8px 28px -10px rgba(0,0,0,0.08), inset 0 1px 0 0 rgba(255,255,255,0.95) !important;
+        }
+        .gws-landing-light .gws-feature-card h3 { color: #0f172a !important; }
+        .gws-landing-light .gws-feature-card p  { color: #475569 !important; }
+        .gws-landing-light .gws-feature-idx    { color: #cbd5e1 !important; }
+      `}</style>
     </section>
   );
 }
@@ -885,49 +971,56 @@ function SalesTodayBanner() {
   const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 
   return (
-    <div data-testid="landing-sales-today" className="mb-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-      {/* Bugün satın alanlar */}
-      <div className="col-span-1 md:col-span-1 rounded-lg border border-emerald-500/40 bg-gradient-to-br from-emerald-500/15 to-emerald-500/5 px-3 py-2.5">
-        <div className="flex items-center gap-2 text-[9px] uppercase tracking-widest text-emerald-300 mono font-bold mb-1">
-          <span className="relative flex w-2 h-2">
+    <div data-testid="landing-sales-today" className="mb-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+      {/* v43.10 Bugün satın alanlar — 3D glass card */}
+      <div className="col-span-1 md:col-span-1 relative overflow-hidden rounded-xl border border-emerald-500/40
+                       bg-gradient-to-br from-emerald-500/15 via-emerald-500/8 to-teal-500/10 px-4 py-3
+                       shadow-[0_8px_28px_-10px_rgba(16,185,129,0.4),inset_0_1px_0_0_rgba(255,255,255,0.08)] gws-sales-card">
+        <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-emerald-500/25 blur-3xl pointer-events-none"/>
+        <div className="relative flex items-center gap-2 text-[9px] uppercase tracking-widest text-emerald-300 mono font-bold mb-1.5 gws-sales-label">
+          <span className="relative flex w-2.5 h-2.5">
             <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-70 animate-ping"/>
-            <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500"/>
+            <span className="relative inline-flex w-2.5 h-2.5 rounded-full bg-emerald-500"/>
           </span>
           Bugün Satın Alanlar
         </div>
-        <div className="flex items-baseline gap-1.5">
-          <span data-testid="sales-today-count" className="text-2xl font-bold text-emerald-100 mono leading-none">{nfmt(d.sales_today || 0)}</span>
-          <span className="text-[11px] text-emerald-300/70">kişi</span>
+        <div className="relative flex items-baseline gap-2">
+          <span data-testid="sales-today-count" className="text-3xl font-black tabular-nums bg-gradient-to-br from-emerald-200 via-emerald-100 to-teal-200 bg-clip-text text-transparent leading-none gws-sales-count">{nfmt(d.sales_today || 0)}</span>
+          <span className="text-[11px] text-emerald-300/80 mono uppercase tracking-widest gws-sales-unit">kişi</span>
         </div>
-        <div className="text-[9px] text-emerald-300/60 mt-0.5">
-          Bu hafta <span className="text-emerald-200 mono">{nfmt(d.sales_this_week || 0)}</span> · Bu ay <span className="text-emerald-200 mono">{nfmt(d.sales_this_month || 0)}</span>
+        <div className="relative text-[10px] text-emerald-300/70 mt-1 gws-sales-hint">
+          Bu hafta <span className="text-emerald-200 mono font-bold gws-sales-sub">{nfmt(d.sales_this_week || 0)}</span> · Bu ay <span className="text-emerald-200 mono font-bold gws-sales-sub">{nfmt(d.sales_this_month || 0)}</span>
         </div>
       </div>
 
       {/* Son satın alan bilgi kartı (rotating) */}
-      <div className="col-span-1 md:col-span-2 rounded-lg border border-indigo-500/30 bg-slate-950/40 px-3 py-2.5 flex items-center gap-3 overflow-hidden">
+      <div className="col-span-1 md:col-span-2 relative overflow-hidden rounded-xl border border-indigo-500/30
+                       bg-gradient-to-br from-slate-900/60 via-indigo-500/5 to-fuchsia-500/5 px-4 py-3 flex items-center gap-3
+                       shadow-[0_8px_28px_-10px_rgba(99,102,241,0.35),inset_0_1px_0_0_rgba(255,255,255,0.06)] gws-recent-card">
+        <div className="absolute -bottom-8 -left-8 w-32 h-32 rounded-full bg-fuchsia-500/15 blur-3xl pointer-events-none"/>
         {current ? (
           <>
-            <div className="shrink-0 w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/30 border border-indigo-500/40 flex items-center justify-center text-sm font-bold text-indigo-100">
+            <div className="relative shrink-0 w-11 h-11 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 border-2 border-white/20 flex items-center justify-center text-base font-bold text-white shadow-lg shadow-indigo-500/30">
               {current.kind === "firm" ? "🏢" : current.name.charAt(0)}
             </div>
-            <div className="flex-1 min-w-0" key={tick}>
-              <div className="text-[11px] text-slate-300 truncate animate-in fade-in duration-500">
-                <b className="text-slate-100">{current.name}</b>
+            <div className="relative flex-1 min-w-0" key={tick}>
+              <div className="text-[12px] text-slate-300 truncate animate-in fade-in duration-500 gws-recent-name">
+                <b className="text-slate-100 gws-recent-strong">{current.name}</b>
                 <span className="text-slate-500"> · </span>
                 <span className="mr-1">{current.flag || "🌍"}</span>
-                <span className="text-slate-400">{current.city}</span>
+                <span className="text-slate-400 gws-recent-city">{current.city}</span>
                 {current.country_code && (
                   <span className="text-slate-500 mono">, {current.country_code}</span>
                 )}
                 <span className="text-slate-500"> aldı: </span>
                 <span className={`mono font-bold ${current.plan === "Enterprise" ? "text-fuchsia-300" : current.plan === "Pro" ? "text-indigo-300" : "text-emerald-300"}`}>{current.plan}</span>
               </div>
-              <div className="text-[9px] text-slate-500 mono mt-0.5">
-                🕐 {current.minutes_ago} dakika önce · doğrulandı ✓
+              <div className="text-[10px] text-slate-500 mono mt-1 flex items-center gap-1.5 gws-recent-time">
+                <span className="inline-block w-1 h-1 rounded-full bg-emerald-400"/>
+                {current.minutes_ago} dakika önce · doğrulandı ✓
               </div>
             </div>
-            <div className="shrink-0 hidden sm:flex items-center gap-1 text-[9px] text-slate-500">
+            <div className="relative shrink-0 hidden sm:flex items-center gap-1 text-[9px] text-slate-500">
               {[...Array(6)].map((_, i) => (
                 <span key={i} className={`w-1 h-1 rounded-full transition-colors ${(tick % 6) === i ? "bg-indigo-400" : "bg-slate-700"}`}/>
               ))}
@@ -962,99 +1055,145 @@ function LiveBlockCounter() {
     }
   }, [target, displayed]);
 
+  // 7 companion tiles — 3D glass cards with icon glyphs
   const tiles = [
-    {
-      label: "Bugün Engellenen",
-      value: displayed, unit: "mail",
-      color: "rose", pulse: true,
-      hint: d.block_rate > 0 ? `%${d.block_rate} oran` : null,
-    },
-    {
-      label: "Toplam Engellenen",
-      value: d.all_time_blocked, unit: "mail",
-      color: "orange",
-      hint: "tüm zamanlar",
-    },
-    {
-      label: "Yakalanan Virüs",
-      value: d.virus_caught_all_time, unit: "adet",
-      color: "amber",
-      hint: "clamav + AI",
-    },
-    {
-      label: "Yakalanan Phishing",
-      value: d.phishing_caught_all_time, unit: "adet",
-      color: "fuchsia",
-      hint: "AI destekli",
-    },
-    {
-      label: "Yakalanan Exploit",
-      value: d.exploits_caught, unit: "bulgu",
-      color: "rose",
-      hint: `${d.exploits_critical || 0} kritik`,
-    },
-    {
-      label: "Bloklu IP",
-      value: d.ips_blocked, unit: "IP",
-      color: "indigo",
-      hint: "kalıcı liste",
-    },
-    {
-      label: "Karantina (Bugün)",
-      value: d.quarantined_today, unit: "mail",
-      color: "cyan",
-      hint: "kullanıcı gözden geçirir",
-    },
-    {
-      label: "Tehdit İstihbaratı",
-      value: d.iocs_tracked, unit: "IOC",
-      color: "purple",
-      hint: "URLhaus + Spamhaus",
-    },
+    { icon: Database, label: "Toplam Engellenen", value: d.all_time_blocked, unit: "mail", tone: "orange", hint: "tüm zamanlar" },
+    { icon: Bug,      label: "Yakalanan Virüs",   value: d.virus_caught_all_time, unit: "adet", tone: "amber", hint: "ClamAV + AI" },
+    { icon: Radar,    label: "Yakalanan Phishing", value: d.phishing_caught_all_time, unit: "adet", tone: "fuchsia", hint: "AI destekli" },
+    { icon: ShieldAlert, label: "Yakalanan Exploit", value: d.exploits_caught, unit: "bulgu", tone: "rose", hint: `${d.exploits_critical || 0} kritik` },
+    { icon: Lock,     label: "Bloklu IP",         value: d.ips_blocked, unit: "IP", tone: "indigo", hint: "kalıcı liste" },
+    { icon: Inbox,    label: "Karantina (Bugün)", value: d.quarantined_today, unit: "mail", tone: "cyan", hint: "gözden geçirir" },
+    { icon: Globe,    label: "Tehdit İstihbaratı",value: d.iocs_tracked, unit: "IOC", tone: "purple", hint: "URLhaus + Spamhaus" },
   ];
 
-  const COLOR = {
-    rose:    "border-rose-500/30 bg-rose-500/5 text-rose-100",
-    orange:  "border-orange-500/30 bg-orange-500/5 text-orange-100",
-    amber:   "border-amber-500/30 bg-amber-500/5 text-amber-100",
-    fuchsia: "border-fuchsia-500/30 bg-fuchsia-500/5 text-fuchsia-100",
-    indigo:  "border-indigo-500/30 bg-indigo-500/5 text-indigo-100",
-    cyan:    "border-cyan-500/30 bg-cyan-500/5 text-cyan-100",
-    purple:  "border-purple-500/30 bg-purple-500/5 text-purple-100",
+  // 3D card gradient palette — each tile gets its own hue
+  const TONE = {
+    orange:  { icon: "from-orange-400 to-amber-500",  glow: "rgba(251,146,60,0.35)", num: "text-orange-200",  numLight: "text-orange-700"  },
+    amber:   { icon: "from-amber-400 to-yellow-500",  glow: "rgba(251,191,36,0.35)", num: "text-amber-200",   numLight: "text-amber-700"   },
+    fuchsia: { icon: "from-fuchsia-400 to-pink-500",  glow: "rgba(217,70,239,0.35)", num: "text-fuchsia-200", numLight: "text-fuchsia-700" },
+    rose:    { icon: "from-rose-400 to-red-500",      glow: "rgba(244,63,94,0.35)",  num: "text-rose-200",    numLight: "text-rose-700"    },
+    indigo:  { icon: "from-indigo-400 to-blue-500",   glow: "rgba(99,102,241,0.35)", num: "text-indigo-200",  numLight: "text-indigo-700"  },
+    cyan:    { icon: "from-cyan-400 to-sky-500",      glow: "rgba(6,182,212,0.35)",  num: "text-cyan-200",    numLight: "text-cyan-700"    },
+    purple:  { icon: "from-purple-400 to-violet-500", glow: "rgba(168,85,247,0.35)", num: "text-purple-200",  numLight: "text-purple-700"  },
   };
 
   return (
-    <div className={`mb-6 transition-all ${pulse ? "scale-[1.01]" : ""}`}
+    <div className={`mb-6 transition-transform ${pulse ? "scale-[1.005]" : ""}`}
          data-testid="landing-live-block-counter">
-      {/* Ana canlı bar */}
-      <div className={`flex items-center gap-3 mb-3 px-4 py-2.5 rounded-lg border border-rose-500/40 bg-rose-500/10 ${pulse ? "shadow-lg shadow-rose-500/30" : ""}`}>
-        <span className="relative flex w-3 h-3">
-          <span className="absolute inline-flex w-full h-full rounded-full bg-rose-400 opacity-60 animate-ping"/>
-          <span className="relative inline-flex w-3 h-3 rounded-full bg-rose-500"/>
-        </span>
-        <span className="text-[11px] uppercase tracking-widest text-rose-300 mono font-semibold">CANLI SİSTEM · GERÇEK ZAMANLI</span>
-        <span className="text-[10px] text-slate-400 ml-auto">5sn otomatik yenileme · {d.active_licenses || 0} aktif lisans</span>
+      {/* v43.10 — 3D layered banner with radar sweep + orbital glow */}
+      <div className="relative overflow-hidden rounded-2xl mb-3 border border-rose-500/40
+                      bg-gradient-to-br from-rose-500/15 via-slate-900/40 to-orange-500/10
+                      shadow-[0_10px_40px_-15px_rgba(244,63,94,0.5),inset_0_1px_0_0_rgba(255,255,255,0.05)]">
+        {/* Radar orbital glow */}
+        <div className="absolute -top-24 -right-24 w-64 h-64 rounded-full bg-rose-500/20 blur-3xl pointer-events-none"/>
+        <div className="absolute -bottom-24 -left-16 w-64 h-64 rounded-full bg-orange-500/15 blur-3xl pointer-events-none"/>
+        {/* Grid mesh */}
+        <div className="absolute inset-0 opacity-30 pointer-events-none
+                        [background-image:linear-gradient(rgba(244,63,94,0.15)_1px,transparent_1px),linear-gradient(90deg,rgba(244,63,94,0.15)_1px,transparent_1px)]
+                        [background-size:24px_24px]
+                        [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_40%,transparent_100%)]"/>
+
+        <div className="relative px-5 py-4 md:px-6 md:py-5 flex items-center gap-4 flex-wrap">
+          {/* Radar sweep indicator */}
+          <div className="relative w-10 h-10 shrink-0" aria-hidden>
+            <span className="absolute inset-0 rounded-full border-2 border-rose-500/50"/>
+            <span className="absolute inset-1 rounded-full border border-rose-400/40"/>
+            <span className="absolute inset-2 rounded-full bg-rose-500"/>
+            <span className="absolute inset-0 rounded-full border-2 border-rose-400 animate-ping opacity-50"/>
+          </div>
+
+          {/* Live number — HERO of the banner */}
+          <div className="flex-1 min-w-[220px]">
+            <div className="text-[10px] uppercase tracking-[0.25em] mono text-rose-300 font-bold mb-0.5 flex items-center gap-2">
+              CANLI SİSTEM
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-rose-500/20 border border-rose-500/40 text-[9px] text-rose-100 normal-case tracking-normal">
+                <span className="w-1 h-1 rounded-full bg-rose-300 animate-pulse"/> gerçek zamanlı
+              </span>
+            </div>
+            <div className="flex items-baseline gap-3 mt-1">
+              <span data-testid="landing-live-today"
+                    className={`text-4xl md:text-5xl font-black tabular-nums bg-gradient-to-br from-white via-rose-100 to-rose-300 bg-clip-text text-transparent leading-none ${pulse ? "drop-shadow-[0_0_18px_rgba(244,63,94,0.6)]" : ""}`}>
+                {nfmt(displayed)}
+              </span>
+              <span className="text-xs text-rose-200/80 mono uppercase tracking-widest">bugün engellendi</span>
+            </div>
+            <div className="text-[10px] text-slate-400 mono mt-1">
+              {d.block_rate > 0 && <span>• %{d.block_rate} engelleme oranı </span>}
+              • 5sn otomatik yenileme • {d.active_licenses || 0} aktif lisans
+            </div>
+          </div>
+
+          {/* Mini trend indicator */}
+          <div className="hidden md:flex items-center gap-3 pl-4 border-l border-slate-700/50">
+            <div className="text-right">
+              <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">Son 1 saat</div>
+              <div className="text-xl font-bold text-emerald-300 mono tabular-nums">
+                +{nfmt(d.blocked_last_hour ?? Math.round((displayed || 0) / 24))}
+              </div>
+            </div>
+            <TrendSpark values={d.hourly_last_24 || []}/>
+          </div>
+        </div>
       </div>
 
       {/* Sosyal kanıt: bugün satın alanlar */}
       <SalesTodayBanner />
 
-      {/* Metrik grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        {tiles.map((t, i) => (
-          <div key={i}
-               data-testid={`landing-tile-${i}`}
-               className={`rounded-lg border px-3 py-2.5 ${COLOR[t.color]} ${t.pulse && pulse ? "ring-2 ring-rose-500/50" : ""}`}>
-            <div className="text-[9px] uppercase tracking-widest opacity-70 mono">{t.label}</div>
-            <div className="flex items-baseline gap-1.5 mt-0.5">
-              <span className="text-2xl font-bold mono leading-none">{nfmt(t.value)}</span>
-              <span className="text-[10px] opacity-70">{t.unit}</span>
+      {/* 3D Metrik grid — floating glass cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mt-3">
+        {tiles.map((t, i) => {
+          const tone = TONE[t.tone] || TONE.indigo;
+          return (
+            <div key={i}
+                 data-testid={`landing-tile-${i}`}
+                 style={{ "--glow": tone.glow }}
+                 className="group relative rounded-xl p-3.5 overflow-hidden
+                            bg-slate-900/60 border border-slate-800
+                            shadow-[0_4px_20px_-8px_rgba(0,0,0,0.5),inset_0_1px_0_0_rgba(255,255,255,0.05)]
+                            hover:-translate-y-1 hover:border-slate-700
+                            hover:shadow-[0_10px_30px_-10px_var(--glow),inset_0_1px_0_0_rgba(255,255,255,0.08)]
+                            transition-all duration-300">
+              {/* Corner glow */}
+              <div className="absolute -top-8 -right-8 w-24 h-24 rounded-full opacity-40 blur-2xl group-hover:opacity-70 transition-opacity"
+                   style={{ background: `radial-gradient(circle, var(--glow), transparent 70%)` }}/>
+              {/* Icon badge (3D) */}
+              <div className={`relative w-9 h-9 rounded-lg bg-gradient-to-br ${tone.icon} flex items-center justify-center
+                              shadow-[0_4px_12px_-2px_var(--glow),inset_0_1px_0_0_rgba(255,255,255,0.3)]
+                              mb-2.5`}>
+                <t.icon className="w-4 h-4 text-white drop-shadow-sm" strokeWidth={2.5}/>
+              </div>
+              <div className="text-[9px] uppercase tracking-widest text-slate-400 mono mb-1 gws-tile-label">{t.label}</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-2xl font-black tabular-nums leading-none ${tone.num} gws-tile-num`}>{nfmt(t.value)}</span>
+                <span className="text-[10px] text-slate-500 mono gws-tile-unit">{t.unit}</span>
+              </div>
+              {t.hint && <div className="text-[9px] text-slate-500 mono mt-1 gws-tile-hint">{t.hint}</div>}
             </div>
-            {t.hint && <div className="text-[9px] opacity-60 mt-0.5">{t.hint}</div>}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
+  );
+}
+
+/** Modern sparkline for the live banner — pure SVG, dependency-free */
+function TrendSpark({ values }) {
+  const arr = (values && values.length > 0) ? values : [3, 5, 4, 7, 6, 9, 8, 12, 10, 14, 13, 16];
+  const w = 80, h = 32;
+  const max = Math.max(...arr, 1);
+  const step = w / (arr.length - 1 || 1);
+  const pts = arr.map((v, i) => `${i * step},${h - (v / max) * h}`).join(" ");
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="opacity-90">
+      <defs>
+        <linearGradient id="spark-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#10b981" stopOpacity="0.5"/>
+          <stop offset="100%" stopColor="#10b981" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <polygon fill="url(#spark-fill)" points={`0,${h} ${pts} ${w},${h}`}/>
+      <polyline fill="none" stroke="#10b981" strokeWidth="1.5" points={pts}/>
+    </svg>
   );
 }
 
@@ -1464,11 +1603,23 @@ function HavaleResult({ havaleData, onDone }) {
 
 export default function Landing() {
   const { effective } = useI18n();
+  const theme = useLandingTheme();
+  const isLight = theme === "light";
   return (
-    <div className={`min-h-screen bg-slate-950 text-slate-100 ${effective === "ar" ? "rtl" : ""}`} dir={effective === "ar" ? "rtl" : "ltr"} data-testid="landing-page">
+    <div
+      className={`min-h-screen ${isLight ? "gws-landing-light bg-[#fef8f0] text-slate-800" : "bg-slate-950 text-slate-100"} ${effective === "ar" ? "rtl" : ""}`}
+      dir={effective === "ar" ? "rtl" : "ltr"}
+      data-landing-theme={theme}
+      data-testid="landing-page"
+    >
+      {/* v43.9 Light theme — sıcak krem/soft-blue palet için Tailwind override'ları.
+          Sadece .gws-landing-light kapsayıcısı içindeyken devreye girer, panel/dashboard etkilenmez. */}
+      {isLight && <LandingLightThemeStyles />}
       <NavBar />
       <Hero />
       <BlockedTrendWidget />
+      <ActivityHeatmap />
+      <CostSavingsWidget />
       <Features />
       <ModulesShowcase />
       <GeoBlockedHeatmap />
@@ -1484,6 +1635,154 @@ export default function Landing() {
       <LicenseEntryModal />
       <LiveTicker />
     </div>
+  );
+}
+
+/**
+ * v43.9 Sıcak, davetkâr light temayı slate-star/text-slate-star class'larını hedefleyen
+ * bir style overlay ile uygular. Tailwind class'larını yeniden yazmadan çalışır.
+ * Hero: krem-mavi gradient; nav/section arkaları: yumuşak beyaz; card: cream + soft border.
+ */
+function LandingLightThemeStyles() {
+  return (
+    <style>{`
+      .gws-landing-light {
+        --gws-page-bg: linear-gradient(180deg, #fef8f0 0%, #fdf2e9 45%, #eaf3ff 100%);
+        background: var(--gws-page-bg) !important;
+        color: #1e293b;
+      }
+      /* Nav & sticky header */
+      .gws-landing-light header[data-testid="landing-nav"] {
+        background: rgba(255,255,255,0.85) !important;
+        border-bottom-color: #fde3c4 !important;
+      }
+      /* Section borders and translucent backdrops */
+      .gws-landing-light .border-slate-800,
+      .gws-landing-light .border-slate-800\\/60,
+      .gws-landing-light .border-slate-700 { border-color: #fde3c4 !important; }
+      .gws-landing-light .bg-slate-950,
+      .gws-landing-light .bg-slate-950\\/60,
+      .gws-landing-light .bg-slate-950\\/70,
+      .gws-landing-light .bg-slate-950\\/80,
+      .gws-landing-light .bg-slate-950\\/40 { background-color: rgba(255,251,244,0.85) !important; }
+      .gws-landing-light .bg-slate-900,
+      .gws-landing-light .bg-slate-900\\/40,
+      .gws-landing-light .bg-slate-900\\/60 { background-color: rgba(255,255,255,0.78) !important; }
+      .gws-landing-light .bg-slate-800,
+      .gws-landing-light .bg-slate-800\\/40,
+      .gws-landing-light .bg-slate-800\\/60 { background-color: rgba(253,242,229,0.7) !important; }
+      /* Text: darken slate-* on light */
+      .gws-landing-light .text-slate-100 { color: #0f172a !important; }
+      .gws-landing-light .text-slate-300 { color: #334155 !important; }
+      .gws-landing-light .text-slate-400 { color: #475569 !important; }
+      .gws-landing-light .text-slate-500 { color: #64748b !important; }
+      .gws-landing-light .text-slate-600 { color: #94a3b8 !important; }
+      /* Hover states from slate → warm cream */
+      .gws-landing-light .hover\\:text-slate-100:hover { color: #1e3a8a !important; }
+      .gws-landing-light .hover\\:bg-slate-800\\/60:hover { background-color: rgba(253,230,199,0.6) !important; }
+      /* Preserve terminal block (dark on purpose) */
+      .gws-landing-light [data-testid="landing-how"] pre { color: #cbd5e1; }
+      /* Hero gradient title accent — softer, warmer palette */
+      .gws-landing-light [data-testid="landing-hero"] h1 span.bg-clip-text {
+        background-image: linear-gradient(90deg, #2563eb, #db2777, #ea580c) !important;
+      }
+      /* Card shadows — softer, no harsh dark */
+      .gws-landing-light [data-testid^="testimonial-"],
+      .gws-landing-light [data-testid^="case-"],
+      .gws-landing-light [data-testid="landing-features"] > div > div > div {
+        box-shadow: 0 4px 20px -6px rgba(30, 58, 138, 0.08);
+      }
+      /* Footer background */
+      .gws-landing-light footer.bg-slate-950 { background: #fef8f0 !important; }
+      /* Live LiveTicker floating widget bg */
+      .gws-landing-light [data-testid="live-ticker"] { background: rgba(255,255,255,0.92) !important; color: #0f172a; }
+
+      /* --- v43.10 3D LiveBlockCounter — light mode adaptation --- */
+      /* Ana banner: koyu gradient yerine sıcak beyaz+rose gradient */
+      .gws-landing-light [data-testid="landing-live-block-counter"] > div:first-child {
+        background: linear-gradient(135deg, #ffffff 0%, #fef2f2 45%, #fff7ed 100%) !important;
+        border-color: #fda4af !important;
+        box-shadow:
+          0 10px 40px -15px rgba(244,63,94,0.35),
+          inset 0 1px 0 0 rgba(255,255,255,0.7),
+          0 1px 3px rgba(0,0,0,0.04) !important;
+      }
+      .gws-landing-light [data-testid="landing-live-today"] {
+        background-image: linear-gradient(135deg, #be123c, #db2777, #ea580c) !important;
+        -webkit-background-clip: text; background-clip: text;
+        color: transparent !important;
+      }
+      /* Banner ikincil metinler */
+      .gws-landing-light [data-testid="landing-live-block-counter"] .text-rose-300,
+      .gws-landing-light [data-testid="landing-live-block-counter"] .text-rose-200\\/80 { color: #be123c !important; }
+      .gws-landing-light [data-testid="landing-live-block-counter"] .text-emerald-300 { color: #047857 !important; }
+      .gws-landing-light [data-testid="landing-live-block-counter"] .border-slate-700\\/50 { border-color: #fecdd3 !important; }
+
+      /* 3D Tile'lar: koyu slate arka plan yerine beyaz cam */
+      .gws-landing-light [data-testid^="landing-tile-"] {
+        background: rgba(255,255,255,0.85) !important;
+        border-color: #e2e8f0 !important;
+        box-shadow:
+          0 6px 24px -10px rgba(15,23,42,0.15),
+          inset 0 1px 0 0 rgba(255,255,255,0.9) !important;
+      }
+      .gws-landing-light [data-testid^="landing-tile-"]:hover {
+        border-color: #cbd5e1 !important;
+        box-shadow:
+          0 12px 32px -8px var(--glow, rgba(99,102,241,0.35)),
+          inset 0 1px 0 0 rgba(255,255,255,0.95) !important;
+      }
+      /* Tile içi metinler light'ta koyu */
+      .gws-landing-light .gws-tile-label { color: #334155 !important; }
+      .gws-landing-light .gws-tile-unit  { color: #475569 !important; }
+      .gws-landing-light .gws-tile-hint  { color: #64748b !important; }
+      /* Tile numaraları light'ta koyu renk versiyonu */
+      .gws-landing-light [data-testid^="landing-tile-"] .gws-tile-num.text-orange-200  { color: #c2410c !important; }
+      .gws-landing-light [data-testid^="landing-tile-"] .gws-tile-num.text-amber-200   { color: #b45309 !important; }
+      .gws-landing-light [data-testid^="landing-tile-"] .gws-tile-num.text-fuchsia-200 { color: #a21caf !important; }
+      .gws-landing-light [data-testid^="landing-tile-"] .gws-tile-num.text-rose-200    { color: #be123c !important; }
+      .gws-landing-light [data-testid^="landing-tile-"] .gws-tile-num.text-indigo-200  { color: #3730a3 !important; }
+      .gws-landing-light [data-testid^="landing-tile-"] .gws-tile-num.text-cyan-200    { color: #0e7490 !important; }
+      .gws-landing-light [data-testid^="landing-tile-"] .gws-tile-num.text-purple-200  { color: #7e22ce !important; }
+
+      /* --- SalesTodayBanner light adaptation --- */
+      .gws-landing-light .gws-sales-card {
+        background: linear-gradient(135deg, #ffffff 0%, #ecfdf5 55%, #d1fae5 100%) !important;
+        border-color: #6ee7b7 !important;
+        box-shadow: 0 8px 24px -10px rgba(5,150,105,0.35), inset 0 1px 0 0 rgba(255,255,255,0.8) !important;
+      }
+      .gws-landing-light .gws-sales-label { color: #047857 !important; }
+      .gws-landing-light .gws-sales-count {
+        background-image: linear-gradient(135deg, #065f46, #047857, #0d9488) !important;
+        -webkit-background-clip: text; background-clip: text; color: transparent !important;
+      }
+      .gws-landing-light .gws-sales-unit { color: #059669 !important; }
+      .gws-landing-light .gws-sales-hint { color: #059669 !important; }
+      .gws-landing-light .gws-sales-sub  { color: #065f46 !important; }
+
+      .gws-landing-light .gws-recent-card {
+        background: linear-gradient(135deg, #ffffff 0%, #eef2ff 55%, #fdf4ff 100%) !important;
+        border-color: #c7d2fe !important;
+        box-shadow: 0 8px 24px -10px rgba(99,102,241,0.25), inset 0 1px 0 0 rgba(255,255,255,0.85) !important;
+      }
+      .gws-landing-light .gws-recent-name    { color: #334155 !important; }
+      .gws-landing-light .gws-recent-strong  { color: #0f172a !important; }
+      .gws-landing-light .gws-recent-city    { color: #475569 !important; }
+      .gws-landing-light .gws-recent-time    { color: #64748b !important; }
+
+      /* Aktif lisans pill (banner) — light contrast */
+      .gws-landing-light [data-testid="landing-live-block-counter"] .bg-rose-500\\/20 {
+        background-color: rgba(254,205,211,0.9) !important;
+      }
+      .gws-landing-light [data-testid="landing-live-block-counter"] .text-rose-100 { color: #9f1239 !important; }
+
+      /* Live ticker at bottom — always readable */
+      .gws-landing-light .text-emerald-100 { color: #065f46 !important; }
+      .gws-landing-light .text-emerald-200 { color: #047857 !important; }
+      .gws-landing-light .text-indigo-100  { color: #3730a3 !important; }
+      .gws-landing-light .text-fuchsia-300 { color: #a21caf !important; }
+      .gws-landing-light .text-indigo-300  { color: #4338ca !important; }
+    `}</style>
   );
 }
 

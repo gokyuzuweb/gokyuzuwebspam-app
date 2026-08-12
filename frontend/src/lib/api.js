@@ -193,6 +193,9 @@ export const api = {
 
   smtpGet: () => client.get("/settings/smtp").then(r => r.data),
   smtpPut: (payload) => client.put("/settings/smtp", payload).then(r => r.data),
+  // v43.9 Landing CMS
+  landingGet: () => client.get("/settings/landing").then(r => r.data),
+  landingPut: (payload) => client.put("/settings/landing", payload).then(r => r.data),
   mailTest: (payload) => client.post("/mail/test", payload).then(r => r.data),
 
   reportDownload: () => `${API}/reports/weekly`,

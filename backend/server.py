@@ -2299,6 +2299,83 @@ async def put_smtp_settings(payload: SmtpSettingsIn):
     return {"ok": True}
 
 
+# ------------------------- Landing Page Settings + CMS -------------------------
+# v43.9 — Master panelden landing sayfası teması + metinleri düzenleyebilir.
+# GET public (herkes okur), PUT master-only.
+
+class LandingHeroBlock(BaseModel):
+    badge: Optional[str] = ""      # ex: "WHM / cPanel için ticari mail güvenliği"
+    title_a: Optional[str] = ""    # ex: "Sunucunuzdan"
+    title_b: Optional[str] = ""    # ex: "spam ve tehdit sızmasın."
+    subtitle: Optional[str] = ""   # long paragraph
+    cta_primary: Optional[str] = ""  # ex: "Şimdi Satın Al"
+    cta_secondary: Optional[str] = ""  # ex: "Canlı Demo"
+
+
+class LandingContentIn(BaseModel):
+    theme: Optional[str] = "dark"   # "dark" | "light"
+    hero: Optional[LandingHeroBlock] = None
+    features_title: Optional[str] = ""
+    features_sub: Optional[str] = ""
+    stats_headline: Optional[str] = ""
+    pricing_title: Optional[str] = ""
+    pricing_sub: Optional[str] = ""
+    cta_bottom_title: Optional[str] = ""
+    cta_bottom_sub: Optional[str] = ""
+    footer_copyright: Optional[str] = ""
+
+
+LANDING_DEFAULTS = {
+    "theme": "dark",
+    "hero": {
+        "badge": "", "title_a": "", "title_b": "", "subtitle": "",
+        "cta_primary": "", "cta_secondary": "",
+    },
+    "features_title": "",
+    "features_sub": "",
+    "stats_headline": "",
+    "pricing_title": "",
+    "pricing_sub": "",
+    "cta_bottom_title": "",
+    "cta_bottom_sub": "",
+    "footer_copyright": "",
+}
+
+
+@api.get("/settings/landing")
+async def get_landing_settings():
+    """Public — Landing page reads theme + optional text overrides.
+    Empty strings mean "use i18n default from LANG_STRINGS"."""
+    doc = await db.settings.find_one({"_key": "landing_content"}, {"_id": 0, "_key": 0}) or {}
+    out = {**LANDING_DEFAULTS, **doc}
+    # normalize hero if nested doc missing
+    if not isinstance(out.get("hero"), dict):
+        out["hero"] = LANDING_DEFAULTS["hero"]
+    else:
+        out["hero"] = {**LANDING_DEFAULTS["hero"], **out["hero"]}
+    # Normalize theme
+    if out.get("theme") not in ("dark", "light"):
+        out["theme"] = "dark"
+    out.pop("updated_at", None)
+    return out
+
+
+@api.put("/settings/landing")
+async def put_landing_settings(payload: LandingContentIn, request: Request):
+    """Master-only — save landing theme + editable text blocks."""
+    await _require_master(request, None)
+    doc = payload.model_dump(exclude_none=False)
+    # Normalize theme
+    if doc.get("theme") not in ("dark", "light"):
+        doc["theme"] = "dark"
+    doc["_key"] = "landing_content"
+    doc["updated_at"] = _iso()
+    await db.settings.update_one(
+        {"_key": "landing_content"}, {"$set": doc}, upsert=True
+    )
+    return {"ok": True, "theme": doc["theme"]}
+
+
 @api.post("/mail/test")
 async def mail_send_test(payload: MailTestIn):
     """Send a real test email to `to`. Uses SMTP settings if enabled, otherwise local sendmail."""

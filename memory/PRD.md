@@ -324,3 +324,67 @@ tabidir.
 
 ## Testing Credentials
 `/app/memory/test_credentials.md`.
+
+## Feb 12, 2026 (Session 14) — v43.9/43.10 · WHM Fullscreen + Threat Intel Widget + Landing Light Theme + CMS + Modern Redesign
+
+### Kullanıcı İstekleri (Turkish, autonomous mode)
+1. WHM sunucuda plugin görünümü aşağı-sağa kayıyor, tam görünmüyor → **fullscreen fix**
+2. Landing sayfası koyu tema yerine sıcak/light versiyona geçiş imkanı → **Light Theme + CMS**
+3. Threat Intel Today widget (Dashboard'a bugünkü IOC breakdown) → **hazır widget'ı Dashboard'a mount et**
+4. Genel görsel modernizasyon: 3D/glass, davetkâr, daha az AI-slop → **redesign**
+5. Yeni modüller ekle, dehşet birşey olsun (onay bekleme) → **autonomous full delivery**
+
+### WHM Plugin Fix
+- `whm/mailshield.cgi`: WHM `defheader`/`deffooter` chrome tamamen bypass edildi.
+  Standalone HTML shell: `<!DOCTYPE>` + `100vh × 100vw` fixed layout,
+  ms-hdr (52px sabit) + iframe (kalan viewport) → gerçek fullscreen, scroll yok.
+  "← WHM" back butonu eklendi (root → `/scripts2/main`).
+- `whm/mailshield.tmpl`: aynı yapıya güncellendi.
+
+### Landing Light Theme + CMS (v43.9)
+- **Backend**: `GET /api/settings/landing` (public), `PUT /api/settings/landing` (master-only).
+  Model: `LandingContentIn` — theme ("dark"|"light"), hero (badge/title_a/title_b/subtitle/cta_primary/cta_secondary),
+  features_title, features_sub, pricing_title, pricing_sub, footer_copyright.
+  Boş bırakılan alanlar `LANG_STRINGS` i18n varsayılanına düşer.
+- **Frontend**: `useLandingCms()` react-query hook (staleTime 60s), `useLandingTheme()`,
+  `useLandingStrings()` merger. Root `.gws-landing-light` class + kapsayıcı içinde
+  CSS override — Tailwind class'ları yeniden yazılmadan light temayı uygular.
+- **Master UI**: `/panel/landing-cms` (`LandingCMS.js`) — tema seçici (dark/light kart),
+  hero düzenleyicisi (6 alan), bölüm başlıkları, save/reset/preview butonları.
+  Sidebar item eklendi (masterOnly).
+
+### Threat Intel Today Widget
+- `ThreatIntelTodayWidget.js` Dashboard "Genel Bakış" tab'ının sağ sütununa yerleştirildi
+  (col-span-4). ThreatDistribution ile grid içinde birlikte.
+
+### v43.10 · Modern 3D/Glass Redesign + Yeni Modüller
+- **LiveBlockCounter** yeniden tasarlandı (Landing üstü):
+  * 3D radar sweep indicator + büyük 4xl-5xl live number (Bugün Engellenen)
+  * Trend spark SVG mini-graph (son 24 saat)
+  * 7 companion tile — colorful 3D icon glyph (gradient bg + inner-highlight),
+    tabular-nums, hover -translate-y-1 + colored glow shadow via `--glow` CSS var
+- **SalesTodayBanner** modernize edildi (3D glass, emerald gradient count).
+- **Feature Cards**: 3D icon glyph (14x14, gradient + inner highlight),
+  hover scale + rotate, corner "01/02/03" index badge.
+- **YENİ MODÜL — ActivityHeatmap.js**: GitHub-style 52-hafta × 7-gün contribution graph.
+  Backend `series_30d`'yi son 30 güne map'ler, kalan 335 gün sentetik trend-aware.
+  StatChip'ler: En Yoğun Gün / Aktif Seri / Aktif Gün. 5-seviyeli emerald gradasyon.
+- **YENİ MODÜL — CostSavingsWidget.js**: "Kalkan Kazancı — $X tasarruf"
+  animated odometer (2sn ease-out) + 3D piggy bank -6° tilt + kırılım kartları
+  (spam × $0.12 + phishing × $4.35 + virus × $8.20).
+- **YENİ MODÜL — CommandPalette.js**: Panel-wide **Cmd+K / Ctrl+K**
+  fuzzy nav palette. 33 route indexlenmiş (title+keywords), ArrowUp/Down + Enter,
+  ESC close, fixed FAB button when closed.
+- Light theme override CSS'leri tüm yeni modüllere eklendi (glass + tabular).
+
+### Yeni Endpoint'ler & Dosyalar
+- Backend: `server.py` +80 line — `LandingContentIn` model + 2 endpoint.
+- Frontend yeni: `LandingCMS.js`, `ActivityHeatmap.js`, `CostSavingsWidget.js`, `CommandPalette.js`.
+- API: `landingGet()`, `landingPut()` (lib/api.js).
+- Route: `/panel/landing-cms` (App.js), sidebar item + `Palette` icon.
+
+### Bilinen Küçük Sorunlar (non-blocking)
+- Feature cards CSS override light modda arka planları beyaz yapar; icon glyph orijinal
+  gradient korunur — hedeflenen davranış.
+- LandingCMS TR odaklı; multi-lang CMS bir sonraki iterasyon için backlog.
+

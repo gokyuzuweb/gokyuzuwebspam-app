@@ -170,9 +170,8 @@ sub _badge {
 }
 my $badge_html = cluster_badge();
 
-# ---- HTML shell (WHM chrome + header + badge + Update button + iframe) ----
+# ---- HTML shell (STANDALONE — no WHM chrome, iframe fills 100vh) ----
 print "Content-type: text/html; charset=utf-8\r\n\r\n";
-Whostmgr::HTMLInterface::defheader('GokyuzuWebSpam', '', '/cgi/mailshield');
 
 my $panel_url = "$public/panel";
 if ($master_key) {
@@ -181,50 +180,85 @@ if ($master_key) {
 }
 
 print <<"HTML";
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>GokyuzuWebSpam - Mail Guvenlik Paneli</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  /* v43.7 WHM plugin fullscreen fix — iframe artık viewport'un tamamını kullanır */
-  html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; }
-  /* WHM outer wrapper padding'i sıfırla */
-  #contentContainer, .pageContainer, #cptext { padding: 0 !important; margin: 0 !important; max-width: none !important; }
-  #ms-shell {
-    position: relative;
-    width: 100vw;
-    height: calc(100vh - 88px); /* sadece kompakt header için 88px ayır */
-    display: block;
-    border: 0;
-    box-shadow: none;
-    margin: 0;
-    padding: 0;
+  /* v43.9 Standalone WHM plugin — WHM chrome tamamen bypass, iframe 100vh gerçek fullscreen */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
+    background: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   .ms-hdr {
-    padding: 10px 16px;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 52px;
+    padding: 8px 16px;
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: nowrap;
     background: #f8fafc;
     border-bottom: 1px solid #e5e7eb;
-    height: 68px;
-    box-sizing: border-box;
+    z-index: 10;
     overflow: hidden;
   }
-  .ms-hdr h1 { margin: 0; font-size: 16px; color: #1e3a8a; line-height: 1.2; }
-  .ms-hdr p { margin: 2px 0 0 0; color: #666; font-size: 11px; line-height: 1.2; }
   .ms-hdr .ms-title { flex: 1; min-width: 200px; overflow: hidden; }
-  .ms-btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 20px; background: #2563eb; color: #fff; border: 0; font-size: 11px; font-weight: 600; cursor: pointer; transition: all .15s; white-space: nowrap; }
+  .ms-hdr h1 { margin: 0; font-size: 15px; color: #1e3a8a; line-height: 1.2; font-weight: 700; }
+  .ms-hdr p { margin: 1px 0 0 0; color: #64748b; font-size: 10px; line-height: 1.2; }
+  .ms-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border-radius: 20px;
+    background: #2563eb; color: #fff; border: 0;
+    font-size: 11px; font-weight: 600; cursor: pointer;
+    transition: all .15s; white-space: nowrap;
+    text-decoration: none;
+  }
   .ms-btn:hover:not(:disabled) { background: #1d4ed8; transform: translateY(-1px); }
   .ms-btn:disabled { opacity: .6; cursor: wait; }
+  .ms-btn.ms-btn-back { background: #64748b; }
+  .ms-btn.ms-btn-back:hover { background: #475569; }
   .ms-btn.ms-btn-ok { background: #059669; }
   .ms-btn.ms-btn-err { background: #dc2626; }
-  #ms-update-status { font-size: 10px; color: #666; margin-left: 6px; }
+  #ms-update-status { font-size: 10px; color: #64748b; margin-left: 6px; }
   #ms-badge { font-size: 11px !important; padding: 3px 8px !important; }
+  #ms-shell {
+    position: fixed;
+    top: 52px;   /* header height */
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    height: calc(100vh - 52px);
+    border: 0;
+    display: block;
+    margin: 0;
+    padding: 0;
+    background: #0f172a;
+  }
 </style>
+</head>
+<body>
 <div class="ms-hdr">
   <div class="ms-title">
     <h1>GokyuzuWebSpam &mdash; Mail Guvenlik Paneli</h1>
-    <p>Modern spam &amp; virus koruma paneli. Canli lisans sunucusu ile senkronize.</p>
+    <p>Modern spam &amp; virus koruma paneli · Canli lisans sunucusu ile senkronize</p>
   </div>
   $badge_html
+  <a href="/scripts2/main" class="ms-btn ms-btn-back" title="WHM Ana Sayfaya Don">
+    &larr; WHM
+  </a>
   <button id="ms-update-btn" class="ms-btn" onclick="msUpdate()" title="Plugin script'lerini son surumden guncelle">
     &#x21bb; Guncelle
   </button>
@@ -281,7 +315,8 @@ async function msUpdate() {
   }
 }
 </script>
+</body>
+</html>
 HTML
 
-Whostmgr::HTMLInterface::deffooter();
 exit 0;

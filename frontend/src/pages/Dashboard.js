@@ -22,6 +22,7 @@ import AttackMap from "@/components/AttackMap";
 import QueueModal from "@/components/QueueModal";
 import IpDrilldownDrawer from "@/components/IpDrilldownDrawer";
 import CountryBlockCard from "@/components/CountryBlockCard";
+import ThreatIntelTodayWidget from "@/components/ThreatIntelTodayWidget";
 
 const LICKEY = () => (typeof window !== "undefined"
   ? (localStorage.getItem("gws.event_license") || "")
@@ -109,7 +110,10 @@ export default function Dashboard() {
                         hint={`${stats.engines_active}/${stats.engines_total} motor aktif`}/>
             </div>
           </div>
-          <ThreatDistribution stats={stats}/>
+          <div className="grid grid-cols-12 gap-4">
+            <div className="col-span-12 lg:col-span-8"><ThreatDistribution stats={stats}/></div>
+            <div className="col-span-12 lg:col-span-4"><ThreatIntelTodayWidget /></div>
+          </div>
         </div>
       )}
 

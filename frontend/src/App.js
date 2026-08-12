@@ -6,7 +6,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal, Server, History, Mail,
-  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck,
+  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck, Palette,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -56,6 +56,8 @@ import Subscription from "@/pages/Subscription";
 import PlanConfig from "@/pages/PlanConfig";
 import BayiServer from "@/pages/BayiServer";
 import WhitelistHistory from "@/pages/WhitelistHistory";
+import LandingCMS from "@/pages/LandingCMS";
+import CommandPalette from "@/components/CommandPalette";
 import Header from "@/components/Header";
 
 const NAV = [
@@ -90,6 +92,7 @@ const NAV = [
   { to: "/panel/wake-history", key: "wake_history", icon: History, testid: "nav-wake-history", label: "Ping Geçmişi", masterOnly: true, sellerOnly: true },
   { to: "/panel/email-templates", key: "email_templates", icon: Mail, testid: "nav-email-templates", label: "Mail Şablonları", masterOnly: true, sellerOnly: true },
   { to: "/panel/plugin-health", key: "plugin_health", icon: HeartPulse, testid: "nav-plugin-health", label: "Plugin Sağlık", masterOnly: true, sellerOnly: true },
+  { to: "/panel/landing-cms", key: "landing_cms", icon: Palette, testid: "nav-landing-cms", label: "Landing CMS", masterOnly: true, sellerOnly: true },
   { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
@@ -219,6 +222,7 @@ function Shell() {
             <Route path="/wake-history" element={<WakeHistory />} />
             <Route path="/email-templates" element={<EmailTemplates />} />
             <Route path="/plugin-health" element={<PluginHealth />} />
+            <Route path="/landing-cms" element={<LandingCMS />} />
             <Route path="/my-server" element={<BayiServer />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />
@@ -241,6 +245,8 @@ function Shell() {
           </Routes>
         </main>
       </div>
+      {/* v43.10 Panel-wide Cmd+K Command Palette */}
+      <CommandPalette />
     </div>
   );
 }
