@@ -9,9 +9,12 @@ from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 from deps import db
+import logging
 import os
 import re
 import uuid
+
+log = logging.getLogger("events")
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -308,6 +311,37 @@ async def ingest_event(evt: MailEvent, request: Request):
             doc["total_score"] = 0
     # ---------------------------------------------------------------------
     await db.mail_events.insert_one(doc)
+
+    # ---- KARANTİNAYA OTOMATİK YAZ (spam/high_spam/virus/phish/blocked) ----
+    # `mail_events` = tüm mail feed; `quarantine` = sadece yakalanan mailler
+    # (frontend Karantina sayfası bu koleksiyondan besleniyor).
+    verdict_lc = (doc.get("verdict") or "").lower()
+    if verdict_lc in {"spam", "high_spam", "virus", "phish", "phishing", "blocked", "block"}:
+        try:
+            engines = doc.get("engines") or list((doc.get("scores") or {}).keys())
+            q_doc = {
+                "id": doc["id"],  # mail_events.id ile eşit (delete/release/report için)
+                "owner_license_key": evt.license_key,
+                "license_key": evt.license_key,
+                "sender": doc.get("from_addr") or "",
+                "recipient": doc.get("to_addr") or "",
+                "subject": doc.get("subject") or "(konusuz)",
+                "verdict": doc["verdict"],
+                "total_score": doc.get("total_score") or 0,
+                "engines": engines if isinstance(engines, list) else [],
+                "scores": doc.get("scores") or {},
+                "sender_ip": doc.get("sender_ip") or doc.get("client_ip") or "",
+                "size_bytes": doc.get("size_bytes") or (doc.get("scores") or {}).get("size"),
+                "received_at": doc.get("ts") or doc.get("ingested_at"),
+                "ingested_at": doc.get("ingested_at"),
+                "released": False,
+                "score_normalized": doc.get("score_normalized", False),
+                "thresholds_used": doc.get("thresholds_used"),
+            }
+            await db.quarantine.insert_one(q_doc)
+        except Exception as ex:
+            log.warning("quarantine insert failed for mail_events.id=%s: %s", doc.get("id"), ex)
+    # ---------------------------------------------------------------------
     # Canlı akışa yayınla — Landing + Panel WebSocket dinleyicileri anında görsün
     try:
         from routes.maintenance import push_attack_event, _GEO_CC_NAME
@@ -676,6 +710,79 @@ async def ingest_batch(events: list[MailEvent]):
         {"$set": {"last_event_at": now}, "$inc": {"total_events": len(docs)}}
     )
     return {"ok": True, "inserted": len(docs)}
+
+
+@router.post("/backfill-quarantine")
+async def backfill_quarantine(request: Request, license_key: Optional[str] = None,
+                                dry_run: bool = False, limit: int = 50000):
+    """`mail_events` içindeki spam/high_spam/virus/phish/blocked kayıtları
+    `quarantine` koleksiyonuna aktar. Idempotent — aynı `id` varsa atlar.
+
+    Karantina sayfası boş görünüyorsa (ör: ingest'ten önce sadece mail_events
+    yazılıyordu) bu endpoint ile geriye dönük doldurulur.
+
+    - Master (header/cookie) → tüm bayilerinki (opsiyonel `license_key` ile drill-down)
+    - Bayi → sadece kendi kayıtları
+    - `dry_run=true` → sayım yapar, insert etmez"""
+    from tenant import resolve_tenant_scope
+    scope = await resolve_tenant_scope(request, license_key, db)
+    if not scope["is_master"] and scope["owner_license_key"] in ("", "__none__"):
+        raise HTTPException(403, "Geçerli lisans veya master yetkisi gerekli")
+
+    q: dict = {"verdict": {"$in": ["spam", "high_spam", "virus", "phish", "phishing", "blocked", "block"]}}
+    if not scope["is_master"]:
+        q["license_key"] = scope["owner_license_key"]
+    elif scope["owner_license_key"]:
+        q["license_key"] = scope["owner_license_key"]
+
+    # Zaten quarantine'da olan id'leri topla (dup önle)
+    existing_ids: set[str] = set()
+    async for x in db.quarantine.find({}, {"_id": 0, "id": 1}).limit(200000):
+        if x.get("id"):
+            existing_ids.add(x["id"])
+
+    scanned = 0
+    inserted = 0
+    to_insert: list[dict] = []
+    async for e in db.mail_events.find(q, {"_id": 0}).sort("ingested_at", -1).limit(limit):
+        scanned += 1
+        if e.get("id") in existing_ids:
+            continue
+        engines = e.get("engines") or list((e.get("scores") or {}).keys())
+        to_insert.append({
+            "id": e["id"],
+            "owner_license_key": e.get("license_key") or "",
+            "license_key": e.get("license_key") or "",
+            "sender": e.get("from_addr") or "",
+            "recipient": e.get("to_addr") or "",
+            "subject": e.get("subject") or "(konusuz)",
+            "verdict": e.get("verdict"),
+            "total_score": e.get("total_score") or 0,
+            "engines": engines if isinstance(engines, list) else [],
+            "scores": e.get("scores") or {},
+            "sender_ip": e.get("sender_ip") or e.get("client_ip") or "",
+            "size_bytes": e.get("size_bytes") or (e.get("scores") or {}).get("size"),
+            "received_at": e.get("ts") or e.get("ingested_at"),
+            "ingested_at": e.get("ingested_at"),
+            "released": False,
+            "score_normalized": e.get("score_normalized", False),
+            "backfilled": True,
+        })
+        if len(to_insert) >= 500 and not dry_run:
+            r = await db.quarantine.insert_many(to_insert, ordered=False)
+            inserted += len(r.inserted_ids)
+            to_insert = []
+    if to_insert and not dry_run:
+        r = await db.quarantine.insert_many(to_insert, ordered=False)
+        inserted += len(r.inserted_ids)
+    elif to_insert and dry_run:
+        inserted = len(to_insert)  # olası ekleme sayısı
+    return {
+        "ok": True, "scanned": scanned, "inserted": inserted,
+        "already_in_quarantine": len(existing_ids),
+        "dry_run": dry_run,
+        "scope": {"is_master": scope["is_master"], "owner": scope["owner_license_key"]},
+    }
 
 
 @router.post("/rescore")
