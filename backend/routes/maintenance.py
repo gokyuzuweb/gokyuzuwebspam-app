@@ -20,31 +20,11 @@ def _iso() -> str:
 
 
 # ============================================================================
-# v40 In-memory TTL cache — Landing polling endpoint'leri için (public/blocked-stats,
-# geo/blocked-heatmap). Sadece process-local; bir bayi başkasının cache'ini görmez
-# çünkü key'e license_key/region dahil ediyoruz. Prod'da process başına yeterli.
+# v41 Redis-backed TTL cache — Landing polling endpoint'leri için
+# (public/blocked-stats, geo/blocked-heatmap). Redis erişilemezse şeffaf
+# olarak process-local in-memory'ye düşer. REDIS_URL env ile aktif olur.
 # ============================================================================
-import time as _time
-_TTL_CACHE: dict[str, tuple[float, object]] = {}
-
-def _cache_get(key: str):
-    hit = _TTL_CACHE.get(key)
-    if not hit:
-        return None
-    expires_at, val = hit
-    if _time.time() > expires_at:
-        _TTL_CACHE.pop(key, None)
-        return None
-    return val
-
-def _cache_set(key: str, val, ttl_sec: float):
-    _TTL_CACHE[key] = (_time.time() + ttl_sec, val)
-    # Prevent unbounded growth in worst case
-    if len(_TTL_CACHE) > 200:
-        # Drop expired entries
-        now = _time.time()
-        for k in [k for k, (exp, _) in _TTL_CACHE.items() if exp < now]:
-            _TTL_CACHE.pop(k, None)
+from cache import cache as _cache
 
 
 # ---- Koleksiyon kategorileri ----
@@ -412,7 +392,7 @@ async def geo_heatmap(license_key: Optional[str] = None):
     """
     # Cache — Landing 5-10sn polling'de ilk çağrı hariç DB'ye hiç gitmez
     cache_key = f"geo_heatmap:{license_key or 'ALL'}"
-    cached = _cache_get(cache_key)
+    cached = await _cache.get(cache_key)
     if cached is not None:
         return cached
 
@@ -558,7 +538,7 @@ async def geo_heatmap(license_key: Optional[str] = None):
         "recent_attacks": recent_attacks[:20],
         "generated_at": now.isoformat(),
     }
-    _cache_set(cache_key, result, 60.0)
+    await _cache.set(cache_key, result, 60.0)
     return result
 
 
@@ -693,7 +673,7 @@ async def public_blocked_stats(region: str = "all", raw: int = 0):
     # Cache lookup — raw=1 (admin) cache bypass eder ki taze veri görsün
     cache_key = f"blocked_stats:{region}"
     if not raw:
-        cached = _cache_get(cache_key)
+        cached = await _cache.get(cache_key)
         if cached is not None:
             return cached
 
@@ -919,7 +899,7 @@ async def public_blocked_stats(region: str = "all", raw: int = 0):
 
     # Cache 45sn — Landing 5sn polling'de aynı response servis edilir
     if not raw:
-        _cache_set(cache_key, result, 45.0)
+        await _cache.set(cache_key, result, 45.0)
     return result
 
 

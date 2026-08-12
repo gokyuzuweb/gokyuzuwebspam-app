@@ -13,6 +13,36 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 12, 2026 (Session 10) - v42 Redis Cache Katmanı
+
+### Yeni Modül
+- ✅ **`/app/backend/cache.py`** — Async `get`/`set`/`delete` API. Backend seçimi:
+  * `REDIS_URL` env varsa → async Redis (`redis.asyncio`) + `gws:cache:` namespace
+  * Yoksa → in-memory dict fallback (mevcut v41 davranışı korunur)
+  * Redis erişilemezse otomatik in-memory fallback + 30sn health-check retry
+  * JSON serialization (dict/list/str/int/float/bool/None), lossless round-trip
+
+### Servis + Konfig
+- ✅ Redis supervisor'da RUNNING (mevcut config güncellenmedi, sadece başlatıldı)
+- ✅ `backend/.env`'ye `REDIS_URL=redis://localhost:6379/0` eklendi
+- ✅ `maintenance.py` cache callsite'ları async'e migrate: `_cache_get()`→`await _cache.get()`, `_cache_set()`→`await _cache.set()`
+- ✅ Eski `_TTL_CACHE`/`_cache_get`/`_cache_set` in-line kaldırıldı; tek `cache` singleton'a delege
+
+### Fallback Davranışı
+- Redis durdurulduğunda backend transparan olarak in-memory'ye düşer (aynı endpoint'ler sorunsuz cevap verir)
+- Redis geri başladığında bir sonraki `_ensure()` çağrısı bağlantıyı yeniden kurar; log: `"Redis cache backend connected"`
+- Downgrade log: `"Redis cache backend degraded (...); using in-memory"`
+
+### Kazanımlar
+- **Horizontal Scale**: Aynı Redis'e yazan N adet backend instance'ı cache'i paylaşır
+- **Instance Restart Zero-Cost**: Backend restart'ında cache kaybolmaz
+- **Namespace İzolasyonu**: `gws:cache:` prefix + `blocked_stats:{region}`, `geo_heatmap:{license_key}` kolon'lu isim şeması ile diğer uygulamalarla Redis paylaşımı güvenli
+
+### Testing (25 test toplam)
+- v42 Redis: **10/10** (write, TTL 45/60sn, read hit, raw=1 bypass, namespace isolation, payload integrity)
+- v41 Perf: 13/13 (schema, region, cache, index)
+- Legacy: 2/2 (TestPublicBlockedStats::test_shape, TestGeoHeatmap::test_heatmap_returns_items)
+
 ## Feb 12, 2026 (Session 9) - v41 Blocked Stats + Geo Heatmap Perf Optimizasyonu
 
 ### Optimizasyonlar
