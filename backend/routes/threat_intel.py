@@ -422,6 +422,45 @@ async def _threat_intel_auto_sync_loop():
 # ============================================================================
 # DMARC DEMO SEED — DB boşsa örnek raporlar ekle (preview/dev için)
 # ============================================================================
+@router.get("/ioc/today-stats")
+async def ioc_today_stats():
+    """v43.6 Dashboard widget — bugün eklenen IOC sayısı, kaynak kırılımı, top-5.
+    Cache 60sn (frequent-poll dashboard endpoint)."""
+    from cache import cache as _cache
+    cached = await _cache.get("ti:today_stats")
+    if cached is not None:
+        return cached
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    total_today = await db.threat_iocs.count_documents({"created_at": {"$gte": today_start}})
+    total_all = await db.threat_iocs.count_documents({})
+    # Kaynak kırılımı
+    pipeline = [
+        {"$match": {"created_at": {"$gte": today_start}}},
+        {"$group": {"_id": "$source", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    by_source = []
+    async for row in db.threat_iocs.aggregate(pipeline):
+        by_source.append({"source": row["_id"] or "unknown", "count": row["count"]})
+    # Tip kırılımı
+    pipe_type = [
+        {"$match": {"created_at": {"$gte": today_start}}},
+        {"$group": {"_id": "$type", "count": {"$sum": 1}}},
+    ]
+    by_type = {}
+    async for row in db.threat_iocs.aggregate(pipe_type):
+        by_type[row["_id"] or "unknown"] = row["count"]
+    result = {
+        "added_today": total_today,
+        "total_all_time": total_all,
+        "by_source": by_source,
+        "by_type": by_type,
+        "generated_at": _iso(),
+    }
+    await _cache.set("ti:today_stats", result, 60.0)
+    return result
+
+
 @router.post("/dmarc/seed-demo")
 async def dmarc_seed_demo():
     """Preview/geliştirme için — DMARC koleksiyonuna örnek raporlar ekler.

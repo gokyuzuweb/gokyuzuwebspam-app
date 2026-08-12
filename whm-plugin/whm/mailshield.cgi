@@ -182,22 +182,47 @@ if ($master_key) {
 
 print <<"HTML";
 <style>
-  #ms-shell { position: relative; width: 100%; height: calc(100vh - 210px); border: 0; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
-  .ms-hdr { padding: 14px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .ms-hdr h1 { margin: 0; font-size: 22px; color: #1e3a8a; }
-  .ms-hdr p { margin: 6px 0 0 0; color: #666; font-size: 13px; }
-  .ms-hdr .ms-title { flex: 1; min-width: 240px; }
-  .ms-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 20px; background: #2563eb; color: #fff; border: 0; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s; }
+  /* v43.7 WHM plugin fullscreen fix — iframe artık viewport'un tamamını kullanır */
+  html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !important; }
+  /* WHM outer wrapper padding'i sıfırla */
+  #contentContainer, .pageContainer, #cptext { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+  #ms-shell {
+    position: relative;
+    width: 100vw;
+    height: calc(100vh - 88px); /* sadece kompakt header için 88px ayır */
+    display: block;
+    border: 0;
+    box-shadow: none;
+    margin: 0;
+    padding: 0;
+  }
+  .ms-hdr {
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: nowrap;
+    background: #f8fafc;
+    border-bottom: 1px solid #e5e7eb;
+    height: 68px;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  .ms-hdr h1 { margin: 0; font-size: 16px; color: #1e3a8a; line-height: 1.2; }
+  .ms-hdr p { margin: 2px 0 0 0; color: #666; font-size: 11px; line-height: 1.2; }
+  .ms-hdr .ms-title { flex: 1; min-width: 200px; overflow: hidden; }
+  .ms-btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 20px; background: #2563eb; color: #fff; border: 0; font-size: 11px; font-weight: 600; cursor: pointer; transition: all .15s; white-space: nowrap; }
   .ms-btn:hover:not(:disabled) { background: #1d4ed8; transform: translateY(-1px); }
   .ms-btn:disabled { opacity: .6; cursor: wait; }
   .ms-btn.ms-btn-ok { background: #059669; }
   .ms-btn.ms-btn-err { background: #dc2626; }
-  #ms-update-status { font-size: 11px; color: #666; margin-left: 8px; }
+  #ms-update-status { font-size: 10px; color: #666; margin-left: 6px; }
+  #ms-badge { font-size: 11px !important; padding: 3px 8px !important; }
 </style>
 <div class="ms-hdr">
   <div class="ms-title">
     <h1>GokyuzuWebSpam &mdash; Mail Guvenlik Paneli</h1>
-    <p>Modern spam &amp; virus koruma paneli. Canli lisans sunucusu kumesi ile senkronize.</p>
+    <p>Modern spam &amp; virus koruma paneli. Canli lisans sunucusu ile senkronize.</p>
   </div>
   $badge_html
   <button id="ms-update-btn" class="ms-btn" onclick="msUpdate()" title="Plugin script'lerini son surumden guncelle">
@@ -205,9 +230,7 @@ print <<"HTML";
   </button>
   <span id="ms-update-status"></span>
 </div>
-<div style="padding: 0 20px 20px 20px;">
-  <iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam"></iframe>
-</div>
+<iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam" allow="fullscreen"></iframe>
 
 <script>
 async function msUpdate() {
