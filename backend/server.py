@@ -3116,6 +3116,64 @@ async def admin_resellers_live(request: Request, license_key: Optional[str] = No
     }
 
 
+@api.get("/admin/plugin-health/list")
+async def admin_plugin_health_list(request: Request, license_key: Optional[str] = None,
+                                     hours: int = 24):
+    """Master-only. Tüm bayilerin son N saatteki plugin normalize sağlığı listesi.
+    Dashboard için: kim ne kadar normalize etmiş, son alert zamanı, status."""
+    await _require_master(request, license_key)
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    items = []
+    async for r in db.resellers.find({}, {"_id": 0}):
+        lk = r.get("license_key") or ""
+        if not lk:
+            continue
+        total = await db.mail_events.count_documents({
+            "license_key": lk, "ingested_at": {"$gte": since},
+        })
+        normalized = await db.mail_events.count_documents({
+            "license_key": lk, "score_normalized": True, "ingested_at": {"$gte": since},
+        })
+        clamped = await db.mail_events.count_documents({
+            "license_key": lk, "score_clamped": True, "ingested_at": {"$gte": since},
+        })
+        last_alert = await db.master_alerts.find_one(
+            {"type": "plugin_normalization", "license_key": lk},
+            {"_id": 0, "created_at": 1, "normalized_count": 1, "seen": 1},
+            sort=[("created_at", -1)],
+        )
+        ratio = (normalized / total * 100) if total else 0
+        status = "healthy"
+        if normalized > 100: status = "critical"
+        elif ratio > 20 and total >= 20: status = "warning"
+        items.append({
+            "license_key": lk,
+            "email": r.get("email") or "",
+            "company": r.get("company") or "",
+            "active": r.get("active", True),
+            "total": total,
+            "normalized": normalized,
+            "clamped": clamped,
+            "ratio": round(ratio, 1),
+            "status": status,
+            "last_alert_at": last_alert.get("created_at") if last_alert else None,
+            "last_alert_count": last_alert.get("normalized_count") if last_alert else None,
+            "last_alert_seen": last_alert.get("seen") if last_alert else None,
+        })
+    # Kritik ve uyarı olanları başa al
+    order = {"critical": 0, "warning": 1, "healthy": 2}
+    items.sort(key=lambda x: (order.get(x["status"], 3), -x["normalized"]))
+    total_bayi = len(items)
+    critical = sum(1 for i in items if i["status"] == "critical")
+    warning = sum(1 for i in items if i["status"] == "warning")
+    return {
+        "items": items, "total_bayi": total_bayi,
+        "critical": critical, "warning": warning,
+        "healthy": total_bayi - critical - warning,
+        "hours": hours,
+    }
+
+
 @api.post("/admin/plugin-health/scan")
 async def admin_plugin_health_scan(request: Request, license_key: Optional[str] = None,
                                     threshold: int = 100, hours: int = 24,

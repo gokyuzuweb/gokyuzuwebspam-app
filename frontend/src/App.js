@@ -20,6 +20,7 @@ import { api } from "@/lib/api";
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import Quarantine from "@/pages/Quarantine";
+import PluginHealth from "@/pages/PluginHealth";
 import Lists from "@/pages/Lists";
 import Rules from "@/pages/Rules";
 import Engines from "@/pages/Engines";
@@ -88,6 +89,7 @@ const NAV = [
   { to: "/panel/version-publish", key: "version_publish", icon: PackageOpen, testid: "nav-version-publish", label: "Sürüm Yayın", masterOnly: true, sellerOnly: true },
   { to: "/panel/wake-history", key: "wake_history", icon: History, testid: "nav-wake-history", label: "Ping Geçmişi", masterOnly: true, sellerOnly: true },
   { to: "/panel/email-templates", key: "email_templates", icon: Mail, testid: "nav-email-templates", label: "Mail Şablonları", masterOnly: true, sellerOnly: true },
+  { to: "/panel/plugin-health", key: "plugin_health", icon: HeartPulse, testid: "nav-plugin-health", label: "Plugin Sağlık", masterOnly: true, sellerOnly: true },
   { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Modül Dokümantasyonu" },
@@ -216,6 +218,7 @@ function Shell() {
             <Route path="/version-publish" element={<VersionPublish />} />
             <Route path="/wake-history" element={<WakeHistory />} />
             <Route path="/email-templates" element={<EmailTemplates />} />
+            <Route path="/plugin-health" element={<PluginHealth />} />
             <Route path="/my-server" element={<BayiServer />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />

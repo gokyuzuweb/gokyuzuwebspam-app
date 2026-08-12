@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Trash2, RotateCcw, GraduationCap, X, Mail, Server, Hash, Filter, BarChart3, Flame, Forward, Calendar, AlertTriangle, Calculator } from "lucide-react";
+import { Search, Trash2, RotateCcw, GraduationCap, X, Mail, Server, Hash, Filter, BarChart3, Flame, Forward, Calendar, AlertTriangle, Calculator, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -123,6 +123,16 @@ export default function Quarantine() {
     onError: (e) => toast.error("Yeniden hesaplama hatası: " + (e?.response?.data?.detail || e.message)),
   });
 
+  const backfillMut = useMutation({
+    mutationFn: () => api.eventsBackfill(),
+    onSuccess: (data) => {
+      toast.success(`Karantina dolduruldu: ${data.inserted} yeni kayıt eklendi (${data.already_in_quarantine} zaten vardı)`);
+      qc.invalidateQueries({ queryKey: ["quarantine"] });
+      qc.invalidateQueries({ queryKey: ["quarantine-stats"] });
+    },
+    onError: (e) => toast.error("Backfill hatası: " + (e?.response?.data?.detail || e.message)),
+  });
+
   const runBulk = (action) => {
     if (selected.size === 0) return toast.error(t("quarantine.select_first"));
     bulk.mutate({ action, ids: Array.from(selected) });
@@ -219,6 +229,15 @@ export default function Quarantine() {
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-sm disabled:opacity-50"
             title="Plugin yanlış skorlar yolladıysa SA skoruna göre otomatik düzelt (ConfigServer Front-End paritesi)">
             <Calculator className="w-3.5 h-3.5" /> {rescoreMut.isPending ? "Hesaplanıyor…" : "Skorları Yeniden Hesapla"}
+          </button>
+          <button data-testid="q-backfill" onClick={() => {
+              if (!confirm("mail_events içindeki tüm spam/virüs/phish kayıtları karantinaya taşınır (idempotent, dup yazmaz). Devam edilsin mi?")) return;
+              backfillMut.mutate();
+            }}
+            disabled={backfillMut.isPending}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 text-sm disabled:opacity-50"
+            title="Karantina sayfasında görünmüyor gibi görünen eski spam kayıtları buraya taşı">
+            <Download className="w-3.5 h-3.5" /> {backfillMut.isPending ? "Dolduruluyor…" : "Karantinayı Doldur"}
           </button>
         </div>
       </div>

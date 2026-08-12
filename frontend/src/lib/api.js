@@ -144,9 +144,12 @@ export const api = {
   quarantinePurgeAll: (params = {}) => client.post("/quarantine/purge-all", null, { params }).then(r => r.data),
   quarantineForward: (payload) => client.post("/quarantine/forward", payload).then(r => r.data),
   eventsRescore: (params = {}) => client.post("/events/rescore", null, { params }).then(r => r.data),
+  eventsBackfill: (params = {}) => client.post("/events/backfill-quarantine", null, { params }).then(r => r.data),
   getThresholds: (params = {}) => client.get("/events/thresholds", { params }).then(r => r.data),
   setThresholds: (payload, params = {}) => client.post("/events/thresholds", payload, { params }).then(r => r.data),
   pluginHealth: (params = {}) => client.get("/events/health/normalization", { params }).then(r => r.data),
+  pluginHealthList: (params = {}) => client.get("/admin/plugin-health/list", { params }).then(r => r.data),
+  pluginHealthScan: (params = {}) => client.post("/admin/plugin-health/scan", null, { params }).then(r => r.data),
 
   lists: (params = {}) => client.get("/lists", { params }).then(r => r.data),
   listAdd: (payload) => client.post("/lists", payload).then(r => r.data),
