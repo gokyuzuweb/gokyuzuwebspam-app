@@ -40,15 +40,30 @@ async def plugin_download():
 @router.get("/install-info")
 async def plugin_install_info(request: Request, license_key: Optional[str] = None):
     """Return wget/curl one-liner + step-by-step install for the current server.
-    Honors X-Forwarded-Proto/Host so public URL is used behind ingress.
+
+    v43.2: Bayi kurulumları için tarball URL'i her zaman MASTER server'dan
+    çekilir (default: `gokyuzuhosting.com`) — böylece bayi kendi panelinin
+    URL'ini bir kurulum makinasında tekrar açsa bile master'a bağlanır.
+    `MASTER_INSTALL_URL` env override eder (örn. staging için).
     """
+    import os as _os
+    # 1) Sabit master install URL — her zaman merkezi olsun
+    master_url = (_os.environ.get("MASTER_INSTALL_URL")
+                  or "https://gokyuzuhosting.com").rstrip("/")
+    # 2) Eğer master'da değilsek (preview veya bayi paneli), yine de master URL kullan
     fwd_proto = request.headers.get("x-forwarded-proto")
-    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
-    if fwd_host:
-        origin = f"{fwd_proto or 'https'}://{fwd_host}"
+    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    is_master_host = fwd_host in ("gokyuzuhosting.com", "www.gokyuzuhosting.com",
+                                     "panel.gokyuzuhosting.com")
+    # Preview/dev environment (emergentagent.com) master gibi davranır — kendi tarball'ı olsun
+    if not is_master_host and "emergentagent.com" in fwd_host:
+        current_origin = f"{fwd_proto or 'https'}://{fwd_host}"
+        download_url = f"{current_origin}/api/plugin/download"
+        master_used = "preview"
     else:
-        origin = str(request.base_url).rstrip("/")
-    download_url = f"{origin}/api/plugin/download"
+        # Prod: bayi panelinden ya da master panelinden → daima master URL
+        download_url = f"{master_url}/api/plugin/download"
+        master_used = "master"
 
     lic_suffix = f" --license={license_key}" if license_key else ""
     wget_one_liner = (
@@ -73,6 +88,8 @@ async def plugin_install_info(request: Request, license_key: Optional[str] = Non
     ]
     return {
         "download_url": download_url,
+        "master_used": master_used,
+        "master_domain": master_url,
         "wget_one_liner": wget_one_liner,
         "curl_one_liner": curl_one_liner,
         "steps": steps,

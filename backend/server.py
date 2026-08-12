@@ -5056,12 +5056,18 @@ async def _plugin_status_payload() -> dict:
 
 @api.get("/plugin/status")
 async def plugin_status(request: Request):
-    """Impersonation aktifken bayi lisansı bakış açısını döner (plan_features
-    ve UI gating impersonate edilen bayiye göre çalışsın).
+    """Ziyaretçi IP'sine göre lisans durumu döner.
 
-    GÜVENLİK: Aktif olmayan lisanslar için `licensed=False` ve `session_expired`
-    flag'i döner — frontend bu bayrağı görünce oturumu kapatıp login'e yönlendirir.
+    v43.3 GÜVENLİK: Eskiden `plugin_state` GLOBAL bir belgeydi — bir kişi
+    lisansını doğruladığında herkes o lisansı görüyordu (Ateş bug'ı).
+    Yeni davranış:
+      1. `gws_impersonate` cookie varsa → o bayinin lisansı görünür (master flow)
+      2. Master (X-Master-Key veya gws_master_session) → master lisansı
+      3. Ziyaretçi IP'si `licenses.authorized_ips` içinde ise → o bayinin lisansı
+      4. Aksi hâlde → **HER ZAMAN DEMO/UNLICENSED**. plugin_state global state
+         artık authoritative kaynak değildir (sadece geriye dönük uyumluluk).
     """
+    # (1) Impersonation — master bayi görünümüne geçmişse
     imp = request.cookies.get("gws_impersonate")
     if imp:
         lic = await db.licenses.find_one({"license_key": imp}, {"_id": 0}) or {}
@@ -5076,24 +5082,127 @@ async def plugin_status(request: Request):
             "impersonated": True,
         })
         return base
-    payload = await _plugin_status_payload()
-    # Bayinin lisansı master tarafından deaktive edildiyse veya süresi dolduysa
-    # frontend "session_expired" bayrağı görüp otomatik oturumu kapatsın.
-    lk = payload.get("license_key")
-    if lk and lk != os.environ.get("MASTER_LICENSE_KEY", ""):
-        lic = await db.licenses.find_one({"license_key": lk}, {"_id": 0})
-        if lic:
-            is_active = bool(lic.get("active", True))
-            valid_until = lic.get("valid_until") or ""
-            now_iso = datetime.now(timezone.utc).isoformat()
-            expired = valid_until and valid_until < now_iso
-            if not is_active or expired:
-                payload["session_expired"] = True
-                payload["session_expired_reason"] = (
-                    "deactivated" if not is_active else "expired"
-                )
-                payload["licensed"] = False
-    return payload
+
+    # (2) Master session?
+    master_key_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    header_key = request.headers.get("x-master-key") or ""
+    cookie_key = request.cookies.get("gws_master_session") or ""
+    is_master_visitor = (
+        (header_key and header_key == master_key_env) or
+        (cookie_key and cookie_key == master_key_env)
+    )
+    if is_master_visitor:
+        payload = await _plugin_status_payload()
+        payload.update({
+            "licensed": True,
+            "license_key": master_key_env,
+            "license_customer_name": "Master",
+            "license_plan": "enterprise",
+            "license_active": True,
+            "is_master": True,
+        })
+        return payload
+
+    # (3) Ziyaretçi IP'sini kontrol et — authorized_ips içinde mi?
+    client_ip = _client_ip(request)
+    lic_by_ip = None
+    if client_ip:
+        # authorized_ips array VEYA legacy ip field'ı
+        lic_by_ip = await db.licenses.find_one(
+            {"$or": [
+                {"authorized_ips": client_ip},
+                {"ip": client_ip},
+            ], "active": True},
+            {"_id": 0},
+        )
+    if lic_by_ip:
+        # Bu IP kayıtlı bir bayiye ait — o bayinin lisansı görünsün
+        valid_until = lic_by_ip.get("valid_until") or ""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        expired = valid_until and valid_until < now_iso
+        licensed = not expired and bool(lic_by_ip.get("active", True))
+        # Revoke kontrolü
+        if licensed:
+            rev = await db.revoked_licenses.find_one(
+                {"license_key": lic_by_ip.get("license_key")}, {"_id": 1}
+            )
+            if rev:
+                licensed = False
+        return {
+            "mode": PLUGIN_MODE,
+            "installed_at": lic_by_ip.get("created_at"),
+            "is_demo": not licensed,
+            "demo_expires": "",
+            "demo_days_remaining": 0,
+            "demo_over": False,
+            "licensed": licensed,
+            "license_key": lic_by_ip.get("license_key", ""),
+            "license_expires": valid_until,
+            "license_customer_name": lic_by_ip.get("customer_name", ""),
+            "license_plan": lic_by_ip.get("plan", "starter"),
+            "license_active": bool(lic_by_ip.get("active", True)),
+            "license_version": int(lic_by_ip.get("license_version") or 0),
+            "gated": (not licensed and PLUGIN_MODE == "customer"),
+            "gate_reason": (
+                "license_expired" if expired
+                else "license_suspended" if not lic_by_ip.get("active", True)
+                else "license_revoked" if not licensed
+                else "ok"
+            ),
+            "visitor_ip": client_ip,
+        }
+
+    # (4) IP tanımlı değil → DEMO. plugin_state'i AUTHORITATIVE OLARAK KULLANMA.
+    # Yalnızca demo süresi / bilgilendirme için okuruz. licensed=false zorla.
+    st = await _plugin_state()
+    now = datetime.now(timezone.utc)
+    demo_exp = _parse_iso(st.get("demo_expires", ""))
+    demo_days_remaining = 0
+    demo_over = False
+    if demo_exp:
+        delta = demo_exp - now
+        demo_days_remaining = max(0, delta.days)
+        demo_over = delta.total_seconds() <= 0
+    gated = PLUGIN_MODE == "customer" and demo_over
+    return {
+        "mode": PLUGIN_MODE,
+        "installed_at": st.get("installed_at"),
+        "is_demo": True,
+        "demo_expires": st.get("demo_expires"),
+        "demo_days_remaining": demo_days_remaining,
+        "demo_over": demo_over,
+        "licensed": False,
+        "license_key": "",
+        "license_expires": "",
+        "license_customer_name": "",
+        "license_plan": "",
+        "license_active": False,
+        "license_version": 0,
+        "gated": gated,
+        "gate_reason": "license_required" if gated else "demo_active",
+        "visitor_ip": client_ip,
+    }
+
+
+@api.post("/plugin/reset-global-state")
+async def plugin_reset_global_state(request: Request, license_key: Optional[str] = None):
+    """Master-only. Master panel'inde eskiden bir bayi lisans doğrulaması yaptığında
+    `plugin_state` global belgesine yazılan `licensed:true, license_key:X` bilgisi
+    tüm ziyaretçilere sızıyordu (v43.3 öncesi Ateş bug). Bu endpoint eski state'i
+    temizler; artık plugin_status authoritative değil ama tutarlılık için sıfırla."""
+    await _require_master(request, license_key)
+    await db.settings.update_one(
+        {"_key": "plugin_state"},
+        {"$set": {
+            "licensed": False,
+            "license_key": "",
+            "license_expires": "",
+            "reset_at": datetime.now(timezone.utc).isoformat(),
+            "reset_reason": "v43.3_security_cleanup",
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "message": "plugin_state global lisans binding'i temizlendi"}
 
 
 # ================== PLUGIN DOWNLOAD (Stabil) ==================

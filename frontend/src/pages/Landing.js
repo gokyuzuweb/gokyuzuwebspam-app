@@ -10,6 +10,7 @@ import {
 import { Badge } from "@/components/ui-primitives";
 import GeoBlockedHeatmap from "@/components/GeoBlockedHeatmap";
 import LiveTicker from "@/components/LiveTicker";
+import ModulesShowcase from "@/pages/landing/ModulesShowcase";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { useI18n, useT } from "@/i18n";
@@ -1163,7 +1164,7 @@ function BlockedTrendWidget() {
   );
 }
 
-function ModulesShowcase() {
+function LegacyModulesShowcase() {
   const modules = [
     { icon: Filter, name: "MailScanner", desc: "Bağımsız spam/virüs tarayıcı motoru · Bayes filter · özel kural motoru · SIEM entegrasyonu",
       color: "from-indigo-500 to-blue-500", link: "/panel/mailscanner" },
