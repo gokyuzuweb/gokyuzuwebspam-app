@@ -388,3 +388,52 @@ tabidir.
   gradient korunur — hedeflenen davranış.
 - LandingCMS TR odaklı; multi-lang CMS bir sonraki iterasyon için backlog.
 
+
+## Feb 12, 2026 (Session 14b) — v43.11 · 4 Next Action Items
+
+### Kullanıcı 4 istek toplu (autonomous)
+1. Feature Card Yerelleştirme (Landing Türkçe default)
+2. Achievement Badges (admin için başarı rozetleri)
+3. Landing CMS Multi-Language (TR/EN/DE/FR/ES/AR ayrı içerik)
+4. Cmd+K Recent History (Son Ziyaretler)
+
+### 1. Feature Card Yerelleştirme
+- `i18n/index.js`: default `"auto"` → `"tr"` yapıldı. GökyüzüWebSpam Türkiye-öncelikli
+  hedef pazarı için TR sabit varsayılan. Kullanıcı dil selector'ından değiştirebilir.
+- Landing Features section artık ilk açılışta Türkçe metinlerle geliyor:
+  "Neden GökyüzüWebSpam?", "5 Motor · Tek Arayüz", "AI Kural Üretici",
+  "IP-Bazlı Lisans", "Karantina + Bayes", "Giden Posta Kontrolü" vb.
+
+### 2. Achievement Badges (`components/AchievementBadges.js`)
+- 9 rozet: İlk 100, Bin Mail Kalkanı, 10K Milestone, Hex Onur, Milyon Kulübü,
+  Virüs Avcısı, Phishing Duvarı, 30 Gün Nöbet, Küresel Kalkan.
+- Her rozet `publicBlockedStats` verisine bağlı; eşik geçildiğinde otomatik unlock.
+- 3D gradient icon + shadow + rotate hover, kilitli olan silik/grayscale.
+- Sağ üst "Toplam İlerleme" progress bar; badge kart altında per-badge yüzde.
+- Landing sayfasına `CostSavingsWidget` ile `Features` arasına eklendi.
+
+### 3. Landing CMS Multi-Language (v43.11)
+- **Backend**: `LandingContentIn` genişletildi — `content_by_lang: Dict[str, LandingLangBlock]`
+  ile 6 dil (tr/en/de/fr/es/ar) için ayrı hero + features + pricing + footer alanları.
+  GET endpoint hem yeni `content_by_lang` hem legacy top-level `hero` döndürür
+  (backwards compat). PUT master-only, legacy top-level payload otomatik TR'ye map'lenir.
+- **MongoDB**: `db.settings _key=landing_content, content_by_lang: {tr:{},en:{},...}`.
+- **Frontend `Landing.js` `useLandingStrings()`**: `useI18n().effective` diline göre
+  `cms.content_by_lang[lang]` bloğunu okur; alan boşsa TR fallback + `LANG_STRINGS`.
+- **Master UI `LandingCMS.js`**: 6 dilli tab bar, her sekmede alan-dolu sayaç chip
+  (yeşil badge >0, gri 0), aktif dil için Hero + Section Titles form set.
+  "v43.11 · MULTI-LANG" ürün badge'i başlıkta.
+
+### 4. Cmd+K Recent History
+- `CommandPalette.js`: `useLocation()` ile route değişimini yakalayıp
+  `localStorage.gws.cmdk.recent` içine son 5 unique path'i kaydeder.
+- Query boşken palette üstünde **"SON ZİYARETLER"** başlıklı ayrı section,
+  altta separator + **"TÜM SAYFALAR"** ana liste.
+- Recent item'lar sağda "yakın" chip'i taşır.
+- Klavye navigation (`↑↓⏎`) birleşik `combined = recent + results` indexi kullanır.
+
+### Test Coverage
+- Backend PUT/GET multi-lang doğrulandı (TR + EN + DE eş zamanlı upsert)
+- Screenshot: Features TR, Achievements 7/9 unlocked, CMS lang tabs (TR 4/EN 4/DE 2/FR 0),
+  Cmd+K recent 3-item + Tüm Sayfalar.
+

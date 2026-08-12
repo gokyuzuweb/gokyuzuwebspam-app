@@ -2301,7 +2301,11 @@ async def put_smtp_settings(payload: SmtpSettingsIn):
 
 # ------------------------- Landing Page Settings + CMS -------------------------
 # v43.9 — Master panelden landing sayfası teması + metinleri düzenleyebilir.
+# v43.11 — Multi-language: her dil için ayrı içerik alanı (tr/en/de/fr/es/ar).
 # GET public (herkes okur), PUT master-only.
+
+_SUPPORTED_LANDING_LANGS = ["tr", "en", "de", "fr", "es", "ar"]
+
 
 class LandingHeroBlock(BaseModel):
     badge: Optional[str] = ""      # ex: "WHM / cPanel için ticari mail güvenliği"
@@ -2312,8 +2316,8 @@ class LandingHeroBlock(BaseModel):
     cta_secondary: Optional[str] = ""  # ex: "Canlı Demo"
 
 
-class LandingContentIn(BaseModel):
-    theme: Optional[str] = "dark"   # "dark" | "light"
+class LandingLangBlock(BaseModel):
+    """Bir dil için tüm metin override alanları."""
     hero: Optional[LandingHeroBlock] = None
     features_title: Optional[str] = ""
     features_sub: Optional[str] = ""
@@ -2325,55 +2329,141 @@ class LandingContentIn(BaseModel):
     footer_copyright: Optional[str] = ""
 
 
+class LandingContentIn(BaseModel):
+    """v43.11 — tema tek; content her dil için ayrı.
+    Geriye uyumluluk: eğer hero + top-level alanlar gönderilirse, "tr" diline yazılır."""
+    theme: Optional[str] = "dark"   # "dark" | "light"
+    # Yeni: dil bazlı içerik map
+    content_by_lang: Optional[Dict[str, LandingLangBlock]] = None
+    # Legacy top-level fields (backwards compat — otomatik "tr"'ye map'lenir)
+    hero: Optional[LandingHeroBlock] = None
+    features_title: Optional[str] = ""
+    features_sub: Optional[str] = ""
+    stats_headline: Optional[str] = ""
+    pricing_title: Optional[str] = ""
+    pricing_sub: Optional[str] = ""
+    cta_bottom_title: Optional[str] = ""
+    cta_bottom_sub: Optional[str] = ""
+    footer_copyright: Optional[str] = ""
+
+
+def _empty_lang_block() -> Dict[str, Any]:
+    return {
+        "hero": {"badge": "", "title_a": "", "title_b": "", "subtitle": "", "cta_primary": "", "cta_secondary": ""},
+        "features_title": "", "features_sub": "", "stats_headline": "",
+        "pricing_title": "", "pricing_sub": "",
+        "cta_bottom_title": "", "cta_bottom_sub": "",
+        "footer_copyright": "",
+    }
+
+
 LANDING_DEFAULTS = {
     "theme": "dark",
-    "hero": {
-        "badge": "", "title_a": "", "title_b": "", "subtitle": "",
-        "cta_primary": "", "cta_secondary": "",
-    },
-    "features_title": "",
-    "features_sub": "",
-    "stats_headline": "",
-    "pricing_title": "",
-    "pricing_sub": "",
-    "cta_bottom_title": "",
-    "cta_bottom_sub": "",
-    "footer_copyright": "",
+    # v43.11 multi-lang default: her destekli dil için boş block
+    "content_by_lang": {l: _empty_lang_block() for l in _SUPPORTED_LANDING_LANGS},
+    # Legacy top-level (silinmez, geriye uyumluluk için okuma tarafı destekler)
+    **_empty_lang_block(),
 }
+
+
+def _merge_lang_block(stored: Dict[str, Any]) -> Dict[str, Any]:
+    """Kayıtlı dil block'unu default ile birleştir (eksik alanları doldurur)."""
+    tpl = _empty_lang_block()
+    if not isinstance(stored, dict):
+        return tpl
+    out = {**tpl, **{k: v for k, v in stored.items() if v is not None}}
+    if not isinstance(out.get("hero"), dict):
+        out["hero"] = tpl["hero"]
+    else:
+        out["hero"] = {**tpl["hero"], **{k: v for k, v in out["hero"].items() if v is not None}}
+    return out
 
 
 @api.get("/settings/landing")
 async def get_landing_settings():
-    """Public — Landing page reads theme + optional text overrides.
-    Empty strings mean "use i18n default from LANG_STRINGS"."""
+    """Public — Landing page reads theme + optional text overrides per language.
+    Empty strings mean 'use i18n default from LANG_STRINGS'.
+    v43.11: `content_by_lang` alanı öncelikli; legacy top-level `hero` vs.
+    okunmaya devam eder (frontend her ikisini de merge eder)."""
     doc = await db.settings.find_one({"_key": "landing_content"}, {"_id": 0, "_key": 0}) or {}
-    out = {**LANDING_DEFAULTS, **doc}
-    # normalize hero if nested doc missing
-    if not isinstance(out.get("hero"), dict):
-        out["hero"] = LANDING_DEFAULTS["hero"]
-    else:
-        out["hero"] = {**LANDING_DEFAULTS["hero"], **out["hero"]}
-    # Normalize theme
-    if out.get("theme") not in ("dark", "light"):
-        out["theme"] = "dark"
-    out.pop("updated_at", None)
-    return out
+    theme = doc.get("theme") if doc.get("theme") in ("dark", "light") else "dark"
+
+    # v43.11 multi-lang normalize
+    cbl_raw = doc.get("content_by_lang") or {}
+    content_by_lang = {}
+    for lang in _SUPPORTED_LANDING_LANGS:
+        content_by_lang[lang] = _merge_lang_block(cbl_raw.get(lang) or {})
+
+    # Legacy top-level içerik varsa TR'ye map'le (backwards compat, override ile)
+    legacy = {k: doc.get(k, "") for k in _empty_lang_block().keys() if k != "hero"}
+    legacy_hero = doc.get("hero") or {}
+    if isinstance(legacy_hero, dict) and any(legacy_hero.get(k) for k in legacy_hero):
+        # Sadece TR'de override boşsa legacy'yi doldur
+        tr = content_by_lang["tr"]
+        for k, v in legacy_hero.items():
+            if v and not tr["hero"].get(k):
+                tr["hero"][k] = v
+    for k, v in legacy.items():
+        if v and not content_by_lang["tr"].get(k):
+            content_by_lang["tr"][k] = v
+
+    # Frontend rahatlığı için legacy top-level TR aynı zamanda döndürülür
+    tr_block = content_by_lang["tr"]
+    return {
+        "theme": theme,
+        "content_by_lang": content_by_lang,
+        # Legacy flat (frontend backward-compat)
+        "hero": tr_block["hero"],
+        "features_title":   tr_block["features_title"],
+        "features_sub":     tr_block["features_sub"],
+        "stats_headline":   tr_block["stats_headline"],
+        "pricing_title":    tr_block["pricing_title"],
+        "pricing_sub":      tr_block["pricing_sub"],
+        "cta_bottom_title": tr_block["cta_bottom_title"],
+        "cta_bottom_sub":   tr_block["cta_bottom_sub"],
+        "footer_copyright": tr_block["footer_copyright"],
+    }
 
 
 @api.put("/settings/landing")
 async def put_landing_settings(payload: LandingContentIn, request: Request):
-    """Master-only — save landing theme + editable text blocks."""
+    """Master-only — save landing theme + multi-language editable text blocks."""
     await _require_master(request, None)
-    doc = payload.model_dump(exclude_none=False)
-    # Normalize theme
-    if doc.get("theme") not in ("dark", "light"):
-        doc["theme"] = "dark"
-    doc["_key"] = "landing_content"
-    doc["updated_at"] = _iso()
+    raw = payload.model_dump(exclude_none=False)
+
+    theme = raw.get("theme")
+    if theme not in ("dark", "light"):
+        theme = "dark"
+
+    # v43.11 multi-lang doldur
+    cbl_in = raw.get("content_by_lang") or {}
+    content_by_lang: Dict[str, Any] = {}
+    for lang in _SUPPORTED_LANDING_LANGS:
+        content_by_lang[lang] = _merge_lang_block(cbl_in.get(lang) or {})
+
+    # Legacy top-level payload varsa TR'ye at (backwards compat)
+    tr = content_by_lang["tr"]
+    for k in _empty_lang_block().keys():
+        if k == "hero":
+            hero_flat = raw.get("hero") or {}
+            if isinstance(hero_flat, dict):
+                for hk, hv in hero_flat.items():
+                    if hv:
+                        tr["hero"][hk] = hv
+        else:
+            if raw.get(k):
+                tr[k] = raw[k]
+
+    doc = {
+        "_key": "landing_content",
+        "theme": theme,
+        "content_by_lang": content_by_lang,
+        "updated_at": _iso(),
+    }
     await db.settings.update_one(
         {"_key": "landing_content"}, {"$set": doc}, upsert=True
     )
-    return {"ok": True, "theme": doc["theme"]}
+    return {"ok": True, "theme": theme, "languages": _SUPPORTED_LANDING_LANGS}
 
 
 @api.post("/mail/test")

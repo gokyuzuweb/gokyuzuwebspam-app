@@ -18,7 +18,9 @@ import { STRINGS } from "@/i18n/strings";
 const I18nContext = createContext({ lang: "tr", setLang: () => {}, t: (k) => k });
 
 export function I18nProvider({ children }) {
-  const [lang, setLang] = useState(() => localStorage.getItem("gws.lang") || "auto");
+  // GökyüzüWebSpam Türkiye pazarı için default TR — kullanıcı language selector'dan
+  // istediği zaman değiştirebilir; browser diline dönmek için "auto" seçilir.
+  const [lang, setLang] = useState(() => localStorage.getItem("gws.lang") || "tr");
   const [effective, setEffective] = useState("tr");
 
   useEffect(() => {

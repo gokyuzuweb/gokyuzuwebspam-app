@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Command as CommandIcon, Search, Activity, Filter, HeartPulse, Globe,
   Bug, Inbox, ListChecks, Radar, Wrench, Cpu, ArrowUpRight, Bell, BellRing,
   FileText, Key, DollarSign, Users, Terminal, Settings2, HardDrive, BookOpen,
-  Palette, Server, Sparkles, PackageOpen, History, Mail, ArrowRight,
+  Palette, Server, Sparkles, PackageOpen, History, Mail, ArrowRight, Clock,
 } from "lucide-react";
 
 /**
@@ -55,9 +55,28 @@ export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [idx, setIdx] = useState(0);
+  const [recent, setRecent] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("gws.cmdk.recent") || "[]"); }
+    catch { return []; }
+  });
   const inputRef = useRef(null);
   const listRef = useRef(null);
   const navigate = useNavigate();
+  const loc = useLocation();
+
+  // Route değişiminde recent history'i güncelle (son 5, unique, en yenisi başta)
+  useEffect(() => {
+    const p = loc.pathname;
+    // Sadece panel içi route'lar kaydedilir; ITEMS listesinde olan bilinen path'ler
+    const match = ITEMS.find((it) => it.path === p);
+    if (!match) return;
+    setRecent((prev) => {
+      const filtered = prev.filter((r) => r !== p);
+      const next = [p, ...filtered].slice(0, 5);
+      try { localStorage.setItem("gws.cmdk.recent", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, [loc.pathname]);
 
   // Global shortcut listener (Cmd+K / Ctrl+K)
   useEffect(() => {
@@ -90,6 +109,18 @@ export default function CommandPalette() {
     }).slice(0, 20);
   }, [query]);
 
+  // Sadece query boşken ve geçmiş varken göster
+  const recentItems = useMemo(() => {
+    if (query.trim()) return [];
+    return recent
+      .map((p) => ITEMS.find((it) => it.path === p))
+      .filter(Boolean)
+      .slice(0, 5);
+  }, [recent, query]);
+
+  // Klavye seçimi: recent + results birleşik liste (0..recentItems.length-1 = recent)
+  const combined = useMemo(() => [...recentItems, ...results], [recentItems, results]);
+
   useEffect(() => { setIdx(0); }, [query]);
 
   const submit = (item) => {
@@ -98,9 +129,9 @@ export default function CommandPalette() {
   };
 
   const onKey = (e) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); setIdx((i) => Math.min(results.length - 1, i + 1)); }
+    if (e.key === "ArrowDown") { e.preventDefault(); setIdx((i) => Math.min(combined.length - 1, i + 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setIdx((i) => Math.max(0, i - 1)); }
-    else if (e.key === "Enter")   { e.preventDefault(); submit(results[idx]); }
+    else if (e.key === "Enter")   { e.preventDefault(); submit(combined[idx]); }
   };
 
   // Scroll active into view
@@ -155,18 +186,55 @@ export default function CommandPalette() {
           <kbd className="hidden md:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-slate-700 bg-slate-950 text-[10px] mono text-slate-500">ESC</kbd>
         </div>
         <div ref={listRef} className="max-h-[60vh] overflow-y-auto py-2" data-testid="cmdk-list">
+          {/* Recent history (query boşken göster) */}
+          {recentItems.length > 0 && (
+            <>
+              <div className="px-4 py-1.5 text-[10px] uppercase tracking-widest mono text-slate-500 flex items-center gap-1.5"
+                   data-testid="cmdk-recent-header">
+                <Clock className="w-3 h-3"/> Son Ziyaretler
+              </div>
+              {recentItems.map((it, i) => {
+                const active = i === idx;
+                return (
+                  <button key={`recent-${it.path}`}
+                          data-idx={i}
+                          data-testid={`cmdk-recent-${it.path.replace(/\//g, "-")}`}
+                          onMouseEnter={() => setIdx(i)}
+                          onClick={() => submit(it)}
+                          className={`w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors
+                                     ${active ? "bg-indigo-500/20 text-white" : "text-slate-300 hover:bg-slate-800/50"}`}>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0
+                                    ${active ? "bg-indigo-500/40 border border-indigo-400/60" : "bg-slate-800 border border-slate-700"}`}>
+                      <it.icon className={`w-4 h-4 ${active ? "text-white" : "text-slate-400"}`}/>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className={`font-medium truncate ${active ? "text-white" : "text-slate-100"}`}>{it.title}</div>
+                      <div className="text-[11px] mono text-slate-500 truncate">{it.path}</div>
+                    </div>
+                    <span className="text-[9px] mono text-slate-500 shrink-0">yakın</span>
+                    {active && <ArrowRight className="w-4 h-4 text-indigo-300 shrink-0"/>}
+                  </button>
+                );
+              })}
+              <div className="my-1 mx-4 border-t border-slate-800"/>
+              <div className="px-4 py-1.5 text-[10px] uppercase tracking-widest mono text-slate-500 flex items-center gap-1.5">
+                <CommandIcon className="w-3 h-3"/> Tüm Sayfalar
+              </div>
+            </>
+          )}
           {results.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-slate-500">
               Sonuç yok · başka bir kelime deneyin
             </div>
           )}
           {results.map((it, i) => {
-            const active = i === idx;
+            const combinedIdx = recentItems.length + i;
+            const active = combinedIdx === idx;
             return (
               <button key={it.path}
-                      data-idx={i}
+                      data-idx={combinedIdx}
                       data-testid={`cmdk-item-${it.path.replace(/\//g, "-")}`}
-                      onMouseEnter={() => setIdx(i)}
+                      onMouseEnter={() => setIdx(combinedIdx)}
                       onClick={() => submit(it)}
                       className={`w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors
                                  ${active ? "bg-indigo-500/20 text-white" : "text-slate-300 hover:bg-slate-800/50"}`}>

@@ -13,6 +13,7 @@ import LiveTicker from "@/components/LiveTicker";
 import ModulesShowcase from "@/pages/landing/ModulesShowcase";
 import ActivityHeatmap from "@/components/ActivityHeatmap";
 import CostSavingsWidget from "@/components/CostSavingsWidget";
+import AchievementBadges from "@/components/AchievementBadges";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { useI18n, useT } from "@/i18n";
@@ -379,9 +380,17 @@ function useLandingStrings() {
   const { effective } = useI18n();
   const base = LANG_STRINGS[effective] || LANG_STRINGS.en;
   const cms = useLandingCms();
-  // CMS overrides: only apply non-empty strings; empty means "use i18n default"
-  const hero = cms?.hero || {};
-  const merged = {
+  // v43.11 Multi-lang: content_by_lang varsa aktif dile göre override çek.
+  // Yoksa (legacy kayıt) top-level hero/features_title vs. kullan (TR olarak muamele).
+  const langBlock = (cms?.content_by_lang && cms.content_by_lang[effective]) || null;
+  const hero = (langBlock?.hero) || (effective === "tr" ? cms?.hero : null) || {};
+  const pick = (k) => {
+    // Öncelik: langBlock[k] → (TR ise) cms[k] → base[k]
+    if (langBlock && langBlock[k]) return langBlock[k];
+    if (effective === "tr" && cms && cms[k]) return cms[k];
+    return base[k];
+  };
+  return {
     ...base,
     hero_badge:    hero.badge     || base.hero_badge,
     hero_title_a:  hero.title_a   || base.hero_title_a,
@@ -389,13 +398,12 @@ function useLandingStrings() {
     hero_sub:      hero.subtitle  || base.hero_sub,
     cta_primary:   hero.cta_primary   || base.cta_primary,
     cta_secondary: hero.cta_secondary || base.cta_secondary,
-    features_title:   cms?.features_title   || base.features_title,
-    features_sub:     cms?.features_sub     || base.features_sub,
-    pricing_title:    cms?.pricing_title    || base.pricing_title,
-    pricing_sub:      cms?.pricing_sub      || base.pricing_sub,
-    footer_copyright: cms?.footer_copyright || base.footer_copyright,
+    features_title:   pick("features_title"),
+    features_sub:     pick("features_sub"),
+    pricing_title:    pick("pricing_title"),
+    pricing_sub:      pick("pricing_sub"),
+    footer_copyright: pick("footer_copyright"),
   };
-  return merged;
 }
 
 /**
@@ -1620,6 +1628,7 @@ export default function Landing() {
       <BlockedTrendWidget />
       <ActivityHeatmap />
       <CostSavingsWidget />
+      <AchievementBadges />
       <Features />
       <ModulesShowcase />
       <GeoBlockedHeatmap />
