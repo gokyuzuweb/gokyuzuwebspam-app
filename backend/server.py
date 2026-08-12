@@ -3116,6 +3116,41 @@ async def admin_resellers_live(request: Request, license_key: Optional[str] = No
     }
 
 
+@api.post("/admin/plugin-health/{lic_key}/queue-update")
+async def admin_plugin_health_queue_update(lic_key: str, request: Request,
+                                            license_key: Optional[str] = None):
+    """Master-only. Belirli bir bayinin plugin güncellemesini kuyruğa al.
+    Bayi WHM sunucusundaki plugin daemon `/api/events/pending-actions` endpoint'ini
+    poll ederken bu action'ı görür ve `install-bayi.sh` betiğini çalıştırır."""
+    await _require_master(request, license_key)
+    lic_doc = await db.licenses.find_one({"license_key": lic_key}, {"_id": 0, "license_key": 1})
+    if not lic_doc:
+        raise HTTPException(404, "Lisans bulunamadı")
+    # Zaten bekleyen bir update aksiyonu var mı? (spam önleme)
+    existing = await db.pending_quarantine_actions.find_one({
+        "license_key": lic_key, "action_type": "plugin_update", "completed_at": None,
+    }, {"_id": 0, "id": 1})
+    if existing:
+        return {"ok": True, "already_queued": True, "action_id": existing["id"]}
+    aid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    master_url = f"https://{MASTER_HOST}" if MASTER_HOST else ""
+    action = {
+        "id": aid,
+        "license_key": lic_key,
+        "action_type": "plugin_update",
+        "command": (
+            f"curl -fsSL {master_url}/api/scripts/install-bayi.sh | "
+            f"sudo LICENSE_KEY={lic_key} MASTER_URL={master_url} bash"
+        ),
+        "created_at": now,
+        "completed_at": None,
+        "queued_by": "master",
+    }
+    await db.pending_quarantine_actions.insert_one(action)
+    return {"ok": True, "action_id": aid, "queued_at": now}
+
+
 @api.get("/admin/plugin-health/list")
 async def admin_plugin_health_list(request: Request, license_key: Optional[str] = None,
                                      hours: int = 24):
@@ -3142,6 +3177,15 @@ async def admin_plugin_health_list(request: Request, license_key: Optional[str] 
             {"_id": 0, "created_at": 1, "normalized_count": 1, "seen": 1},
             sort=[("created_at", -1)],
         )
+        pending_update = await db.pending_quarantine_actions.find_one(
+            {"license_key": lk, "action_type": "plugin_update", "completed_at": None},
+            {"_id": 0, "id": 1, "created_at": 1},
+        )
+        last_update = await db.pending_quarantine_actions.find_one(
+            {"license_key": lk, "action_type": "plugin_update", "completed_at": {"$ne": None}},
+            {"_id": 0, "completed_at": 1, "result": 1},
+            sort=[("completed_at", -1)],
+        )
         ratio = (normalized / total * 100) if total else 0
         status = "healthy"
         if normalized > 100: status = "critical"
@@ -3159,6 +3203,9 @@ async def admin_plugin_health_list(request: Request, license_key: Optional[str] 
             "last_alert_at": last_alert.get("created_at") if last_alert else None,
             "last_alert_count": last_alert.get("normalized_count") if last_alert else None,
             "last_alert_seen": last_alert.get("seen") if last_alert else None,
+            "pending_update_at": pending_update.get("created_at") if pending_update else None,
+            "last_update_at": last_update.get("completed_at") if last_update else None,
+            "last_update_result": last_update.get("result") if last_update else None,
         })
     # Kritik ve uyarı olanları başa al
     order = {"critical": 0, "warning": 1, "healthy": 2}

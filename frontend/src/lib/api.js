@@ -150,6 +150,7 @@ export const api = {
   pluginHealth: (params = {}) => client.get("/events/health/normalization", { params }).then(r => r.data),
   pluginHealthList: (params = {}) => client.get("/admin/plugin-health/list", { params }).then(r => r.data),
   pluginHealthScan: (params = {}) => client.post("/admin/plugin-health/scan", null, { params }).then(r => r.data),
+  pluginHealthQueueUpdate: (licKey) => client.post(`/admin/plugin-health/${licKey}/queue-update`).then(r => r.data),
 
   lists: (params = {}) => client.get("/lists", { params }).then(r => r.data),
   listAdd: (payload) => client.post("/lists", payload).then(r => r.data),

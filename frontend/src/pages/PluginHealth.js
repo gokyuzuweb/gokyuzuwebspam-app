@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardBody } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
-import { Activity, AlertTriangle, CheckCircle2, XCircle, RefreshCcw, Zap } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, XCircle, RefreshCcw, Zap, RotateCw, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 /**
@@ -28,6 +28,19 @@ export default function PluginHealth() {
       qc.invalidateQueries({ queryKey: ["threat-alerts"] });
     },
     onError: (e) => toast.error("Tarama hatası: " + (e?.response?.data?.detail || e.message)),
+  });
+
+  const queueUpdate = useMutation({
+    mutationFn: (licKey) => api.pluginHealthQueueUpdate(licKey),
+    onSuccess: (data, licKey) => {
+      if (data.already_queued) {
+        toast.info(`Bu bayi için zaten kuyrukta bekleyen bir güncelleme var (action: ${data.action_id.slice(0,8)}…)`);
+      } else {
+        toast.success(`Güncelleme kuyruğa alındı — bayi plugin'i heartbeat'te alacak (action: ${data.action_id.slice(0,8)}…)`);
+      }
+      qc.invalidateQueries({ queryKey: ["plugin-health-list"] });
+    },
+    onError: (e) => toast.error("Kuyruğa alma hatası: " + (e?.response?.data?.detail || e.message)),
   });
 
   const items = health.data?.items || [];
@@ -86,6 +99,7 @@ export default function PluginHealth() {
                   <th className="text-right px-3 py-2">Clamp</th>
                   <th className="text-right px-3 py-2">Oran</th>
                   <th className="text-left px-3 py-2">Son Uyarı</th>
+                  <th className="text-center px-3 py-2">Güncelle</th>
                 </tr>
               </thead>
               <tbody data-testid="ph-table-body">
@@ -114,15 +128,40 @@ export default function PluginHealth() {
                         </span>
                       ) : <span className="text-slate-600">—</span>}
                     </td>
+                    <td className="px-3 py-2 text-center">
+                      {row.pending_update_at ? (
+                        <span data-testid={`ph-pending-${row.license_key}`}
+                              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300"
+                              title={`Kuyruğa alındı: ${new Date(row.pending_update_at).toLocaleString('tr-TR')}`}>
+                          <Clock className="w-3 h-3"/> Bekliyor
+                        </span>
+                      ) : (
+                        <button data-testid={`ph-update-${row.license_key}`}
+                                onClick={() => {
+                                  if (!confirm(`${row.company || row.email} için plugin güncelleme kuyruğa alınacak. Bayi WHM sunucusundaki plugin heartbeat'te install-bayi.sh betiğini çalıştıracak. Devam?`)) return;
+                                  queueUpdate.mutate(row.license_key);
+                                }}
+                                disabled={queueUpdate.isPending}
+                                className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50"
+                                title="Bu bayinin WHM sunucusunda install-bayi.sh betiğini uzaktan tetikle">
+                          <RotateCw className="w-3 h-3"/> Şimdi Güncelle
+                        </button>
+                      )}
+                      {row.last_update_at && !row.pending_update_at && (
+                        <div className="text-[10px] text-slate-500 mt-0.5" title={row.last_update_result || ""}>
+                          Son: {new Date(row.last_update_at).toLocaleDateString('tr-TR')}
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {items.length === 0 && !health.isLoading && (
-                  <tr><td colSpan={7} className="px-3 py-12 text-center text-sm text-slate-500">
+                  <tr><td colSpan={8} className="px-3 py-12 text-center text-sm text-slate-500">
                     Bayi bulunamadı — henüz kimse plugin yüklememiş
                   </td></tr>
                 )}
                 {health.isLoading && (
-                  <tr><td colSpan={7} className="px-3 py-12 text-center text-sm text-slate-500">Yükleniyor…</td></tr>
+                  <tr><td colSpan={8} className="px-3 py-12 text-center text-sm text-slate-500">Yükleniyor…</td></tr>
                 )}
               </tbody>
             </table>

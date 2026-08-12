@@ -542,6 +542,9 @@ function QuarantineDetail({ item, onClose, onAction }) {
           <div><div className="text-slate-500 text-[9px] uppercase tracking-widest">Alındı</div><div className="text-slate-300 truncate">{item.received_at ? new Date(item.received_at).toLocaleString("tr-TR", { hour12: false }) : "-"}</div></div>
         </div>
 
+        {/* Skor karşılaştırma bandı — Panel / MailScanner / SA */}
+        <ScoreComparisonBand item={item} verdictColor={verdictColor}/>
+
         <div className="px-5 pt-3 border-b border-slate-800 flex gap-1 overflow-x-auto">
           {tabs.map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
@@ -674,5 +677,68 @@ function QuarantineDetail({ item, onClose, onAction }) {
         </div>
       </div>
     </>
+  );
+}
+
+
+/* -------- Skor Karşılaştırma Bandı ------------------------------------- */
+function ScoreComparisonBand({ item, verdictColor }) {
+  const scores = item.scores || {};
+  const panelScore = Number(item.total_score ?? item.score ?? 0);
+  // SA skoru → scores.spamassassin veya scores.sa
+  const saScore = scores.spamassassin !== undefined ? Number(scores.spamassassin)
+                : scores.sa !== undefined ? Number(scores.sa) : null;
+  // MailScanner skoru → scores.mailscanner veya scores.msc veya scores.ms
+  const msScore = scores.mailscanner !== undefined ? Number(scores.mailscanner)
+                : scores.msc !== undefined ? Number(scores.msc)
+                : scores.ms !== undefined ? Number(scores.ms) : null;
+  const th = item.thresholds_used || { spam: 5, high_spam: 10 };
+  const verdictFor = (s) => {
+    if (s === null || s === undefined || Number.isNaN(s)) return null;
+    if (s >= th.high_spam) return { label: "High Spam", color: "#f43f5e" };
+    if (s >= th.spam) return { label: "Spam", color: "#f59e0b" };
+    return { label: "Clean", color: "#10b981" };
+  };
+  const cells = [
+    { title: "Panel Skoru", val: panelScore, verdict: verdictFor(panelScore),
+      note: item.score_normalized ? "SA'dan normalize" : "Plugin toplam",
+      testid: "score-panel" },
+    { title: "MailScanner", val: msScore, verdict: verdictFor(msScore),
+      note: msScore === null ? "Header eksik" : "X-MailScanner header",
+      testid: "score-mailscanner" },
+    { title: "SpamAssassin", val: saScore, verdict: verdictFor(saScore),
+      note: saScore === null ? "SA çalışmamış" : "X-Spam-Score header",
+      testid: "score-sa" },
+  ];
+  return (
+    <div className="px-5 py-3 border-b border-slate-800 bg-slate-900/40" data-testid="q-score-compare">
+      <div className="text-[9px] uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-2">
+        <span>Skor Karşılaştırma</span>
+        <span className="text-slate-600">
+          eşik: spam={th.spam} · high={th.high_spam}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {cells.map(c => (
+          <div key={c.title} data-testid={c.testid}
+               className="rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2">
+            <div className="text-[10px] text-slate-500 uppercase tracking-widest">{c.title}</div>
+            <div className="flex items-baseline gap-2 mt-0.5">
+              <span className="mono text-lg font-semibold"
+                    style={{ color: c.verdict?.color || "#64748b" }}>
+                {c.val === null || Number.isNaN(c.val) ? "—" : c.val.toFixed(2)}
+              </span>
+              {c.verdict && (
+                <span className="text-[9px] uppercase font-medium"
+                      style={{ color: c.verdict.color }}>
+                  {c.verdict.label}
+                </span>
+              )}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">{c.note}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
