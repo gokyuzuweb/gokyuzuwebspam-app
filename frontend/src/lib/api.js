@@ -590,6 +590,7 @@ export const api = {
   tiAutoSyncRunNow: () => client.post("/threat-intel/auto-sync/run-now").then(r => r.data),
   tiDmarcSeedDemo: () => client.post("/threat-intel/dmarc/seed-demo").then(r => r.data),
   tiCompliance: () => client.get("/threat-intel/compliance").then(r => r.data),
+  tiTodayStats: () => client.get("/threat-intel/ioc/today-stats").then(r => r.data),
   tiComplianceToggle: (payload) => client.post("/threat-intel/compliance/toggle", payload).then(r => r.data),
 
   // RBL + Mail Health + Update
