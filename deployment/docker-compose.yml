@@ -39,6 +39,8 @@ services:
       - ../backend:/app/backend
       - ../whm-plugin:/app/whm-plugin:ro
       - ./data/uploads:/app/backend/uploads
+      # v43.22.2 — Exim spool read-only mount: eski maillerin body'sini spool'dan okumak için
+      - /var/spool/exim:/var/spool/exim:ro
     ports:
       - "127.0.0.1:8001:8001"
     networks: [gws]
