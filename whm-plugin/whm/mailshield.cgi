@@ -451,12 +451,6 @@ async function msUpdate() {
     <p>Modern spam &amp; virus koruma paneli · Canli lisans sunucusu ile senkronize</p>
   </div>
   $badge_html
-  <a href="/scripts2/main" class="ms-btn ms-btn-back" title="WHM Ana Sayfaya Don">
-    &larr; WHM
-  </a>
-  <button id="ms-fullscreen-btn" class="ms-btn" style="background:#059669;" onclick="window.open(window.location.pathname, '_blank', 'noopener'); return false;" title="Yeni sekmede tam ekran ac">
-    &#x1F5A5; Tam Ekran
-  </button>
   <button id="ms-update-btn" class="ms-btn" onclick="msUpdate()" title="Plugin script'lerini son surumden guncelle">
     &#x21bb; Guncelle
   </button>
