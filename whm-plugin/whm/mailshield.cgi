@@ -252,6 +252,10 @@ print <<"HTML";
 //   (d) MutationObserver + interval ile WHM tekrar sıfırlarsa geri uygula (30s sürer)
 //   (e) postMessage fallback (cross-origin senaryosu)
 (function ensureFullscreen() {
+  // v43.21 — WHM sidebar ve default davranışını KORU. Tüm parent DOM manipülasyonu iptal.
+  // Kullanıcı isteği: "plugin tıkladığımda tam ekran değil whm içinde acılsın yan sayfasında
+  // sol tarafta ben yine whm modüllerini görim"
+  return;
   var inFrame = false;
   try { inFrame = window.top !== window.self; } catch (e) { inFrame = true; }
   if (!inFrame) return;
