@@ -46,8 +46,9 @@ my $qs     = $ENV{QUERY_STRING} // '';
 # ---- Self-update endpoint (query string based - PATH_INFO daha az guvenilir) ----
 # URL: /cgi/mailshield/index.cgi?action=self-update
 # v43.18 — SIRA DEĞİŞTİ: Önce git pull + docker rebuild → SONRA taze tarball
-# Böylece tek tıklamada hem backend hem CGI güncel olur (eski akışta backend bayat
-# tarball servis ediyordu, kullanıcı 2 kez tıklamak zorunda kalıyordu).
+# v43.19 — Tarball yapısı fallback: hem `gokyuzuwebspam/` prefix hem `backend/` prefix
+#          hem prefix'siz düz layout destekleniyor. auto-update.sh her durumda çalışır
+#          (extract fail olsa bile), böylece stale-tarball döngüsünden çıkılabilir.
 if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
     my @actions;
     my @errors;
@@ -55,6 +56,7 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
     my $tmp_dir = "/tmp/gws-selfupdate-$$";
 
     # 1) FAZ-1: auto-update.sh (git pull + docker rebuild) — backend güncellenir
+    # HER DURUMDA çalışsın (extract fail olsa bile). Sadece bu adım fail ederse skip.
     my $update_script = "/opt/gokyuzuwebspam-app/deployment/auto-update.sh";
     if (-x $update_script) {
         my $out = `bash $update_script 2>&1`;
@@ -62,9 +64,9 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
         if ($rc == 0) {
             push @actions, "phase-1: git pull + docker rebuild OK (backend guncellendi)";
         } else {
-            push @errors, "phase-1: docker-update failed (rc=$rc): " . substr($out, 0, 300);
+            # Fail olsa bile @errors'a EKLEME — sadece uyarı ekle, tarball indirmeye devam
+            push @actions, "phase-1: docker-update warning (rc=$rc): " . substr($out, 0, 200);
         }
-        # Backend'in tamamen ayağa kalkması için 5sn bekle (yoksa 503 alırız)
         sleep(5);
     } else {
         push @actions, "phase-1: auto-update.sh bulunamadi (skip)";
@@ -76,17 +78,45 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
         push @errors, "Tarball indirilemedi ($public/api/plugin/download)";
     }
 
-    # 3) FAZ-3: Extract
+    # 3) FAZ-3: Extract — birden fazla layout dene
+    my $tarball_root = '';   # extracted plugin root (mailshield.cgi/whm alt dizinini içeriyor)
     unless (@errors) {
         mkdir $tmp_dir;
+        # Önce --strip-components=1 dene (gokyuzuwebspam/... prefix)
         system("tar -xzf $tmp_tgz -C $tmp_dir --strip-components=1 2>/dev/null");
-        unless (-d "$tmp_dir/scripts") {
-            push @errors, "Tarball extract basarisiz veya beklenen icerik yok";
+        if (-d "$tmp_dir/scripts" && -f "$tmp_dir/whm/mailshield.cgi") {
+            $tarball_root = $tmp_dir;
+            push @actions, "extract: layout=plugin-root (strip=1)";
+        } else {
+            # 2. deneme: prefix'siz (root'ta scripts/, whm/ direkt)
+            system("rm -rf $tmp_dir && mkdir $tmp_dir");
+            system("tar -xzf $tmp_tgz -C $tmp_dir 2>/dev/null");
+            if (-d "$tmp_dir/scripts" && -f "$tmp_dir/whm/mailshield.cgi") {
+                $tarball_root = $tmp_dir;
+                push @actions, "extract: layout=flat";
+            } else {
+                # 3. deneme: whm-plugin/ prefix (yeni format)
+                if (-d "$tmp_dir/whm-plugin/scripts" && -f "$tmp_dir/whm-plugin/whm/mailshield.cgi") {
+                    $tarball_root = "$tmp_dir/whm-plugin";
+                    push @actions, "extract: layout=whm-plugin-subdir";
+                }
+                # 4. deneme: whole-project prefix'li (backend/ vs) → whm-plugin/ alt dizinini ara
+                elsif (-d "$tmp_dir/whm-plugin" || -d "$tmp_dir/plugin") {
+                    my $sub = -d "$tmp_dir/whm-plugin" ? "$tmp_dir/whm-plugin" : "$tmp_dir/plugin";
+                    if (-d "$sub/scripts" && -f "$sub/whm/mailshield.cgi") {
+                        $tarball_root = $sub;
+                        push @actions, "extract: layout=project-subdir";
+                    }
+                }
+            }
+        }
+        unless ($tarball_root) {
+            push @errors, "Tarball extract basarisiz veya beklenen icerik yok. Deneyin: docker container'lari yeniden baslatildi, taze tarball icin sayfayi yenileyip tekrar Guncelle basin.";
         }
     }
 
     # 4) FAZ-4: Refresh key files (only if extraction succeeded)
-    unless (@errors) {
+    if (@errors == 0 && $tarball_root) {
         my @files = (
             # [src_rel, dst_abs, mode]
             ['scripts/mailshield-logtail.pl', '/usr/local/mailshield/bin/mailshield-logtail.pl', '0755'],
@@ -103,7 +133,7 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
         );
         for my $f (@files) {
             my ($rel, $dst, $mode) = @$f;
-            my $src = "$tmp_dir/$rel";
+            my $src = "$tarball_root/$rel";
             next unless -f $src;
             my $r = system("install -m $mode -o root -g root '$src' '$dst'");
             if ($r == 0) { push @actions, "updated: $dst"; }
