@@ -314,6 +314,37 @@ print <<"HTML";
   try { window.parent.postMessage({ type:'mailshield-fullscreen', height:'100vh' }, '*'); } catch(e){}
 })();
 
+// v43.19 — İç iframe'in (React SPA) gönderdiği "gws-panel-resize" mesajlarına
+// cevaben iç iframe'i (id=ms-shell) ve dış WHM chrome'unu tam yükseklik yap.
+// SPA cross-origin (panel.gokyuzuhosting.com) olduğu için DOM manipülasyonu
+// yapamıyor, ama postMessage ile bize sinyal gönderiyor.
+window.addEventListener('message', function(ev) {
+  try {
+    var d = ev.data;
+    if (!d || d.source !== 'gws-panel' || d.type !== 'gws-panel-resize') return;
+    // İç iframe'i (kendi ms-shell) tam yükseklik yap
+    var shell = document.getElementById('ms-shell');
+    if (shell) {
+      shell.style.cssText = 'position:fixed !important;top:52px !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:calc(100vh - 52px) !important;min-height:calc(100vh - 52px) !important;border:0 !important;z-index:9999 !important;background:#0f172a !important;';
+      shell.setAttribute('scrolling', 'no');
+    }
+    // Parent WHM iframe'ini de yenile (100vh)
+    try {
+      var p = window.parent && window.parent.document;
+      if (p) {
+        var iframes = p.querySelectorAll('iframe');
+        for (var i = 0; i < iframes.length; i++) {
+          var f = iframes[i];
+          if (f.src && f.src.indexOf('mailshield') !== -1) {
+            f.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;border:0 !important;z-index:99999 !important;background:#0f172a !important;';
+            f.setAttribute('scrolling','no');
+          }
+        }
+      }
+    } catch(_) {}
+  } catch(_) {}
+});
+
 async function msUpdate() {
 </script>
 <style>

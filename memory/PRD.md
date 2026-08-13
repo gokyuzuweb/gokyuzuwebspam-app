@@ -48,6 +48,36 @@ gokyuzuhosting.com.
 - Test: `DISKWARN blocks âš` → `DISKWARN blocks ⚠` ✓
 - Startup migration çalıştı: **10 mojibake subject düzeltildi** (mail_events)
 
+
+## Feb 13, 2026 (Session 14b, v43.19) — Panel SPA iframe-aware (5. şikayet fix)
+
+### Problem (Kullanıcının 5. şikayeti + yeni ekran görüntüsü)
+- WHM'de plugin açılınca panel ~500px yükseklikte küçük gösteriliyor, kullanıcı WHM'in DIŞ sayfasını aşağı kaydırıyor
+- Panel içeriği (KPI + Threat Dist + Global Tehdit + Nasıl Çalışır) ~1500px, iframe 500px → outer WHM scroll'a başvuruyor
+- v43.18 CGI fix'i sunucuya deploy edilmediği için hala eski davranış görülüyor
+
+### Çözüm (v43.19)
+1. **Panel SPA (`App.js`) — iframe detection + self-lock**:
+   - `window.top !== window.self` ise: `html, body, #root` → `height:100vh; overflow:hidden` (dinamik <style> injection)
+   - `Shell` layout: iframe içindeyken `h-screen max-h-screen` + `<main>` `overflow-y-auto` (internal scroll)
+   - Her 1sn'de parent'a `postMessage({type:'gws-panel-resize', height:'100vh', source:'gws-panel'})` gönder
+2. **CGI (`mailshield.cgi`) — postMessage receiver**:
+   - Panel'den gelen `gws-panel-resize` mesajını dinle → iç iframe `#ms-shell`'i ve dış WHM iframe'ini 100vh cebren yükselt
+3. **Kombine etki**: Kullanıcı artık SADECE panel içeriği içinde kaydıracak, WHM'in outer sayfası kilitli kalacak
+
+### Deployment Komutu (User için)
+```bash
+# 1) Preview'da "Save to Github" tıkla
+# 2) SSH ile WHM sunucusuna gir ve tek satır:
+ssh root@ns1.gokyuzuhosting.com "bash /opt/gokyuzuwebspam-app/deployment/auto-update.sh && \
+  curl -sSL http://127.0.0.1:8001/api/plugin/download -o /tmp/g.tgz && \
+  tar -xzf /tmp/g.tgz -C /tmp && \
+  install -m 0755 /tmp/gokyuzuwebspam/whm/mailshield.cgi /usr/local/cpanel/whostmgr/docroot/cgi/mailshield/index.cgi && \
+  rm -rf /tmp/g.tgz /tmp/gokyuzuwebspam && echo DONE"
+```
+
+**Veya WHM UI'dan (2 kere)**: Güncelle → sayfa yenile → Güncelle → sayfa yenile (birinci click backend'i günceller, ikinci CGI'yi)
+
 ### Deployment Notes for User
 - User's WHM server pull's from `panel.gokyuzuhosting.com/api/plugin/download` (prod backend)
 - Preview'ın tarball'ı zaten güncel (`x-plugin-source: on-the-fly`)

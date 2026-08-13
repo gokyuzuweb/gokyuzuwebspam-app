@@ -193,8 +193,20 @@ function Shell() {
   const loc = useLocation();
   const t = useT();
   const active = NAV.find((n) => (n.end ? loc.pathname === n.to : loc.pathname.startsWith(n.to)));
+  // v43.19 — Iframe içindeysek h-screen (kesin viewport yüksekliği) kullan,
+  // scroll SADECE <main>'de olsun. Standalone'da min-h-screen (uzayabilir).
+  const [inFrame, setInFrame] = React.useState(false);
+  React.useEffect(() => {
+    try { setInFrame(window.top !== window.self); } catch (_) { setInFrame(true); }
+  }, []);
+  const rootCls = inFrame
+    ? "flex h-screen max-h-screen bg-slate-950 text-slate-100 overflow-hidden"
+    : "flex min-h-screen bg-slate-950 text-slate-100";
+  const mainCls = inFrame
+    ? "flex-1 min-w-0 overflow-x-hidden overflow-y-auto"
+    : "flex-1 min-w-0 overflow-x-hidden";
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-100">
+    <div className={rootCls} data-testid={inFrame ? "shell-embedded" : "shell-standalone"}>
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <PluginStatusStripe />
@@ -203,7 +215,7 @@ function Shell() {
         <BayiEventBridge />
         <RenewalBanner />
         <Header title={active ? (active.label || t(`nav.${active.key}`)) : "GökyüzüWebSpam"} />
-        <main className="flex-1 min-w-0 overflow-x-hidden">
+        <main className={mainCls} data-testid="panel-main-scroll">
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/security" element={<Security />} />
@@ -252,8 +264,13 @@ function Shell() {
 }
 
 export default function App() {
-  // WHM CGI iframe'inden gelen ?master_key=... parametresini yakalayıp localStorage'a yaz
-  // Bu sayede WHM'e root erişimi olan kullanıcı otomatik olarak master modunda görünür
+  // v43.19 — Iframe detection + parent auto-resize + compact layout
+  // WHM CGI (mailshield.cgi) SPA'yı iframe olarak yükler. Panel içeriği
+  // uzun (~1500px) olduğu için kullanıcı DIŞ WHM sayfasını aşağı kaydırıyor.
+  // Çözüm: iframe içindeysek body height'ı 100vh'a kilitle, internal scroll
+  // Shell içindeki `<main>` üstlensin. Ayrıca parent'a postMessage ile
+  // "resize me to 100vh" bildir — WHM CGI dinleyip iframe'i yükseltir.
+  const [isInIframe, setIsInIframe] = React.useState(false);
   React.useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -261,15 +278,49 @@ export default function App() {
       if (mk && mk.startsWith("MS-")) {
         localStorage.setItem("gws.event_license", mk);
         localStorage.setItem("gws.master_license", mk);
-        // URL'den anahtarı temizle (tarayıcı adres çubuğunda görünmesin)
         params.delete("master_key");
         const cleanUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "") + window.location.hash;
         window.history.replaceState({}, "", cleanUrl);
       }
     } catch (_) {}
+
+    // v43.19 iframe detection
+    let inFrame = false;
+    try { inFrame = window.top !== window.self; } catch (_) { inFrame = true; }
+    if (!inFrame) return;
+
+    setIsInIframe(true);
+    // Kilitli fullscreen — html/body 100vh, scroll SADECE panel içi <main>'de
+    const styleId = "gws-iframe-lock";
+    if (!document.getElementById(styleId)) {
+      const st = document.createElement("style");
+      st.id = styleId;
+      st.textContent = `
+        html, body, #root { height: 100vh !important; max-height: 100vh !important; overflow: hidden !important; margin: 0 !important; padding: 0 !important; }
+        .App { height: 100vh !important; max-height: 100vh !important; overflow: hidden !important; display: flex !important; flex-direction: column !important; }
+      `;
+      document.head.appendChild(st);
+    }
+
+    // Parent'a "beni 100vh yap" mesajı gönder — WHM CGI dinliyor (v43.18+)
+    const notifyParent = () => {
+      try {
+        window.parent.postMessage({
+          type: "gws-panel-resize",
+          height: "100vh",
+          scrollHeight: document.documentElement.scrollHeight,
+          source: "gws-panel",
+        }, "*");
+      } catch (_) {}
+    };
+    notifyParent();
+    const iv = setInterval(notifyParent, 1000);
+    const cleanup = () => clearInterval(iv);
+    window.addEventListener("beforeunload", cleanup);
+    return cleanup;
   }, []);
   return (
-    <div className="App">
+    <div className={`App ${isInIframe ? "gws-embedded" : ""}`}>
       <I18nProvider>
         <BrowserRouter>
           <Routes>
