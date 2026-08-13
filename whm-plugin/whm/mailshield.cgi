@@ -228,8 +228,11 @@ sub _badge {
 }
 my $badge_html = cluster_badge();
 
-# ---- HTML shell (STANDALONE — no WHM chrome, iframe fills 100vh) ----
+# ---- WHM chrome ile birlikte HTML shell (v43.22 — defheader/deffooter) ----
+# `.tmpl` yaklaşımı çalışmadı (statik dosya olarak indi). Bu doğru yol:
+# CGI içinde defheader() → WHM sidebar/header enjekte edilir → deffooter() ile kapatılır.
 print "Content-type: text/html; charset=utf-8\r\n\r\n";
+Whostmgr::HTMLInterface::defheader("GokyuzuWebSpam", "/mailshield/icon.png", "/scripts2/main");
 
 my $panel_url = "$public/panel";
 if ($master_key) {
@@ -238,281 +241,84 @@ if ($master_key) {
 }
 
 print <<"HTML";
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-<meta charset="utf-8">
-<title>GokyuzuWebSpam - Mail Guvenlik Paneli</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<script>
-// v43.18 ULTRA fullscreen — kullanıcı "küçük açılıyor, kaydırma veriyor" şikayeti sonrası:
-//   (a) Parent WHM chrome'unu tamamen bypass et (nav, footer, breadcrumb, sidebar)
-//   (b) Wrapper containerları 100vh'a genişlet
-//   (c) Kendi iframe'imizi position:fixed + 100vw × 100vh yap
-//   (d) MutationObserver + interval ile WHM tekrar sıfırlarsa geri uygula (30s sürer)
-//   (e) postMessage fallback (cross-origin senaryosu)
-(function ensureFullscreen() {
-  // v43.21 — WHM sidebar ve default davranışını KORU. Tüm parent DOM manipülasyonu iptal.
-  // Kullanıcı isteği: "plugin tıkladığımda tam ekran değil whm içinde acılsın yan sayfasında
-  // sol tarafta ben yine whm modüllerini görim"
-  return;
-  var inFrame = false;
-  try { inFrame = window.top !== window.self; } catch (e) { inFrame = true; }
-  if (!inFrame) return;
-
-  // (0) En radikal — top window'a escape (same-origin ise anında)
-  try { window.top.location.replace(window.self.location.href); } catch (e) {}
-
-  var CHROME_HIDE = [
-    '#navigation','#topNav','.whm-navbar','#topsplash','#navbar',
-    '.pageContainer > .navBar','#pageHeader','#header:not(.ms-hdr)',
-    '#leftMenu','#leftmenu','.sidebar','#sidebar','#leftSidebar',
-    '#footerContainer','#footer','.footer','#breadcrumbs','.breadcrumb',
-    '#pageTitleContainer','.page-title','.copyright-footer','#homeLink',
-    '#searchBox','#searchbox','.notifications-panel','#notificationHeader'
-  ];
-  var WRAP_IDS = [
-    'contentContainer','pageContainer','wrapper','main-content','cptext',
-    'ui-view','mainContainer','contentPane','pageContent','contentWrapper',
-    'contentWrapperInner','mainContent','pageWrapper','pageContainerInner',
-    'contentContainerInner','bodyContainer','app','root'
-  ];
-
-  var applyFix = function() {
-    try {
-      var p = window.parent && window.parent.document;
-      if (!p) return;
-
-      // Nav/footer/breadcrumb gizle
-      CHROME_HIDE.forEach(function(sel){
-        try {
-          var els = p.querySelectorAll(sel);
-          els.forEach(function(el){
-            el.style.setProperty('display','none','important');
-            el.style.setProperty('height','0','important');
-            el.style.setProperty('overflow','hidden','important');
-          });
-        } catch(_) {}
-      });
-
-      // Wrapper containerları 100vh yap
-      WRAP_IDS.forEach(function(id){
-        var el = p.getElementById(id);
-        if (el) {
-          el.style.cssText = 'padding:0 !important;margin:0 !important;max-width:none !important;width:100vw !important;height:100vh !important;min-height:100vh !important;position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;overflow:hidden !important;z-index:99998 !important;';
-        }
-      });
-
-      // Parent html/body reset
-      if (p.documentElement) p.documentElement.style.cssText = 'height:100vh !important;max-height:100vh !important;overflow:hidden !important;margin:0 !important;padding:0 !important;';
-      if (p.body) p.body.style.cssText = 'height:100vh !important;max-height:100vh !important;overflow:hidden !important;margin:0 !important;padding:0 !important;';
-
-      // Kendi iframe'imizi zorla fullscreen yap
-      var frames = p.querySelectorAll('iframe');
-      for (var i = 0; i < frames.length; i++) {
-        var f = frames[i];
-        var isMine = false;
-        try { isMine = (f.contentWindow === window) || (f === window.frameElement); } catch(_){}
-        if (!isMine && f.src && (f.src.indexOf('mailshield') !== -1 || f.src.indexOf('/cgi/mailshield') !== -1)) isMine = true;
-        if (isMine) {
-          f.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;min-height:100vh !important;max-height:100vh !important;border:0 !important;margin:0 !important;padding:0 !important;z-index:99999 !important;background:#fff !important;';
-          f.setAttribute('scrolling','no');
-          f.removeAttribute('height');
-          f.removeAttribute('width');
-        }
-      }
-    } catch (e) { /* cross-origin fallback below */ }
-  };
-
-  // İlk uygula
-  applyFix();
-  // 500ms aralıklarla 30 saniye boyunca yeniden uygula (WHM sonradan reset ederse)
-  var iv = setInterval(applyFix, 500);
-  setTimeout(function(){ clearInterval(iv); }, 30000);
-
-  // MutationObserver — parent DOM'da her değişiklikte tekrar uygula
-  try {
-    var p = window.parent && window.parent.document;
-    if (p) {
-      var obs = new MutationObserver(function(){ applyFix(); });
-      obs.observe(p.documentElement, { attributes:true, childList:true, subtree:true, attributeFilter:['style','class'] });
-      // 60s sonra kapat (performans)
-      setTimeout(function(){ try { obs.disconnect(); } catch(_){} }, 60000);
-    }
-  } catch(e) {}
-
-  // Window resize eventinde de tekrar uygula
-  window.addEventListener('resize', applyFix);
-
-  // Cross-origin senaryosu için postMessage fallback (WHM iframe wrap ediyorsa)
-  try { window.parent.postMessage({ type:'mailshield-fullscreen', height:'100vh' }, '*'); } catch(e){}
-})();
-
-// v43.19 — İç iframe'in (React SPA) gönderdiği "gws-panel-resize" mesajlarına
-// cevaben iç iframe'i (id=ms-shell) ve dış WHM chrome'unu tam yükseklik yap.
-// SPA cross-origin (panel.gokyuzuhosting.com) olduğu için DOM manipülasyonu
-// yapamıyor, ama postMessage ile bize sinyal gönderiyor.
-window.addEventListener('message', function(ev) {
-  try {
-    var d = ev.data;
-    if (!d || d.source !== 'gws-panel' || d.type !== 'gws-panel-resize') return;
-    // İç iframe'i (kendi ms-shell) tam yükseklik yap
-    var shell = document.getElementById('ms-shell');
-    if (shell) {
-      shell.style.cssText = 'position:fixed !important;top:52px !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:calc(100vh - 52px) !important;min-height:calc(100vh - 52px) !important;border:0 !important;z-index:9999 !important;background:#0f172a !important;';
-      shell.setAttribute('scrolling', 'no');
-    }
-    // Parent WHM iframe'ini de yenile (100vh)
-    try {
-      var p = window.parent && window.parent.document;
-      if (p) {
-        var iframes = p.querySelectorAll('iframe');
-        for (var i = 0; i < iframes.length; i++) {
-          var f = iframes[i];
-          if (f.src && f.src.indexOf('mailshield') !== -1) {
-            f.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;border:0 !important;z-index:99999 !important;background:#0f172a !important;';
-            f.setAttribute('scrolling','no');
-          }
-        }
-      }
-    } catch(_) {}
-  } catch(_) {}
-});
-
-async function msUpdate() {
-</script>
 <style>
-  /* v43.9 Standalone WHM plugin — WHM chrome tamamen bypass, iframe 100vh gerçek fullscreen */
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0 !important;
-    padding: 0 !important;
-    width: 100vw !important;
-    height: 100vh !important;
-    max-width: 100vw !important;
-    max-height: 100vh !important;
-    overflow: hidden !important;
-    background: #fff;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  .ms-wrap { margin: -10px -10px 0 -10px; background: #0f172a; }
+  .ms-topbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 14px; background: #f8fafc; border-bottom: 1px solid #e5e7eb;
+    font-size: 12px;
   }
-  .ms-hdr {
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    height: 52px;
-    padding: 8px 16px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: nowrap;
-    background: #f8fafc;
-    border-bottom: 1px solid #e5e7eb;
-    z-index: 10;
-    overflow: hidden;
+  .ms-topbar .ms-title { flex: 1; font-weight: 700; color: #1e3a8a; }
+  .ms-topbar .ms-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 14px; background: #2563eb; color: #fff;
+    border: 0; font-size: 11px; font-weight: 600; cursor: pointer;
+    text-decoration: none; transition: background .15s;
   }
-  .ms-hdr .ms-title { flex: 1; min-width: 200px; overflow: hidden; }
-  .ms-hdr h1 { margin: 0; font-size: 15px; color: #1e3a8a; line-height: 1.2; font-weight: 700; }
-  .ms-hdr p { margin: 1px 0 0 0; color: #64748b; font-size: 10px; line-height: 1.2; }
-  .ms-btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 5px 12px; border-radius: 20px;
-    background: #2563eb; color: #fff; border: 0;
-    font-size: 11px; font-weight: 600; cursor: pointer;
-    transition: all .15s; white-space: nowrap;
-    text-decoration: none;
-  }
-  .ms-btn:hover:not(:disabled) { background: #1d4ed8; transform: translateY(-1px); }
-  .ms-btn:disabled { opacity: .6; cursor: wait; }
-  .ms-btn.ms-btn-back { background: #64748b; }
-  .ms-btn.ms-btn-back:hover { background: #475569; }
-  .ms-btn.ms-btn-ok { background: #059669; }
-  .ms-btn.ms-btn-err { background: #dc2626; }
-  #ms-update-status { font-size: 10px; color: #64748b; margin-left: 6px; }
-  #ms-badge { font-size: 11px !important; padding: 3px 8px !important; }
+  .ms-topbar .ms-btn:hover:not(:disabled) { background: #1d4ed8; }
+  .ms-topbar .ms-btn:disabled { opacity: .6; cursor: wait; }
+  .ms-topbar .ms-btn.ms-btn-ok  { background: #059669; }
+  .ms-topbar .ms-btn.ms-btn-err { background: #dc2626; }
+  .ms-topbar .ms-btn.ms-btn-alt { background: #0891b2; }
+  #ms-badge { padding: 3px 10px !important; border-radius: 12px !important; font-size: 11px !important; }
+  #ms-update-status { color: #64748b; font-size: 10px; margin-left: 4px; }
   #ms-shell {
-    position: fixed;
-    top: 52px;   /* header height */
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100vw;
-    height: calc(100vh - 52px);
-    border: 0;
-    display: block;
-    margin: 0;
-    padding: 0;
-    background: #0f172a;
+    display: block; width: 100%; border: 0; background: #0f172a;
+    height: calc(100vh - 220px);   /* WHM chrome + topbar sonrası kalan */
+    min-height: 620px;
   }
   \@keyframes msPulse {
-    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220,38,38,0.7); }
-    50%      { transform: scale(1.08); box-shadow: 0 0 0 8px rgba(220,38,38,0); }
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239,68,68,.7); }
+    50% { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(239,68,68,0); }
   }
 </style>
-</head>
-<body>
-<div class="ms-hdr">
-  <div class="ms-title">
-    <h1>GokyuzuWebSpam &mdash; Mail Guvenlik Paneli</h1>
-    <p>Modern spam &amp; virus koruma paneli · Canli lisans sunucusu ile senkronize</p>
+
+<div class="ms-wrap">
+  <div class="ms-topbar">
+    <span class="ms-title">GokyuzuWebSpam &mdash; Mail Guvenlik Paneli</span>
+    $badge_html
+    <a href="/cgi/mailshield/index.cgi?tam=1" target="_blank" rel="noopener" class="ms-btn ms-btn-alt" title="Yeni sekmede tam ekran ac">
+      &#x1F517; Yeni Sekme
+    </a>
+    <button id="ms-update-btn" class="ms-btn" onclick="msUpdate()" title="Plugin script'lerini son surumden guncelle">
+      &#x21bb; Guncelle
+    </button>
+    <span id="ms-update-status"></span>
   </div>
-  $badge_html
-  <button id="ms-update-btn" class="ms-btn" onclick="msUpdate()" title="Plugin script'lerini son surumden guncelle">
-    &#x21bb; Guncelle
-  </button>
-  <span id="ms-update-status"></span>
+  <iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
 </div>
-<iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam" allow="fullscreen"></iframe>
 
 <script>
 async function msUpdate() {
   const btn = document.getElementById('ms-update-btn');
   const st  = document.getElementById('ms-update-status');
-  if (!confirm('Plugin script\\'lerini son surumden yenilemek istiyor musunuz? Log-tail servisi yeniden baslatilir.')) return;
   btn.disabled = true;
-  btn.classList.remove('ms-btn-ok','ms-btn-err');
   btn.innerHTML = '&#x21bb; Guncelleniyor...';
   st.textContent = '';
   try {
-    // Query string based — PATH_INFO WHM cpsrvd icinde her zaman calismiyor
-    const r = await fetch(window.location.pathname + '?action=self-update', {
-      method: 'GET', credentials: 'same-origin',
-      headers: { 'Accept': 'application/json' },
-    });
-    const txt = await r.text();
-    let d;
-    try { d = JSON.parse(txt); }
-    catch(_) {
-      // HTML doner ise ilk 300 char kullaniciya goster
-      throw new Error('Sunucu JSON donmedi (' + r.status + '): ' + txt.slice(0, 300));
-    }
-    if (d.ok) {
+    const r = await fetch('/cgi/mailshield/index.cgi?action=self-update', { credentials:'same-origin' });
+    const d = await r.json();
+    if (r.ok && d.ok) {
       btn.classList.add('ms-btn-ok');
       btn.innerHTML = '&check; Guncellendi';
-      st.textContent = (d.actions || []).length + ' dosya guncellendi';
-      setTimeout(() => {
-        btn.classList.remove('ms-btn-ok');
-        btn.innerHTML = '&#x21bb; Guncelle';
-        btn.disabled = false;
-        // Reload iframe to refresh SPA
-        document.getElementById('ms-shell').src = document.getElementById('ms-shell').src;
-      }, 2500);
-      alert('Guncelleme basarili:\\n\\n' + (d.actions || []).join('\\n'));
+      st.textContent = (d.actions || []).length + ' islem';
+      setTimeout(() => location.reload(), 1500);
     } else {
       btn.classList.add('ms-btn-err');
       btn.innerHTML = '&#x2717; Hata';
-      st.textContent = (d.errors || ['bilinmiyor']).join(', ');
-      alert('Guncelleme hatasi:\\n\\n' + (d.errors || []).join('\\n'));
+      alert('Guncelleme hatasi:\\n\\n' + (d.errors || ['Bilinmeyen hata']).join('\\n'));
       setTimeout(() => { btn.disabled = false; btn.classList.remove('ms-btn-err'); btn.innerHTML = '&#x21bb; Guncelle'; }, 3000);
     }
-  } catch(e) {
+  } catch (e) {
     btn.classList.add('ms-btn-err');
-    btn.innerHTML = '&#x2717; Baglanti';
-    alert('Baglanti hatasi: ' + e.message);
+    btn.innerHTML = '&#x2717; Hata';
+    alert('Guncelleme hatasi: ' + e.message);
     setTimeout(() => { btn.disabled = false; btn.classList.remove('ms-btn-err'); btn.innerHTML = '&#x21bb; Guncelle'; }, 3000);
   }
 }
 </script>
-</body>
-</html>
 HTML
 
+Whostmgr::HTMLInterface::deffooter();
 exit 0;
+
