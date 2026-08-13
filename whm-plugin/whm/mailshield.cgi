@@ -232,7 +232,9 @@ my $badge_html = cluster_badge();
 # `.tmpl` yaklaşımı çalışmadı (statik dosya olarak indi). Bu doğru yol:
 # CGI içinde defheader() → WHM sidebar/header enjekte edilir → deffooter() ile kapatılır.
 print "Content-type: text/html; charset=utf-8\r\n\r\n";
-Whostmgr::HTMLInterface::defheader("GokyuzuWebSpam", "/cgi/mailshield/icon.png", "/cgi/mailshield/index.cgi");
+# v43.23 — defheader icon'unu MİNİMAL kılmak için boş bırak (WHM default mavi kare gitsin).
+# Kendi güzel Landing-style logo'muzu topbar'da göstereceğiz.
+Whostmgr::HTMLInterface::defheader("GökyüzüWebSpam");
 
 my $panel_url = "$public/panel";
 if ($master_key) {
@@ -244,86 +246,79 @@ print <<"HTML";
 <style>
   .ms-wrap { margin: -10px -10px 0 -10px; background: #0f172a; }
   .ms-topbar {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding: 8px 14px; background: #f8fafc; border-bottom: 1px solid #e5e7eb;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px; background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+    border-bottom: 2px solid #4338ca; color: #f1f5f9;
     font-size: 12px;
   }
-  .ms-topbar .ms-title { flex: 1; font-weight: 700; color: #1e3a8a; }
+  .ms-brand { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .ms-logo {
+    width: 34px; height: 34px; border-radius: 8px;
+    background: linear-gradient(135deg, #6366f1 0%, #f43f5e 100%);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, .35);
+  }
+  .ms-brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+  .ms-brand-name { color: #fff; font-weight: 800; font-size: 15px; letter-spacing: -.2px; }
+  .ms-brand-name-accent {
+    background: linear-gradient(90deg, #818cf8, #f472b6, #fda4af);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; color: transparent;
+  }
+  .ms-brand-sub { color: #94a3b8; font-size: 10px; letter-spacing: .3px; }
+  #ms-auto-update-badge {
+    padding: 4px 10px; border-radius: 12px; font-size: 10px; font-weight: 600;
+    background: rgba(16, 185, 129, .15); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, .3);
+  }
   .ms-topbar .ms-btn {
     display: inline-flex; align-items: center; gap: 5px;
-    padding: 4px 10px; border-radius: 14px; background: #2563eb; color: #fff;
+    padding: 5px 12px; border-radius: 14px; background: #0891b2; color: #fff;
     border: 0; font-size: 11px; font-weight: 600; cursor: pointer;
     text-decoration: none; transition: background .15s;
   }
-  .ms-topbar .ms-btn:hover:not(:disabled) { background: #1d4ed8; }
-  .ms-topbar .ms-btn:disabled { opacity: .6; cursor: wait; }
-  .ms-topbar .ms-btn.ms-btn-ok  { background: #059669; }
-  .ms-topbar .ms-btn.ms-btn-err { background: #dc2626; }
+  .ms-topbar .ms-btn:hover:not(:disabled) { background: #0e7490; }
   .ms-topbar .ms-btn.ms-btn-alt { background: #0891b2; }
-  #ms-badge { padding: 3px 10px !important; border-radius: 12px !important; font-size: 11px !important; }
-  #ms-update-status { color: #64748b; font-size: 10px; margin-left: 4px; }
+  #ms-badge {
+    padding: 4px 10px !important; border-radius: 12px !important;
+    font-size: 10px !important; font-weight: 600 !important;
+  }
   #ms-shell {
     display: block; width: 100%; border: 0; background: #0f172a;
-    height: 1800px;    /* baslangic — postMessage ile SPA icerik yuksekligine gore ayarlanir */
+    height: 1800px;
     min-height: 1200px;
     transition: height .3s ease;
-  }
-  \@keyframes msPulse {
-    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239,68,68,.7); }
-    50% { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(239,68,68,0); }
   }
 </style>
 
 <div class="ms-wrap">
   <div class="ms-topbar">
-    <span class="ms-title">GokyuzuWebSpam &mdash; Mail Guvenlik Paneli</span>
+    <div class="ms-brand">
+      <div class="ms-logo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="M12 8v4M12 16h.01"/>
+        </svg>
+      </div>
+      <div class="ms-brand-text">
+        <span class="ms-brand-name">Gökyüzü<span class="ms-brand-name-accent">WebSpam</span></span>
+        <span class="ms-brand-sub">Mail Güvenlik Paneli · v1.3</span>
+      </div>
+    </div>
     $badge_html
-    <a href="/cgi/mailshield/index.cgi?tam=1" target="_blank" rel="noopener" class="ms-btn ms-btn-alt" title="Yeni sekmede tam ekran ac">
-      &#x1F517; Yeni Sekme
+    <span id="ms-auto-update-badge" title="Sistem her 30 dakikada bir kendini otomatik günceller">
+      🔄 Otomatik Güncelleme AKTİF
+    </span>
+    <a href="/cgi/mailshield/index.cgi" target="_blank" rel="noopener" class="ms-btn ms-btn-alt" title="Yeni sekmede tam ekran ac">
+      🔗 Yeni Sekme
     </a>
-    <button id="ms-update-btn" class="ms-btn" onclick="msUpdate()" title="Plugin script'lerini son surumden guncelle">
-      &#x21bb; Guncelle
-    </button>
-    <span id="ms-update-status"></span>
   </div>
   <iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
 </div>
 
 <script>
-async function msUpdate() {
-  const btn = document.getElementById('ms-update-btn');
-  const st  = document.getElementById('ms-update-status');
-  btn.disabled = true;
-  btn.innerHTML = '&#x21bb; Guncelleniyor...';
-  st.textContent = '';
-  let raw = '';
-  try {
-    const r = await fetch('/cgi/mailshield/index.cgi?action=self-update', { credentials:'same-origin', headers: { 'Accept': 'application/json' } });
-    raw = await r.text();
-    let d;
-    try { d = JSON.parse(raw); }
-    catch (parseErr) {
-      // Sunucu HTML dondurdu — muhtemelen auth redirect veya Perl hatasi
-      throw new Error('Yanit JSON degil. HTTP ' + r.status + '. Ilk 300 karakter:\\n\\n' + raw.substring(0, 300));
-    }
-    if (r.ok && d.ok) {
-      btn.classList.add('ms-btn-ok');
-      btn.innerHTML = '&check; Guncellendi';
-      st.textContent = (d.actions || []).length + ' islem';
-      setTimeout(() => location.reload(), 1500);
-    } else {
-      btn.classList.add('ms-btn-err');
-      btn.innerHTML = '&#x2717; Hata';
-      alert('Guncelleme hatasi:\\n\\n' + (d.errors || ['Bilinmeyen hata']).join('\\n'));
-      setTimeout(() => { btn.disabled = false; btn.classList.remove('ms-btn-err'); btn.innerHTML = '&#x21bb; Guncelle'; }, 3000);
-    }
-  } catch (e) {
-    btn.classList.add('ms-btn-err');
-    btn.innerHTML = '&#x2717; Hata';
-    alert('Guncelleme hatasi: ' + e.message);
-    setTimeout(() => { btn.disabled = false; btn.classList.remove('ms-btn-err'); btn.innerHTML = '&#x21bb; Guncelle'; }, 5000);
-  }
-}
+// v43.23 — Guncelle butonu KALDIRILDI. Sistem her 30 dakikada bir kendini
+// otomatik gunceller (cron job: /opt/gokyuzuwebspam-app/deployment/auto-update.sh).
+// Kullanici hicbir sey yapmasin.
 </script>
 HTML
 
