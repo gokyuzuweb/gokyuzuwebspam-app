@@ -445,6 +445,41 @@ async def seed_if_empty() -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     await seed_if_empty()
+    # v43.17 — Toplu Türkçe subject mojibake fix (background task, idempotent)
+    async def _migrate_subjects():
+        try:
+            import asyncio as _asyncio
+            from routes.outbound import _fix_subject
+            fixed = 0
+            # Sadece mojibake işaretleri olan kayıtları hedef al (index-friendly)
+            cursor = db.mail_events.find(
+                {"subject": {"$regex": r"(=\?|Ã|Å|Ä±|Ä°|â€)"}},
+                {"_id": 1, "subject": 1}
+            ).limit(5000)
+            async for d in cursor:
+                new_s = _fix_subject(d["subject"])
+                if new_s and new_s != d["subject"]:
+                    await db.mail_events.update_one({"_id": d["_id"]}, {"$set": {"subject": new_s}})
+                    fixed += 1
+            if fixed:
+                logging.info(f"[startup] Fixed {fixed} mojibake subjects in mail_events")
+            # Aynı işlemi quarantine koleksiyonunda da yap
+            q_fixed = 0
+            cursor2 = db.quarantine.find(
+                {"subject": {"$regex": r"(=\?|Ã|Å|Ä±|Ä°|â€)"}},
+                {"_id": 1, "subject": 1}
+            ).limit(5000)
+            async for d in cursor2:
+                new_s = _fix_subject(d["subject"])
+                if new_s and new_s != d["subject"]:
+                    await db.quarantine.update_one({"_id": d["_id"]}, {"$set": {"subject": new_s}})
+                    q_fixed += 1
+            if q_fixed:
+                logging.info(f"[startup] Fixed {q_fixed} mojibake subjects in quarantine")
+        except Exception as e:
+            logging.warning(f"[startup] mojibake migration skipped: {e}")
+    import asyncio as _asyncio_root
+    _asyncio_root.create_task(_migrate_subjects())
     # Deduplicate engines by (name, owner_license_key) — multi-tenant safe.
     # Legacy pre-multitenancy dedupe used only `name` which wiped bayi copies,
     # and legacy `name_1` unique index conflicts with per-bayi rows.

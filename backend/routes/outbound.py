@@ -36,7 +36,8 @@ from deps import db
 def _fix_subject(s: str) -> str:
     """Legacy DB kayıtlarında hala bozuk (MIME encoded-word veya mojibake)
     subject'ler olabilir. Okuma sırasında da tekrar temizle — idempotent.
-    v43.15c: ftfy kütüphanesi ile mixed-mojibake dahil tüm bozulmaları onarır."""
+    v43.15c: ftfy kütüphanesi ile mixed-mojibake dahil tüm bozulmaları onarır.
+    v43.17: ftfy'nin çözemediği Windows-1252/UTF-8 karma bigram'ları manuel çözer."""
     if not s:
         return s
     out = s
@@ -47,18 +48,15 @@ def _fix_subject(s: str) -> str:
             out = str(make_header(decode_header(out)))
         except Exception:
             pass
-    # 2) Mojibake fix — ftfy tüm known encoding hatalarını çözer
-    #    ("Ã¼" → "ü", "Ãœ" → "Ü", "Ä±" → "ı", karma metinler dahil)
+    # 2) ftfy ile toplu decode (mono-encoding mojibake için)
     if any(m in out for m in ("Ã", "Å", "Ä±", "Ä°", "â€")):
         try:
             import ftfy
             fixed = ftfy.fix_text(out)
-            # Kabul: sonuç orijinalden daha kısa VE Türkçe karakter sayısı artmışsa
             def _tr_ratio(t): return sum(1 for c in t if c in "çğıöşüÇĞİÖŞÜ")
             if _tr_ratio(fixed) >= _tr_ratio(out):
                 out = fixed
         except ImportError:
-            # Fallback: eski latin-1↔utf-8 chain
             try:
                 fixed = out.encode("latin-1", errors="ignore").decode("utf-8", errors="ignore")
                 if fixed and "Ã" not in fixed and "Å" not in fixed:
@@ -67,7 +65,38 @@ def _fix_subject(s: str) -> str:
                 pass
         except Exception:
             pass
-    # 3) Whitespace normalize
+    # 3) v43.17 — Manual bigram fixup (Windows-1252/UTF-8 karma mojibake).
+    # ftfy'nin yakalayamadığı isolated bigram'lar için hedefli substitusyon.
+    _bigrams = {
+        "\u00c5\u0178": "\u015e",  # Å + Ÿ → Ş
+        "\u00c5\u009e": "\u015e",  # Å + <9E> → Ş
+        "\u00c4\u00b0": "\u0130",  # Ä + ° → İ
+        "\u00c4\u00b1": "\u0131",  # Ä + ± → ı
+        "\u00c4\u0178": "\u017e",  # Ä + Ÿ → ž (rare)
+        "\u00c3\u00bc": "\u00fc",  # Ã + ¼ → ü
+        "\u00c3\u00b6": "\u00f6",  # Ã + ¶ → ö
+        "\u00c3\u00a7": "\u00e7",  # Ã + § → ç
+        "\u00c3\u009c": "\u00dc",  # Ã + <9C> → Ü
+        "\u00c3\u0153": "\u00dc",  # Ã + œ → Ü (Windows-1252 path)
+        # v43.17c — U+FFFD (replacement char) sonlu bigram'lar
+        "\u00c5\ufffd": "\u015e",  # Å + � → Ş (context-aware later)
+        "\u00c4\ufffd": "\u011e",  # Ä + � → Ğ (context-aware later)
+        "\u00c3\ufffd": "\u0130",  # Ã + � → İ (rare)
+    }
+    for bad, good in _bigrams.items():
+        if bad in out:
+            out = out.replace(bad, good)
+    # v43.17b — Bigram sonrası büyük/küçük harf context düzeltmesi:
+    # "edilmiŞ çözüm" → "edilmiş çözüm" (lowercase letter follows → lowercase Ş)
+    # "müŞteri" → "müşteri"
+    import re as _re
+    out = _re.sub(r"(?<=[a-zçğıöüi])Ş(?=[a-zçğıöüi\s]|$)", "ş", out)
+    out = _re.sub(r"(?<=[a-zçğıöüi])İ(?=[a-zçğıöüi\s]|$)", "i", out)
+    out = _re.sub(r"(?<=[a-zçğıöüi])Ğ(?=[a-zçğıöüi\s]|$)", "ğ", out)
+    # Ayrıca isolated Å kalmışsa (Ş yerine) — ardışık küçük harf varsa uygula
+    out = _re.sub(r"Å(?=[a-zçğıöüi])", "ş", out)
+    out = _re.sub(r"Å(?=\s|$|[A-ZÇĞİÖŞÜ])", "Ş", out)
+    # 4) Whitespace normalize
     return out.strip() if out else out
 
 from tenant import resolve_tenant_scope
@@ -241,6 +270,10 @@ async def outbound_events(
         "license_key": 1,
     }
     rows = await db.mail_events.find(match, projection).sort("ts", -1).limit(limit).to_list(limit)
+    # v43.15+ — Türkçe karakter fix: her satırda subject decode uygula
+    for row in rows:
+        if row.get("subject"):
+            row["subject"] = _fix_subject(row["subject"])
     return {"items": rows, "count": len(rows), "limit": limit}
 
 
