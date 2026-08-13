@@ -503,7 +503,7 @@ async def outbound_event_content(event_id: str, request: Request,
     headers_full = ev.get("headers_full") or ev.get("headers_preview") or ""
     source_note  = ""
     if (not body_preview and not headers_full):
-        msg_id = (ev.get("message_id") or ev.get("exim_id") or "").strip()
+        msg_id = (ev.get("message_id") or ev.get("exim_mid") or ev.get("exim_id") or "").strip()
         if msg_id:
             spool_read = _try_read_exim_spool(msg_id)
             if spool_read["ok"]:
@@ -523,7 +523,7 @@ async def outbound_event_content(event_id: str, request: Request,
         "scores": ev.get("scores") or {},
         "sender_ip": ev.get("sender_ip") or ev.get("client_ip"),
         "size_bytes": ev.get("size_bytes"),
-        "message_id": ev.get("message_id") or ev.get("exim_id"),
+        "message_id": ev.get("message_id") or ev.get("exim_mid") or ev.get("exim_id"),
         "headers_full": headers_full,
         "body_preview": body_preview,
         "body_html": body_html,
