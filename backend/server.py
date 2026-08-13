@@ -446,16 +446,20 @@ async def seed_if_empty() -> None:
 async def _startup() -> None:
     await seed_if_empty()
     # v43.17 — Toplu Türkçe subject mojibake fix (background task, idempotent)
+    # v43.18 — Regex genişletildi: `â` (DISKWARN warning triangle) ve `\ufffd` (replacement char)
     async def _migrate_subjects():
         try:
             import asyncio as _asyncio
             from routes.outbound import _fix_subject
             fixed = 0
-            # Sadece mojibake işaretleri olan kayıtları hedef al (index-friendly)
+            # Sadece mojibake işaretleri olan kayıtları hedef al (index-friendly).
+            # Not: MongoDB PCRE2 `\u` escape'i desteklemez → literal Unicode karakter kullan.
+            _REPL = "\ufffd"  # U+FFFD replacement char (literal)
+            mojibake_regex = f"(=\\?|Ã|Å|Ä±|Ä°|â€|âš|â{_REPL}|{_REPL})"
             cursor = db.mail_events.find(
-                {"subject": {"$regex": r"(=\?|Ã|Å|Ä±|Ä°|â€)"}},
+                {"subject": {"$regex": mojibake_regex}},
                 {"_id": 1, "subject": 1}
-            ).limit(5000)
+            ).limit(10000)
             async for d in cursor:
                 new_s = _fix_subject(d["subject"])
                 if new_s and new_s != d["subject"]:
@@ -466,9 +470,9 @@ async def _startup() -> None:
             # Aynı işlemi quarantine koleksiyonunda da yap
             q_fixed = 0
             cursor2 = db.quarantine.find(
-                {"subject": {"$regex": r"(=\?|Ã|Å|Ä±|Ä°|â€)"}},
+                {"subject": {"$regex": mojibake_regex}},
                 {"_id": 1, "subject": 1}
-            ).limit(5000)
+            ).limit(10000)
             async for d in cursor2:
                 new_s = _fix_subject(d["subject"])
                 if new_s and new_s != d["subject"]:
@@ -5678,12 +5682,33 @@ def _promote_dist_version(version: str) -> Optional[str]:
 
 @api.get("/plugin/download")
 async def plugin_download_latest(request: Request):
-    """En son plugin paketini indirir. Öncelik:
-      1) BACKEND_DIST_DIR/gokyuzuwebspam-{latest_version}.tar.gz
-      2) BACKEND_DIST_DIR/gokyuzuwebspam-latest.tar.gz
-      3) frontend/public/gokyuzuwebspam-source.tar.gz (son çare fallback)
+    """En son plugin paketini indirir.
+    v43.18 — Her zaman `/app/whm-plugin/` dizininden on-the-fly build eder
+    (BACKEND_DIST_DIR bayat kalabildiği için — Ağustos'ta build edilen
+    tarball WHM sunucusundaki fullscreen fix'ini içermiyordu).
+    Bu sayede güncel CGI/Perl/tmpl her zaman servis edilir.
     """
+    import io as _io
+    import tarfile as _tar
     ver = await _current_version()
+    plugin_dir = Path("/app/whm-plugin")
+    if plugin_dir.exists():
+        buf = _io.BytesIO()
+        with _tar.open(fileobj=buf, mode="w:gz") as tar:
+            tar.add(str(plugin_dir), arcname="gokyuzuwebspam")
+        buf.seek(0)
+        from fastapi.responses import StreamingResponse
+        return StreamingResponse(
+            _io.BytesIO(buf.getvalue()),
+            media_type="application/gzip",
+            headers={
+                "Content-Disposition": f'attachment; filename="gokyuzuwebspam-{ver}.tar.gz"',
+                "X-Plugin-Version": ver,
+                "X-Plugin-Source": "on-the-fly",
+                "Cache-Control": "no-store",
+            },
+        )
+    # Fallback (legacy) — pre-built tarball
     versioned = _dist_path(f"gokyuzuwebspam-{ver}.tar.gz")
     latest = _dist_path("gokyuzuwebspam-latest.tar.gz")
     fallback = Path("/app/frontend/public/gokyuzuwebspam-source.tar.gz")

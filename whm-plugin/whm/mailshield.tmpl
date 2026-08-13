@@ -2,17 +2,23 @@
 [% Whostmgr.header('GokyuzuWebSpam') %]
 
 <style>
-  /* v43.8 fullscreen fix — WHM chrome scrollbar'ı yok say, iframe viewport'un tamamı */
+  /* v43.18 ULTRA fullscreen — WHM chrome scrollbar'ı yok say, iframe viewport'un tamamı */
   html, body { margin: 0 !important; padding: 0 !important; height: 100vh !important; max-height: 100vh !important; overflow: hidden !important; }
   #pageContainer, #contentContainer, .pageContainer, #cptext,
-  .body-content, .mainContainer, #wrapper, #main-content, .container-fluid {
-    padding: 0 !important; margin: 0 !important; max-width: none !important; width: 100% !important; overflow: hidden !important;
+  .body-content, .mainContainer, #wrapper, #main-content, .container-fluid,
+  #contentWrapper, #contentWrapperInner, #mainContent, #pageWrapper {
+    padding: 0 !important; margin: 0 !important; max-width: none !important; width: 100vw !important;
+    height: 100vh !important; min-height: 100vh !important; overflow: hidden !important;
+    position: fixed !important; top: 0 !important; left: 0 !important; z-index: 99998 !important;
   }
-  .ms-wrap { position: fixed; inset: 0; display: flex; flex-direction: column; z-index: 1; background: #fff; }
+  #navigation, #topNav, #topsplash, #navbar, .navBar, #pageHeader,
+  #leftMenu, #leftmenu, .sidebar, #sidebar, #footerContainer, #footer,
+  #breadcrumbs, .breadcrumb, #pageTitleContainer, .page-title { display: none !important; }
+  .ms-wrap { position: fixed; inset: 0; display: flex; flex-direction: column; z-index: 99999; background: #fff; }
   #ms-header { flex: 0 0 auto; padding: 8px 16px; background: #f8fafc; border-bottom: 1px solid #e5e7eb; box-sizing: border-box; }
   #ms-header h2 { margin: 0; font-size: 15px; color: #1e3a8a; line-height: 1.2; }
   #ms-header p { margin: 2px 0 0 0; color: #666; font-size: 11px; line-height: 1.2; }
-  #ms-shell { flex: 1 1 auto; width: 100%; height: 100%; border: 0; display: block; }
+  #ms-shell { flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; border: 0; display: block; }
 </style>
 
 <div class="ms-wrap">
@@ -22,5 +28,22 @@
   </div>
   <iframe id="ms-shell" src="https://panel.gokyuzuhosting.com/panel" title="GokyuzuWebSpam" allow="fullscreen"></iframe>
 </div>
+
+<script>
+// v43.18 — WHM chrome'unu tekrar tekrar gizle (tmpl fallback için)
+(function() {
+  var HIDE = ['#navigation','#topNav','#topsplash','#navbar','.navBar','#pageHeader','#leftMenu','#leftmenu','.sidebar','#sidebar','#footerContainer','#footer','#breadcrumbs','.breadcrumb','#pageTitleContainer','.page-title'];
+  var apply = function() {
+    HIDE.forEach(function(s){ try { document.querySelectorAll(s).forEach(function(el){ el.style.setProperty('display','none','important'); }); } catch(_){} });
+    ['contentContainer','pageContainer','wrapper','main-content','cptext','ui-view','mainContainer','contentPane','pageContent','contentWrapper','contentWrapperInner','mainContent','pageWrapper'].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) el.style.cssText = 'padding:0 !important;margin:0 !important;max-width:none !important;width:100vw !important;height:100vh !important;position:fixed !important;top:0 !important;left:0 !important;overflow:hidden !important;z-index:99998 !important;';
+    });
+  };
+  apply();
+  var iv = setInterval(apply, 500);
+  setTimeout(function(){ clearInterval(iv); }, 30000);
+})();
+</script>
 
 [% Whostmgr.footer() %]

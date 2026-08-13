@@ -45,19 +45,38 @@ my $qs     = $ENV{QUERY_STRING} // '';
 
 # ---- Self-update endpoint (query string based - PATH_INFO daha az guvenilir) ----
 # URL: /cgi/mailshield/index.cgi?action=self-update
+# v43.18 — SIRA DEĞİŞTİ: Önce git pull + docker rebuild → SONRA taze tarball
+# Böylece tek tıklamada hem backend hem CGI güncel olur (eski akışta backend bayat
+# tarball servis ediyordu, kullanıcı 2 kez tıklamak zorunda kalıyordu).
 if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
     my @actions;
     my @errors;
     my $tmp_tgz = "/tmp/gws-selfupdate-$$.tar.gz";
     my $tmp_dir = "/tmp/gws-selfupdate-$$";
 
-    # 1) Download
-    system("curl -sS --max-time 25 -o $tmp_tgz '$public/api/plugin/download'");
+    # 1) FAZ-1: auto-update.sh (git pull + docker rebuild) — backend güncellenir
+    my $update_script = "/opt/gokyuzuwebspam-app/deployment/auto-update.sh";
+    if (-x $update_script) {
+        my $out = `bash $update_script 2>&1`;
+        my $rc = $? >> 8;
+        if ($rc == 0) {
+            push @actions, "phase-1: git pull + docker rebuild OK (backend guncellendi)";
+        } else {
+            push @errors, "phase-1: docker-update failed (rc=$rc): " . substr($out, 0, 300);
+        }
+        # Backend'in tamamen ayağa kalkması için 5sn bekle (yoksa 503 alırız)
+        sleep(5);
+    } else {
+        push @actions, "phase-1: auto-update.sh bulunamadi (skip)";
+    }
+
+    # 2) FAZ-2: Artik TAZE backend'den tarball indir
+    system("curl -sS --max-time 30 -o $tmp_tgz '$public/api/plugin/download'");
     unless (-s $tmp_tgz) {
         push @errors, "Tarball indirilemedi ($public/api/plugin/download)";
     }
 
-    # 2) Extract
+    # 3) FAZ-3: Extract
     unless (@errors) {
         mkdir $tmp_dir;
         system("tar -xzf $tmp_tgz -C $tmp_dir --strip-components=1 2>/dev/null");
@@ -66,7 +85,7 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
         }
     }
 
-    # 3) Refresh key files (only if extraction succeeded)
+    # 4) FAZ-4: Refresh key files (only if extraction succeeded)
     unless (@errors) {
         my @files = (
             # [src_rel, dst_abs, mode]
@@ -113,22 +132,9 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
             system("systemctl enable --now mailshield-milter.service 2>/dev/null");
             push @actions, "started: mailshield-milter.service";
         }
-
-        # 3b) Docker container'ları da güncelle (git pull + docker rebuild)
-        # auto-update.sh script'i git pull + docker compose up --build yapar
-        my $update_script = "/opt/gokyuzuwebspam-app/deployment/auto-update.sh";
-        if (-x $update_script) {
-            my $out = `bash $update_script 2>&1`;
-            my $rc = $? >> 8;
-            if ($rc == 0) {
-                push @actions, "docker-update: OK (git pull + rebuild)";
-            } else {
-                push @errors, "docker-update failed (rc=$rc): " . substr($out, 0, 300);
-            }
-        }
     }
 
-    # 4) Cleanup
+    # 5) Cleanup
     system("rm -rf $tmp_tgz $tmp_dir");
 
     print "Content-type: application/json; charset=utf-8\r\n\r\n";
@@ -209,63 +215,103 @@ print <<"HTML";
 <title>GokyuzuWebSpam - Mail Guvenlik Paneli</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <script>
-// v43.14/16/17 Frame-break-out — 3 katmanlı fullscreen garantisi:
-// (1) window.top escape (aynı origin ise sorunsuz)
-// (2) parent iframe'i CSS ile 100vh yap (cross-origin fallback)
-// (3) 800ms sonra hala frame içindeysek header'da "Tam Ekran Aç" butonu vurgulanır
+// v43.18 ULTRA fullscreen — kullanıcı "küçük açılıyor, kaydırma veriyor" şikayeti sonrası:
+//   (a) Parent WHM chrome'unu tamamen bypass et (nav, footer, breadcrumb, sidebar)
+//   (b) Wrapper containerları 100vh'a genişlet
+//   (c) Kendi iframe'imizi position:fixed + 100vw × 100vh yap
+//   (d) MutationObserver + interval ile WHM tekrar sıfırlarsa geri uygula (30s sürer)
+//   (e) postMessage fallback (cross-origin senaryosu)
 (function ensureFullscreen() {
   var inFrame = false;
   try { inFrame = window.top !== window.self; } catch (e) { inFrame = true; }
   if (!inFrame) return;
 
-  // (1) Top-level'e escape et
+  // (0) En radikal — top window'a escape (same-origin ise anında)
   try { window.top.location.replace(window.self.location.href); } catch (e) {}
 
-  // (2) 100ms sonra hala frame içindeysek parent CSS'ini zorla
-  setTimeout(function() {
+  var CHROME_HIDE = [
+    '#navigation','#topNav','.whm-navbar','#topsplash','#navbar',
+    '.pageContainer > .navBar','#pageHeader','#header:not(.ms-hdr)',
+    '#leftMenu','#leftmenu','.sidebar','#sidebar','#leftSidebar',
+    '#footerContainer','#footer','.footer','#breadcrumbs','.breadcrumb',
+    '#pageTitleContainer','.page-title','.copyright-footer','#homeLink',
+    '#searchBox','#searchbox','.notifications-panel','#notificationHeader'
+  ];
+  var WRAP_IDS = [
+    'contentContainer','pageContainer','wrapper','main-content','cptext',
+    'ui-view','mainContainer','contentPane','pageContent','contentWrapper',
+    'contentWrapperInner','mainContent','pageWrapper','pageContainerInner',
+    'contentContainerInner','bodyContainer','app','root'
+  ];
+
+  var applyFix = function() {
     try {
       var p = window.parent && window.parent.document;
-      if (p) {
-        // WHM chrome wrapper'larını sıfırla
-        ['contentContainer','pageContainer','wrapper','main-content','cptext','ui-view'].forEach(function(id){
-          var el = p.getElementById(id);
-          if (el) { el.style.cssText = 'padding:0!important;margin:0!important;overflow:hidden!important;max-width:none!important;width:100%!important;height:100vh!important;'; }
-        });
-        // WHM navbar'ı gizle (fullscreen için)
-        var navSels = ['#navigation','#topNav','.whm-navbar','#topsplash','#navbar','.pageContainer > .navBar'];
-        navSels.forEach(function(sel){
-          var n = p.querySelector(sel);
-          if (n) n.style.display = 'none';
-        });
-        // Kendi iframe'imizi 100vh × 100vw yap
-        var frames = p.querySelectorAll('iframe, embed, object');
-        for (var i = 0; i < frames.length; i++) {
-          if (frames[i].src && frames[i].src.indexOf('mailshield') !== -1) {
-            frames[i].style.cssText = 'width:100vw!important;height:100vh!important;border:0!important;position:fixed!important;top:0!important;left:0!important;z-index:9999!important;';
-          }
-        }
-      }
-    } catch (e) { /* cross-origin */ }
-  }, 100);
+      if (!p) return;
 
-  // (3) Frame içindeysek anında "Tam Ekran Aç" butonunu pulse'la vurgula
-  try {
-    var btn = document.getElementById('ms-fullscreen-btn');
-    if (btn) {
-      btn.style.cssText += 'animation:msPulse 1.2s ease-in-out infinite;background:#dc2626!important;';
-    }
-  } catch (e) {}
-  // Alternatif: 800ms sonra tekrar dene (DOM hazır değilse)
-  setTimeout(function() {
-    try {
-      if (window.top !== window.self) {
-        var btn2 = document.getElementById('ms-fullscreen-btn');
-        if (btn2 && !btn2.style.animation) {
-          btn2.style.cssText += 'animation:msPulse 1.2s ease-in-out infinite;background:#dc2626!important;';
+      // Nav/footer/breadcrumb gizle
+      CHROME_HIDE.forEach(function(sel){
+        try {
+          var els = p.querySelectorAll(sel);
+          els.forEach(function(el){
+            el.style.setProperty('display','none','important');
+            el.style.setProperty('height','0','important');
+            el.style.setProperty('overflow','hidden','important');
+          });
+        } catch(_) {}
+      });
+
+      // Wrapper containerları 100vh yap
+      WRAP_IDS.forEach(function(id){
+        var el = p.getElementById(id);
+        if (el) {
+          el.style.cssText = 'padding:0 !important;margin:0 !important;max-width:none !important;width:100vw !important;height:100vh !important;min-height:100vh !important;position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;overflow:hidden !important;z-index:99998 !important;';
+        }
+      });
+
+      // Parent html/body reset
+      if (p.documentElement) p.documentElement.style.cssText = 'height:100vh !important;max-height:100vh !important;overflow:hidden !important;margin:0 !important;padding:0 !important;';
+      if (p.body) p.body.style.cssText = 'height:100vh !important;max-height:100vh !important;overflow:hidden !important;margin:0 !important;padding:0 !important;';
+
+      // Kendi iframe'imizi zorla fullscreen yap
+      var frames = p.querySelectorAll('iframe');
+      for (var i = 0; i < frames.length; i++) {
+        var f = frames[i];
+        var isMine = false;
+        try { isMine = (f.contentWindow === window) || (f === window.frameElement); } catch(_){}
+        if (!isMine && f.src && (f.src.indexOf('mailshield') !== -1 || f.src.indexOf('/cgi/mailshield') !== -1)) isMine = true;
+        if (isMine) {
+          f.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;min-height:100vh !important;max-height:100vh !important;border:0 !important;margin:0 !important;padding:0 !important;z-index:99999 !important;background:#fff !important;';
+          f.setAttribute('scrolling','no');
+          f.removeAttribute('height');
+          f.removeAttribute('width');
         }
       }
-    } catch (e) {}
-  }, 800);
+    } catch (e) { /* cross-origin fallback below */ }
+  };
+
+  // İlk uygula
+  applyFix();
+  // 500ms aralıklarla 30 saniye boyunca yeniden uygula (WHM sonradan reset ederse)
+  var iv = setInterval(applyFix, 500);
+  setTimeout(function(){ clearInterval(iv); }, 30000);
+
+  // MutationObserver — parent DOM'da her değişiklikte tekrar uygula
+  try {
+    var p = window.parent && window.parent.document;
+    if (p) {
+      var obs = new MutationObserver(function(){ applyFix(); });
+      obs.observe(p.documentElement, { attributes:true, childList:true, subtree:true, attributeFilter:['style','class'] });
+      // 60s sonra kapat (performans)
+      setTimeout(function(){ try { obs.disconnect(); } catch(_){} }, 60000);
+    }
+  } catch(e) {}
+
+  // Window resize eventinde de tekrar uygula
+  window.addEventListener('resize', applyFix);
+
+  // Cross-origin senaryosu için postMessage fallback (WHM iframe wrap ediyorsa)
+  try { window.parent.postMessage({ type:'mailshield-fullscreen', height:'100vh' }, '*'); } catch(e){}
 })();
 
 async function msUpdate() {

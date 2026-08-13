@@ -172,24 +172,67 @@ sub _split_body_parts {
 }
 
 # v43.16 — Attachment metadata çıkar (filename, content-type, tahmini boyut)
+# v43.18 — Base64 içerik de dahil et: image/PDF preview için (max 1MB per attachment,
+# toplam 3 attachment). MongoDB doc size 16MB olduğu için 3×1MB = 3MB güvenli.
 sub _extract_attachments {
     my ($body) = @_;
     my @out;
-    # Content-Disposition: attachment; filename="..." blokları
-    while ($body =~ /Content-Disposition:\s*attachment;[^\n]*filename\s*=\s*"?([^"\r\n]+)"?/ig) {
-        my $filename = $1;
+    my $total_bytes = 0;
+    my $MAX_PER_ATT  = 1_048_576;   # 1 MB per attachment
+    my $MAX_TOTAL    = 3_145_728;   # 3 MB total
+    my $MAX_COUNT    = 5;           # max 5 attachment metadata (ilk 3'ü içerik ile)
+
+    # Multipart body'yi boundary'ye göre split et
+    my $boundary;
+    if ($body =~ /^--([^\r\n]+)/m) { $boundary = $1; $boundary =~ s/--$//; }
+    return \@out unless $boundary;
+
+    my @parts = split(/--\Q$boundary\E(?:--)?\r?\n/, $body);
+    for my $part (@parts) {
+        next unless length($part) > 20;
+        my ($phdrs, $pbody) = split(/\r?\n\r?\n/, $part, 2);
+        next unless defined $pbody && defined $phdrs;
+        next unless $phdrs =~ /Content-Disposition:\s*attachment/i
+                 || $phdrs =~ /filename\s*=/i;
+
+        # Filename
+        my $filename = 'file.bin';
+        if ($phdrs =~ /filename\*?=\s*"?([^"\r\n;]+)"?/i) { $filename = $1; }
+        # Content-Type
         my $ctype = 'application/octet-stream';
-        # Aynı blokta Content-Type'ı geri geriye ara
-        my $pre = substr($body, 0, pos($body));
-        if ($pre =~ /Content-Type:\s*([^;\s]+)/i && length($&) > length($pre) - 400) {
-            $ctype = lc($1);
+        if ($phdrs =~ /Content-Type:\s*([^;\s\r\n]+)/i) { $ctype = lc($1); }
+        # Transfer encoding
+        my $enc = ($phdrs =~ /Content-Transfer-Encoding:\s*(\S+)/i) ? lc($1) : '';
+
+        # Content'i decode et → binary boyutu belirle
+        $pbody =~ s/\r?\n//g if $enc eq 'base64';  # base64'te sadece rakam/harf
+        my $raw = $pbody;
+        my $bin;
+        if ($enc eq 'base64') {
+            require MIME::Base64;
+            $bin = eval { MIME::Base64::decode_base64($raw) };
+        } else {
+            $bin = $raw;
         }
-        push @out, {
+        my $size = length($bin // '');
+
+        my %att = (
             filename     => (substr($filename, 0, 200)),
             content_type => $ctype,
-            size         => 0,   # exact size hesaplaması pahalı — 0 bırak
-        };
-        last if @out >= 20;  # DoS koruması
+            size         => $size,
+        );
+
+        # Küçük ekler için base64 içeriği de gönder (preview için)
+        if ($size > 0 && $size <= $MAX_PER_ATT
+            && ($total_bytes + $size) <= $MAX_TOTAL
+            && scalar(@out) < 3) {
+            require MIME::Base64;
+            $att{content_base64} = MIME::Base64::encode_base64($bin, '');
+            $total_bytes += $size;
+        }
+
+        push @out, \%att;
+        last if @out >= $MAX_COUNT;
     }
     return \@out;
 }

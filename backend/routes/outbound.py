@@ -49,7 +49,7 @@ def _fix_subject(s: str) -> str:
         except Exception:
             pass
     # 2) ftfy ile toplu decode (mono-encoding mojibake için)
-    if any(m in out for m in ("Ã", "Å", "Ä±", "Ä°", "â€")):
+    if any(m in out for m in ("Ã", "Å", "Ä±", "Ä°", "â€", "â", "â")):
         try:
             import ftfy
             fixed = ftfy.fix_text(out)
@@ -79,9 +79,25 @@ def _fix_subject(s: str) -> str:
         "\u00c3\u009c": "\u00dc",  # Ã + <9C> → Ü
         "\u00c3\u0153": "\u00dc",  # Ã + œ → Ü (Windows-1252 path)
         # v43.17c — U+FFFD (replacement char) sonlu bigram'lar
-        "\u00c5\ufffd": "\u015e",  # Å + � → Ş (context-aware later)
-        "\u00c4\ufffd": "\u011e",  # Ä + � → Ğ (context-aware later)
-        "\u00c3\ufffd": "\u0130",  # Ã + � → İ (rare)
+        "\u00c5\ufffd": "\u015e",  # Å + � → Ş
+        "\u00c4\ufffd": "\u011e",  # Ä + � → Ğ
+        "\u00c3\ufffd": "\u0130",  # Ã + � → İ
+        # v43.18 — â€ (Windows-1252 punctuation misread) bigram'lar
+        "\u00e2\u20ac\u009c": "\u201c",  # â€œ → " (open quote)
+        "\u00e2\u20ac\u009d": "\u201d",  # â€ → " (close quote)
+        "\u00e2\u20ac\u0099": "\u2019",  # â€™ → ' (right single quote)
+        "\u00e2\u20ac\u0098": "\u2018",  # â€˜ → ' (left single quote)
+        "\u00e2\u20ac\ufffd": "\u201d",  # â€� → " (replacement char after â€)
+        "\u00e2\u20ac\u201c": "\u2013",  # â€“ → – (en-dash)
+        "\u00e2\u20ac\u201d": "\u2014",  # â€" → — (em-dash)
+        # v43.18 — DISKWARN system message mojibake (⚠ warning triangle)
+        "\u00e2\u0161\ufffd": "\u26a0",  # â� → ⚠ (warning triangle)
+        "\u00e2\u0161\u00a0": "\u26a0",  # âš  → ⚠ (with trailing NBSP)
+        "\u00e2\u0161": "\u26a0",         # âš (bare, warning triangle mojibake)
+        "\u00e2\ufffd": "\u26a0",         # â� (2-char) → ⚠
+        # v43.18 — Trailing â€ alone (unpaired close quote) → strip veya "
+        "\u00e2\u20ac ": " ",             # â€ (space) → space (remove artifact)
+        "\u00e2\u20ac$": "",              # â€ at end of string → strip
     }
     for bad, good in _bigrams.items():
         if bad in out:
@@ -218,6 +234,7 @@ async def outbound_events(
     to_search: Optional[str] = None,       # to_addr regex
     subject_search: Optional[str] = None,
     ip_search: Optional[str] = None,
+    body_search: Optional[str] = None,     # v43.18: body_preview + body_html regex
     min_score: Optional[float] = None,
     max_score: Optional[float] = None,
     hours: Optional[int] = None,           # son N saat
@@ -258,6 +275,15 @@ async def outbound_events(
             {"sender_ip": {"$regex": ip_search, "$options": "i"}},
             {"client_ip": {"$regex": ip_search, "$options": "i"}},
         ]
+    if body_search:
+        # v43.18 Body Search — body_preview + body_html içinde regex ara.
+        # $and'e ekle ki $or ile çakışmasın (ip_search + body_search birlikte kullanılabilsin).
+        import re as _re
+        safe = _re.escape(body_search)
+        match["$and"].append({"$or": [
+            {"body_preview": {"$regex": safe, "$options": "i"}},
+            {"body_html":    {"$regex": safe, "$options": "i"}},
+        ]})
     if min_score is not None:
         match.setdefault("total_score", {})["$gte"] = float(min_score)
     if max_score is not None:

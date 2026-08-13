@@ -13,6 +13,47 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 13, 2026 (Session 14, v43.18) — Milter Body+Attachment, Body Search, Mojibake, WHM Fullscreen ULTRA
+
+### Kullanıcı istekleri (öncelik sırası)
+1. WHM plugin ekran KÜÇÜK açılıyor, kaydırma çıkmasın diye yükseklik büyütülsün ⚠ (4. kez şikayet)
+2. Milter Body Ingest Verify — yeni maillerde body gerçekten kaydediliyor mu?
+3. Body Search — outbound mail body içinde full-text arama
+4. Body/Attachment Preview — PDF/resim/text inline preview
+5. DB Mojibake Sweep — DISKWARN blocks âš gibi sistem mesajları
+
+### v43.18 ULTRA Fullscreen (WHM plugin)
+- ✅ `whm/mailshield.cgi` içine 4 katmanlı fix: window.top escape + parent DOM chrome hide (15+ selector) + wrapper container 100vh (18+ ID) + iframe force position fixed
+- ✅ MutationObserver + setInterval(500ms, 30sn) — WHM'in dinamik reset girişimlerini geri alır
+- ✅ Self-update reorder: FAZ-1 (git pull + docker rebuild) ÖNCE, FAZ-2 (taze tarball indir) SONRA. Böylece tek "Güncelle" tıklamasında hem backend hem CGI güncel.
+- ✅ `backend/server.py::plugin_download_latest` on-the-fly tarball build (`/app/whm-plugin/` dizininden) — BACKEND_DIST_DIR bayat kaldığı için değişiklikler ulaşmıyordu.
+
+### Milter Body Ingest — VERIFIED ✅
+- Test payload: body_preview (78 char) + 2 attachment ingest edildi, `content_source: "db"` döndü.
+- `/api/outbound/event/{id}/content` Türkçe karakter, HTML body, attachment metadata döndürüyor.
+
+### Body Search — DONE ✅
+- ✅ `GET /api/outbound/events?body_search=<text>` — body_preview + body_html regex ($and'e append)
+- ✅ Outbound.js: Gelişmiş filtrelerde "Gövde içinde ara" input (`ob-adv-body`, full-width)
+- Test: "Türkçe" araması 1 sonuç bulur; "nonexistentxyz" 0 sonuç ✓
+
+### Attachment Preview — DONE ✅
+- ✅ `Milter.pm::_extract_attachments` yeniden yazıldı: multipart boundary parse, base64 decode, 1MB/attachment × 3 attachment × 3MB toplam sınır ile `content_base64` alanı ekler.
+- ✅ Outbound.js: image/pdf/text için inline preview + "İndir" data-URL butonu (data-testid: `ob-att-preview-{img,pdf,text}-{i}`)
+- MongoDB doc size 16MB → 3MB attachment güvenli.
+
+### DB Mojibake Sweep — DONE ✅
+- ✅ `_fix_subject` bigram map genişletildi: `âš` → ⚠ (DISKWARN), `â\ufffd` → ⚠, trailing `â€` cleanup
+- ✅ Migration trigger regex genişletildi: `âš` ve `\ufffd` de yakalanıyor; PCRE2 `\u` desteklenmediği için literal Unicode karakter kullanıldı
+- Test: `DISKWARN blocks âš` → `DISKWARN blocks ⚠` ✓
+- Startup migration çalıştı: **10 mojibake subject düzeltildi** (mail_events)
+
+### Deployment Notes for User
+- User's WHM server pull's from `panel.gokyuzuhosting.com/api/plugin/download` (prod backend)
+- Preview'ın tarball'ı zaten güncel (`x-plugin-source: on-the-fly`)
+- Prod'a ulaşması için: "Save to Github" → WHM'de Güncelle tıkla
+
+
 ## Feb 12, 2026 (Session 13) - v43+ Threat Intel Auto-Sync + DMARC Demo + Karantina Direction Tab
 
 ### Kullanıcı istekleri

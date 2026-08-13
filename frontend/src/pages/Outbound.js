@@ -48,6 +48,7 @@ export default function Outbound() {
   const [toSearch, setToSearch] = useState("");
   const [subjectSearch, setSubjectSearch] = useState("");
   const [ipSearch, setIpSearch] = useState("");
+  const [bodySearch, setBodySearch] = useState("");
   const [minScore, setMinScore] = useState("");
   const [maxScore, setMaxScore] = useState("");
   const [hoursFilter, setHoursFilter] = useState("");
@@ -113,18 +114,20 @@ export default function Outbound() {
   const dTo = useDebounced(toSearch);
   const dSubj = useDebounced(subjectSearch);
   const dIp = useDebounced(ipSearch);
+  const dBody = useDebounced(bodySearch);
   const dMinS = useDebounced(minScore);
   const dMaxS = useDebounced(maxScore);
   const dHours = useDebounced(hoursFilter);
 
   const eventsQuery = useQuery({
-    queryKey: ["outbound-events", { dSearch, dTo, dSubj, dIp, dMinS, dMaxS, dHours, verdict, limit }],
+    queryKey: ["outbound-events", { dSearch, dTo, dSubj, dIp, dBody, dMinS, dMaxS, dHours, verdict, limit }],
     queryFn: () => api.outboundEvents({
       limit,
       search: dSearch || undefined,
       to_search: dTo || undefined,
       subject_search: dSubj || undefined,
       ip_search: dIp || undefined,
+      body_search: dBody || undefined,
       min_score: dMinS ? Number(dMinS) : undefined,
       max_score: dMaxS ? Number(dMaxS) : undefined,
       hours: dHours ? Number(dHours) : undefined,
@@ -279,6 +282,9 @@ export default function Outbound() {
                    placeholder="Konu (regex)..." className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs" />
             <input value={ipSearch} onChange={(e) => setIpSearch(e.target.value)} data-testid="ob-adv-ip"
                    placeholder="IP (regex)..." className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs" />
+            <input value={bodySearch} onChange={(e) => setBodySearch(e.target.value)} data-testid="ob-adv-body"
+                   placeholder="Gövde içinde ara (metin/html)..."
+                   className="bg-slate-950 border border-emerald-800/40 rounded px-2 py-1.5 text-xs md:col-span-3 focus:border-emerald-500 focus:outline-none" />
             <input value={minScore} onChange={(e) => setMinScore(e.target.value)} data-testid="ob-adv-min"
                    type="number" step="0.1" placeholder="Min skor" className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs" />
             <input value={maxScore} onChange={(e) => setMaxScore(e.target.value)} data-testid="ob-adv-max"
@@ -291,14 +297,15 @@ export default function Outbound() {
         <div className="px-3 pb-3 border-t border-slate-800 pt-2">
           <SavedFiltersBar
             module="outbound_events"
-            currentFilters={{ search, verdict, limit, toSearch, subjectSearch, ipSearch, minScore, maxScore, hoursFilter }}
+            currentFilters={{ search, verdict, limit, toSearch, subjectSearch, ipSearch, bodySearch, minScore, maxScore, hoursFilter }}
             onLoad={(f) => {
               setSearch(f.search ?? ""); setVerdict(f.verdict ?? "all");
               if (f.limit && Number.isFinite(Number(f.limit))) setLimit(Number(f.limit));
               setToSearch(f.toSearch ?? ""); setSubjectSearch(f.subjectSearch ?? "");
-              setIpSearch(f.ipSearch ?? ""); setMinScore(f.minScore ?? "");
+              setIpSearch(f.ipSearch ?? ""); setBodySearch(f.bodySearch ?? "");
+              setMinScore(f.minScore ?? "");
               setMaxScore(f.maxScore ?? ""); setHoursFilter(f.hoursFilter ?? "");
-              if (f.toSearch || f.subjectSearch || f.ipSearch || f.minScore || f.maxScore || f.hoursFilter) setAdvOpen(true);
+              if (f.toSearch || f.subjectSearch || f.ipSearch || f.bodySearch || f.minScore || f.maxScore || f.hoursFilter) setAdvOpen(true);
             }}
           />
         </div>
@@ -516,16 +523,57 @@ export default function Outbound() {
                     </div>
                   )}
 
-                  {/* Ekler */}
+                  {/* Ekler (v43.18 — inline preview + download) */}
                   {c.attachments && c.attachments.length > 0 && (
-                    <div className="text-xs">
+                    <div className="text-xs" data-testid="ob-content-attachments">
                       <div className="text-slate-500 mb-1 uppercase tracking-widest">Ekler ({c.attachments.length})</div>
-                      <ul className="space-y-1">
-                        {c.attachments.map((a, i) => (
-                          <li key={i} className="mono text-slate-300 text-[11px]">
-                            📎 {a.filename || "(isimsiz)"} · {a.content_type || "?"} · {a.size ? `${(a.size/1024).toFixed(1)}KB` : ""} {a.sha256 && <span className="text-slate-500">sha256={a.sha256.slice(0,12)}...</span>}
-                          </li>
-                        ))}
+                      <ul className="space-y-2">
+                        {c.attachments.map((a, i) => {
+                          const ct = (a.content_type || "").toLowerCase();
+                          const isImage = ct.startsWith("image/");
+                          const isPdf = ct === "application/pdf";
+                          const isText = ct.startsWith("text/") || ct.includes("json") || ct.includes("xml");
+                          const dataUrl = a.content_base64 ? `data:${a.content_type || "application/octet-stream"};base64,${a.content_base64}` : null;
+                          return (
+                            <li key={i} className="border border-slate-800 rounded p-2 bg-slate-950/60">
+                              <div className="mono text-slate-300 text-[11px] flex items-center gap-2 flex-wrap">
+                                <span className="text-emerald-400">📎</span>
+                                <span className="text-slate-100">{a.filename || "(isimsiz)"}</span>
+                                <span className="text-slate-500">·</span>
+                                <span>{a.content_type || "?"}</span>
+                                <span className="text-slate-500">·</span>
+                                <span>{a.size ? `${(a.size / 1024).toFixed(1)} KB` : "?"}</span>
+                                {dataUrl && (
+                                  <a href={dataUrl} download={a.filename || "attachment.bin"}
+                                     data-testid={`ob-att-download-${i}`}
+                                     className="ml-auto px-2 py-0.5 rounded bg-emerald-700/40 hover:bg-emerald-600/60 text-emerald-200 text-[10px] no-underline">
+                                    ⬇ İndir
+                                  </a>
+                                )}
+                                {!dataUrl && (
+                                  <span className="ml-auto text-[10px] text-amber-400/70" title="Milter attachment içeriğini ingest etmedi (>1MB veya eski Milter sürümü)">
+                                    (içerik yok)
+                                  </span>
+                                )}
+                              </div>
+                              {/* Inline preview */}
+                              {dataUrl && isImage && (
+                                <img src={dataUrl} alt={a.filename} data-testid={`ob-att-preview-img-${i}`}
+                                     className="mt-2 max-h-64 rounded border border-slate-800 object-contain bg-slate-900" />
+                              )}
+                              {dataUrl && isPdf && (
+                                <embed src={dataUrl} type="application/pdf" data-testid={`ob-att-preview-pdf-${i}`}
+                                       className="mt-2 w-full h-72 rounded border border-slate-800 bg-slate-900" />
+                              )}
+                              {dataUrl && isText && (
+                                <pre data-testid={`ob-att-preview-text-${i}`}
+                                     className="mt-2 p-2 bg-slate-900 border border-slate-800 rounded max-h-56 overflow-auto text-[10px] mono text-slate-300 whitespace-pre-wrap">
+                                  {(() => { try { return atob(a.content_base64).slice(0, 8000); } catch (_) { return "(decode error)"; } })()}
+                                </pre>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   )}
