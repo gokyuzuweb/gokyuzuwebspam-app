@@ -209,33 +209,66 @@ print <<"HTML";
 <title>GokyuzuWebSpam - Mail Guvenlik Paneli</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <script>
-// v43.14 Frame-break-out — WHM'in appconfig'inde hala target=_self varsa
-// (eski kurulum) plugin küçük bir iframe içinde açılır. Bu durumda üst
-// pencereye çıkıp gerçek fullscreen sağlarız. Yeni kurulumda target=_top
-// zaten browser viewport'una atar; bu kod no-op'tur.
-// v43.16: <head> içine taşındı ki flash olmadan hemen escape etsin.
+// v43.14/16/17 Frame-break-out — 3 katmanlı fullscreen garantisi:
+// (1) window.top escape (aynı origin ise sorunsuz)
+// (2) parent iframe'i CSS ile 100vh yap (cross-origin fallback)
+// (3) 800ms sonra hala frame içindeysek header'da "Tam Ekran Aç" butonu vurgulanır
 (function ensureFullscreen() {
-  try {
-    if (window.top !== window.self) {
-      window.top.location.replace(window.self.location.href);
-      // Escape başarısız olursa parent WHM chrome'u sıkıştır (fallback)
-      setTimeout(function() {
-        try {
-          var p = window.parent && window.parent.document;
-          if (p) {
-            ['contentContainer','pageContainer','wrapper','main-content'].forEach(function(id){
-              var el = p.getElementById(id);
-              if (el) { el.style.padding='0'; el.style.margin='0'; el.style.overflow='hidden'; el.style.maxWidth='none'; }
-            });
-            // WHM navbar'ı da gizle (fullscreen için)
-            var nav = p.querySelector('#navigation, #topNav, .whm-navbar');
-            if (nav) nav.style.display = 'none';
+  var inFrame = false;
+  try { inFrame = window.top !== window.self; } catch (e) { inFrame = true; }
+  if (!inFrame) return;
+
+  // (1) Top-level'e escape et
+  try { window.top.location.replace(window.self.location.href); } catch (e) {}
+
+  // (2) 100ms sonra hala frame içindeysek parent CSS'ini zorla
+  setTimeout(function() {
+    try {
+      var p = window.parent && window.parent.document;
+      if (p) {
+        // WHM chrome wrapper'larını sıfırla
+        ['contentContainer','pageContainer','wrapper','main-content','cptext','ui-view'].forEach(function(id){
+          var el = p.getElementById(id);
+          if (el) { el.style.cssText = 'padding:0!important;margin:0!important;overflow:hidden!important;max-width:none!important;width:100%!important;height:100vh!important;'; }
+        });
+        // WHM navbar'ı gizle (fullscreen için)
+        var navSels = ['#navigation','#topNav','.whm-navbar','#topsplash','#navbar','.pageContainer > .navBar'];
+        navSels.forEach(function(sel){
+          var n = p.querySelector(sel);
+          if (n) n.style.display = 'none';
+        });
+        // Kendi iframe'imizi 100vh × 100vw yap
+        var frames = p.querySelectorAll('iframe, embed, object');
+        for (var i = 0; i < frames.length; i++) {
+          if (frames[i].src && frames[i].src.indexOf('mailshield') !== -1) {
+            frames[i].style.cssText = 'width:100vw!important;height:100vh!important;border:0!important;position:fixed!important;top:0!important;left:0!important;z-index:9999!important;';
           }
-        } catch (e) {}
-      }, 100);
+        }
+      }
+    } catch (e) { /* cross-origin */ }
+  }, 100);
+
+  // (3) Frame içindeysek anında "Tam Ekran Aç" butonunu pulse'la vurgula
+  try {
+    var btn = document.getElementById('ms-fullscreen-btn');
+    if (btn) {
+      btn.style.cssText += 'animation:msPulse 1.2s ease-in-out infinite;background:#dc2626!important;';
     }
-  } catch (e) { /* cross-origin */ }
+  } catch (e) {}
+  // Alternatif: 800ms sonra tekrar dene (DOM hazır değilse)
+  setTimeout(function() {
+    try {
+      if (window.top !== window.self) {
+        var btn2 = document.getElementById('ms-fullscreen-btn');
+        if (btn2 && !btn2.style.animation) {
+          btn2.style.cssText += 'animation:msPulse 1.2s ease-in-out infinite;background:#dc2626!important;';
+        }
+      }
+    } catch (e) {}
+  }, 800);
 })();
+
+async function msUpdate() {
 </script>
 <style>
   /* v43.9 Standalone WHM plugin — WHM chrome tamamen bypass, iframe 100vh gerçek fullscreen */
@@ -298,6 +331,10 @@ print <<"HTML";
     padding: 0;
     background: #0f172a;
   }
+  @keyframes msPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220,38,38,0.7); }
+    50%      { transform: scale(1.08); box-shadow: 0 0 0 8px rgba(220,38,38,0); }
+  }
 </style>
 </head>
 <body>
@@ -310,6 +347,9 @@ print <<"HTML";
   <a href="/scripts2/main" class="ms-btn ms-btn-back" title="WHM Ana Sayfaya Don">
     &larr; WHM
   </a>
+  <button id="ms-fullscreen-btn" class="ms-btn" style="background:#059669;" onclick="window.open(window.location.pathname, '_blank', 'noopener'); return false;" title="Yeni sekmede tam ekran ac">
+    &#x1F5A5; Tam Ekran
+  </button>
   <button id="ms-update-btn" class="ms-btn" onclick="msUpdate()" title="Plugin script'lerini son surumden guncelle">
     &#x21bb; Guncelle
   </button>
