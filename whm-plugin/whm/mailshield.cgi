@@ -296,9 +296,16 @@ async function msUpdate() {
   btn.disabled = true;
   btn.innerHTML = '&#x21bb; Guncelleniyor...';
   st.textContent = '';
+  let raw = '';
   try {
-    const r = await fetch('/cgi/mailshield/index.cgi?action=self-update', { credentials:'same-origin' });
-    const d = await r.json();
+    const r = await fetch('/cgi/mailshield/index.cgi?action=self-update', { credentials:'same-origin', headers: { 'Accept': 'application/json' } });
+    raw = await r.text();
+    let d;
+    try { d = JSON.parse(raw); }
+    catch (parseErr) {
+      // Sunucu HTML dondurdu — muhtemelen auth redirect veya Perl hatasi
+      throw new Error('Yanit JSON degil. HTTP ' + r.status + '. Ilk 300 karakter:\\n\\n' + raw.substring(0, 300));
+    }
     if (r.ok && d.ok) {
       btn.classList.add('ms-btn-ok');
       btn.innerHTML = '&check; Guncellendi';
@@ -314,7 +321,7 @@ async function msUpdate() {
     btn.classList.add('ms-btn-err');
     btn.innerHTML = '&#x2717; Hata';
     alert('Guncelleme hatasi: ' + e.message);
-    setTimeout(() => { btn.disabled = false; btn.classList.remove('ms-btn-err'); btn.innerHTML = '&#x21bb; Guncelle'; }, 3000);
+    setTimeout(() => { btn.disabled = false; btn.classList.remove('ms-btn-err'); btn.innerHTML = '&#x21bb; Guncelle'; }, 5000);
   }
 }
 </script>
