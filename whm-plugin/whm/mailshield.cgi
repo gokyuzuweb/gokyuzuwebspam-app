@@ -438,7 +438,7 @@ async function msUpdate() {
     padding: 0;
     background: #0f172a;
   }
-  @keyframes msPulse {
+  \@keyframes msPulse {
     0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220,38,38,0.7); }
     50%      { transform: scale(1.08); box-shadow: 0 0 0 8px rgba(220,38,38,0); }
   }

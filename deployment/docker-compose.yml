@@ -37,6 +37,7 @@ services:
       - MAILSHIELD_MODE=seller
     volumes:
       - ../backend:/app/backend
+      - ../whm-plugin:/app/whm-plugin:ro
       - ./data/uploads:/app/backend/uploads
     ports:
       - "127.0.0.1:8001:8001"
