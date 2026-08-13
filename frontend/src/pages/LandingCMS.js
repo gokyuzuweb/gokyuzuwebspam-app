@@ -52,6 +52,9 @@ const buildInitialState = (data) => {
     ab_test_enabled: !!data?.ab_test_enabled,
     // v43.13 Geo scope
     ab_geo_scope: data?.ab_geo_scope || "global",
+    // v43.16 Hero live preview toggle
+    hero_preview_enabled: data?.hero_preview_enabled !== false,
+    hero_preview_style: data?.hero_preview_style || "animated",
     variant_b_hero_by_lang: variantBByLang,
   };
 };
@@ -293,6 +296,25 @@ export default function LandingCMS() {
             </div>
           </div>
         </CardBody>
+      </Card>
+
+      {/* v43.16 Hero Live Preview toggle */}
+      <Card>
+        <CardHeader
+          title={<span className="flex items-center gap-2"><Sparkles className="w-5 h-5 text-indigo-300"/> Hero Canlı Önizleme</span>}
+          subtitle="Landing hero'nun sağ tarafında animasyonlu yönetim paneli önizlemesi (git-gel kalkan + canlı tile grid)."
+          right={
+            <button
+              data-testid="hero-preview-toggle"
+              onClick={() => { setDirty(true); setForm(prev => ({...prev, hero_preview_enabled: !prev.hero_preview_enabled})); }}
+              className={`text-xs px-3 py-1.5 rounded-md border font-medium transition-colors
+                         ${form.hero_preview_enabled
+                           ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                           : "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-600"}`}>
+              {form.hero_preview_enabled ? "AÇIK · Kapat" : "KAPALI · Aç"}
+            </button>
+          }
+        />
       </Card>
 
       {/* v43.12 A/B Testing Card */}

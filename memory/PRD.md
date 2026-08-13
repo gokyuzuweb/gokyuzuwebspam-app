@@ -582,3 +582,44 @@ tabidir.
 - Backend curl: MIME + mixed mojibake her ikisi de temiz decode
 - Overview endpoint 200 OK, backend restart sonrası ftfy import başarılı
 
+
+## Feb 13, 2026 (Session 14f) — v43.16 · Milter Body Ingest + Hero Live Preview + WHM Fullscreen v2 + Cmd+K 403 Fix
+
+### 1. Perl Milter Body Ingest (kalıcı çözüm)
+- `lib/SpamGuard/Milter.pm` `_report_saas` genişletildi:
+  * `headers_full` (16KB), `body_preview` (32KB), `body_html` (64KB), `attachments`, `message_id`, `size_bytes`
+  * `_split_body_parts($body, $hdrs)` — multipart boundary regex-parser, base64/quoted-printable decoder
+  * `_extract_attachments($body)` — `Content-Disposition: attachment; filename="..."` regex, 20 max DoS koruması
+- Self-update file list'e eklendi: `mailshield-milter.pl` + `lib/SpamGuard/{Milter,Engines,Config}.pm`
+- Self-update sonrası `systemctl restart mailshield-milter.service` çağrısı (yeni kod anında devreye girer)
+
+### 2. Landing Hero Live Preview entegrasyonu
+- `Landing.js` `Hero()` 2 sütuna dönüştürüldü (`lg:grid-cols-12` — 7/5 oran)
+- Sol: hero_badge + title + subtitle + CTA'lar (Şimdi Satın Al / Canlı Demo / Kurulum)
+- Sağ: `<HeroLivePreview/>` — animasyonlu kalkan (git-gel motion), CANLI SİSTEM banner,
+  4 mini 3D tile (Yakalanan Virüs/Phishing, Bloklu IP, Tehdit İstihbaratı), Trend spark,
+  Server rack ikonları, floating "Yeni Satın Alan" emerald card
+- CMS'te `hero_preview_enabled` toggle butonu (v43.16 kartı) — AÇIK varsayılan
+
+### 3. Cmd+K "Landing Tema Değiştir" 403 hata handling
+- Aksiyon şimdi önce localStorage'da `MS-` prefix'li master key var mı ön-kontrol yapar
+- Yoksa: net Turkish toast "Yönetici yetkisi gerekli — önce Ana Panele girin"
+- 403 alırsa: "Master oturum düşmüş — sayfayı yenileyin veya /panel'e girip whoami tetikleyin"
+- Başarılı olursa: "Aç" butonu ile yeni sekmede landing preview
+
+### 4. WHM Plugin Fullscreen v2
+- CGI'da frame-break-out JS artık `<head>` içinde ilk çalışır (flash olmadan escape)
+- Cross-origin engel olursa fallback: WHM chrome elementlerini (contentContainer, pageContainer, wrapper, navigation) inline-style ile sıfırlar/gizler
+- Self-update: `appconfig/mailshield.conf` (target=_top) + `register_appconfig` + `mailshield-milter.service restart`
+- Kullanıcının tek adımı: WHM plugin'de **Güncelle** butonuna basmak
+
+### Kullanıcı Adımları (deployment)
+1. WHM sunucusunda plugin'e girin, **Güncelle** butonuna basın
+2. Log çıktısı şunları içermeli:
+   * `updated: /usr/local/mailshield/lib/SpamGuard/Milter.pm`
+   * `updated: /var/cpanel/apps/mailshield.conf`
+   * `reregistered: mailshield appconfig (target=_top)`
+   * `restarted: mailshield-milter.service (body ingest active)`
+3. WHM ana sayfaya dönüp plugin'e tekrar tıklayın → browser viewport'un tamamı
+4. Bundan sonra tüm yeni giden/gelen mail'lerin body'si "Mail İçeriği Oku" modalında görünecek
+

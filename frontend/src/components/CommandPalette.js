@@ -71,15 +71,39 @@ const ACTIONS = [
     icon: Palette, title: "Landing Tema Değiştir (Dark ↔ Light)",
     keywords: "landing theme dark light tema toggle",
     run: async ({ toast, api }) => {
+      // v43.16 — Master yetkisi ön-kontrol: localStorage'da MS- prefix'li key olmalı
+      const mk = (localStorage.getItem("gws.master_license") || "").startsWith("MS-")
+              ? localStorage.getItem("gws.master_license")
+              : ((localStorage.getItem("gws.event_license") || "").startsWith("MS-")
+                  ? localStorage.getItem("gws.event_license") : "");
+      if (!mk) {
+        toast.error("Yönetici yetkisi gerekli", {
+          description: "Bu aksiyon için master anahtar gerekli — önce Ana Panele girin veya Master Unlock yapın",
+        });
+        return;
+      }
       try {
         const cur = await api.landingGet();
         const next = (cur.theme === "light") ? "dark" : "light";
+        // API interceptor X-Master-Key'i otomatik ekler; ayrıca cookie session da geçerli olur
         await api.landingPut({ theme: next });
         toast.success(`Landing teması ${next.toUpperCase()} yapıldı`, {
-          description: "Sayfayı yenilediğinizde değişiklik görünür",
+          description: "Ana sayfayı (yeni sekme) açıp değişikliği görün",
+          action: {
+            label: "Aç",
+            onClick: () => window.open("/", "_blank", "noopener,noreferrer"),
+          },
         });
       } catch (e) {
-        toast.error("Tema değiştirilemedi", { description: String(e?.response?.data?.detail || e) });
+        const detail = e?.response?.data?.detail || "";
+        const status = e?.response?.status;
+        if (status === 403) {
+          toast.error("Master oturum düşmüş", {
+            description: "Sayfayı yenileyip tekrar deneyin veya /panel'e girip whoami'yi tetikleyin",
+          });
+        } else {
+          toast.error("Tema değiştirilemedi", { description: detail || String(e) });
+        }
       }
     },
   },

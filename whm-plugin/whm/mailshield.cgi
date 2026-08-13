@@ -71,7 +71,12 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
         my @files = (
             # [src_rel, dst_abs, mode]
             ['scripts/mailshield-logtail.pl', '/usr/local/mailshield/bin/mailshield-logtail.pl', '0755'],
+            ['scripts/mailshield-milter.pl',  '/usr/local/mailshield/bin/mailshield-milter.pl',  '0755'],
             ['scripts/heartbeat.pl',          '/usr/local/mailshield/bin/heartbeat.pl',          '0755'],
+            # v43.16 — Milter Perl kütüphaneleri (body ingest kodu bunlarda)
+            ['lib/SpamGuard/Milter.pm',       '/usr/local/mailshield/lib/SpamGuard/Milter.pm',  '0644'],
+            ['lib/SpamGuard/Engines.pm',      '/usr/local/mailshield/lib/SpamGuard/Engines.pm', '0644'],
+            ['lib/SpamGuard/Config.pm',       '/usr/local/mailshield/lib/SpamGuard/Config.pm',  '0644'],
             ['whm/mailshield.cgi',            '/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/index.cgi', '0755'],
             ['whm/mailshield.tmpl',           '/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/mailshield.tmpl', '0644'],
             # v43.14 — appconfig'i de kopyala (target=_top gibi değişiklikleri yayınlar)
@@ -99,6 +104,14 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
         } else {
             system("systemctl enable --now mailshield-logtail.service 2>/dev/null");
             push @actions, "started: mailshield-logtail.service";
+        }
+        # v43.16 — mailshield-milter'i de yeniden başlat (yeni body ingest kodu için)
+        if (system("systemctl is-active --quiet mailshield-milter.service") == 0) {
+            system("systemctl restart mailshield-milter.service");
+            push @actions, "restarted: mailshield-milter.service (body ingest active)";
+        } elsif (-f "/etc/systemd/system/mailshield-milter.service") {
+            system("systemctl enable --now mailshield-milter.service 2>/dev/null");
+            push @actions, "started: mailshield-milter.service";
         }
 
         # 3b) Docker container'ları da güncelle (git pull + docker rebuild)
@@ -195,6 +208,35 @@ print <<"HTML";
 <meta charset="utf-8">
 <title>GokyuzuWebSpam - Mail Guvenlik Paneli</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<script>
+// v43.14 Frame-break-out — WHM'in appconfig'inde hala target=_self varsa
+// (eski kurulum) plugin küçük bir iframe içinde açılır. Bu durumda üst
+// pencereye çıkıp gerçek fullscreen sağlarız. Yeni kurulumda target=_top
+// zaten browser viewport'una atar; bu kod no-op'tur.
+// v43.16: <head> içine taşındı ki flash olmadan hemen escape etsin.
+(function ensureFullscreen() {
+  try {
+    if (window.top !== window.self) {
+      window.top.location.replace(window.self.location.href);
+      // Escape başarısız olursa parent WHM chrome'u sıkıştır (fallback)
+      setTimeout(function() {
+        try {
+          var p = window.parent && window.parent.document;
+          if (p) {
+            ['contentContainer','pageContainer','wrapper','main-content'].forEach(function(id){
+              var el = p.getElementById(id);
+              if (el) { el.style.padding='0'; el.style.margin='0'; el.style.overflow='hidden'; el.style.maxWidth='none'; }
+            });
+            // WHM navbar'ı da gizle (fullscreen için)
+            var nav = p.querySelector('#navigation, #topNav, .whm-navbar');
+            if (nav) nav.style.display = 'none';
+          }
+        } catch (e) {}
+      }, 100);
+    }
+  } catch (e) { /* cross-origin */ }
+})();
+</script>
 <style>
   /* v43.9 Standalone WHM plugin — WHM chrome tamamen bypass, iframe 100vh gerçek fullscreen */
   * { box-sizing: border-box; }
@@ -276,32 +318,6 @@ print <<"HTML";
 <iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam" allow="fullscreen"></iframe>
 
 <script>
-// v43.14 Frame-break-out — WHM'in appconfig'inde hala target=_self varsa
-// (eski kurulum) plugin küçük bir iframe içinde açılır. Bu durumda üst
-// pencereye çıkıp gerçek fullscreen sağlarız. Yeni kurulumda target=_top
-// zaten browser viewport'una atar; bu kod no-op'tur.
-(function ensureFullscreen() {
-  try {
-    if (window.top !== window.self) {
-      // Frame içindeyiz — top-level'e escape et (aynı URL)
-      window.top.location.replace(window.self.location.href);
-    }
-  } catch (e) {
-    // cross-origin engeli olursa fallback: kendi document'imizi
-    // max viewport'a zorla ve WHM outer'ını hidden yap
-    try {
-      document.documentElement.style.minHeight = "100vh";
-      document.body.style.minHeight = "100vh";
-      var p = window.parent && window.parent.document;
-      if (p) {
-        var wrap = p.getElementById("contentContainer")
-                 || p.getElementById("pageContainer");
-        if (wrap) { wrap.style.padding = "0"; wrap.style.overflow = "hidden"; }
-      }
-    } catch (ex) {}
-  }
-})();
-
 async function msUpdate() {
   const btn = document.getElementById('ms-update-btn');
   const st  = document.getElementById('ms-update-status');
