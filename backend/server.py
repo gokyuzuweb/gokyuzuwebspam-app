@@ -1253,8 +1253,9 @@ async def top_senders(limit: int = 8):
     ]
     rows = await db.quarantine.aggregate(pipeline).to_list(limit)
     return [{
-        "ip": r["_id"], "sender": r["sender"], "count": r["count"],
-        "avg_score": round(r["avg_score"], 2), "verdict": r["verdict"],
+        "ip": r.get("_id"), "sender": r.get("sender"), "count": r.get("count", 0),
+        "avg_score": round(r.get("avg_score") or 0.0, 2),
+        "verdict": r.get("verdict"),
     } for r in rows]
 
 
