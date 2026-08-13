@@ -206,6 +206,20 @@ async def ingest_event(evt: MailEvent, request: Request):
     doc["id"] = str(uuid.uuid4())
     doc["ts"] = doc.get("ts") or datetime.now(timezone.utc).isoformat()
     doc["ingested_at"] = datetime.now(timezone.utc).isoformat()
+
+    # v43.24 — Türkçe karakter mojibake fix: Perl logtail body'yi UTF-8 bytes
+    # olarak POST ederken JSON encoder latin1 sanıp double-encode ediyor.
+    # `_fix_subject` mojibake decoder'ını subject + body_preview + body_html'e uygula.
+    try:
+        from routes.outbound import _fix_subject
+        if doc.get("subject"):
+            doc["subject"] = _fix_subject(doc["subject"])
+        if doc.get("body_preview"):
+            doc["body_preview"] = _fix_subject(doc["body_preview"])
+        if doc.get("body_html"):
+            doc["body_html"] = _fix_subject(doc["body_html"])
+    except Exception:
+        pass
     # ---- AUTO TZ CORRECTION ---------------------------------------------
     # Perl script'in eski versiyonu Exim log lokal saatini alıp yanlış "+00:00"
     # ile postluyordu. Yeni versiyon bunu düzeltir ama geçiş süresinde ve

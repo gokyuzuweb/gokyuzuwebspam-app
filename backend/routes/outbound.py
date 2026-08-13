@@ -525,8 +525,10 @@ async def outbound_event_content(event_id: str, request: Request,
         "size_bytes": ev.get("size_bytes"),
         "message_id": ev.get("message_id") or ev.get("exim_mid") or ev.get("exim_id"),
         "headers_full": headers_full,
-        "body_preview": body_preview,
-        "body_html": body_html,
+        # v43.24 — Türkçe mojibake fix'i body_preview + body_html'e de uygula
+        # (eski bozuk kayıtlar da görüntülerken düzelir)
+        "body_preview": _fix_subject(body_preview) if body_preview else body_preview,
+        "body_html":    _fix_subject(body_html)    if body_html    else body_html,
         "attachments": ev.get("attachments") or [],
         "action": ev.get("action"),
         # v43.15 — kullanıcıya rehber bilgi
