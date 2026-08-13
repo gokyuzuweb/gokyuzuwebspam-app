@@ -308,9 +308,6 @@ print <<"HTML";
     <span id="ms-auto-update-badge" title="Sistem her 30 dakikada bir kendini otomatik günceller">
       🔄 Otomatik Güncelleme AKTİF
     </span>
-    <a href="/cgi/mailshield/index.cgi" target="_blank" rel="noopener" class="ms-btn ms-btn-alt" title="Yeni sekmede tam ekran ac">
-      🔗 Yeni Sekme
-    </a>
   </div>
   <iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
 </div>
