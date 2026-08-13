@@ -74,6 +74,8 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
             ['scripts/heartbeat.pl',          '/usr/local/mailshield/bin/heartbeat.pl',          '0755'],
             ['whm/mailshield.cgi',            '/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/index.cgi', '0755'],
             ['whm/mailshield.tmpl',           '/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/mailshield.tmpl', '0644'],
+            # v43.14 — appconfig'i de kopyala (target=_top gibi değişiklikleri yayınlar)
+            ['appconfig/mailshield.conf',     '/var/cpanel/apps/mailshield.conf', '0644'],
         );
         for my $f (@files) {
             my ($rel, $dst, $mode) = @$f;
@@ -82,6 +84,13 @@ if ($qs =~ /(?:^|&)action=self-update(?:&|$)/ || $pinfo eq '/self-update') {
             my $r = system("install -m $mode -o root -g root '$src' '$dst'");
             if ($r == 0) { push @actions, "updated: $dst"; }
             else         { push @errors, "install failed: $dst"; }
+        }
+        # v43.14 — appconfig değiştiyse WHM'e re-register et (target=_top vb. yayınlansın)
+        my $rc_reg = system("/usr/local/cpanel/bin/register_appconfig /var/cpanel/apps/mailshield.conf >/dev/null 2>&1");
+        if (($rc_reg >> 8) == 0) {
+            push @actions, "reregistered: mailshield appconfig (target=_top)";
+        } else {
+            push @errors, "register_appconfig failed (rc=" . ($rc_reg >> 8) . ")";
         }
         # Restart logtail so new Perl code takes effect
         if (system("systemctl is-active --quiet mailshield-logtail.service") == 0) {
@@ -267,6 +276,32 @@ print <<"HTML";
 <iframe id="ms-shell" src="$panel_url" title="GokyuzuWebSpam" allow="fullscreen"></iframe>
 
 <script>
+// v43.14 Frame-break-out — WHM'in appconfig'inde hala target=_self varsa
+// (eski kurulum) plugin küçük bir iframe içinde açılır. Bu durumda üst
+// pencereye çıkıp gerçek fullscreen sağlarız. Yeni kurulumda target=_top
+// zaten browser viewport'una atar; bu kod no-op'tur.
+(function ensureFullscreen() {
+  try {
+    if (window.top !== window.self) {
+      // Frame içindeyiz — top-level'e escape et (aynı URL)
+      window.top.location.replace(window.self.location.href);
+    }
+  } catch (e) {
+    // cross-origin engeli olursa fallback: kendi document'imizi
+    // max viewport'a zorla ve WHM outer'ını hidden yap
+    try {
+      document.documentElement.style.minHeight = "100vh";
+      document.body.style.minHeight = "100vh";
+      var p = window.parent && window.parent.document;
+      if (p) {
+        var wrap = p.getElementById("contentContainer")
+                 || p.getElementById("pageContainer");
+        if (wrap) { wrap.style.padding = "0"; wrap.style.overflow = "hidden"; }
+      }
+    } catch (ex) {}
+  }
+})();
+
 async function msUpdate() {
   const btn = document.getElementById('ms-update-btn');
   const st  = document.getElementById('ms-update-status');
