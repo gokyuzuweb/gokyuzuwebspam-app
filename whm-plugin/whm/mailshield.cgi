@@ -232,7 +232,7 @@ my $badge_html = cluster_badge();
 # `.tmpl` yaklaşımı çalışmadı (statik dosya olarak indi). Bu doğru yol:
 # CGI içinde defheader() → WHM sidebar/header enjekte edilir → deffooter() ile kapatılır.
 print "Content-type: text/html; charset=utf-8\r\n\r\n";
-Whostmgr::HTMLInterface::defheader("GokyuzuWebSpam", "/mailshield/icon.png", "/scripts2/main");
+Whostmgr::HTMLInterface::defheader("GokyuzuWebSpam", "/cgi/mailshield/icon.png", "/cgi/mailshield/index.cgi");
 
 my $panel_url = "$public/panel";
 if ($master_key) {
@@ -264,8 +264,9 @@ print <<"HTML";
   #ms-update-status { color: #64748b; font-size: 10px; margin-left: 4px; }
   #ms-shell {
     display: block; width: 100%; border: 0; background: #0f172a;
-    height: calc(100vh - 220px);   /* WHM chrome + topbar sonrası kalan */
-    min-height: 620px;
+    height: 1800px;    /* baslangic — postMessage ile SPA icerik yuksekligine gore ayarlanir */
+    min-height: 1200px;
+    transition: height .3s ease;
   }
   \@keyframes msPulse {
     0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239,68,68,.7); }
