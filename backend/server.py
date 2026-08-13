@@ -2482,6 +2482,9 @@ class LandingContentIn(BaseModel):
     # v43.13 A/B geo scope: "global" (herkes), "TR_only" (sadece TR ziyaretçiler B görür),
     # "TR_exclude" (TR dışı herkes B görür), veya bir dizi ülke kodu (comma-separated).
     ab_geo_scope: Optional[str] = "global"
+    # v43.15 Hero live preview (animated dashboard sağ tarafta) — default AÇIK
+    hero_preview_enabled: Optional[bool] = True
+    hero_preview_style: Optional[str] = "animated"  # "animated" | "compact" | "hidden"
     # Legacy top-level fields (backwards compat — otomatik "tr"'ye map'lenir)
     hero: Optional[LandingHeroBlock] = None
     features_title: Optional[str] = ""
@@ -2544,6 +2547,10 @@ async def get_landing_settings():
     # v43.12 A/B — variant_b_hero_by_lang normalize
     ab_enabled = bool(doc.get("ab_test_enabled", False))
     ab_geo_scope = str(doc.get("ab_geo_scope") or "global")
+    hero_preview_enabled = bool(doc.get("hero_preview_enabled", True))
+    hero_preview_style = str(doc.get("hero_preview_style") or "animated")
+    if hero_preview_style not in ("animated", "compact", "hidden"):
+        hero_preview_style = "animated"
     vb_raw = doc.get("variant_b_hero_by_lang") or {}
     variant_b_hero_by_lang = {}
     empty_hero = {"badge": "", "title_a": "", "title_b": "", "subtitle": "", "cta_primary": "", "cta_secondary": ""}
@@ -2572,6 +2579,8 @@ async def get_landing_settings():
         # v43.12 A/B testing
         "ab_test_enabled": ab_enabled,
         "ab_geo_scope": ab_geo_scope,
+        "hero_preview_enabled": hero_preview_enabled,
+        "hero_preview_style": hero_preview_style,
         "variant_b_hero_by_lang": variant_b_hero_by_lang,
         # Legacy flat (frontend backward-compat)
         "hero": tr_block["hero"],
@@ -2634,6 +2643,8 @@ async def put_landing_settings(payload: LandingContentIn, request: Request):
         # v43.12 A/B testing
         "ab_test_enabled": bool(raw.get("ab_test_enabled", False)),
         "ab_geo_scope": str(raw.get("ab_geo_scope") or "global"),
+        "hero_preview_enabled": bool(raw.get("hero_preview_enabled", True)),
+        "hero_preview_style": (raw.get("hero_preview_style") if raw.get("hero_preview_style") in ("animated","compact","hidden") else "animated"),
         "variant_b_hero_by_lang": _normalize_variant_b(raw.get("variant_b_hero_by_lang") or {}),
         "updated_at": _iso(),
     }

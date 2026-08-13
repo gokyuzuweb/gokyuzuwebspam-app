@@ -542,3 +542,43 @@ tabidir.
 - Backend seed testi: 600/600 impression + 30/60 conv → p=0.001, z=-3.288, güven %99.9, winner=B
 - Screenshot: A/B confidence + geo, Cmd+K "krntn" fuzzy match, Achievement Twitter share button + big CTA
 
+
+## Feb 12, 2026 (Session 14e) — v43.15 · Outbound Turkish Subject Fix + Mail Content Fallback
+
+### Kullanıcı Şikayetleri
+1. Outbound'daki "Konu" alanında Türkçe karakterler bozuk gösteriliyor (mojibake / MIME encoded-word)
+2. "Mail İçeriği Oku" modalında sadece "Bu maildeki body/headers Perl daemon tarafından ingest edilmemiş" mesajı çıkıyor, içerik hiç görünmüyor
+
+### 1. Türkçe Karakter Fix (read-path)
+- `routes/outbound.py` `_fix_subject(s)` helper eklendi — 3 aşamalı idempotent decode:
+  * MIME encoded-word (`=?UTF-8?B?...?=` / `=?UTF-8?Q?...?=`) → `email.header.decode_header`
+  * Mojibake (`Ã¼`, `Ã§`, `Ãœ`, `Ä±`, `â€` vb.) → **ftfy** library ile onarım
+  * Fallback: latin-1↔utf-8 chain (ftfy import hatası durumunda)
+- Uygulama noktaları: `GET /outbound/events` list + `GET /outbound/event/{id}/content` detail
+- **Kabul filtresi**: sadece Türkçe karakter sayısı azalmıyorsa onarımı kabul et → false-positive engelle
+- Yeni dep: `ftfy==6.3.1`, `wcwidth==0.8.2` (requirements.txt eklendi)
+- Doğrulama:
+  * `=?UTF-8?B?SGFmdGFsxLFrIGluZGlyaW0gYsO8bHRlbmk=?=` → **"Haftalık indirim bülteni"** ✅
+  * `GökyüzüWebSpam Merhaba Ãœrün bilgisi Ã§evre` (mixed) → **"GökyüzüWebSpam Merhaba Ürün bilgisi çevre"** ✅
+
+### 2. Mail İçeriği Fallback (spool oku + rehber UI)
+- Backend `GET /outbound/event/{id}/content` genişletildi:
+  * DB'de body/headers boşsa `_try_read_exim_spool(msg_id)` denenir
+  * Exim `-H` (headers, first blank-line sonrası) + `-D` (body, ilk 8KB) dosyalarını okur
+  * Master (Docker) ortamında Exim yok → `ok:False` döner, frontend rehber gösterir
+  * Yeni response alanları: `content_source` ("db" | "Exim spool'dan okundu: ..." | "none"), `spool_hint`, `message_id`
+- Frontend `Outbound.js` "içerik yok" mesajı zenginleştirildi:
+  * Sarı warning kartı + **2 seçenek** listesi (spool'dan oku / milter body ingest)
+  * Kullanıcıya `/var/spool/exim/input/xxx/msg-H` ve `-D` path'lerini select-all ile gösterir
+  * message-id chip'i clipboard-friendly
+  * `data-testid="ob-content-fallback"`
+  * Eğer içerik gerçekten Exim spool'undan alındıysa "✓ Exim spool'undan gerçek zamanlı okundu" emerald banner
+
+### 3. Perl Script (mailshield-logtail.pl)
+- Zaten `_spool_content()` fonksiyonu ile spool okuyor — yeni mail'lerde body/headers otomatik ingest edilir.
+- Eski DB rows için user artık iki yola sahip: spool okuma hint + Güncelle butonu (milter v43.15+ auto).
+
+### Test Coverage
+- Backend curl: MIME + mixed mojibake her ikisi de temiz decode
+- Overview endpoint 200 OK, backend restart sonrası ftfy import başarılı
+

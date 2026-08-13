@@ -28,6 +28,48 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from deps import db
+
+
+# ============================================================================
+# v43.15 — Türkçe karakter safety-net (subject decoding on READ path)
+# ============================================================================
+def _fix_subject(s: str) -> str:
+    """Legacy DB kayıtlarında hala bozuk (MIME encoded-word veya mojibake)
+    subject'ler olabilir. Okuma sırasında da tekrar temizle — idempotent.
+    v43.15c: ftfy kütüphanesi ile mixed-mojibake dahil tüm bozulmaları onarır."""
+    if not s:
+        return s
+    out = s
+    # 1) MIME encoded-word decode (=?UTF-8?B?...?= veya =?UTF-8?Q?...?=)
+    if "=?" in out and "?=" in out:
+        try:
+            from email.header import decode_header, make_header
+            out = str(make_header(decode_header(out)))
+        except Exception:
+            pass
+    # 2) Mojibake fix — ftfy tüm known encoding hatalarını çözer
+    #    ("Ã¼" → "ü", "Ãœ" → "Ü", "Ä±" → "ı", karma metinler dahil)
+    if any(m in out for m in ("Ã", "Å", "Ä±", "Ä°", "â€")):
+        try:
+            import ftfy
+            fixed = ftfy.fix_text(out)
+            # Kabul: sonuç orijinalden daha kısa VE Türkçe karakter sayısı artmışsa
+            def _tr_ratio(t): return sum(1 for c in t if c in "çğıöşüÇĞİÖŞÜ")
+            if _tr_ratio(fixed) >= _tr_ratio(out):
+                out = fixed
+        except ImportError:
+            # Fallback: eski latin-1↔utf-8 chain
+            try:
+                fixed = out.encode("latin-1", errors="ignore").decode("utf-8", errors="ignore")
+                if fixed and "Ã" not in fixed and "Å" not in fixed:
+                    out = fixed
+            except Exception:
+                pass
+        except Exception:
+            pass
+    # 3) Whitespace normalize
+    return out.strip() if out else out
+
 from tenant import resolve_tenant_scope
 from cache import cache as _cache
 
@@ -327,7 +369,7 @@ async def outbound_event_action(event_id: str, payload: EventActionIn, request: 
                 "license_key": ev.get("license_key"),
                 "sender": ev.get("from_addr") or "",
                 "recipient": ev.get("to_addr") or "",
-                "subject": ev.get("subject") or "(konusuz)",
+                "subject": _fix_subject(ev.get("subject") or "") or "(konusuz)",
                 "verdict": ev.get("verdict") or "spam",
                 "total_score": ev.get("total_score", 0),
                 "scores": ev.get("scores") or {},
@@ -393,24 +435,90 @@ async def outbound_event_content(event_id: str, request: Request,
     ev = await db.mail_events.find_one(q, {"_id": 0})
     if not ev:
         raise HTTPException(404, "Mail bulunamadı veya yetkiniz yok")
+
+    # v43.15 — Body/headers yoksa Exim spool'dan direkt okumayı dene.
+    # Master (Docker) ortamında Exim yoktur; bayi sunucularında /var/spool/exim/input/
+    # altında -H (headers) ve -D (data/body) dosyaları saatlerce kalır.
+    body_preview = ev.get("body_preview") or ""
+    body_html    = ev.get("body_html") or ""
+    headers_full = ev.get("headers_full") or ev.get("headers_preview") or ""
+    source_note  = ""
+    if (not body_preview and not headers_full):
+        msg_id = (ev.get("message_id") or ev.get("exim_id") or "").strip()
+        if msg_id:
+            spool_read = _try_read_exim_spool(msg_id)
+            if spool_read["ok"]:
+                headers_full = spool_read.get("headers") or headers_full
+                body_preview = spool_read.get("body") or body_preview
+                source_note = f"Exim spool'dan okundu: {spool_read.get('path')}"
+
     return {
         "id": ev.get("id"),
         "ts": ev.get("ts") or ev.get("ingested_at"),
         "from_addr": ev.get("from_addr"),
         "from_user": ev.get("from_user"),
         "to_addr": ev.get("to_addr"),
-        "subject": ev.get("subject"),
+        "subject": _fix_subject(ev.get("subject") or ""),
         "verdict": ev.get("verdict"),
         "total_score": ev.get("total_score"),
         "scores": ev.get("scores") or {},
         "sender_ip": ev.get("sender_ip") or ev.get("client_ip"),
         "size_bytes": ev.get("size_bytes"),
-        "headers_full": ev.get("headers_full") or ev.get("headers_preview") or "",
-        "body_preview": ev.get("body_preview") or "",
-        "body_html": ev.get("body_html") or "",
+        "message_id": ev.get("message_id") or ev.get("exim_id"),
+        "headers_full": headers_full,
+        "body_preview": body_preview,
+        "body_html": body_html,
         "attachments": ev.get("attachments") or [],
         "action": ev.get("action"),
+        # v43.15 — kullanıcıya rehber bilgi
+        "content_source": source_note or ("db" if (headers_full or body_preview) else "none"),
+        "spool_hint": (
+            f"/var/spool/exim/input/{(ev.get('message_id') or '')[:3]}/{ev.get('message_id') or ''}-H "
+            if ev.get("message_id") else ""
+        ),
     }
+
+
+def _try_read_exim_spool(msg_id: str) -> dict:
+    """v43.15 — Bayi WHM sunucusunda Exim -H/-D dosyalarını okumayı dener.
+    Master (Docker) ortamında Exim yoktur, {ok: False} döner. Dosya bulunursa:
+    - -H dosyasından header'ları ayıklar
+    - -D dosyasından body'nin ilk 8KB'ını okur
+    """
+    import os as _os
+    if not msg_id or len(msg_id) < 3:
+        return {"ok": False, "reason": "invalid_msg_id"}
+    # Exim message-id formatı: XXXXXX-XXXXXX-XX (16 char) — spool'da ilk 3 char subdir
+    subdir = msg_id[:3]
+    base = f"/var/spool/exim/input/{subdir}"
+    h_file = f"{base}/{msg_id}-H"
+    d_file = f"{base}/{msg_id}-D"
+    if not _os.path.exists(h_file) and not _os.path.exists(d_file):
+        return {"ok": False, "reason": "spool_not_found", "path": h_file}
+    out = {"ok": True, "path": base}
+    try:
+        if _os.path.exists(h_file):
+            with open(h_file, "r", encoding="utf-8", errors="replace") as fh:
+                raw = fh.read(64 * 1024)
+                # Exim -H dosyasında sender/recipients ve boş satırdan sonra headers gelir
+                if "\n\n" in raw:
+                    _, hdrs = raw.split("\n\n", 1)
+                    out["headers"] = hdrs[:8192]
+                else:
+                    out["headers"] = raw[:8192]
+    except Exception as e:
+        out["headers_err"] = str(e)
+    try:
+        if _os.path.exists(d_file):
+            with open(d_file, "rb") as fb:
+                # -D dosyası: 1. satır message-id (skip), sonra body
+                first_line = fb.readline()
+                del first_line
+                body_bytes = fb.read(8 * 1024)  # 8KB
+                out["body"] = body_bytes.decode("utf-8", errors="replace")[:8192]
+    except Exception as e:
+        out["body_err"] = str(e)
+    return out
 
 
 @router.post("/migrate-direction")

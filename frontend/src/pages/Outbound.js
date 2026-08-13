@@ -566,9 +566,50 @@ export default function Outbound() {
                     </details>
                   )}
 
-                  {!c.body_preview && !c.body_html && !c.headers_full && (
-                    <div className="text-center py-6 text-slate-500 text-xs italic">
-                      Bu maildeki body/headers Perl daemon tarafından ingest edilmemiş.
+                  {c.content_source === "none" || (!c.body_preview && !c.body_html && !c.headers_full) ? (
+                    <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-xs" data-testid="ob-content-fallback">
+                      <div className="flex items-start gap-2 mb-2">
+                        <span className="text-amber-300 text-base leading-none">⚠</span>
+                        <div className="flex-1">
+                          <div className="text-amber-200 font-semibold mb-1">Mail gövdesi henüz veritabanında yok</div>
+                          <p className="text-slate-400 leading-relaxed">
+                            Perl daemon (mailshield-logtail.pl) sadece Exim log satırlarını okur;
+                            mail body ve header'lar log'da yer almadığı için doğrudan ingest edilmez.
+                            <br/><br/>
+                            <b className="text-slate-300">Mail'i görmek için 2 seçenek:</b>
+                          </p>
+                          <ol className="list-decimal ml-5 mt-2 space-y-1 text-slate-300">
+                            <li>
+                              <b>Hızlı — Exim spool'undan oku:</b> Mail hala Exim kuyruğundaysa
+                              (genelde 3-7 gün) sunucuda şu dosyaları bulabilirsiniz:
+                              {c.spool_hint ? (
+                                <div className="mt-1 mono text-[10px] bg-slate-950 border border-slate-800 rounded p-2 text-emerald-300 select-all">
+                                  {c.spool_hint}<br/>
+                                  {c.spool_hint.replace("-H", "-D")}
+                                </div>
+                              ) : (
+                                <span className="text-slate-500 italic"> (message_id yok — spool'da bulunamaz)</span>
+                              )}
+                              {c.message_id && (
+                                <div className="mt-1 mono text-[10px] text-slate-500">
+                                  message-id: <span className="text-slate-300 select-all">{c.message_id}</span>
+                                </div>
+                              )}
+                            </li>
+                            <li>
+                              <b>Kalıcı çözüm — Milter body ingest:</b> WHM sunucunuzda
+                              mailshield-milter.pl v43.15+ yüklüyse tüm gelen/giden mail body'leri
+                              otomatik ingest edilir. Panelden <b>Güncelle</b> butonuna basmanız yeterli.
+                            </li>
+                          </ol>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {c.content_source && c.content_source.startsWith("Exim spool") && (
+                    <div className="text-[10px] mono text-emerald-400 border-l-2 border-emerald-500/50 pl-2">
+                      ✓ İçerik Exim spool'undan gerçek zamanlı okundu · {c.content_source}
                     </div>
                   )}
                 </div>
