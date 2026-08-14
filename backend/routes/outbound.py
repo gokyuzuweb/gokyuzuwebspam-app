@@ -538,6 +538,9 @@ async def outbound_event_content(event_id: str, request: Request,
         "body_html":    _fix_subject(body_html)    if body_html    else body_html,
         "attachments": ev.get("attachments") or [],
         "action": ev.get("action"),
+        # v43.23 — ClamAV verdict + threats (Milter tarafından yazılır)
+        "clam_verdict": ev.get("clam_verdict"),
+        "clam_threats": ev.get("clam_threats") or [],
         # v43.15 — kullanıcıya rehber bilgi
         "content_source": source_note or ("db" if (headers_full or body_preview) else "none"),
         "spool_hint": (

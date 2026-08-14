@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Clock, RefreshCw, Search } from "lucide-react";
+import { Clock, RefreshCw, Search, Sparkles } from "lucide-react";
 import ThreatAlertBell from "@/components/ThreatAlertBell";
 import { ImpersonatePicker } from "@/components/Impersonate";
 
@@ -46,6 +46,13 @@ export default function Header({ title }) {
     queryFn: api.overview,
     refetchInterval: 15000,
   });
+  const ver = useQuery({
+    queryKey: ["version-panel"],
+    queryFn: api.versionPanel,
+    staleTime: 5 * 60 * 1000, // 5 dk (VERSION dosyası nadiren değişir)
+    refetchInterval: 60_000,
+  });
+  const version = ver.data?.version || "";
   const active = data?.engines_active ?? 0;
   const total = data?.engines_total ?? 0;
   const status = active > 0 ? "aktif" : "durduruldu";
@@ -57,6 +64,17 @@ export default function Header({ title }) {
         <span className="hidden sm:inline text-[10px] mono tracking-widest text-slate-500 uppercase border border-slate-800 rounded px-1.5 py-0.5 shrink-0">
           WHM PLUGIN
         </span>
+        {version && (
+          <a
+            href="/panel/version-publish"
+            data-testid="header-version-chip"
+            title={`Panel sürümü: ${version} — sürüm notları için tıkla`}
+            className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono tracking-wide px-2 py-1 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 hover:border-indigo-500/50 transition-all shrink-0"
+          >
+            <Sparkles className="w-3 h-3" />
+            <span>{version}</span>
+          </a>
+        )}
       </div>
       <GlobalSearch />
       <div className="flex items-center gap-4 shrink-0">

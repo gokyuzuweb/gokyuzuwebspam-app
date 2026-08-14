@@ -529,6 +529,56 @@ async def _startup() -> None:
             logging.warning(f"[startup] version broadcast skipped: {e}")
     _asyncio_root.create_task(_broadcast_version_bump())
 
+    # v43.24 — Bozuk internal IP fix: proxy/gateway IP'si (172.16-31.x.x, 10.x.x.x,
+    # 192.168.x.x, 127.0.0.1) client_ip/sender_ip alanlarına yanlışlıkla yazılmış
+    # kayıtları temizle. Header'da X-Originating-IP varsa oradan tekrar yaz.
+    async def _fix_internal_ip_records():
+        import re as _re
+        try:
+            def _is_internal(ip):
+                if not ip: return False
+                if ip in ("127.0.0.1", "::1", "localhost"): return True
+                parts = ip.split(".")
+                if len(parts) != 4: return False
+                try:
+                    a, b = int(parts[0]), int(parts[1])
+                except ValueError:
+                    return False
+                if a == 10: return True
+                if a == 172 and 16 <= b <= 31: return True
+                if a == 192 and b == 168: return True
+                return False
+            fixed = 0
+            for coll_name in ("mail_events", "quarantine"):
+                coll = getattr(db, coll_name)
+                # 172.16-31 aralığı için regex
+                cursor = coll.find(
+                    {"$or": [
+                        {"client_ip": {"$regex": r"^(172\.(1[6-9]|2[0-9]|3[01])\.|10\.|192\.168\.|127\.)"}},
+                        {"sender_ip": {"$regex": r"^(172\.(1[6-9]|2[0-9]|3[01])\.|10\.|192\.168\.|127\.)"}},
+                    ]},
+                    {"_id": 1, "client_ip": 1, "sender_ip": 1, "headers_full": 1, "headers_preview": 1},
+                ).limit(5000)
+                async for d in cursor:
+                    hdrs = d.get("headers_full") or d.get("headers_preview") or ""
+                    real_ip = None
+                    m = _re.search(r"X-Originating-IP:\s*\[?([\d.]+)\]?", hdrs, _re.IGNORECASE)
+                    if m and not _is_internal(m.group(1)):
+                        real_ip = m.group(1)
+                    if not real_ip:
+                        m = _re.search(r"Received:.*?\[([\d.]+)\]", hdrs)
+                        if m and not _is_internal(m.group(1)):
+                            real_ip = m.group(1)
+                    # Header'dan bulamadıysak null'a çek (yanlış IP'yi göstermekten iyi)
+                    upd = {"client_ip": real_ip, "sender_ip": real_ip}
+                    await coll.update_one({"_id": d["_id"]}, {"$set": upd})
+                    fixed += 1
+            if fixed:
+                logging.info(f"[startup] Cleaned {fixed} internal-IP records (172.x/10.x/192.168.x → null or header-derived)")
+        except Exception as e:
+            logging.warning(f"[startup] internal-ip cleanup skipped: {e}")
+    _asyncio_root.create_task(_fix_internal_ip_records())
+
     # Deduplicate engines by (name, owner_license_key) — multi-tenant safe.
     # Legacy pre-multitenancy dedupe used only `name` which wiped bayi copies,
     # and legacy `name_1` unique index conflicts with per-bayi rows.
@@ -1502,6 +1552,45 @@ async def quarantine_get(item_id: str):
     if not doc:
         raise HTTPException(404, "Kayıt bulunamadı")
     return doc
+
+
+@api.get("/quarantine/{item_id}/content")
+async def quarantine_content(item_id: str):
+    """v43.23 — Karantina Gmail-style modal için normalize edilmiş içerik.
+    Şema Outbound `/event/{id}/content` ile birebir aynı → shared frontend
+    reader component'i her ikisini de besleyebilir."""
+    doc = await db.quarantine.find_one({"id": item_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Kayıt bulunamadı")
+    # Türkçe subject mojibake fix (outbound'daki gibi)
+    try:
+        from routes.outbound import _fix_subject
+    except Exception:
+        _fix_subject = lambda s: s
+    body_preview = doc.get("body_preview") or ""
+    body_html = doc.get("body_html") or ""
+    headers_full = doc.get("headers_full") or doc.get("headers") or doc.get("headers_preview") or ""
+    return {
+        "id": doc.get("id"),
+        "ts": doc.get("received_at") or doc.get("ingested_at"),
+        "from_addr": doc.get("from") or doc.get("from_addr"),
+        "from_user": doc.get("from_user"),
+        "to_addr": doc.get("to") or doc.get("to_addr"),
+        "subject": _fix_subject(doc.get("subject") or ""),
+        "verdict": doc.get("verdict"),
+        "total_score": doc.get("score") or doc.get("total_score"),
+        "scores": doc.get("scores") or {},
+        "sender_ip": doc.get("sender_ip") or doc.get("client_ip"),
+        "size_bytes": doc.get("size_bytes"),
+        "message_id": doc.get("message_id") or doc.get("exim_mid"),
+        "headers_full": headers_full,
+        "body_preview": _fix_subject(body_preview) if body_preview else body_preview,
+        "body_html":    _fix_subject(body_html) if body_html else body_html,
+        "attachments": doc.get("attachments") or [],
+        "action": doc.get("action"),
+        "clam_verdict": doc.get("clam_verdict"),  # v43.23 — ClamAV verdict passthrough
+        "content_source": "db" if (headers_full or body_preview or body_html) else "none",
+    }
 
 
 class BulkAction(BaseModel):

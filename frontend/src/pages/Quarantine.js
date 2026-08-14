@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Trash2, RotateCcw, GraduationCap, X, Mail, Server, Hash, Filter, BarChart3, Flame, Forward, Calendar, AlertTriangle, Calculator, Download } from "lucide-react";
+import { Search, Trash2, RotateCcw, GraduationCap, X, Mail, Server, Hash, Filter, BarChart3, Flame, Forward, Calendar, AlertTriangle, Calculator, Download, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { useT, useI18n } from "@/i18n";
 import SavedFiltersBar from "@/components/SavedFiltersBar";
+import WebmailReader from "@/components/WebmailReader";
 
 function useVerdictBadge() {
   const t = useT();
@@ -37,6 +38,7 @@ export default function Quarantine() {
   const [direction, setDirection] = useState("all"); // v43: all | in | out
   const [selected, setSelected] = useState(new Set());
   const [preview, setPreview] = useState(null);
+  const [webmailId, setWebmailId] = useState(null); // v43.23 — Gmail-style modal
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [fwdOpen, setFwdOpen] = useState(false);
   const locale = { tr: "tr-TR", en: "en-US", de: "de-DE", fr: "fr-FR", es: "es-ES", ar: "ar-SA" }[effective] || "en-US";
@@ -327,7 +329,19 @@ export default function Quarantine() {
                   <td className="px-4 py-2.5 text-slate-200 truncate max-w-[380px]">{r.subject}</td>
                   <td className="px-4 py-2.5 text-right mono text-amber-300">{(r.score ?? r.total_score ?? 0).toFixed ? (r.score ?? r.total_score ?? 0).toFixed(2) : Number(r.score ?? r.total_score ?? 0).toFixed(2)}</td>
                   <td className="px-4 py-2.5">{verdictBadge(r.verdict)}</td>
-                  <td className="px-4 py-2.5 mono text-xs text-slate-400 uppercase">{r.engine}</td>
+                  <td className="px-4 py-2.5 mono text-xs text-slate-400 uppercase">
+                    <div className="flex items-center gap-2">
+                      <span>{r.engine}</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setWebmailId(r.id); }}
+                        data-testid={`q-webmail-${r.id}`}
+                        title="Gmail-tarzı mail okuyucu"
+                        className="text-cyan-400 hover:text-cyan-200 transition-colors"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (
@@ -346,6 +360,15 @@ export default function Quarantine() {
             bulk.mutate({ action, ids: [id] });
             setPreview(null);
           }}
+        />
+      )}
+
+      {webmailId && (
+        <WebmailReader
+          eventId={webmailId}
+          fetcher={api.quarantineContent}
+          queryKey="quarantine-content"
+          onClose={() => setWebmailId(null)}
         />
       )}
 

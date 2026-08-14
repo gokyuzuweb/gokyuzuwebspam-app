@@ -35,7 +35,7 @@ class MailEvent(BaseModel):
     headers_full: Optional[str] = None      # Complete SMTP headers (multi-line)
     body_preview: Optional[str] = None      # Plain-text body (first N KB)
     body_html: Optional[str] = None         # HTML body if available
-    attachments: Optional[list[dict]] = None  # [{filename, content_type, size, sha256}]
+    attachments: Optional[list[dict]] = None  # [{filename, content_type, size, sha256, clam_verdict, clam_threat}]
     ts: Optional[str] = None  # ISO ts, milter tarafinda uretilirse
     # v43 Outbound tracking — WHM Perl script logtail-mainlog.pl outbound
     # mail'leri direction="out" ile gönderir (from_addr sistem kullanıcısı).
@@ -43,6 +43,12 @@ class MailEvent(BaseModel):
     direction: Optional[str] = Field(default="in", pattern="^(in|out)$")
     # Outbound için gönderen sistem kullanıcısı (Exim'de "$originator_login")
     from_user: Optional[str] = None
+    # v43.23 — ClamAV mesaj-seviyesi verdict (Milter attachment scan sonucu).
+    # Değerler: "clean" | "infected" | "unavailable" | "error". Frontend attachment
+    # tile'lerinde ve mail listesinde badge gösterir. Bayi WHM sunucusundaki
+    # clamd üzerinden Milter.pm _scan_attachments_clam() ile hesaplanır.
+    clam_verdict: Optional[str] = Field(default=None, pattern="^(clean|infected|unavailable|error|suspicious)$")
+    clam_threats: Optional[list[str]] = None  # ["EICAR-Test", "Trojan.Emotet"]
 
 
 async def _validate_license(license_key: str) -> dict:
@@ -262,7 +268,14 @@ async def ingest_event(evt: MailEvent, request: Request):
                 doc["subject_double_decoded"] = True
             except Exception:
                 pass
-    # Sender IP tespit: header'da X-Originating-IP > client_ip payload > request.client
+    # Sender IP tespit sırası (v43.24):
+    #  1. Mail header'ları: X-Originating-IP > Received:...[IP]
+    #  2. Ingest payload: client_ip alanı
+    #  3. HTTP header: X-Forwarded-For (kubernetes/proxy chain — ilk public IP)
+    #                  veya X-Real-IP (nginx)
+    #  4. Son çare: request.client.host — ancak Docker/kubernetes internal IP
+    #     (10./172.16-31./192.168./127.) ise ATLA (bu proxy/gateway IP'sidir,
+    #     gerçek gönderici değil → `null` bırak).
     sender_ip = None
     headers = (doc.get("headers_full") or doc.get("headers_preview") or "")
     import re as _re
@@ -275,8 +288,36 @@ async def ingest_event(evt: MailEvent, request: Request):
             sender_ip = m.group(1)
     if not sender_ip:
         sender_ip = doc.get("client_ip")
+    # HTTP header chain (kubernetes ingress / reverse-proxy)
+    if not sender_ip:
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            # İlk IP genellikle asıl client'tir
+            first = xff.split(",")[0].strip()
+            if first:
+                sender_ip = first
+    if not sender_ip:
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip:
+            sender_ip = real_ip
     if not sender_ip and request.client:
-        sender_ip = request.client.host
+        candidate = request.client.host
+        # Docker/kubernetes internal ip'lerini reddet — proxy gateway'idir
+        def _is_internal(ip: str) -> bool:
+            if not ip: return True
+            if ip in ("127.0.0.1", "::1", "localhost"): return True
+            parts = ip.split(".")
+            if len(parts) != 4: return False
+            try:
+                a, b = int(parts[0]), int(parts[1])
+            except ValueError:
+                return False
+            if a == 10: return True
+            if a == 172 and 16 <= b <= 31: return True  # 172.16.0.0/12
+            if a == 192 and b == 168: return True       # 192.168.0.0/16
+            return False
+        if not _is_internal(candidate):
+            sender_ip = candidate
     doc["client_ip"] = sender_ip or doc.get("client_ip")
     doc["sender_ip"] = sender_ip
 

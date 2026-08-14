@@ -588,6 +588,10 @@ export const api = {
   moduleQaLog: (moduleKey) => client.get("/mailscanner/ai/module-qa-log", { params: moduleKey ? { module_key: moduleKey } : {} }).then(r => r.data),
 
   // Threat Intelligence
+  // v43.23 — Panel version chip
+  versionPanel: () => client.get("/version/panel").then(r => r.data),
+  // Quarantine content reader (Gmail-style modal)
+  quarantineContent: (item_id) => client.get(`/quarantine/${item_id}/content`).then(r => r.data),
   tiIocList: (opts = {}) => client.get("/threat-intel/ioc", { params: opts }).then(r => r.data),
   tiIocAdd: (payload) => client.post("/threat-intel/ioc", payload).then(r => r.data),
   tiIocDelete: (id) => client.delete(`/threat-intel/ioc/${id}`).then(r => r.data),

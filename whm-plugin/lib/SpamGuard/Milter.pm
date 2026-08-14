@@ -95,6 +95,18 @@ sub _report_saas {
     # Attachment metadata (filename + content-type + size)
     my $attachments = _extract_attachments($body_raw);
 
+    # v43.23 — Attachment ClamAV scan (bayi WHM sunucusundaki clamd üzerinden).
+    # Her attachment için clam_verdict ("clean"|"infected"|"unavailable"|"error")
+    # ve varsa clam_threat (yakalanan signature) alanları eklenir.
+    # Ayrıca mesaj-seviyesi (message-level) clam_verdict de hesaplanır:
+    # herhangi bir ek "infected" ise mesaj "infected", hiç scan yapılmadıysa
+    # "unavailable", tümü clean ise "clean".
+    my $msg_clam_verdict = _scan_attachments_clam($attachments);
+    my @threats = ();
+    for my $a (@$attachments) {
+        push @threats, $a->{clam_threat} if $a->{clam_threat};
+    }
+
     my $payload = {
         license_key     => $self->{license_key},
         server_hostname => $self->{hostname},
@@ -113,6 +125,9 @@ sub _report_saas {
         attachments     => $attachments,
         message_id      => $msg_id,
         size_bytes      => $body_size,
+        # v43.23 — ClamAV verdicts (mesaj + per-attachment attachments[] içinde)
+        clam_verdict    => $msg_clam_verdict,
+        clam_threats    => \@threats,
     };
 
     my $url = $self->{server_url} . '/api/events/ingest';
@@ -235,6 +250,74 @@ sub _extract_attachments {
         last if @out >= $MAX_COUNT;
     }
     return \@out;
+}
+
+# v43.23 — ClamAV attachment scan (bayi WHM sunucusundaki clamd üzerinden).
+# Her attachment'e in-place `clam_verdict` ("clean"|"infected"|"unavailable"|
+# "error") ve varsa `clam_threat` (signature adı) ekler. Mesaj-seviyesi
+# özet döner: "clean" | "infected" | "unavailable".
+#
+# Tercih sırası:
+#   1) clamdscan --stream (unix socket / TCP daemon — hızlı, low-overhead)
+#   2) clamscan --no-summary (fork-per-scan — yavaş ama clamd olmadan çalışır)
+#   3) Hiçbiri yoksa → "unavailable"
+#
+# NOT: clamd/clamscan binary'leri PATH'te değilse veya `content_base64` alanı
+# yoksa scan atlanır; verdict "unavailable" olarak set edilir.
+sub _scan_attachments_clam {
+    my ($attachments) = @_;
+    return "unavailable" unless $attachments && @$attachments;
+
+    # Binary tespit — module-level cache (perl 5.10+ `state` yerine `my` closure)
+    our $_GWS_CLAM_BIN;
+    unless (defined $_GWS_CLAM_BIN) {
+        for my $bin (qw(/usr/bin/clamdscan /usr/local/bin/clamdscan /usr/bin/clamscan /usr/local/bin/clamscan)) {
+            if (-x $bin) { $_GWS_CLAM_BIN = $bin; last; }
+        }
+        $_GWS_CLAM_BIN //= "";  # marker (empty = not found)
+    }
+    return "unavailable" unless $_GWS_CLAM_BIN;
+
+    require MIME::Base64;
+    require File::Temp;
+
+    my $any_infected = 0;
+    my $any_scanned  = 0;
+    for my $a (@$attachments) {
+        # content_base64 yoksa scan yapılamaz
+        unless ($a->{content_base64}) {
+            $a->{clam_verdict} = "unavailable";
+            next;
+        }
+        # Geçici dosyaya yaz
+        my ($fh, $tmp) = File::Temp::tempfile("gws-clam-XXXXXX", UNLINK => 1, TMPDIR => 1);
+        my $bin = eval { MIME::Base64::decode_base64($a->{content_base64}) };
+        unless (defined $bin) { $a->{clam_verdict} = "error"; close $fh; next; }
+        binmode $fh;
+        print $fh $bin;
+        close $fh;
+
+        # clamdscan / clamscan çağır, verdict parse et
+        # Exit code: 0=clean, 1=infected, 2=error
+        my @cmd = ($_GWS_CLAM_BIN, "--no-summary", "--stdout", $tmp);
+        my $out = `@cmd 2>&1`;
+        my $rc  = $? >> 8;
+        $any_scanned = 1;
+        if ($rc == 0) {
+            $a->{clam_verdict} = "clean";
+        } elsif ($rc == 1) {
+            $a->{clam_verdict} = "infected";
+            $any_infected = 1;
+            # Signature çıkar: "path: SIGNATURE FOUND"
+            if ($out =~ /:\s*([^:\n]+?)\s+FOUND/) {
+                $a->{clam_threat} = $1;
+            }
+        } else {
+            $a->{clam_verdict} = "error";
+        }
+        unlink $tmp if -e $tmp;
+    }
+    return $any_infected ? "infected" : ($any_scanned ? "clean" : "unavailable");
 }
 
 1;
