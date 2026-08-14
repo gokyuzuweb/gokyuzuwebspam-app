@@ -134,7 +134,7 @@ export default function PaymentsAdmin() {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                           <Field icon={User} label="Alıcı" value={o.user_name}/>
                           <Field icon={Mail} label="E-posta" value={o.email}/>
-                          <Field icon={Hash} label="Tutar" value={`${o.amount} TL`} mono/>
+                          <Field icon={Hash} label="Tutar" value={`${o.amount} ${o.currency || 'TL'}`} mono/>
                           <Field icon={Clock} label="Oluşturma"
                                  value={(o.created_at || "").slice(0, 19).replace("T", " ")} mono/>
                         </div>
@@ -188,7 +188,7 @@ export default function PaymentsAdmin() {
                         <span className="mono text-[11px] text-slate-500">{(n.created_at || "").slice(11, 19)}</span>
                         <span className="text-slate-300 ml-2">💰 {n.user_name}</span>
                         <span className="text-slate-500 ml-1">({n.email})</span>
-                        <span className="text-emerald-300 mono ml-2">{n.amount} TL</span>
+                        <span className="text-emerald-300 mono ml-2">{n.amount} {n.currency || 'TL'}</span>
                         <span className="text-slate-500 mono ml-2">ref: {n.transaction_ref || "-"}</span>
                       </div>
                       {!n.read && (
@@ -233,7 +233,7 @@ export default function PaymentsAdmin() {
                         <div className="text-slate-200">{o.user_name}</div>
                         <div className="text-[10px] text-slate-500">{o.email}</div>
                       </td>
-                      <td className="px-3 py-2 mono text-right text-emerald-300">{o.amount} TL</td>
+                      <td className="px-3 py-2 mono text-right text-emerald-300">{o.amount} {o.currency || 'TL'}</td>
                       <td className="px-3 py-2">
                         {o.status === "paid" && <Badge tone="success">Ödendi ✓</Badge>}
                         {o.status === "pending" && <Badge>PayTR bekleniyor</Badge>}
@@ -964,7 +964,7 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
                     {o.provider === "havale"
                       ? <Badge tone="success">HAV</Badge>
                       : <Badge tone="info">{(o.provider || "?").toUpperCase().slice(0, 4)}</Badge>}
-                    <span className="mono text-emerald-300 ml-auto">{o.amount} TL</span>
+                    <span className="mono text-emerald-300 ml-auto">{o.amount} {o.currency || 'TL'}</span>
                   </div>
                   <div className="text-slate-200 truncate">{o.user_name || "—"}</div>
                   <div className="text-slate-500 truncate">{o.email}</div>
