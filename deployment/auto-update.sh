@@ -23,20 +23,42 @@ log() {
 
 cd "$APP_DIR" || { log "❌ App dir bulunamadı: $APP_DIR"; exit 1; }
 
+# ---------------------------------------------------------------------------
+# v43.22 — İnsan-okuyabilir sürüm adı (git commit yerine)
+# VERSION dosyası (repo kökünde) → "v43.22" gibi bir string tutar.
+# Yoksa fallback olarak son commit mesajından "v43.xx" pattern'ini yakalar,
+# o da yoksa kısa commit hash'e düşer.
+# ---------------------------------------------------------------------------
+read_version_at() {
+    # $1 = commit-ish (HEAD, origin/main, vs.)
+    local ref="$1"
+    local v
+    v=$(git show "${ref}:VERSION" 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$v" ]; then
+        v=$(git log -1 --pretty=%s "$ref" 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+    fi
+    if [ -z "$v" ]; then
+        v="commit ${ref:0:8}"
+    fi
+    echo "$v"
+}
+
 # 1. Son commit'i al
 CURRENT=$(git rev-parse HEAD)
-log "🔍 Mevcut commit: ${CURRENT:0:8}"
+CURRENT_VER=$(read_version_at HEAD)
+log "🔍 Mevcut sürüm: $CURRENT_VER (${CURRENT:0:8})"
 
 # 2. GitHub'dan yeni sürüm var mı?
 git fetch origin main --quiet
 LATEST=$(git rev-parse origin/main)
+LATEST_VER=$(read_version_at origin/main)
 
 if [ "$CURRENT" = "$LATEST" ]; then
-    log "✓ Zaten güncel — güncelleme yok"
+    log "✓ $CURRENT_VER zaten güncel — güncelleme yok"
     exit 0
 fi
 
-log "🔄 Yeni sürüm bulundu: ${LATEST:0:8}"
+log "🔄 Yeni sürüm bulundu: $LATEST_VER (${LATEST:0:8})"
 
 # 2b. Yerel conflict'leri temizle (sunucuda manuel edit varsa)
 if ! git diff --quiet HEAD; then
@@ -115,4 +137,4 @@ fi
 # 6. Yayınlanan sürümü bayilere duyur
 # (Panelden manuel yapın veya API ile otomatize edin — aşağı bkz.)
 
-log "🎉 Güncelleme başarılı!"
+log "🎉 $LATEST_VER güncellemesi tamamlandı! (önceki: $CURRENT_VER)"

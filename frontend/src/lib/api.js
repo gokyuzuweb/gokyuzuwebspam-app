@@ -666,6 +666,9 @@ export const api = {
   adminPendingHavale: () => client.get("/payments/admin/pending").then(r => r.data),
   adminInbox: (params = {}) => client.get("/payments/admin/inbox", { params }).then(r => r.data),
   adminInboxRead: (nid) => client.post(`/payments/admin/inbox/${nid}/read`).then(r => r.data),
+  // v43.22 — Master payment gateway settings (havale ↔ stripe)
+  adminPaymentSettings: () => client.get("/admin/payment-settings").then(r => r.data),
+  adminPaymentSettingsSet: (payload) => client.post("/admin/payment-settings", payload).then(r => r.data),
 
   // Auto-cleanup cron config + geo heatmap
   getAutoCleanup: () => client.get("/maintenance/auto-cleanup").then(r => r.data),

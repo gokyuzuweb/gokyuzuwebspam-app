@@ -80,6 +80,9 @@ export default function PaymentsAdmin() {
               icon={<CheckCircle2 className="w-4 h-4 text-emerald-400"/>}/>
       </div>
 
+      {/* Gateway toggle (master default) */}
+      <GatewayToggle />
+
       {/* Tabs */}
       <div className="flex gap-2 border-b border-slate-800">
         {[
@@ -337,6 +340,71 @@ function Field({ icon: Icon, label, value, mono = false }) {
       </div>
       <div className={`text-slate-200 truncate ${mono ? "mono" : ""}`}>{value || "-"}</div>
     </div>
+  );
+}
+
+function GatewayToggle() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["admin-payment-settings"], queryFn: api.adminPaymentSettings });
+  const s = q.data;
+  const setGw = useMutation({
+    mutationFn: (gw) => api.adminPaymentSettingsSet({
+      default_gateway: gw,
+      havale_enabled: s?.havale_enabled !== false,
+      stripe_enabled: s?.stripe_enabled !== false,
+    }),
+    onSuccess: (d) => {
+      toast.success(`Varsayılan gateway → ${d.default_gateway === "stripe" ? "💳 Stripe" : "🏦 Havale"}`);
+      qc.invalidateQueries({ queryKey: ["admin-payment-settings"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Kaydedilemedi"),
+  });
+  if (!s) return null;
+  const current = s.default_gateway || "havale";
+  const OptionCard = ({ id, icon, label, desc, badge }) => {
+    const active = current === id;
+    return (
+      <button
+        type="button"
+        data-testid={`gateway-opt-${id}`}
+        onClick={() => !active && setGw.mutate(id)}
+        disabled={setGw.isPending}
+        className={`relative flex-1 min-w-0 text-left px-4 py-3 rounded-lg border transition-all ${
+          active
+            ? "bg-gradient-to-br from-indigo-500/15 to-emerald-500/5 border-indigo-500/50 shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-500/20"
+            : "bg-slate-900/50 border-slate-800 hover:border-slate-700 hover:bg-slate-900/80"
+        } disabled:opacity-60`}
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="text-2xl">{icon}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className={`text-sm font-semibold ${active ? "text-indigo-200" : "text-slate-200"}`}>{label}</span>
+              {active && (
+                <span className="text-[9.5px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 mono">Varsayılan</span>
+              )}
+              {badge && !active && (
+                <span className="text-[9.5px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 mono">{badge}</span>
+              )}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5 truncate">{desc}</div>
+          </div>
+          <CheckCircle2 className={`w-4 h-4 shrink-0 ${active ? "text-emerald-400" : "text-slate-700"}`} />
+        </div>
+      </button>
+    );
+  };
+  return (
+    <Card data-testid="gateway-toggle-card">
+      <CardHeader
+        title={<span className="flex items-center gap-2"><Settings2 className="w-4 h-4 text-indigo-400" /> Varsayılan Ödeme Yöntemi</span>}
+        subtitle="Yeni satın alımlarda ve plan yükseltmelerinde otomatik kullanılacak gateway"
+      />
+      <CardBody className="flex gap-3 flex-col sm:flex-row">
+        <OptionCard id="stripe" icon="💳" label="Stripe (Kart)" desc="Anında ödeme · Otomatik lisans aktivasyonu · Global kart desteği" badge="Önerilen" />
+        <OptionCard id="havale" icon="🏦" label="Havale / EFT" desc="IBAN'a transfer · Manuel onay · Türk banka müşterileri için" />
+      </CardBody>
+    </Card>
   );
 }
 
