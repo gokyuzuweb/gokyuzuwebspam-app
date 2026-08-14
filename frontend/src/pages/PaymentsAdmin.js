@@ -173,33 +173,77 @@ export default function PaymentsAdmin() {
       {/* Inbox */}
       {tab === "inbox" && (
         <Card>
-          <CardHeader title="Bildirim Kutusu" subtitle="Havale bildirimleri, kullanıcı iletileri"/>
+          <CardHeader title="Bildirim Kutusu" subtitle="Havale bildirimleri, rozet açılışları, sistem alarmları"/>
           <CardBody>
             {inboxItems.length === 0 ? (
               <div className="text-center text-sm text-slate-500 py-10">Bildirim yok</div>
             ) : (
               <div className="space-y-1.5">
-                {inboxItems.map((n) => (
-                  <div key={n.id} className={`px-3 py-2 rounded border text-xs ${
-                    n.read ? "bg-slate-900/40 border-slate-800 opacity-60" : "bg-amber-500/10 border-amber-500/30"
-                  }`}>
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <span className="mono text-[11px] text-slate-500">{(n.created_at || "").slice(11, 19)}</span>
-                        <span className="text-slate-300 ml-2">💰 {n.user_name}</span>
-                        <span className="text-slate-500 ml-1">({n.email})</span>
+                {inboxItems.map((n) => {
+                  const time = (n.created_at || "").slice(11, 19);
+                  const date = (n.created_at || "").slice(0, 10);
+                  const kind = n.kind || "havale_notified";
+                  let icon = "💰", body = null, toneClass = n.read
+                    ? "bg-slate-900/40 border-slate-800 opacity-70"
+                    : "bg-amber-500/10 border-amber-500/30";
+                  if (kind === "badge_unlocked") {
+                    icon = "🏅";
+                    toneClass = n.read ? "bg-slate-900/40 border-slate-800 opacity-70" : "bg-indigo-500/10 border-indigo-500/40";
+                    body = (
+                      <>
+                        <span className="text-slate-100 ml-2 font-semibold">{n.title || "Rozet Açıldı"}</span>
+                        {n.message && <span className="text-slate-400 ml-2">— {n.message}</span>}
+                      </>
+                    );
+                  } else if (kind === "havale_notified") {
+                    body = (
+                      <>
+                        <span className="text-slate-300 ml-2">{n.user_name || "-"}</span>
+                        <span className="text-slate-500 ml-1">({n.email || "-"})</span>
                         <span className="text-emerald-300 mono ml-2">{n.amount} {n.currency || 'TL'}</span>
                         <span className="text-slate-500 mono ml-2">ref: {n.transaction_ref || "-"}</span>
+                      </>
+                    );
+                  } else if (kind === "attack_alarm" || kind === "bulk_mail_alarm" || kind === "attack_alert" || kind === "bulk_mail_alert" || kind === "trust_score_alert") {
+                    const isAttack = kind.startsWith("attack");
+                    const isBulk = kind.startsWith("bulk");
+                    icon = isAttack ? "🛡️" : isBulk ? "📤" : "📉";
+                    toneClass = n.read ? "bg-slate-900/40 border-slate-800 opacity-70" : "bg-rose-500/10 border-rose-500/40";
+                    const label = isAttack ? "Saldırı Alarmı" : isBulk ? "Toplu Mail Alarmı" : "Güven Skoru Uyarısı";
+                    body = (
+                      <>
+                        <span className="text-rose-200 ml-2 font-semibold">{n.title || label}</span>
+                        {n.message && <span className="text-slate-400 ml-2">— {n.message}</span>}
+                      </>
+                    );
+                  } else {
+                    icon = "🔔";
+                    body = (
+                      <>
+                        <span className="text-slate-200 ml-2 font-semibold">{n.title || kind}</span>
+                        {n.message && <span className="text-slate-400 ml-2">— {n.message}</span>}
+                      </>
+                    );
+                  }
+                  return (
+                    <div key={n.id} data-testid={`inbox-item-${n.id}`} className={`px-3 py-2 rounded border text-xs ${toneClass}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <span className="mono text-[11px] text-slate-500" title={n.created_at}>{date} {time}</span>
+                          <span className="ml-2">{icon}</span>
+                          {body}
+                        </div>
+                        {!n.read && (
+                          <button onClick={() => api.adminInboxRead(n.id).then(() => inbox.refetch())}
+                                  data-testid={`inbox-read-${n.id}`}
+                                  className="text-slate-400 hover:text-slate-200 text-[10px] shrink-0">
+                            okundu ✓
+                          </button>
+                        )}
                       </div>
-                      {!n.read && (
-                        <button onClick={() => api.adminInboxRead(n.id).then(() => inbox.refetch())}
-                                className="text-slate-400 hover:text-slate-200 text-[10px]">
-                          okundu ✓
-                        </button>
-                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardBody>

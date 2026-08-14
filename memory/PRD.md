@@ -654,7 +654,34 @@ tabidir.
 - Overview endpoint 200 OK, backend restart sonrası ftfy import başarılı
 
 
-## Feb 13, 2026 (Session 14f) — v43.16 · Milter Body Ingest + Hero Live Preview + WHM Fullscreen v2 + Cmd+K 403 Fix
+## Feb 14, 2026 (Session 15) — v43.20 · P0 Bug Triage (App.js Syntax, Checkout 423, Inbox Rendering)
+
+### Kullanıcı raporu (Turkish, önceki fork)
+1. "Satın Al" butonu çalışmıyor → checkout 423 dönüyor
+2. Home sayfası açılmıyor
+3. "Bildirim Kutusu" bozuk gösteriyor
+
+### Root Cause (tek kaynak, 3 semptom)
+Önceki fork Sidebar modernizasyon sırasında `App.js`'i yarım bıraktı. Yeni NAV+NAV_GROUPS eklendi ama ESKİ NAV array elemanları (satır 119-154) `];` kapanışına kadar orphan olarak kaldı → **SyntaxError: Missing semicolon (App.js:119:21)**. Bu compile hatası tüm React uygulamasını kilitledi:
+- Landing/Home render edemedi ("Compiled with problems")
+- /shop butonu yüklenemedi
+- PaymentsAdmin /panel/payments-admin Bildirim Kutusu boş göründü
+
+### Fix'ler
+- ✅ **App.js**: 119-154 arası orphan NAV elemanları temizlendi. Yeni gruplu NAV (63-107) + NAV_GROUPS (109-118) intact. Babel parser OK, app compile ediyor.
+- ✅ **server.py demo write-guard**: `/api/checkout/` prefix `_DEMO_ALLOW_PREFIXES` whitelist'ine eklendi. Ziyaretçi (lisanssız) satın alma akışı 423 yerine gerçek session döndürüyor. Test: POST /api/checkout/create-session → 200 + havale session redirect URL.
+- ✅ **PaymentsAdmin.js Bildirim Kutusu**: `havale_notified`, `badge_unlocked`, `attack_alert`/`bulk_mail_alert`/`trust_score_alert`, generic diğer kinds için ayrı render dalları. Her tip için doğru ikon (💰 🏅 🛡️ 📤 📉 🔔), renk tonu ve başlık. Rozet açılışları artık "undefined 💰 undefined TL" yerine düzgün görünüyor.
+
+### Screenshot Doğrulaması
+- Landing hero (`9.174 BUGÜN ENGELLENDİ`) + sidebar tam render
+- /shop → "Şimdi Satın Al" (pro) → /panel/payment/havale?ref=UPGxxx (havale gateway seçili)
+- /panel/payments-admin → Bildirimler tab · 10 kayıt render + her tip farklı ikon
+- App.js Babel parser: OK
+
+### Yarım kalan
+- Sidebar modernizasyon (yeni gruplu görünüm) — NAV_GROUPS array tanımlı ama Sidebar render'ı hala flat map. P1 olarak next iteration.
+
+
 
 ### 1. Perl Milter Body Ingest (kalıcı çözüm)
 - `lib/SpamGuard/Milter.pm` `_report_saas` genişletildi:
