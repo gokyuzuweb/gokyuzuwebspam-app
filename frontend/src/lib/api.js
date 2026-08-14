@@ -591,6 +591,7 @@ export const api = {
   tiIocList: (opts = {}) => client.get("/threat-intel/ioc", { params: opts }).then(r => r.data),
   tiIocAdd: (payload) => client.post("/threat-intel/ioc", payload).then(r => r.data),
   tiIocDelete: (id) => client.delete(`/threat-intel/ioc/${id}`).then(r => r.data),
+  tiIocSeedDemoCategories: () => client.post("/threat-intel/ioc/seed-demo-categories").then(r => r.data),
   tiDmarcSummary: (days = 30) => client.get("/threat-intel/dmarc/summary", { params: { days } }).then(r => r.data),
   tiDmarcIngest: (payload) => client.post("/threat-intel/dmarc/ingest", payload).then(r => r.data),
   tiFeeds: () => client.get("/threat-intel/feeds").then(r => r.data),

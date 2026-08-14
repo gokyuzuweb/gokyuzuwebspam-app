@@ -75,8 +75,17 @@ function IocTab() {
     mutationFn: (id) => api.tiIocDelete(id),
     onSuccess: () => { toast.success("Silindi"); qc.invalidateQueries({ queryKey: ["ti-ioc"] }); },
   });
+  const seedDemo = useMutation({
+    mutationFn: () => api.tiIocSeedDemoCategories(),
+    onSuccess: (d) => {
+      toast.success(`${d.inserted} demo IOC yüklendi (Domain/Hash/Email kategorileri)`);
+      qc.invalidateQueries({ queryKey: ["ti-ioc"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
   const items = q.data?.items || [];
   const counts = q.data?.counts || {};
+  const emptyCat = (counts.domain ?? 0) === 0 || (counts.hash ?? 0) === 0 || (counts.email ?? 0) === 0;
   return (
     <Card>
       <CardHeader
@@ -92,6 +101,27 @@ function IocTab() {
           <StatCounter label="Hash" value={counts.hash ?? 0} tone="text-amber-300"/>
           <StatCounter label="Email" value={counts.email ?? 0} tone="text-rose-300"/>
         </div>
+        {emptyCat && (
+          <div data-testid="ioc-empty-cat-banner" className="p-3 rounded-lg border-l-4 border-amber-500 bg-amber-500/5 flex items-start gap-3">
+            <div className="text-2xl">💡</div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-amber-200">
+                {["Domain", "Hash", "Email"].filter((_, i) => [counts.domain, counts.hash, counts.email][i] === 0).join(" · ")} kategorileri boş
+              </div>
+              <div className="text-xs text-slate-400 mt-0.5">
+                URLhaus/PhishTank sadece URL, Spamhaus/Barracuda sadece IP döner. Bu 3 kategori için gerçek üretim feed'i (OpenPhish/MalwareBazaar/Blocklist.de) satın alınmadan aşağıdaki demo veriyi yükleyebilirsiniz.
+              </div>
+            </div>
+            <button
+              data-testid="ioc-seed-demo-btn"
+              onClick={() => seedDemo.mutate()}
+              disabled={seedDemo.isPending}
+              className="shrink-0 text-xs px-3 py-1.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40 hover:bg-amber-500/30 disabled:opacity-40"
+            >
+              {seedDemo.isPending ? "Yükleniyor…" : "🌱 Demo Verilerini Yükle"}
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2 p-3 bg-slate-950/50 border border-slate-800 rounded">
           <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} data-testid="ioc-type"
                   className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm">

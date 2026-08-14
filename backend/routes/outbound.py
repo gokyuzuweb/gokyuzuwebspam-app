@@ -209,6 +209,12 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
         throttle_q["license_key"] = lic_key
     throttled_users = await db.outbound_throttles.count_documents(throttle_q)
 
+    # v43.24 — Tüm zamanlar sayacı (bugün 0 olsa bile kullanıcı geçmiş veriyi görsün)
+    all_time_q: dict = {"direction": "out"}
+    if lic_key:
+        all_time_q["license_key"] = lic_key
+    all_time_total = await db.mail_events.count_documents(all_time_q)
+
     result = {
         "today_total": total,
         "today_spam": spam,
@@ -216,6 +222,7 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
         "throttled_users": throttled_users,
         "limit_per_hour": limit_hour,
         "top_users": top_users,
+        "all_time_total": all_time_total,
         "generated_at": _iso(),
     }
     await _cache.set(cache_key, result, 15.0)

@@ -484,6 +484,51 @@ async def _startup() -> None:
             logging.warning(f"[startup] mojibake migration skipped: {e}")
     import asyncio as _asyncio_root
     _asyncio_root.create_task(_migrate_subjects())
+
+    # v43.23 — VERSION dosyası değiştiyse (yeni sürüm deploy edildi) master_alerts
+    # koleksiyonuna bir "new_version" bildirimi düşür. Idempotent: aynı sürüm için
+    # sadece 1 kez.
+    async def _broadcast_version_bump():
+        try:
+            cur_ver = _read_panel_version()
+            if not cur_ver or cur_ver == "unknown":
+                return
+            last = await db.settings.find_one({"_key": "last_broadcast_version"}, {"_id": 0})
+            last_ver = (last or {}).get("version") or ""
+            if last_ver == cur_ver:
+                return
+            await db.master_alerts.insert_one({
+                "id": str(uuid.uuid4()),
+                "type": "new_version",
+                "version": cur_ver,
+                "previous_version": last_ver or None,
+                "message": (f"Yeni sürüm yayınlandı: {cur_ver}"
+                            + (f" (önceki: {last_ver})" if last_ver else "")),
+                "seen": False,
+                "created_at": _iso(),
+            })
+            await db.settings.update_one(
+                {"_key": "last_broadcast_version"},
+                {"$set": {"_key": "last_broadcast_version", "version": cur_ver, "updated_at": _iso()}},
+                upsert=True,
+            )
+            # v43.22+ Ayrıca inbox'a da düşür (Bildirim Kutusu için)
+            await db.notifications_inbox.insert_one({
+                "id": str(uuid.uuid4()),
+                "kind": "new_version",
+                "title": f"Yeni sürüm: {cur_ver}",
+                "message": (f"Panel {cur_ver} sürümüne güncellendi"
+                            + (f" (önceki: {last_ver})" if last_ver else "")),
+                "version": cur_ver,
+                "read": False,
+                "severity": "info",
+                "created_at": _iso(),
+            })
+            logging.info(f"[startup] Broadcast new version: {cur_ver} (previous: {last_ver or 'none'})")
+        except Exception as e:
+            logging.warning(f"[startup] version broadcast skipped: {e}")
+    _asyncio_root.create_task(_broadcast_version_bump())
+
     # Deduplicate engines by (name, owner_license_key) — multi-tenant safe.
     # Legacy pre-multitenancy dedupe used only `name` which wiped bayi copies,
     # and legacy `name_1` unique index conflicts with per-bayi rows.
@@ -3007,6 +3052,27 @@ async def reports_weekly_send(payload: ReportSendPayload):
 
 
 # ----- Version & Update Manifest -----
+# v43.23 — /app/VERSION dosyası → panel & bayi bildirimleri için tek doğruluk kaynağı
+_VERSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")
+
+def _read_panel_version() -> str:
+    """Read /app/VERSION content (fallback: 'unknown'). Called by /version/panel
+    endpoint and the startup broadcast task."""
+    try:
+        with open(_VERSION_FILE, "r", encoding="utf-8") as f:
+            v = f.read().strip()
+            return v or "unknown"
+    except Exception:
+        return "unknown"
+
+
+@api.get("/version/panel")
+async def version_panel():
+    """Preview/panel şu anki sürümü döndürür (Header rozeti için).
+    Kaynak: repo kökündeki VERSION dosyası (deploy sırasında güncellenir)."""
+    return {"version": _read_panel_version(), "source": "VERSION"}
+
+
 @api.get("/version/current")
 async def version_current():
     doc = await db.settings.find_one({"_key": "version"}, {"_id": 0, "_key": 0})

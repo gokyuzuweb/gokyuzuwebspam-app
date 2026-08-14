@@ -204,13 +204,36 @@ export default function Outbound() {
 
   return (
     <div className="p-6 space-y-4" data-testid="outbound-page">
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <StatCard label="Bugün Giden" value={nfmt(s.today_total)} icon={ArrowUpRight} tone="brand" testid="ob-today-total" />
+        <StatCard label="Tüm Zamanlar" value={nfmt(s.all_time_total ?? 0)} icon={ArrowUpRight} tone="info" testid="ob-alltime-total" />
         <StatCard label="Spam Giden" value={nfmt(s.today_spam)} icon={MailWarning} tone="warning" testid="ob-today-spam" />
         <StatCard label="Bloklanan" value={nfmt(s.today_blocked)} icon={Ban} tone="danger" testid="ob-today-blocked" />
         <StatCard label="Throttled User" value={nfmt(s.throttled_users)} icon={Users} tone="danger" testid="ob-throttled-users" />
         <StatCard label="Saatlik Limit" value={nfmt(s.limit_per_hour)} icon={ClipboardList} tone="info" testid="ob-limit" />
       </div>
+
+      {/* v43.24 — Boş durum rehberi: hiç kayıt yoksa neden ve nasıl açıklaması */}
+      {events.length === 0 && !eventsQuery.isLoading && (
+        <Card data-testid="ob-empty-hint">
+          <div className="p-4 border-l-4 border-sky-500 bg-sky-500/5">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+              <div className="flex-1 text-sm text-slate-300 space-y-1.5">
+                <div className="font-semibold text-sky-300">Giden mail kaydı görünmüyor</div>
+                <div className="text-xs text-slate-400 leading-relaxed">
+                  Olası nedenler:
+                </div>
+                <ul className="text-xs text-slate-400 list-disc pl-5 space-y-0.5">
+                  <li><b>Master anahtarı</b> tarayıcıda kayıtlı olmayabilir — panel'e MS- prefix'li anahtarla giriş yaptığınızdan emin olun.</li>
+                  <li><b>Milter/logtail v43+</b> henüz kurulu değilse yeni gönderilen mailler <code className="mono text-slate-300">direction=in</code> olarak yanlış sınıflanır. WHM sunucunuzda <code className="mono text-amber-300">gws-update</code> çalıştırın.</li>
+                  <li>Filtre (verdict / arama / skor / saat) çok dar olabilir — üstteki filtreleri <b>Sıfırla</b> deneyin.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {bulk.length > 0 && (
         <Card data-testid="ob-bulk-banner">

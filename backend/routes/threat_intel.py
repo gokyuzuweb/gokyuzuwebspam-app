@@ -45,6 +45,71 @@ async def add_ioc(payload: Indicator):
     return {"ok": True, **doc}
 
 
+# v43.25 — Boş kategori seed'i: Domain / Hash / Email için gerçek dünya feed'i
+# yok (URLhaus/PhishTank sadece URL, Spamhaus/Barracuda sadece IP). Kullanıcının
+# panelde 5 kategoriyi de dolu görebilmesi için tek tıkla demo IOC yükler.
+@router.post("/ioc/seed-demo-categories")
+async def seed_demo_ioc_categories():
+    """Idempotent — Domain / Hash / Email kategorilerine gerçekçi demo IOC'lar
+    ekler. Zaten var olanlar üzerine yazmaz (unique index: type + value)."""
+    seed_data = [
+        # Malicious domains (phishing/malware C2)
+        ("domain", "secure-paypal-login.info",      "phishing",   88, "demo-openphish"),
+        ("domain", "microsoft-verify-account.top",  "phishing",   92, "demo-openphish"),
+        ("domain", "apple-icloud-lock.support",     "phishing",   90, "demo-openphish"),
+        ("domain", "amazon-billing-update.click",   "phishing",   85, "demo-openphish"),
+        ("domain", "instagram-verify-badge.help",   "phishing",   87, "demo-openphish"),
+        ("domain", "bank-of-america-alert.tech",    "phishing",   93, "demo-openphish"),
+        ("domain", "google-drive-shared.link",      "phishing",   80, "demo-openphish"),
+        ("domain", "netflix-payment-failed.online", "phishing",   82, "demo-openphish"),
+        ("domain", "wechat-security-check.xyz",     "phishing",   78, "demo-openphish"),
+        ("domain", "coinbase-wallet-recover.pro",   "phishing",   91, "demo-openphish"),
+        ("domain", "wetransfer-download-file.com",  "malware",    75, "demo-malwarebazaar"),
+        ("domain", "office365-update.top",          "malware",    83, "demo-malwarebazaar"),
+        # Malware hashes (SHA256 first 64 hex, MD5 - realistic patterns)
+        ("hash",   "a3b6c9d7e0f1234567890abcdef1234567890abcdef1234567890abcdef123456", "malware",    95, "demo-malwarebazaar"),
+        ("hash",   "b4c7d8e9f0a1234567890bcdef1234567890abcdef1234567890abcdef1234567", "ransomware", 97, "demo-malwarebazaar"),
+        ("hash",   "c5d8e9f0a1b2345678901cdef1234567890abcdef1234567890abcdef12345678", "malware",    90, "demo-malwarebazaar"),
+        ("hash",   "d6e9f0a1b2c3456789012def1234567890abcdef1234567890abcdef123456789", "c2",         88, "demo-malwarebazaar"),
+        ("hash",   "e7f0a1b2c3d4567890123ef1234567890abcdef1234567890abcdef1234567890", "malware",    85, "demo-malwarebazaar"),
+        ("hash",   "44d88612fea8a8f36de82e1278abb02f",         "malware",    92, "demo-eicar"),
+        ("hash",   "84c82835a5d21bbcf75a61706d8ab549",         "ransomware", 96, "demo-wannacry"),
+        ("hash",   "d724d8cc6420f06e8a48752f0da11c66",         "malware",    89, "demo-emotet"),
+        # Malicious sender emails (spam / phishing)
+        ("email",  "phisher@fake-paypal-support.info",   "phishing",   85, "demo-blocklist"),
+        ("email",  "no-reply@fake-microsoft-alerts.top", "phishing",   87, "demo-blocklist"),
+        ("email",  "spammer1@bulk-mailer-2024.online",   "spam",       92, "demo-blocklist"),
+        ("email",  "invoice@fake-amazon-billing.click",  "phishing",   90, "demo-blocklist"),
+        ("email",  "admin@compromised-hosting.pro",      "malware",    80, "demo-blocklist"),
+        ("email",  "support@fake-apple-service.tech",    "phishing",   88, "demo-blocklist"),
+        ("email",  "info@phishing-campaign-2026.link",   "phishing",   83, "demo-blocklist"),
+        ("email",  "noreply@ransomware-c2.xyz",          "c2",         95, "demo-blocklist"),
+    ]
+    inserted = 0
+    now = _iso()
+    expires = (datetime.now(timezone.utc) + timedelta(days=90)).isoformat()
+    for t, v, tag, conf, source in seed_data:
+        res = await db.threat_iocs.update_one(
+            {"type": t, "value": v},
+            {"$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "type": t, "value": v, "tag": tag,
+                "confidence": conf, "source": source, "feed": source,
+                "created_at": now, "expires_at": expires,
+                "note": "Demo veri — gerçek üretim için OpenPhish/MalwareBazaar/Blocklist.de feed'lerine abone olun",
+            }},
+            upsert=True,
+        )
+        if res.upserted_id is not None:
+            inserted += 1
+    return {
+        "ok": True,
+        "inserted": inserted,
+        "total_seeded": len(seed_data),
+        "categories": {"domain": 12, "hash": 8, "email": 8},
+    }
+
+
 @router.get("/ioc")
 async def list_ioc(
     type: Optional[str] = None,
