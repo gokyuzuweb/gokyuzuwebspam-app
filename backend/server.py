@@ -1354,11 +1354,20 @@ async def quarantine_purge_demo(request: Request):
     ]}
     q = await db.quarantine.delete_many(filt)
     e = await db.mail_events.delete_many(filt)
+    # v43.25 — Demo user'ları da `users` collection'ından temizle
+    demo_usernames = ["example", "sirket", "tekno", "deneme", "kobi"]
+    u = await db.users.delete_many({
+        "$or": [
+            {"username": {"$in": demo_usernames}},
+            {"domain": {"$in": list(_DEMO_DOMAINS)}},
+        ]
+    })
     await db.logs.insert_one(ActivityLog(
         source="quarantine", level="warn",
-        message=f"Demo verisi temizlendi: quarantine={q.deleted_count}, mail_events={e.deleted_count}",
+        message=f"Demo verisi temizlendi: quarantine={q.deleted_count}, mail_events={e.deleted_count}, users={u.deleted_count}",
     ).model_dump())
     return {"quarantine_deleted": q.deleted_count, "events_deleted": e.deleted_count,
+            "users_deleted": u.deleted_count,
             "demo_domains": sorted(_DEMO_DOMAINS)}
 
 

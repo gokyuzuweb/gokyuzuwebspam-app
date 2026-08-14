@@ -15,8 +15,10 @@ export default function UsersPage() {
   const purgeDemo = useMutation({
     mutationFn: () => api.quarantinePurgeDemo(),
     onSuccess: (d) => {
-      toast.success(`Demo temizlendi: ${d.quarantine_deleted} karantina + ${d.events_deleted} event silindi`);
+      toast.success(`Demo temizlendi: ${d.users_deleted || 0} kullanıcı + ${d.quarantine_deleted} karantina + ${d.events_deleted} event silindi`);
       qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["quarantine"] });
+      qc.invalidateQueries({ queryKey: ["events"] });
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Hata"),
   });
