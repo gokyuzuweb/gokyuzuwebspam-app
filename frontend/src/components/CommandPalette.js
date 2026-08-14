@@ -236,6 +236,18 @@ export default function CommandPalette() {
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // Header search-bar entegrasyonu: window event ile açılabilir + query preload
+  useEffect(() => {
+    const onOpen = (e) => {
+      const q = (e?.detail?.query ?? "");
+      setOpen(true);
+      setQuery(q);
+      setIdx(0);
+    };
+    window.addEventListener("gws:open-palette", onOpen);
+    return () => window.removeEventListener("gws:open-palette", onOpen);
+  }, []);
+
   // Focus input on open
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 40);

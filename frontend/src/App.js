@@ -135,10 +135,17 @@ function Sidebar() {
     if (n.masterOnly && !isMaster) return false;
     return true;
   });
+  // v43.21 — grup bazlı bölütleme (NAV_GROUPS sırasına uygun)
+  const grouped = NAV_GROUPS.map((g) => ({
+    ...g,
+    items: items.filter((n) => n.group === g.key),
+  })).filter((g) => g.items.length > 0);
+  const ungrouped = items.filter((n) => !n.group);
+
   return (
-    <aside data-testid="sidebar" className={`w-60 shrink-0 border-r border-slate-800 bg-slate-900/60 flex flex-col ${effective === "ar" ? "rtl" : ""}`}>
-      <div className="h-14 flex items-center gap-2 px-3 border-b border-slate-800">
-        <NavLink to="/" data-testid="sidebar-home" className="relative w-8 h-8 rounded-md bg-gradient-to-br from-indigo-500 to-rose-500 flex items-center justify-center shrink-0" title="Home">
+    <aside data-testid="sidebar" className={`w-60 shrink-0 border-r border-slate-800/80 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900/60 backdrop-blur flex flex-col ${effective === "ar" ? "rtl" : ""}`}>
+      <div className="h-14 flex items-center gap-2 px-3 border-b border-slate-800/80">
+        <NavLink to="/" data-testid="sidebar-home" className="relative w-8 h-8 rounded-md bg-gradient-to-br from-indigo-500 to-rose-500 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20 ring-1 ring-white/10" title="Home">
           <ShieldAlert className="w-4 h-4 text-white" />
         </NavLink>
         <div className="leading-tight min-w-0">
@@ -146,7 +153,7 @@ function Sidebar() {
           <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v1.3 · {effective.toUpperCase()}</div>
         </div>
       </div>
-      <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto sidebar-scroll">
         <NavLink
           to="/"
           data-testid="nav-home"
@@ -155,39 +162,67 @@ function Sidebar() {
           <Home className="w-4 h-4" strokeWidth={1.75} />
           <span>Home</span>
         </NavLink>
-        <div className="h-px bg-slate-800/60 my-1.5" />
-        {items.map((n) => {
-          const showBadge = n.key === "payments_admin" && pendingCount > 0;
-          return (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.end}
-              data-testid={n.testid}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors duration-150 ${
-                  isActive
-                    ? "bg-indigo-500/10 text-indigo-300 border border-indigo-500/30"
-                    : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 border border-transparent"
-                }`
-              }
-            >
-              <n.icon className="w-4 h-4" strokeWidth={1.75} />
-              <span className="flex-1">{n.label || t(`nav.${n.key}`)}</span>
-              {showBadge && (
-                <span
-                  data-testid={`nav-badge-${n.key}`}
-                  className="ml-auto shrink-0 mono text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500 text-white leading-none min-w-[18px] text-center animate-pulse"
-                  title={`${pendingCount} bekleyen havale bildirimi`}
-                >
-                  {pendingCount}
-                </span>
-              )}
-            </NavLink>
-          );
-        })}
+        <div className="h-px bg-slate-800/60 my-2" />
+        {grouped.map((g, gi) => (
+          <div key={g.key} className={gi > 0 ? "pt-3" : ""} data-testid={`nav-group-${g.key}`}>
+            <div className="px-3 mb-1 flex items-center gap-1.5 text-[9.5px] uppercase tracking-[0.2em] font-bold text-slate-600 select-none">
+              <span className="text-[11px] opacity-90">{g.icon}</span>
+              <span>{g.label}</span>
+              <span className="flex-1 h-px bg-gradient-to-r from-slate-800/60 to-transparent ml-1" />
+            </div>
+            <div className="space-y-0.5">
+              {g.items.map((n) => {
+                const showBadge = n.key === "payments_admin" && pendingCount > 0;
+                return (
+                  <NavLink
+                    key={n.to}
+                    to={n.to}
+                    end={n.end}
+                    data-testid={n.testid}
+                    className={({ isActive }) =>
+                      `group relative flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition-all duration-150 ${
+                        isActive
+                          ? "bg-gradient-to-r from-indigo-500/15 to-transparent text-indigo-200 border border-indigo-500/30 shadow-sm shadow-indigo-500/10"
+                          : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent hover:border-slate-700/40"
+                      }`
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r bg-indigo-400 shadow-[0_0_6px_rgba(129,140,248,0.6)]" />}
+                        <n.icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-indigo-300" : "text-slate-500 group-hover:text-slate-300"}`} strokeWidth={1.75} />
+                        <span className="flex-1 truncate">{n.label || t(`nav.${n.key}`)}</span>
+                        {showBadge && (
+                          <span
+                            data-testid={`nav-badge-${n.key}`}
+                            className="ml-auto shrink-0 mono text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500 text-white leading-none min-w-[16px] text-center animate-pulse"
+                            title={`${pendingCount} bekleyen havale bildirimi`}
+                          >
+                            {pendingCount}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        {ungrouped.length > 0 && (
+          <div className="pt-3">
+            <div className="px-3 mb-1 text-[9.5px] uppercase tracking-[0.2em] font-bold text-slate-600 select-none">Diğer</div>
+            {ungrouped.map((n) => (
+              <NavLink key={n.to} to={n.to} end={n.end} data-testid={n.testid}
+                className={({ isActive }) => `flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] ${isActive ? "bg-indigo-500/10 text-indigo-300" : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50"}`}>
+                <n.icon className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span className="flex-1 truncate">{n.label || t(`nav.${n.key}`)}</span>
+              </NavLink>
+            ))}
+          </div>
+        )}
       </nav>
-      <div className="px-4 py-3 border-t border-slate-800 text-[11px] text-slate-500 mono flex items-center gap-2" data-testid="sidebar-role-strip">
+      <div className="px-4 py-3 border-t border-slate-800/80 text-[11px] text-slate-500 mono flex items-center gap-2 bg-slate-950/60" data-testid="sidebar-role-strip">
         <GaugeCircle className="w-3.5 h-3.5" />
         {isMaster ? (
           <>

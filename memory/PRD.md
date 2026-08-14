@@ -654,6 +654,28 @@ tabidir.
 - Overview endpoint 200 OK, backend restart sonrası ftfy import başarılı
 
 
+## Feb 14, 2026 (Session 15b) — v43.21 · Global Spotlight Search + Modernize Sidebar
+
+### Kullanıcı isteği
+1. "Kontrol paneli üstüne arama çubuğu koy, tüm filtrelerde akıllı arama sistemi olsun"
+2. "Yönetim paneli modüllerini modernize bir sistem şekilde gruplandır"
+
+### 1. Global Spotlight Search (Header)
+- ✅ `components/Header.js` yeniden yazıldı — orta genişlikte glass search bar (max-w-md)
+- ✅ Search bar (`data-testid=global-search-btn`): tıklama veya doğrudan yazma → `window.dispatchEvent('gws:open-palette', {detail:{query}})` fırlatır
+- ✅ `⌘K` chip (kbd stili) — hover'da indigo glow
+- ✅ Doğrudan yazma modu: butona focus + karakter basıldığında palette o karakterle açılır (Spotlight-style)
+- ✅ `components/CommandPalette.js` — `gws:open-palette` custom event listener eklendi; pre-query desteği. Cmd+K korundu.
+
+### 2. Modernize Sidebar (Group Headers + Glass)
+- ✅ `App.js::Sidebar` refaktoru — 8 NAV_GROUPS (İzleme/Koruma/Posta/Kullanıcı/Satış/Bildirim/Master/Sistem) her biri kendi bölümü
+- ✅ Grup başlıkları: 9.5px uppercase tracking-[0.2em] font-bold slate-600 + gradient ayırıcı çizgi + emoji ikon
+- ✅ Aktif item: `bg-gradient-to-r from-indigo-500/15 to-transparent` + sol kenar shine bar (glow shadow) + border indigo-500/30
+- ✅ İkon boyutu 4→3.5, satır padding 2→1.5 → kompakt (daha çok item görünür, scroll az)
+- ✅ Sidebar bg: `gradient-to-b from-slate-950 via-slate-950 to-slate-900/60 backdrop-blur`
+- ✅ Slim scroll bar (App.css `.sidebar-scroll` 6px indigo/15%)
+- ✅ `data-testid="nav-group-{key}"` her grup için
+
 ## Feb 14, 2026 (Session 15) — v43.20 · P0 Bug Triage (App.js Syntax, Checkout 423, Inbox Rendering)
 
 ### Kullanıcı raporu (Turkish, önceki fork)
