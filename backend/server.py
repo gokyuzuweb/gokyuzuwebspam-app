@@ -1689,6 +1689,33 @@ async def lists_delete_post(entry_id: str, request: Request, license_key: Option
     return await lists_delete(entry_id, request, license_key)
 
 
+@api.post("/lists/bulk-delete")
+async def lists_bulk_delete(request: Request):
+    """v43.26 — Seçilen kayıtları toplu sil. Body: {"ids": ["...", "..."]}"""
+    scope = await _tenant_scope(request, None)
+    body = await request.json()
+    ids = body.get("ids") or []
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(400, "ids: string listesi gerekli")
+    filt: dict = {"id": {"$in": ids}}
+    if not scope.get("is_master"):
+        filt["license_key"] = scope.get("owner_license_key") or "__none__"
+    r = await db.lists.delete_many(filt)
+    return {"deleted": r.deleted_count}
+
+
+@api.post("/lists/purge")
+async def lists_purge(request: Request, list_type: str = "white"):
+    """v43.26 — Belirtilen liste türünün TAMAMINI temizle (?list_type=white|black).
+    Master ise tüm tenant'lar, bayi ise sadece kendi kayıtları."""
+    scope = await _tenant_scope(request, None)
+    filt: dict = {"list_type": list_type}
+    if not scope.get("is_master"):
+        filt["license_key"] = scope.get("owner_license_key") or "__none__"
+    r = await db.lists.delete_many(filt)
+    return {"deleted": r.deleted_count, "list_type": list_type}
+
+
 # ----- Rules -----
 @api.get("/rules")
 async def rules_get(request: Request, license_key: Optional[str] = None):

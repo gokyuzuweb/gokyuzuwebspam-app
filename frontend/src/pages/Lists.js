@@ -94,6 +94,7 @@ function AddForm({ listType, onAdded }) {
 
 function ListPanel({ listType }) {
   const qc = useQueryClient();
+  const [selected, setSelected] = useState(new Set());
   const q = useQuery({
     queryKey: ["lists", listType],
     queryFn: () => api.lists({ list_type: listType }),
@@ -103,9 +104,38 @@ function ListPanel({ listType }) {
     onSuccess: () => { toast.success("Silindi"); qc.invalidateQueries({ queryKey: ["lists", listType] }); },
     onError: () => toast.error("Silme başarısız"),
   });
+  const bulkDel = useMutation({
+    mutationFn: (ids) => api.listBulkDelete(ids),
+    onSuccess: (d) => {
+      toast.success(`${d.deleted} kayıt silindi`);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["lists", listType] });
+    },
+    onError: () => toast.error("Toplu silme başarısız"),
+  });
+  const purge = useMutation({
+    mutationFn: () => api.listPurge(listType),
+    onSuccess: (d) => {
+      toast.success(`Liste tamamen temizlendi: ${d.deleted} kayıt silindi`);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["lists", listType] });
+    },
+    onError: () => toast.error("Temizleme başarısız"),
+  });
 
   const isWhite = listType === "white";
   const rows = q.data || [];
+  const allChecked = rows.length > 0 && selected.size === rows.length;
+  const someChecked = selected.size > 0 && selected.size < rows.length;
+  const toggleAll = () => {
+    if (allChecked) setSelected(new Set());
+    else setSelected(new Set(rows.map((r) => r.id)));
+  };
+  const toggleOne = (id) => {
+    const n = new Set(selected);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    setSelected(n);
+  };
 
   return (
     <Card>
@@ -117,7 +147,40 @@ function ListPanel({ listType }) {
           </span>
         }
         subtitle={isWhite ? "Puanlamayı atlayacak güvenilir kaynaklar" : "Doğrudan reddedilecek kaynaklar"}
-        right={<Badge tone={isWhite ? "success" : "danger"}>{rows.length} kayıt</Badge>}
+        right={
+          <div className="flex items-center gap-2">
+            <Badge tone={isWhite ? "success" : "danger"}>{rows.length} kayıt</Badge>
+            {selected.size > 0 && (
+              <button
+                data-testid={`list-${listType}-bulk-delete`}
+                onClick={() => {
+                  if (confirm(`${selected.size} seçili kaydı silmek istediğinizden emin misiniz?`)) {
+                    bulkDel.mutate(Array.from(selected));
+                  }
+                }}
+                disabled={bulkDel.isPending}
+                className="text-xs px-2.5 py-1 rounded bg-amber-600/20 border border-amber-500/40 text-amber-300 hover:bg-amber-600/30 disabled:opacity-50"
+              >
+                <Trash2 className="w-3 h-3 inline mr-1" />
+                Seçilenleri Sil ({selected.size})
+              </button>
+            )}
+            <button
+              data-testid={`list-${listType}-purge`}
+              onClick={() => {
+                if (rows.length === 0) return toast.info("Liste zaten boş");
+                if (confirm(`TÜM listeyi (${rows.length} kayıt) silmek istediğinizden emin misiniz? Bu işlem geri alınamaz!`)) {
+                  purge.mutate();
+                }
+              }}
+              disabled={purge.isPending || rows.length === 0}
+              className="text-xs px-2.5 py-1 rounded bg-rose-700/20 border border-rose-500/40 text-rose-300 hover:bg-rose-600/30 disabled:opacity-50"
+            >
+              <Trash2 className="w-3 h-3 inline mr-1" />
+              Komple Temizle
+            </button>
+          </div>
+        }
       />
       <CardBody className="border-b border-slate-800 bg-slate-950/40">
         <AddForm listType={listType} onAdded={() => qc.invalidateQueries({ queryKey: ["lists", listType] })} />
@@ -126,6 +189,16 @@ function ListPanel({ listType }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[11px] uppercase tracking-widest text-slate-500">
+              <th className="text-left px-3 py-3 font-semibold w-10">
+                <input
+                  type="checkbox"
+                  data-testid={`list-${listType}-check-all`}
+                  checked={allChecked}
+                  ref={(el) => el && (el.indeterminate = someChecked)}
+                  onChange={toggleAll}
+                  className="w-4 h-4 accent-indigo-500 cursor-pointer"
+                />
+              </th>
               <th className="text-left px-4 py-3 font-semibold">Tip</th>
               <th className="text-left px-4 py-3 font-semibold">Değer</th>
               <th className="text-left px-4 py-3 font-semibold">Kapsam</th>
@@ -135,7 +208,17 @@ function ListPanel({ listType }) {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.id} data-row data-testid={`list-${listType}-row-${r.id}`} className="border-t border-slate-800">
+              <tr key={r.id} data-row data-testid={`list-${listType}-row-${r.id}`}
+                  className={`border-t border-slate-800 ${selected.has(r.id) ? "bg-indigo-500/5" : ""}`}>
+                <td className="px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    data-testid={`list-${listType}-check-${r.id}`}
+                    checked={selected.has(r.id)}
+                    onChange={() => toggleOne(r.id)}
+                    className="w-4 h-4 accent-indigo-500 cursor-pointer"
+                  />
+                </td>
                 <td className="px-4 py-2.5"><Badge tone="brand">{typeLabel(r.entry_type)}</Badge></td>
                 <td className="px-4 py-2.5 mono text-slate-200">{r.value}</td>
                 <td className="px-4 py-2.5 text-xs text-slate-400">
@@ -155,7 +238,7 @@ function ListPanel({ listType }) {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-500">Kayıt yok</td></tr>
+              <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">Kayıt yok</td></tr>
             )}
           </tbody>
         </table>
