@@ -160,14 +160,32 @@ async def history(request: Request, limit: int = 30):
 
 @router.post("/run-now")
 async def run_now(request: Request):
-    """Master manuel tetikler — tüm aktif lisanslar için digest üretir + saklar."""
+    """Master manuel tetikler — tüm aktif lisanslar için digest üretir + saklar.
+
+    v43.53 — Master anahtarı her zaman iterasyon setine dahil edilir (db.licenses'ta
+    bulunmasa bile). 0-bounce lisanslar için de skorlama yapılır ama kayıt eklenmez;
+    kullanıcı per-license sonuç görebilsin diye response detaylandırıldı.
+    """
     master_key = (request.headers.get("x-master-key") or "").strip()
     if not master_key.startswith("MS-"):
         raise HTTPException(403, "Master anahtarı gerekli")
-    generated = 0
+
+    # Master key'i her zaman aktif licenses setine dahil et
+    license_keys: set[str] = {master_key}
     async for lic in db.licenses.find({"active": True}, {"license_key": 1}):
-        d = await _generate_digest_for_license(lic["license_key"], 24)
-        if d["total_bounces"] == 0:
+        if lic.get("license_key"):
+            license_keys.add(lic["license_key"])
+
+    generated = 0
+    zero_bounce = 0
+    per_license: list[dict] = []
+
+    for lic_key in license_keys:
+        d = await _generate_digest_for_license(lic_key, 24)
+        tb = int(d.get("total_bounces") or 0)
+        per_license.append({"license_key": lic_key, "total_bounces": tb})
+        if tb == 0:
+            zero_bounce += 1
             continue
         d["id"] = str(uuid.uuid4())
         d["html_preview"] = _render_html(d)
@@ -175,21 +193,27 @@ async def run_now(request: Request):
         generated += 1
         # Webhook opsiyonel
         cfg = await db.settings.find_one(
-            {"_key": f"bounce_digest_config:{lic['license_key']}"}, {"_id": 0}) or {}
+            {"_key": f"bounce_digest_config:{lic_key}"}, {"_id": 0}) or {}
         if cfg.get("delivery_method") == "webhook" and cfg.get("webhook_url"):
             try:
                 import httpx
                 async with httpx.AsyncClient(timeout=8) as client:
                     await client.post(cfg["webhook_url"], json={
                         "kind": "bounce_digest",
-                        "license_key": lic["license_key"],
+                        "license_key": lic_key,
                         "total_bounces": d["total_bounces"],
                         "top_users": d["top_users"],
                         "generated_at": d["generated_at"],
                     })
             except Exception:
                 pass
-    return {"ok": True, "generated": generated}
+    return {
+        "ok": True,
+        "generated": generated,
+        "zero_bounce_licenses": zero_bounce,
+        "total_scanned": len(license_keys),
+        "per_license": per_license,
+    }
 
 
 async def _bounce_digest_daily_loop():

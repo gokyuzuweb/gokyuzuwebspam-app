@@ -40,7 +40,24 @@ export default function BounceDigest() {
   });
   const runNow = useMutation({
     mutationFn: () => api.bounceDigestRunNow(),
-    onSuccess: (d) => { toast.success(`✓ ${d.generated} lisans için digest üretildi`); qc.invalidateQueries({ queryKey: ["bd-history"] }); },
+    onSuccess: (d) => {
+      const gen = d.generated || 0;
+      const scanned = d.total_scanned || 0;
+      const zero = d.zero_bounce_licenses || 0;
+      if (gen > 0) {
+        toast.success(`✓ ${gen} lisans için digest üretildi`, {
+          description: `${scanned} lisans tarandı, ${zero} temiz (bounce yok).`,
+          duration: 8000,
+        });
+      } else {
+        toast.info(`Son 24 saatte bounce bulunmadı`, {
+          description: `${scanned} lisans tarandı, hepsi temiz — digest üretilecek veri yok.`,
+          duration: 8000,
+        });
+      }
+      qc.invalidateQueries({ queryKey: ["bd-history"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Hata"),
   });
 
   const p = preview.data;

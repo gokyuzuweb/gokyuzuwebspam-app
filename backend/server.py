@@ -6591,16 +6591,27 @@ if [ -r "$USERDOMAINS_FILE" ]; then
 fi
 
 CHECKPOINT_FILE="$STATE_DIR/checkpoint"
+INFLIGHT_FILE="$STATE_DIR/in_flight.state"    # v43.53 — persist arrival state between cron cycles
+INFLIGHT_MAX=5000                              # üst sınır: 5000 mesaj (~450KB); üstü FIFO drop
 LAST_POS=0
 if [ -f "$CHECKPOINT_FILE" ]; then LAST_POS=$(cat "$CHECKPOINT_FILE" 2>/dev/null || echo "0"); fi
+# In-flight state dosyası çok büyümüşse eski satırları kırp (FIFO)
+if [ -f "$INFLIGHT_FILE" ]; then
+    IF_LINES=$(wc -l < "$INFLIGHT_FILE" 2>/dev/null || echo "0")
+    if [ "$IF_LINES" -gt "$INFLIGHT_MAX" ]; then
+        tail -n "$INFLIGHT_MAX" "$INFLIGHT_FILE" > "$INFLIGHT_FILE.tmp" && mv "$INFLIGHT_FILE.tmp" "$INFLIGHT_FILE"
+    fi
+fi
 # v43.48 — Backfill sinyali: panelde butona basıldıysa checkpoint'i sıfırla → son 24s tam re-scan
 BACKFILL_RESP=$(curl -sSf --max-time 8 \
     "$PANEL_URL/api/outbound/backfill-signal?license_key=$LICENSE_KEY" 2>/dev/null || echo '{"pending":false}')
 BACKFILL_ACTIVE=0
 if echo "$BACKFILL_RESP" | grep -q '"pending":true'; then
-    log_line "Backfill signal → checkpoint sıfırlanıyor + panel checkpoint sıfırla"
+    log_line "Backfill signal → checkpoint sıfırlanıyor + in_flight state temizleniyor"
     LAST_POS=0
     BACKFILL_ACTIVE=1
+    # Backfill'de in_flight state'i de sıfırla — 24h re-scan sırasında karışıklık olmasın
+    : > "$INFLIGHT_FILE"
     # Panel'e ACK gönder + panel-side checkpoint sıfırla (reset flag ile)
     curl -sSf --max-time 8 -X POST -H "Content-Type: application/json" \
         "$PANEL_URL/api/outbound/backfill-ack" \
@@ -6620,11 +6631,22 @@ if [ "$FILE_SIZE" -eq "$LAST_POS" ]; then log_line "No new data (pos=$LAST_POS)"
 DELTA=$(dd if="$EXIM_LOG" bs=1 skip="$LAST_POS" 2>/dev/null || true)
 NEW_POS=$FILE_SIZE
 
-TMP=$(mktemp); trap "rm -f $TMP $TMP.events $TMP.count $TMP.payload $TMP.debug" EXIT
+TMP=$(mktemp); trap "rm -f $TMP $TMP.events $TMP.count $TMP.payload $TMP.debug $INFLIGHT_FILE.new" EXIT
 
-echo "$DELTA" | awk -v batch_max="$BATCH_MAX" -v userdomains="$USERDOMAINS_LIST" -v debug="$DEBUG" '
+echo "$DELTA" | awk -v batch_max="$BATCH_MAX" -v userdomains="$USERDOMAINS_LIST" -v debug="$DEBUG" \
+    -v inflight_in="$INFLIGHT_FILE" -v inflight_out="$INFLIGHT_FILE.new" '
 BEGIN {
-    count=0; arrivals=0; deliveries=0; skipped=0; first=1
+    count=0; arrivals=0; deliveries=0; skipped=0; first=1; state_loaded=0
+    # v43.53 — Önceki cron cycle'ından in_flight state'i yükle
+    while ((getline line < inflight_in) > 0) {
+        tab = index(line, "\t")
+        if (tab > 0) {
+            k = substr(line, 1, tab-1)
+            v = substr(line, tab+1)
+            if (k != "") { in_flight[k] = v; state_loaded++ }
+        }
+    }
+    close(inflight_in)
     # userdomains: pipe-separated list → hash
     n = split(userdomains, ud_arr, "|")
     for (i=1; i<=n; i++) if (ud_arr[i] != "") ud[ud_arr[i]] = 1
@@ -6701,18 +6723,33 @@ function domain_of(email,   parts,at) {
 }
 END {
     print ""; print "]"
+    # v43.53 — In-flight state persist et (sonraki cron cycle bunu yükleyecek)
+    persisted = 0
+    for (k in in_flight) {
+        print k "\t" in_flight[k] > inflight_out
+        persisted++
+    }
+    close(inflight_out)
     print "COUNT:"count > "/dev/stderr"
     if (debug == "1") {
-        printf "DEBUG arrivals=%d deliveries=%d skipped=%d userdomains=%d\n", arrivals, deliveries, skipped, length(ud) > "/dev/stderr"
+        printf "DEBUG arrivals=%d deliveries=%d skipped=%d userdomains=%d loaded=%d persisted=%d\n", \
+            arrivals, deliveries, skipped, length(ud), state_loaded, persisted > "/dev/stderr"
     }
 }
 ' 2> "$TMP.count" > "$TMP.events"
 
+# v43.53 — Atomically move new in_flight state file
+if [ -f "$INFLIGHT_FILE.new" ]; then
+    mv "$INFLIGHT_FILE.new" "$INFLIGHT_FILE"
+fi
+
 EVENT_COUNT=$(grep -oE 'COUNT:[0-9]+' "$TMP.count" 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "0")
 DBG=$(cat "$TMP.count" 2>/dev/null | tr '\n' ' ')
+# v43.53 — In-flight state boyutunu log'a ekle (arrival/delivery eşleşme diagnostiği)
+IF_SIZE=$(wc -l < "$INFLIGHT_FILE" 2>/dev/null || echo "0")
 
 if [ "$EVENT_COUNT" -eq 0 ]; then
-    log_line "Parsed 0 events from $((NEW_POS-LAST_POS)) bytes · $DBG"
+    log_line "Parsed 0 events from $((NEW_POS-LAST_POS)) bytes · in_flight=$IF_SIZE · $DBG"
     echo "$NEW_POS" > "$CHECKPOINT_FILE"; exit 0
 fi
 
@@ -6778,7 +6815,7 @@ RESP=$(curl -sSf --max-time 30 -H "Content-Type: application/json" \
 if echo "$RESP" | grep -q '"ok":true'; then
     INSERTED=$(echo "$RESP" | grep -oE '"inserted":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "?")
     UPDATED=$(echo "$RESP" | grep -oE '"updated":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "?")
-    log_line "OK · parsed=$EVENT_COUNT · inserted=$INSERTED · updated=$UPDATED · pos=$NEW_POS · $DBG"
+    log_line "OK · parsed=$EVENT_COUNT · inserted=$INSERTED · updated=$UPDATED · pos=$NEW_POS · in_flight=$IF_SIZE · $DBG"
     echo "$NEW_POS" > "$CHECKPOINT_FILE"
 else
     log_line "FAIL: $RESP"; exit 1
