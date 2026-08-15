@@ -7377,6 +7377,179 @@ echo ""
     return _PT(script, media_type="text/x-shellscript")
 
 
+# ============================================================================
+# v43.58 — SIMPLE PUSH (kullanıcı'nın kanıtlanmış tail -c 5MB komutu + 10sn timer)
+# ---------------------------------------------------------------------------
+# Kullanıcı `gws-simple-push` komutunu manuel yazıp çalıştırdı ve çalıştığını
+# doğruladı. Bu endpoint aynı script'i + systemd timer (her 10 saniye)
+# kurar. Eski daemon/cron temizlenir.
+# ============================================================================
+@api.get("/tools/install-simple-push.sh")
+async def install_simple_push_oneliner(license_key: str = "", panel_url: str = "",
+                                         interval: int = 10):
+    """v43.58 — `gws-simple-push` + systemd timer (10sn) tek-satırlık kurulum:
+      bash <(curl -sSf "https://panel.gokyuzuhosting.com/api/tools/install-simple-push.sh?license_key=MS-...")
+
+    Kullanıcının kanıtlanmış tail -c 5MB + base64 push komutu her N saniyede bir
+    otomatik çalışır. Eski daemon/cron job'ları temizlenir.
+    """
+    from fastapi.responses import PlainTextResponse as _PT
+    if not panel_url:
+        panel_url = "https://panel.gokyuzuhosting.com"
+    iv = max(5, min(int(interval or 10), 300))
+    script = f"""#!/bin/bash
+# GökyüzüWebSpam Simple Push — 10sn otomatik push kurulumu (v43.58)
+set -euo pipefail
+
+LICENSE_KEY="{license_key}"
+PANEL_URL="{panel_url}"
+INTERVAL="{iv}"
+
+if [ -z "$LICENSE_KEY" ] && [ -n "${{1:-}}" ]; then
+    LICENSE_KEY="$1"
+fi
+
+if [ -z "$LICENSE_KEY" ]; then
+    echo "HATA: License key gerekli"
+    echo "Kullanım: bash <(curl -sSf $PANEL_URL/api/tools/install-simple-push.sh?license_key=MS-...)"
+    exit 1
+fi
+
+echo "══════════════════════════════════════════════════════"
+echo "  GökyüzüWebSpam Simple Push Kurulumu (v43.58)"
+echo "  Her ${{INTERVAL}} saniyede bir mailler otomatik push edilecek"
+echo "══════════════════════════════════════════════════════"
+echo ""
+
+echo "==> [1/5] Eski daemon/cron/timer jobları temizleniyor…"
+# Eski cron entry
+(crontab -l 2>/dev/null | grep -v gws-exim-push | grep -v gws-simple-push) | crontab - 2>/dev/null || true
+# Eski systemd unit'ler
+for U in gws-exim-daemon.service gws-exim-push.timer gws-exim-push.service \\
+         gws-exim-inotify.service gws-simple-push.service gws-simple-push.timer; do
+    if systemctl list-unit-files 2>/dev/null | grep -q "^$U"; then
+        systemctl disable --now "$U" 2>/dev/null || true
+        rm -f "/etc/systemd/system/$U" 2>/dev/null || true
+        echo "  · $U kaldırıldı"
+    fi
+done
+# Eski daemon process varsa öldür
+pkill -f "gws-exim-daemon --foreground" 2>/dev/null || true
+systemctl daemon-reload 2>/dev/null || true
+
+echo "==> [2/5] Push script yazılıyor: /usr/local/bin/gws-simple-push"
+cat > /usr/local/bin/gws-simple-push <<PUSH_EOF
+#!/bin/bash
+# gws-simple-push — v43.58
+# Exim mainlog'un son 5MB'ını base64 encode edip panele push eder.
+# Idempotent: backend upsert dedup yapar, aynı mail 2 kez yazılmaz.
+LK="$LICENSE_KEY"
+PANEL="$PANEL_URL"
+LOG=/var/log/gws-simple-push.log
+LOG_MAINLOG=/var/log/exim_mainlog
+TMP=\\$(mktemp)
+
+# Log rotate (10MB üstü)
+if [ -f "\\$LOG" ]; then
+    SZ=\\$(stat -c%s "\\$LOG" 2>/dev/null || echo 0)
+    if [ "\\$SZ" -gt 10485760 ]; then
+        mv "\\$LOG" "\\$LOG.1" 2>/dev/null || true
+    fi
+fi
+
+if [ ! -r "\\$LOG_MAINLOG" ]; then
+    echo "[\\$(date -u +%FT%TZ)] ERR: \\$LOG_MAINLOG okunamıyor" >> "\\$LOG"
+    exit 1
+fi
+
+{{
+printf '{{"license_key":"%s","log_text_b64":"' "\\$LK"
+tail -c 5000000 "\\$LOG_MAINLOG" | base64 -w0
+printf '"}}'
+}} > "\\$TMP"
+
+START=\\$(date +%s%3N)
+RESP=\\$(curl -sS --max-time 90 -X POST \\
+    -H "Content-Type: application/json" \\
+    --data-binary "@\\$TMP" \\
+    "\\$PANEL/api/outbound/exim-log-push-raw" 2>&1)
+END=\\$(date +%s%3N)
+DUR=\\$((END - START))
+echo "[\\$(date -u +%FT%TZ)] dur=\\${{DUR}}ms \\$(echo \\$RESP | head -c 300)" >> "\\$LOG"
+rm -f "\\$TMP"
+PUSH_EOF
+chmod +x /usr/local/bin/gws-simple-push
+echo "  · /usr/local/bin/gws-simple-push"
+
+echo "==> [3/5] Log dosyası hazırlanıyor…"
+touch /var/log/gws-simple-push.log
+chmod 640 /var/log/gws-simple-push.log
+
+echo "==> [4/5] Systemd timer kuruluyor (her ${{INTERVAL}} saniye)…"
+INSTALLED=0
+if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+    cat > /etc/systemd/system/gws-simple-push.service <<'SVC'
+[Unit]
+Description=GokyuzuWebSpam Simple Push (tail -c 5MB → panel)
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gws-simple-push
+User=root
+Nice=10
+SVC
+    cat > /etc/systemd/system/gws-simple-push.timer <<TMR
+[Unit]
+Description=GWS Simple Push Timer (her ${{INTERVAL}}sn)
+After=network-online.target
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=${{INTERVAL}}s
+AccuracySec=1s
+Unit=gws-simple-push.service
+[Install]
+WantedBy=timers.target
+TMR
+    systemctl daemon-reload
+    systemctl enable --now gws-simple-push.timer 2>/dev/null && INSTALLED=1
+    if [ "$INSTALLED" -eq 1 ]; then
+        echo "  ✓ systemd timer aktif — her ${{INTERVAL}}sn push"
+    fi
+fi
+
+if [ "$INSTALLED" -eq 0 ]; then
+    echo "==> [4/5-alt] systemd yok → cron ile fallback (her dakika)…"
+    (crontab -l 2>/dev/null | grep -v gws-simple-push; \\
+     echo "* * * * * /usr/local/bin/gws-simple-push >/dev/null 2>&1") | crontab -
+    echo "  ⚠ Cron her dakika çalışır (sub-minute değil). Sub-second için systemd gerekli."
+fi
+
+echo "==> [5/5] İlk manuel push testi…"
+/usr/local/bin/gws-simple-push
+sleep 1
+LAST=$(tail -1 /var/log/gws-simple-push.log 2>/dev/null || echo "(boş)")
+echo "  · Sonuç: $LAST"
+
+echo ""
+echo "══════════════════════════════════════════════════════"
+echo "  ✓ Kurulum tamamlandı!"
+echo "══════════════════════════════════════════════════════"
+echo ""
+echo "  Mailler artık **her ${{INTERVAL}} saniyede bir** panele push edilecek."
+echo "  Panel Outbound sayfası 3 saniyede bir refresh yaptığından"
+echo "  toplam gecikme max ${{INTERVAL}}+3 = ~$(( INTERVAL + 3 )) saniyedir."
+echo ""
+echo "  Kullanışlı komutlar:"
+echo "  · Manuel push:   sudo /usr/local/bin/gws-simple-push"
+echo "  · Log takip:     tail -f /var/log/gws-simple-push.log"
+echo "  · Timer durum:   systemctl status gws-simple-push.timer"
+echo "  · Timer durdur:  systemctl stop gws-simple-push.timer"
+echo "  · Timer başlat:  systemctl start gws-simple-push.timer"
+echo ""
+"""
+    return _PT(script, media_type="text/x-shellscript")
+
+
 @api.get("/plugin/renewal-info")
 async def plugin_renewal_info():
     """Panel içi banner için lisans bitişi bilgisi. Her istekte kalan gün + banner

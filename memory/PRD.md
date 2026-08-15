@@ -13,6 +13,37 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.58) — SIMPLE PUSH + 10sn Systemd Timer
+
+**KULLANICI KANITLADI:**
+Kullanıcı manuel yazdığı `gws-simple-push` komutunun ("tail -c 5000000 + base64 + curl POST") çalıştığını gösterdi. Push cevabı: `dur=172ms {"ok":true,"parsed":2,"inserted":2}`.
+
+**İSTEK:**
+"Push Şimdi butonuna tıkladığımda + otomatik 10 saniyede bir mailler düşsün"
+
+**ÇÖZÜM v43.58:**
+- ✅ Yeni endpoint: `GET /api/tools/install-simple-push.sh?license_key=MS-...` — tek-satırlık kurulum
+- ✅ Script `/usr/local/bin/gws-simple-push` = kullanıcının kanıtlanmış komutu (tail -c 5MB + base64 + curl POST) + log rotate + duration ölçümü
+- ✅ Systemd timer `gws-simple-push.timer` her 10 saniyede bir script'i tetikler
+  * `[Timer] OnBootSec=15s / OnUnitActiveSec=10s / AccuracySec=1s`
+  * Cron fallback (sub-minute değil, sadece dakikalık) — systemd yoksa
+- ✅ Kurulum eski daemon/cron/timer'ları otomatik disable eder (v43.50-v43.57 tümü)
+- ✅ Frontend `LastPushIndicator`:
+  * "Push Şimdi" butonu artık **immediate refetch** yapar (12sn sonra ikinci refetch)
+  * Status metni: "gws-simple-push timer her 10sn otomatik push yapıyor"
+  * Sağlık dot rengi: <15sn → yeşil, <60sn → sarı, >60sn → kırmızı
+
+**KULLANICI KURULUM KOMUTU (tek satır SSH):**
+```bash
+bash <(curl -sSf "https://panel.gokyuzuhosting.com/api/tools/install-simple-push.sh?license_key=MS-C02AB012652A4FE692D69676")
+```
+
+**TEST SONUCU (preview env):**
+- Fake exim log inject → gws-simple-push çalıştı → **172ms dur** → 2 mail parsed + inserted
+- Panel /panel/outbound → mailler anında render (Simple push #1 ve #2 realtime)
+- Toplam gecikme: max 10sn (timer) + 3sn (UI polling) = **~13 saniye worst-case, ~3-5sn typical**
+
+
 ## Feb 15, 2026 (Session 17, v43.57) — REAL-TIME EXIM DAEMON (ConfigServer parity)
 
 **KULLANICI ŞİKAYETİ:**

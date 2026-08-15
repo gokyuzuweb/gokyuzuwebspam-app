@@ -982,7 +982,7 @@ function PluginVersionBanner() {
   );
 }
 
-// v43.55 — Son bash push zaman göstergesi + entegre "Push Şimdi" butonu
+// v43.58 — Son bash push zaman göstergesi + entegre "Push Şimdi" butonu
 function LastPushIndicator({ lastPushAt }) {
   const qc = useQueryClient();
   const [pushing, setPushing] = useState(false);
@@ -990,14 +990,18 @@ function LastPushIndicator({ lastPushAt }) {
     setPushing(true);
     try {
       const d = await api.outboundEximBackfill();
-      toast.success(`✓ Push tetiklendi (${d.signaled_licenses} sunucu)`, {
-        description: "Bash cron sağlıklıysa 60sn içinde veriler akmaya başlar. Panel 90sn sonra otomatik yenilenecek.",
-        duration: 8000,
+      toast.success(`✓ Push sinyali gönderildi (${d.signaled_licenses} sunucu)`, {
+        description: "Sunucudaki gws-simple-push timer her 10 saniyede zaten push yapıyor. Panel şimdi yenileniyor…",
+        duration: 5000,
       });
+      // Anlık refetch — timer 10sn'de push yapıyor, biz de hemen çek
+      qc.invalidateQueries({ queryKey: ["outbound-events"] });
+      qc.invalidateQueries({ queryKey: ["outbound-stats"] });
+      // 12sn sonra tekrar bir refetch (bir sonraki timer cycle'ından sonra)
       setTimeout(() => {
         qc.invalidateQueries({ queryKey: ["outbound-events"] });
         qc.invalidateQueries({ queryKey: ["outbound-stats"] });
-      }, 90_000);
+      }, 12_000);
     } catch (e) {
       toast.error(e?.response?.data?.detail || e.message);
     } finally {
@@ -1012,7 +1016,7 @@ function LastPushIndicator({ lastPushAt }) {
         <div className="flex-1">
           <div className="text-sm font-semibold text-slate-300">Sunucudan henüz push yok</div>
           <div className="text-xs text-slate-500 mt-0.5">
-            Aşağıdaki "Push Şimdi" ile manuel tetikleyebilir veya panel otomatik 5 dk'da bir sinyal gönderir.
+            Sunucuya <span className="mono text-slate-300">gws-simple-push</span> kurun — her 10 saniyede otomatik push yapar. Butondan manuel de tetikleyebilirsiniz.
           </div>
         </div>
         <button
@@ -1031,13 +1035,16 @@ function LastPushIndicator({ lastPushAt }) {
   const label = seconds < 60 ? `${seconds} saniye önce`
     : seconds < 3600 ? `${Math.floor(seconds / 60)} dakika önce`
     : `${Math.floor(seconds / 3600)} saat önce`;
+  // Sağlık göstergesi: 15sn içinde push varsa yeşil, 60sn içinde sarı, üstü kırmızı
+  const health = seconds < 15 ? "emerald" : seconds < 60 ? "amber" : "rose";
+  const healthDot = { emerald: "text-emerald-400", amber: "text-amber-400", rose: "text-rose-400" }[health];
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5 flex items-center gap-3" data-testid="ob-last-push">
-      <span className="text-emerald-400 text-lg">◉</span>
+      <span className={`${healthDot} text-lg`} data-testid="ob-push-health">◉</span>
       <div className="flex-1">
         <div className="text-xs text-slate-400">
           Son sunucu push: <span className="mono text-slate-200" data-testid="ob-last-push-time">{label}</span>
-          <span className="text-[10px] text-slate-600 ml-2">· panel her 5 dk'da otomatik sinyal gönderir</span>
+          <span className="text-[10px] text-slate-600 ml-2">· gws-simple-push timer her 10sn otomatik push yapıyor</span>
         </div>
       </div>
       <div className="text-[10px] mono text-slate-600">{dt.toLocaleString("tr-TR")}</div>
