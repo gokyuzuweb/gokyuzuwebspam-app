@@ -693,38 +693,221 @@ async def outbound_diagnostic(request: Request):
 
 @router.post("/dev/seed-sample")
 async def outbound_seed_sample(request: Request):
-    """Demo/test amaçlı 5 outbound event ekler. Milter kurulmadan panel'de
-    outbound akışının çalıştığını doğrulamak için. Master gerekli."""
+    """v43.38 — Preview/demo için 50 gerçekçi outbound event ekler.
+    ConfigServer MailScanner benzeri görünüm için farklı domain, verdict, saat
+    dağılımı kullanılır. Master gerekli."""
     from datetime import datetime, timezone, timedelta
     master_key = (request.headers.get("x-master-key") or "").strip()
     if not master_key.startswith("MS-"):
         raise HTTPException(403, "Master anahtarı gerekli (X-Master-Key header)")
     import random, uuid
     now = datetime.now(timezone.utc)
-    users = ["info", "admin", "sales", "support", "noreply"]
-    domains = ["ornek.com", "musteri.com.tr", "corporate.com"]
-    verdicts = [("clean", 0.5), ("spam", 6.2), ("clean", 1.1), ("high_spam", 8.9), ("clean", 0.2)]
+    # Gerçekçi Türk hosting müşterisi profili (ConfigServer örneğine benzer)
+    users = ["info", "admin", "sales", "support", "noreply", "kemal.ozturk", "ece.karahan",
+             "burak", "ayla.uzun", "info", "hasan", "muhasebe", "iletisim", "destek"]
+    domains = ["gokyuzuhosting.com", "aydogdudenizcilik.com", "sedefshipyard.com",
+               "talentcenter.com.tr", "seramikcenter.com", "ditasdeniz.com.tr",
+               "hammadde.com.tr", "erol denizcilik.com", "fatsachemicals.com",
+               "tuzlaadr.com", "opus.tuzlaadr.com", "musteri.com.tr", "corporate.com"]
+    ext_recipients = [
+        "kemal.ozturk@sedefshipyard.com", "info@aydogdudenizcilik.com",
+        "aylauzun@seramikcenter.com", "bilgi@eroldenizcilik.com",
+        "eymen@alesend.com", "burak@fatsachemicals.com",
+        "ece.karahan@talentcenter.com.tr", "hasananac@hammadde.com.tr",
+        "kemal@dilsen.com", "info@ilkimas.com", "store@dilsen.com",
+        "customer1@gmail.com", "customer2@outlook.com", "customer3@yahoo.com.tr",
+    ]
+    subjects_by_verdict = {
+        "clean": [
+            "5.000 TL'ye Varan İNDİRİM!", "Mağazanız için Görsel Çözümler",
+            "Cari Hesap Mutabakatı Haziran/2026", "Workitive Insight #011",
+            "İŞ KAZASI HK.", "Devlet desteği almak zor değil",
+            "Ürün katalogumuz güncellendi", "Sipariş onayı - #S28193",
+            "Kargo takip bilgisi", "Fatura ekli - Nisan 2026",
+        ],
+        "spam": [
+            "URGENT: Milyon dolar bekliyor", "🎁 Kazandınız! Tıklayın",
+            "IBAN değişti — yeni hesap numaram", "Şantaj: paranı öde",
+            "Winner notification — claim now", "Sahte fatura ödemeniz gerekli",
+        ],
+        "high_spam": [
+            "🔥 ACIL: Hesabınız kilitlenecek!!!", "PayPal doğrulama gerekli",
+            "Cryptocurrency yatırım fırsatı!!!", "Nijerya prens miras",
+        ],
+        "blocked": [
+            "Malware detected — attachment blocked",
+        ],
+    }
+    verdict_weights = [("clean", 0.72), ("spam", 0.18), ("high_spam", 0.08), ("blocked", 0.02)]
     inserted = []
-    for i, (verdict, score) in enumerate(verdicts):
+    for i in range(50):
+        # Random verdict per weight
+        r = random.random()
+        acc = 0
+        verdict = "clean"
+        for v, w in verdict_weights:
+            acc += w
+            if r <= acc:
+                verdict = v
+                break
+        # Score based on verdict
+        score = round({
+            "clean": random.uniform(-2.0, 2.5),
+            "spam": random.uniform(5.0, 8.0),
+            "high_spam": random.uniform(8.5, 15.0),
+            "blocked": random.uniform(12.0, 20.0),
+        }[verdict], 2)
+        subj = random.choice(subjects_by_verdict[verdict])
         from_user = random.choice(users)
         domain = random.choice(domains)
+        # Time spread: last 24 saat
+        minutes_ago = random.randint(0, 60 * 23)
+        ts = (now - timedelta(minutes=minutes_ago)).isoformat()
         doc = {
             "id": str(uuid.uuid4()),
             "license_key": master_key,
             "direction": "out",
             "from_addr": f"{from_user}@{domain}",
             "from_user": from_user,
-            "to_addr": f"external{i}@gmail.com",
-            "subject": f"[DEMO SEED {i+1}] Test outbound mail — v43.28",
+            "to_addr": random.choice(ext_recipients),
+            "subject": subj,
             "verdict": verdict,
             "total_score": score,
-            "action": "accept" if verdict == "clean" else "quarantine",
-            "sender_ip": None,
-            "body_preview": f"Bu bir demo giden mail. Kullanıcı: {from_user}@{domain}. Milter kurulmadan outbound akışı testi.",
-            "ts": (now - timedelta(minutes=i*2)).isoformat(),
-            "scores": {"spamassassin": score},
+            "action": "accept" if verdict == "clean" else ("reject" if verdict == "blocked" else "quarantine"),
+            "sender_ip": f"{random.randint(31, 213)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}",
+            "body_preview": f"[DEMO SEED] Gönderen: {from_user}@{domain}. Konu: {subj[:80]}",
+            "ts": ts,
+            "ingested_at": ts,
+            "scores": {"spamassassin": score, "bayes": round(random.uniform(0, 3), 2)},
+            "source": "demo_seed",
+            "size_bytes": random.randint(2048, 900_000),
         }
         await db.mail_events.insert_one(doc)
         inserted.append(doc["id"])
-    return {"ok": True, "inserted": len(inserted), "ids": inserted, "note": "Sayfayı yenileyin"}
+    return {"ok": True, "inserted": len(inserted),
+            "note": f"{len(inserted)} demo outbound eklendi. Sayfayı yenileyin — filtre 'Son 24 saat' ise hepsi görünmeli."}
 
+
+
+# ============================================================================
+# v43.38 — EXIM LOG PUSH (no-milter fallback)
+# ---------------------------------------------------------------------------
+# heartbeat.pl her cycle'da /var/log/exim_mainlog son N satırını okuyup bu
+# endpoint'e POST eder. Bu sayede Milter kurulmadan sadece heartbeat daemon'la
+# outbound trafik pane'e akar.
+#
+# Exim log formatı (delivery/reject lines):
+#   2026-08-15 14:34:56 1uHqCk-000123-A2 <= user@domain.com H=... U=user P=esmtp S=12345 id=xyz
+#   2026-08-15 14:34:57 1uHqCk-000123-A2 => external@example.com R=dnslookup T=remote_smtp
+#   2026-08-15 14:34:58 1uHqCk-000123-A2 Completed
+# ============================================================================
+class EximLogLine(BaseModel):
+    ts: str
+    exim_mid: Optional[str] = ""
+    from_addr: Optional[str] = ""
+    to_addr: Optional[str] = ""
+    from_user: Optional[str] = ""
+    subject: Optional[str] = ""
+    size_bytes: Optional[int] = 0
+    host: Optional[str] = ""
+    action: Optional[str] = "accept"
+
+
+class EximPushIn(BaseModel):
+    license_key: str = Field(..., min_length=8)
+    hostname: Optional[str] = ""
+    server_ip: Optional[str] = ""
+    events: list[dict] = Field(default_factory=list, max_length=1000)
+    since_position: Optional[int] = None
+    checkpoint_position: Optional[int] = None
+
+
+@router.post("/exim-log-push")
+async def exim_log_push(payload: EximPushIn):
+    """Bayi heartbeat.pl'in Exim log tailer'ı — /var/log/exim_mainlog'dan
+    son okunan pozisyondan itibaren yeni satırları buraya push eder.
+    Idempotent: exim_mid varsa aynı olay tekrar eklenmez (upsert)."""
+    lic = await db.licenses.find_one(
+        {"license_key": payload.license_key, "active": True}, {"_id": 0})
+    if not lic:
+        raise HTTPException(403, "Geçersiz lisans")
+    now = datetime.now(timezone.utc).isoformat()
+    inserted = 0
+    updated = 0
+    for e in payload.events[:1000]:
+        mid = str(e.get("exim_mid") or e.get("mid") or "").strip()
+        from_addr = str(e.get("from_addr") or "").strip()
+        to_addr = str(e.get("to_addr") or "").strip()
+        if not (mid or (from_addr and to_addr)):
+            continue
+        # Only OUTBOUND: from_user is a local cPanel user OR from_addr is on
+        # the server's local domains. Heuristic: exim log 'U=' field maps to
+        # from_user; presence of it means outbound.
+        from_user = str(e.get("from_user") or "").strip()
+        if not from_user and "@" in from_addr:
+            from_user = from_addr.split("@", 1)[0]
+        # Verdict + score: heartbeat pl usually cannot compute — use "unknown"
+        verdict = e.get("verdict") or "clean"
+        score = float(e.get("total_score") or 0)
+        doc = {
+            "id": str(uuid.uuid4()),
+            "license_key": payload.license_key,
+            "direction": "out",
+            "exim_mid": mid,
+            "from_addr": from_addr,
+            "from_user": from_user,
+            "to_addr": to_addr,
+            "subject": e.get("subject") or "",
+            "verdict": verdict,
+            "total_score": score,
+            "action": e.get("action") or "accept",
+            "sender_ip": e.get("sender_ip") or payload.server_ip,
+            "size_bytes": int(e.get("size_bytes") or 0),
+            "ts": e.get("ts") or now,
+            "ingested_at": now,
+            "source": "exim_logtail_heartbeat",
+            "server_hostname": payload.hostname or lic.get("hostname"),
+        }
+        # Idempotent upsert by exim_mid+to_addr
+        key = {"license_key": payload.license_key, "exim_mid": mid, "to_addr": to_addr} \
+            if mid else {"license_key": payload.license_key, "from_addr": from_addr,
+                         "to_addr": to_addr, "ts": doc["ts"]}
+        r = await db.mail_events.update_one(
+            key,
+            {"$set": doc, "$setOnInsert": {"first_seen": now}},
+            upsert=True,
+        )
+        if r.upserted_id is not None:
+            inserted += 1
+        else:
+            updated += 1
+
+    # Checkpoint kaydı
+    if payload.checkpoint_position is not None:
+        await db.settings.update_one(
+            {"_key": f"exim_logtail_pos:{payload.license_key}"},
+            {"$set": {
+                "_key": f"exim_logtail_pos:{payload.license_key}",
+                "license_key": payload.license_key,
+                "hostname": payload.hostname,
+                "last_position": payload.checkpoint_position,
+                "last_push_at": now,
+                "last_inserted": inserted,
+            }},
+            upsert=True,
+        )
+
+    return {"ok": True, "inserted": inserted, "updated": updated,
+            "total": inserted + updated, "checkpoint": payload.checkpoint_position}
+
+
+@router.get("/exim-log-checkpoint")
+async def exim_log_checkpoint(license_key: str = Query(..., min_length=8)):
+    """heartbeat.pl bir sonraki cycle'da nereden okumaya devam edeceğini öğrenir."""
+    doc = await db.settings.find_one(
+        {"_key": f"exim_logtail_pos:{license_key}"}, {"_id": 0}) or {}
+    return {
+        "last_position": doc.get("last_position", 0),
+        "last_push_at": doc.get("last_push_at"),
+        "last_inserted": doc.get("last_inserted", 0),
+    }

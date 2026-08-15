@@ -461,3 +461,152 @@ sub auto_sync_users_if_stale {
 auto_sync_users_if_stale($license_key, $CENTER);
 
 
+
+
+# ============================================================================
+# v43.38 — EXIM LOG TAILER (no-milter outbound push)
+# ---------------------------------------------------------------------------
+# /var/log/exim_mainlog dosyasının son okunan pozisyonundan itibaren yeni
+# satırları parse eder ve GökyüzüWebSpam panel'ine POST eder. Böylece bayi
+# ayrıca mailshield-milter veya mailshield-logtail servisini kurmasa dahi
+# heartbeat cycle'ında (15dk) outbound mail'ler master paneline yansır.
+#
+# Panel URL: settings.panel.url veya MAILSHIELD_PANEL_URL env veya default.
+# Endpoint: POST /api/outbound/exim-log-push
+# Checkpoint: GET /api/outbound/exim-log-checkpoint?license_key=<lic>
+# ============================================================================
+
+sub push_exim_log_delta {
+    my ($license_key, $panel_url) = @_;
+    return unless $license_key;
+    my $LOG = '/var/log/exim_mainlog';
+    return unless -r $LOG;
+    my @stat = stat($LOG);
+    return unless @stat;
+    my $file_size = $stat[7];
+
+    my $ua = LWP::UserAgent->new(timeout => 20);
+
+    # 1) Son okunan pozisyonu master'dan öğren
+    my $last_pos = 0;
+    eval {
+        my $r = $ua->get("$panel_url/api/outbound/exim-log-checkpoint?license_key=$license_key");
+        if ($r->is_success) {
+            my $d = decode_json($r->decoded_content);
+            $last_pos = int($d->{last_position} // 0);
+        }
+    };
+
+    # Dosya küçüldüyse (rotate) pozisyonu sıfırla
+    $last_pos = 0 if $last_pos > $file_size;
+
+    # 2) Yeni satırları oku
+    open(my $fh, '<', $LOG) or return;
+    seek($fh, $last_pos, 0) or return;
+    my @new_events;
+    my %in_flight;  # exim_mid → partial info
+    my $bytes_read = 0;
+    while (my $line = <$fh>) {
+        $bytes_read = tell($fh) - $last_pos;
+        last if @new_events >= 500;  # per-cycle üst sınır
+        chomp $line;
+        # Exim mainlog format:
+        #   2026-08-15 14:34:56 1uHqCk-000123-A2 <= sender@x.com H=... U=user P=esmtp S=12345 T="Subject"
+        #   2026-08-15 14:34:57 1uHqCk-000123-A2 => recipient@y.com R=dnslookup T=remote_smtp
+        next unless $line =~ /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+([\w-]+)\s+(<=|=>|->|\*\*|==)\s+(.+)$/;
+        my ($ts, $mid, $direction, $rest) = ($1, $2, $3, $4);
+        $ts =~ s/ /T/; $ts .= "+00:00";
+
+        if ($direction eq '<=') {
+            # Inbound to Exim — capture sender + user
+            my ($sender) = $rest =~ /^(\S+)/;
+            my ($user)   = $rest =~ /U=(\S+)/;
+            my ($size)   = $rest =~ /S=(\d+)/;
+            my ($subj)   = $rest =~ /T="([^"]+)"/;
+            $in_flight{$mid} = {
+                ts => $ts, from_addr => $sender, from_user => $user // '',
+                size_bytes => int($size // 0), subject => $subj // '',
+            };
+        } elsif ($direction eq '=>' || $direction eq '->') {
+            # Delivered / forwarded
+            my ($rcpt) = $rest =~ /^(\S+)/;
+            next unless $rcpt;
+            my $meta = $in_flight{$mid} || {};
+            # Local user göndermişse OUTBOUND kabul et
+            my $is_outbound = defined($meta->{from_user}) && length($meta->{from_user}) > 0;
+            # Eğer U=user kaydı elimizde yoksa, sender'ı yerel domain listesiyle kontrol et
+            if (!$is_outbound) {
+                my $sender = $meta->{from_addr} || '';
+                if ($sender && $sender ne '<>' && open(my $ud, '<', '/etc/userdomains')) {
+                    while (my $l = <$ud>) {
+                        if ($l =~ /^(\S+):/) {
+                            my $d = $1;
+                            if (index($sender, "\@$d") >= 0) { $is_outbound = 1; last; }
+                        }
+                    }
+                    close($ud);
+                }
+            }
+            next unless $is_outbound;
+            push @new_events, {
+                exim_mid   => $mid,
+                ts         => $meta->{ts} || $ts,
+                from_addr  => $meta->{from_addr} || '',
+                from_user  => $meta->{from_user} || '',
+                to_addr    => $rcpt,
+                subject    => $meta->{subject} || '',
+                size_bytes => $meta->{size_bytes} || 0,
+                verdict    => 'clean',
+                total_score=> 0,
+                action     => 'accept',
+            };
+        } elsif ($direction eq '**' || $direction eq '==') {
+            # Bounced / defer
+            my ($rcpt) = $rest =~ /^(\S+)/;
+            my $meta = $in_flight{$mid} || {};
+            next unless $rcpt && $meta->{from_user};
+            push @new_events, {
+                exim_mid   => $mid,
+                ts         => $meta->{ts} || $ts,
+                from_addr  => $meta->{from_addr} || '',
+                from_user  => $meta->{from_user} || '',
+                to_addr    => $rcpt,
+                subject    => $meta->{subject} || '',
+                size_bytes => $meta->{size_bytes} || 0,
+                verdict    => 'clean',
+                total_score=> 0,
+                action     => ($direction eq '**' ? 'bounce' : 'defer'),
+            };
+        }
+    }
+    my $new_pos = tell($fh);
+    close($fh);
+    return 0 unless @new_events;
+
+    # 3) Panel'e push
+    my $payload = encode_json({
+        license_key         => $license_key,
+        hostname            => hostname(),
+        server_ip           => $ip,
+        events              => \@new_events,
+        checkpoint_position => $new_pos,
+    });
+    my $req = HTTP::Request->new(POST => "$panel_url/api/outbound/exim-log-push");
+    $req->header('Content-Type' => 'application/json');
+    $req->content($payload);
+    my $r = $ua->request($req);
+    open my $lf, '>>', '/var/log/mailshield/exim-tail.log';
+    if ($lf) {
+        print $lf scalar(gmtime()) . " · pushed " . scalar(@new_events)
+                . " events · pos=$new_pos · code=" . $r->code . "\n";
+        close $lf;
+    }
+    return scalar @new_events;
+}
+
+# Aktifleştir — panel_url conf veya default
+my $panel_url = $conf{panel}{url}
+             || $ENV{MAILSHIELD_PANEL_URL}
+             || 'https://panel.gokyuzuhosting.com';
+eval { push_exim_log_delta($license_key, $panel_url); };
+warn "[exim-tail] failed: $@" if $@;

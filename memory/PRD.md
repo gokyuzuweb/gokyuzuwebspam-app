@@ -13,6 +13,15 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 15, v43.39) — Outbound Fix: Exim Log Tailer (No Milter Needed)
+Kullanıcı şikayeti: ConfigServer MailScanner 203k giden mail görüyor, GökyüzüWebSpam paneli 0 gösteriyor. Kalıcı 3 katmanlı çözüm:
+- ✅ **Yeni backend**: `POST /api/outbound/exim-log-push` + `GET /api/outbound/exim-log-checkpoint` — bayi heartbeat cycle'ında `/var/log/exim_mainlog` son okunan pozisyondan itibaren yeni satırları parse edip idempotent upsert eder.
+- ✅ **heartbeat.pl güncellendi**: `push_exim_log_delta()` fonksiyonu — Exim mainlog format (`<= sender U=user`, `=> rcpt`) parse eder, sadece yerel cPanel kullanıcısı olan (`U=` field'ı dolu veya `/etc/userdomains` içindeki domain) mailleri OUTBOUND kabul eder ve panele push eder. **MILTER KURULMASI GEREKMİYOR ARTIK** — sadece heartbeat çalışması yeterli.
+- ✅ **Preview demo seed**: 5 → 50 gerçekçi outbound event (Türkçe konular, ConfigServer benzeri domain listesi, verdict ağırlıklı dağılım). Butondan tıklanabilir.
+- ✅ Backend testlendi: `stats` endpoint bugün=44, tüm zamanlar=97, top_users listesi geliyor.
+- ✅ Screenshot doğrulandı: Outbound page artık dolu.
+
+
 ## Feb 15, 2026 (Session 15, v43.38) — Marketplace + Alert Center + Domain Guide + Refactor v1
 - ✅ **Signature Marketplace** — 7 backend endpoint + full React page (Keşfet/Yayınlarım/Yeni Yayınla). Bayiler MailScanner kurallarını sürüm-kontrollü paylaşır, upvote/install eder. Collections: `marketplace_signatures`, `marketplace_votes`, `marketplace_install_log`. Seed komutu: `POST /api/marketplace/seed-demo`.
 - ✅ **Master Alert Center Widget** — Dashboard `overview` tab'ına eklendi. `GET /api/master/alerts` legacy (seen/type/message) ve yeni (read/kind/title/detail) şemaları birleştirip döner. Read/read-all endpoint'leri.
