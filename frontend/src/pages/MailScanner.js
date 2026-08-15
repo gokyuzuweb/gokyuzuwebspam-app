@@ -303,65 +303,103 @@ function ConfigTab() {
 
 function StatsTab() {
   const q = useQuery({ queryKey: ["ms-stats"], queryFn: () => api.msStats(LICKEY(), 24), refetchInterval: 30000 });
+  const bayes = useQuery({ queryKey: ["ms-bayes"], queryFn: () => api.msBayesStatus(LICKEY()) });
+  const health = useQuery({ queryKey: ["ms-health"], queryFn: () => api.msHealth(LICKEY()) });
   if (!q.data) return <SkeletonCard/>;
   const s = q.data;
   const pie = Object.entries(s.verdicts || {}).map(([name, value]) => ({ name, value }));
+  // v43.31 — Detay metrikler
+  const totalScanned = s.total_scanned || 0;
+  const spam = (s.verdicts?.spam || 0) + (s.verdicts?.high_spam || 0);
+  const clean = s.verdicts?.clean || 0;
+  const virus = (s.verdicts?.virus || 0) + (s.verdicts?.phishing || 0);
+  const spamRate = totalScanned ? ((spam / totalScanned) * 100).toFixed(1) : "0.0";
+  const bayesTrainedHam = bayes.data?.ham_learned || 0;
+  const bayesTrainedSpam = bayes.data?.spam_learned || 0;
+  const activeEngines = (health.data?.engines || []).filter(e => e.enabled).length;
+  const totalEngines = (health.data?.engines || []).length;
   return (
-    <div className="grid grid-cols-12 gap-4">
-      <Card className="col-span-12 lg:col-span-6">
-        <CardHeader title="Skor Histogramı" subtitle={`Son ${s.hours} saat · ${s.total_scanned} mail`}/>
-        <CardBody>
-          <div className="h-64">
-            <ResponsiveContainer>
-              <BarChart data={s.score_histogram || []}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false}/>
-                <XAxis dataKey="bin" stroke="#475569" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }}/>
-                <YAxis stroke="#475569" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }}/>
-                <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 6 }}/>
-                <Bar dataKey="count" fill="#6366f1" radius={[3, 3, 0, 0]}/>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardBody>
-      </Card>
-      <Card className="col-span-12 lg:col-span-6">
-        <CardHeader title="Verdict Dağılımı"/>
-        <CardBody>
-          <div className="h-64">
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie data={pie} dataKey="value" nameKey="name" outerRadius={90} innerRadius={40}>
-                  {pie.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
-                </Pie>
-                <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 6 }}/>
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </CardBody>
-      </Card>
-      <Card className="col-span-12">
-        <CardHeader title="Motor Aktivitesi"/>
-        <CardBody>
-          <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase tracking-widest text-slate-500">
-              <tr><th className="text-left px-3 py-1.5">Motor</th><th className="text-right px-3 py-1.5">Toplam</th><th className="text-right px-3 py-1.5">Spam Yakalama</th><th className="text-right px-3 py-1.5">Oran</th></tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {(s.engines || []).map(e => (
-                <tr key={e.engine} className="hover:bg-slate-800/40">
-                  <td className="px-3 py-2 mono text-slate-300">{e.engine}</td>
-                  <td className="px-3 py-2 text-right mono">{e.total}</td>
-                  <td className="px-3 py-2 text-right mono text-rose-300">{e.spam}</td>
-                  <td className="px-3 py-2 text-right text-slate-500 text-xs">%{e.total ? Math.round(e.spam / e.total * 100) : 0}</td>
-                </tr>
-              ))}
-              {(s.engines || []).length === 0 && (
-                <tr><td colSpan={4} className="text-center py-8 text-slate-500">Motor verisi yok</td></tr>
-              )}
-            </tbody>
-          </table>
-        </CardBody>
-      </Card>
+    <div className="space-y-4">
+      {/* v43.31 — 6 KPI kartı */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <MSKpi label="Toplam Taranan" value={totalScanned} tone="text-indigo-300" icon="📧" sub={`Son ${s.hours}h`}/>
+        <MSKpi label="Spam Yakalanan" value={spam} tone="text-amber-300" icon="🛡️" sub={`% ${spamRate} oran`}/>
+        <MSKpi label="Temiz Teslim" value={clean} tone="text-emerald-300" icon="✓" sub="Kullanıcıya iletildi"/>
+        <MSKpi label="Virüs/Phishing" value={virus} tone="text-rose-300" icon="☠"/>
+        <MSKpi label="Aktif Motor" value={`${activeEngines}/${totalEngines || 6}`} tone="text-cyan-300" icon="⚙️" sub="Tarama motorları"/>
+        <MSKpi label="Bayes Eğitilen" value={bayesTrainedHam + bayesTrainedSpam} tone="text-fuchsia-300" icon="🧠"
+               sub={`${bayesTrainedHam} ham · ${bayesTrainedSpam} spam`}/>
+      </div>
+
+      <div className="grid grid-cols-12 gap-4">
+        <Card className="col-span-12 lg:col-span-6">
+          <CardHeader title="Skor Histogramı" subtitle={`Son ${s.hours} saat · ${s.total_scanned} mail`}/>
+          <CardBody>
+            <div className="h-64">
+              <ResponsiveContainer>
+                <BarChart data={s.score_histogram || []}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false}/>
+                  <XAxis dataKey="bin" stroke="#475569" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }}/>
+                  <YAxis stroke="#475569" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }}/>
+                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 6 }}/>
+                  <Bar dataKey="count" fill="#6366f1" radius={[3, 3, 0, 0]}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardBody>
+        </Card>
+        <Card className="col-span-12 lg:col-span-6">
+          <CardHeader title="Verdict Dağılımı"/>
+          <CardBody>
+            <div className="h-64">
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={pie} dataKey="value" nameKey="name" outerRadius={90} innerRadius={40}>
+                    {pie.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
+                  </Pie>
+                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 6 }}/>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </CardBody>
+        </Card>
+        <Card className="col-span-12">
+          <CardHeader title="Motor Aktivitesi" subtitle="Her motorun bu pencerede kaç mail'e vurduğu + spam yakalama oranı"/>
+          <CardBody>
+            <table className="w-full text-sm">
+              <thead className="text-[11px] uppercase tracking-widest text-slate-500">
+                <tr><th className="text-left px-3 py-1.5">Motor</th><th className="text-right px-3 py-1.5">Toplam</th><th className="text-right px-3 py-1.5">Spam Yakalama</th><th className="text-right px-3 py-1.5">Oran</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {(s.engines || []).map(e => (
+                  <tr key={e.engine} className="hover:bg-slate-800/40">
+                    <td className="px-3 py-2 mono text-slate-300">{e.engine}</td>
+                    <td className="px-3 py-2 text-right mono">{e.total}</td>
+                    <td className="px-3 py-2 text-right mono text-rose-300">{e.spam}</td>
+                    <td className="px-3 py-2 text-right text-slate-500 text-xs">%{e.total ? Math.round(e.spam / e.total * 100) : 0}</td>
+                  </tr>
+                ))}
+                {(s.engines || []).length === 0 && (
+                  <tr><td colSpan={4} className="text-center py-8 text-slate-500">Motor verisi yok</td></tr>
+                )}
+              </tbody>
+            </table>
+          </CardBody>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function MSKpi({ label, value, tone, icon, sub }) {
+  return (
+    <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800 hover:border-indigo-500/30 transition-colors">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] uppercase tracking-widest text-slate-500">{label}</span>
+        <span className="text-base opacity-70">{icon}</span>
+      </div>
+      <div className={`text-2xl font-bold mono ${tone}`}>{typeof value === "number" ? new Intl.NumberFormat("tr-TR").format(value) : value}</div>
+      {sub && <div className="text-[10px] text-slate-500 mt-0.5">{sub}</div>}
     </div>
   );
 }

@@ -579,6 +579,26 @@ async def _startup() -> None:
             logging.warning(f"[startup] internal-ip cleanup skipped: {e}")
     _asyncio_root.create_task(_fix_internal_ip_records())
 
+    # v43.31 — IOC Feed Auto-Sync Scheduler
+    # Global tehdit zekası feed'lerini (URLhaus, PhishTank, Spamhaus) her 3 saatte
+    # bir otomatik senkronize eder. Backend restart'sız güncel IOC verisi sunar.
+    async def _ioc_feed_scheduler():
+        import asyncio as _a
+        try:
+            await _a.sleep(60)  # startup'tan 1dk sonra ilk çalıştırma
+            while True:
+                try:
+                    # threat_intel router'daki manual sync helper'ı çağır
+                    from routes.threat_intel import auto_sync_run_now
+                    result = await auto_sync_run_now()
+                    logging.info(f"[ioc-scheduler] Feeds synced: added={result.get('total_added')}")
+                except Exception as e:
+                    logging.warning(f"[ioc-scheduler] cycle failed: {e}")
+                await _a.sleep(3 * 3600)  # 3 saatte bir
+        except _a.CancelledError:
+            pass
+    _asyncio_root.create_task(_ioc_feed_scheduler())
+
     # Deduplicate engines by (name, owner_license_key) — multi-tenant safe.
     # Legacy pre-multitenancy dedupe used only `name` which wiped bayi copies,
     # and legacy `name_1` unique index conflicts with per-bayi rows.
@@ -3306,14 +3326,33 @@ async def reports_weekly_send(payload: ReportSendPayload):
 _VERSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")
 
 def _read_panel_version() -> str:
-    """Read /app/VERSION content (fallback: 'unknown'). Called by /version/panel
-    endpoint and the startup broadcast task."""
+    """Read /app/VERSION content (fallback: package default). Called by /version/panel
+    endpoint and the startup broadcast task.
+
+    v43.31 fallback chain:
+      1. /app/VERSION dosyası (deploy sırasında güncellenir)
+      2. Git commit'ten en yakın vX.Y tag (git binary varsa)
+      3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
+    """
+    _PACKAGE_VERSION = "v43.31"  # backend bundle içindeki varsayılan
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
-            return v or "unknown"
+            if v:
+                return v
     except Exception:
-        return "unknown"
+        pass
+    # Git fallback (opsiyonel)
+    try:
+        import subprocess as _sp
+        r = _sp.run(["git", "-C", os.path.dirname(_VERSION_FILE),
+                     "describe", "--tags", "--abbrev=0"],
+                    capture_output=True, text=True, timeout=3)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return _PACKAGE_VERSION
 
 
 @api.get("/version/panel")
@@ -7627,7 +7666,13 @@ async def plugin_simulate_state(payload: SimulateStateIn):
 
 @api.get("/system/mode")
 async def system_mode():
-    return {"mode": PLUGIN_MODE, "demo_days": DEMO_DAYS}
+    # v43.31 — master_ip ve master_hostname da döndür (Header chip için)
+    return {
+        "mode": PLUGIN_MODE,
+        "demo_days": DEMO_DAYS,
+        "master_ip": os.environ.get("MASTER_IP", ""),
+        "master_hostname": os.environ.get("MASTER_HOSTNAME", "gokyuzuhosting.com"),
+    }
 
 
 class UpgradeResult(BaseModel):

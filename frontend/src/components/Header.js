@@ -53,6 +53,8 @@ function MasterModeToggle() {
   // Trigger re-render whenever localStorage'a yazılırsa
   const active = typeof window !== "undefined"
     && (localStorage.getItem("gws.master_license") || "").startsWith("MS-");
+  const mode = useQuery({ queryKey: ["system-mode"], queryFn: api.systemMode, enabled: active });
+  const masterIp = mode.data?.master_ip || "";
   const activate = () => {
     const val = window.prompt(
       "Master Lisans Anahtarınızı Girin (MS- prefix'li 24 karakter):",
@@ -84,11 +86,12 @@ function MasterModeToggle() {
         type="button"
         data-testid="header-master-active"
         onClick={deactivate}
-        title="Master modu aktif — kapatmak için tıklayın"
+        title={`Master modu aktif — ${masterIp ? `IP: ${masterIp}` : ""} — kapatmak için tıklayın`}
         className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono tracking-wide px-2 py-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-all shrink-0"
       >
         <ShieldCheck className="w-3 h-3" />
         <span>MASTER</span>
+        {masterIp && <span className="text-[9.5px] text-emerald-400/70 ml-0.5">· {masterIp}</span>}
       </button>
     );
   }
