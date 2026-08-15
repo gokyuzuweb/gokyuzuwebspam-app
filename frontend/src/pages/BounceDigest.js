@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Mail, Send, Clock, AlertTriangle, Save, Eye, Zap, Webhook } from "lucide-react";
@@ -18,17 +18,20 @@ export default function BounceDigest() {
     enabled: true, recipient_email: "", send_hour_utc: 9,
     delivery_method: "panel", webhook_url: "",
   });
-  // Sync form once config loads
-  const c = cfg.data;
-  if (c && form.recipient_email === "" && (c.recipient_email || c.enabled != null)) {
-    setForm({
-      enabled: c.enabled ?? true,
-      recipient_email: c.recipient_email || "",
-      send_hour_utc: c.send_hour_utc ?? 9,
-      delivery_method: c.delivery_method || "panel",
-      webhook_url: c.webhook_url || "",
-    });
-  }
+  // Sync form once config loads (proper useEffect — render sırasında setState olmamalı)
+  useEffect(() => {
+    const c = cfg.data;
+    if (c && (c.recipient_email || c.enabled != null)) {
+      setForm({
+        enabled: c.enabled ?? true,
+        recipient_email: c.recipient_email || "",
+        send_hour_utc: c.send_hour_utc ?? 9,
+        delivery_method: c.delivery_method || "panel",
+        webhook_url: c.webhook_url || "",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg.data]);
 
   const save = useMutation({
     mutationFn: () => api.bounceDigestSetConfig(form),

@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.49"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v43.50"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
@@ -6657,12 +6657,22 @@ function domain_of(email,   parts,at) {
         # user precedence: auth_user > U=user > empty
         eff_user = (auth_user != "") ? auth_user : user
         in_flight[mid] = ts"|"sender"|"eff_user"|"size"|"subj
-    } else if (dir=="=>" || dir=="->" || dir=="**" || dir=="==") {
-        deliveries++
+    } else if (dir=="=>" || dir=="->" || dir=="**" || dir=="=="){deliveries++
         rcpt=$5
         if (!(mid in in_flight)) { skipped++; next }
         n=split(in_flight[mid],parts,"|")
         s_ts=parts[1]; s_from=parts[2]; s_user=parts[3]; s_size=parts[4]; s_subj=parts[5]
+
+        # v43.50 — cPanel local delivery: rcpt sadece username olabilir ("=> mehmet.cakir")
+        # Sonraki tokenlerde <full@email> varsa onu al
+        rest_line = ""
+        for (kk=6; kk<=NF; kk++) rest_line = rest_line " " $kk
+        if (match(rest_line, /<[^>]+@[^>]+>/)) {
+            rcpt = substr(rest_line, RSTART+1, RLENGTH-2)
+        } else if (index(rcpt, "@") == 0) {
+            sd_guess = domain_of(s_from)
+            if (sd_guess != "") rcpt = rcpt "@" sd_guess
+        }
 
         # Outbound decision — HER ÜÇ HALDE outbound sayılır:
         # 1) auth_user veya U= dolu (kullanıcı login yaptı)
@@ -6768,6 +6778,34 @@ chmod 600 /etc/gws-exim-push.conf
 
 echo "==> Cron entry ekleniyor (her dakika — anlık akış)…"
 (crontab -l 2>/dev/null | grep -v gws-exim-push; echo '* * * * * /usr/local/bin/gws-exim-push >/dev/null 2>&1') | crontab -
+
+# v43.50 — Systemd timer (15sn'de bir gerçek anlık akış)
+if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+    cat > /etc/systemd/system/gws-exim-push.service <<'SVC'
+[Unit]
+Description=GokyuzuWebSpam Exim Log Tailer (bash)
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gws-exim-push
+User=root
+SVC
+    cat > /etc/systemd/system/gws-exim-push.timer <<'TMR'
+[Unit]
+Description=GWS Exim Log Push Timer (her 15sn)
+After=network-online.target
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=15s
+AccuracySec=1s
+Unit=gws-exim-push.service
+[Install]
+WantedBy=timers.target
+TMR
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now gws-exim-push.timer 2>/dev/null && \
+        echo "  ✓ systemd timer aktif — her 15sn push"
+fi
 
 echo "==> İlk çalıştırma test ediliyor…"
 /usr/local/bin/gws-exim-push || echo "(İlk çalıştırma başarısız olabilir; log dosyasına bakın: /var/log/gws-exim-push/push.log)"

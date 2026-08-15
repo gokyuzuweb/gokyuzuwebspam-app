@@ -14,7 +14,7 @@ const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const fmtTime = (iso) => {
   if (!iso) return "—";
   const d = new Date(iso);
-  return d.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 };
 // Exim null-sender ("<>") bounce/DSN mesajlarını okunabilir etikete çevir.
 // Bkz. RFC 5321 §4.5.5 — mail server bounce mesajları boş envelope sender ile döner.
@@ -208,6 +208,8 @@ export default function Outbound() {
 
   return (
     <div className="p-6 space-y-4" data-testid="outbound-page">
+      {/* v43.50 — Son push zamanı göstergesi (cron çalışıyor mu?) */}
+      <LastPushIndicator lastPushAt={statsQuery.data?.last_push_at} />
       {/* v43.41 — Plugin version banner (eğer eski sürümdeyse) */}
       <PluginVersionBanner />
       {/* v43.40 — Master action bar (backfill etc.) always visible */}
@@ -899,6 +901,50 @@ function PluginVersionBanner() {
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">sudo gws-update</code>
             <span className="text-[11px] text-slate-500">→</span>
+
+// v43.50 — Son bash push zaman göstergesi (cron sağlığı)
+function LastPushIndicator({ lastPushAt }) {
+  if (!lastPushAt) {
+    return (
+      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 flex items-start gap-3" data-testid="ob-last-push">
+        <span className="text-amber-400 text-xl">⏳</span>
+        <div className="flex-1">
+          <div className="text-sm font-bold text-amber-200">Sunucudan henüz push yok</div>
+          <div className="text-xs text-slate-300 mt-0.5">
+            /usr/local/bin/gws-exim-push script'i sunucuda kurulu mu ve çalışıyor mu? SSH: <code className="mono text-emerald-300">tail /var/log/gws-exim-push/push.log</code>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const dt = new Date(lastPushAt);
+  const seconds = Math.floor((Date.now() - dt.getTime()) / 1000);
+  const stale = seconds > 180;  // 3dk üstü uyarı
+  const label = seconds < 60 ? `${seconds} saniye önce`
+    : seconds < 3600 ? `${Math.floor(seconds / 60)} dakika önce`
+    : `${Math.floor(seconds / 3600)} saat önce`;
+  return (
+    <div className={`rounded-lg border p-3 flex items-center gap-3 ${
+      stale ? "border-rose-500/40 bg-rose-500/10" : "border-emerald-500/30 bg-emerald-500/5"
+    }`} data-testid="ob-last-push">
+      <span className={`text-xl ${stale ? "text-rose-400" : "text-emerald-400"}`}>
+        {stale ? "⚠" : "✓"}
+      </span>
+      <div className="flex-1">
+        <div className={`text-sm font-semibold ${stale ? "text-rose-200" : "text-emerald-200"}`}>
+          Son sunucu push: <span className="mono" data-testid="ob-last-push-time">{label}</span>
+        </div>
+        <div className="text-[11px] text-slate-400 mt-0.5">
+          {stale
+            ? "Cron 3 dakikadan uzun süredir push yapmadı — SSH: crontab -l | grep gws && systemctl status crond"
+            : "Cron her dakika çalışıyor · yeni mailler 60sn içinde burada görünür"}
+        </div>
+      </div>
+      <div className="text-[10px] mono text-slate-500">{dt.toLocaleString("tr-TR")}</div>
+    </div>
+  );
+}
+
             <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">systemctl status gws-heartbeat</code>
             <span className="text-[11px] text-slate-500">→</span>
             <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">tail /var/log/mailshield/exim-tail.log</code>

@@ -223,10 +223,25 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
         "limit_per_hour": limit_hour,
         "top_users": top_users,
         "all_time_total": all_time_total,
+        "last_push_at": await _get_last_push_at(lic_key or "MASTER"),
         "generated_at": _iso(),
     }
     await _cache.set(cache_key, result, 15.0)
     return result
+
+
+async def _get_last_push_at(license_key: str) -> Optional[str]:
+    """Son bash push zamanı — Outbound sayfası göstergesi."""
+    if license_key == "MASTER":
+        # En son push edilen lisansın timestamp'ini döndür
+        latest = await db.settings.find(
+            {"_key": {"$regex": "^exim_logtail_pos:"}},
+            {"_id": 0, "last_push_at": 1},
+        ).sort("last_push_at", -1).limit(1).to_list(1)
+        return (latest[0].get("last_push_at") if latest else None)
+    doc = await db.settings.find_one(
+        {"_key": f"exim_logtail_pos:{license_key}"}, {"_id": 0, "last_push_at": 1}) or {}
+    return doc.get("last_push_at")
 
 
 # ============================================================================
