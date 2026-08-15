@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.47"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v43.48"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
@@ -6593,10 +6593,25 @@ fi
 CHECKPOINT_FILE="$STATE_DIR/checkpoint"
 LAST_POS=0
 if [ -f "$CHECKPOINT_FILE" ]; then LAST_POS=$(cat "$CHECKPOINT_FILE" 2>/dev/null || echo "0"); fi
-REMOTE_POS=$(curl -sSf --max-time 8 \
-    "$PANEL_URL/api/outbound/exim-log-checkpoint?license_key=$LICENSE_KEY" 2>/dev/null \
-    | grep -oE '"last_position":[0-9]+' | grep -oE '[0-9]+$' || echo "0")
-if [ "$REMOTE_POS" -gt "$LAST_POS" ]; then LAST_POS="$REMOTE_POS"; fi
+# v43.48 — Backfill sinyali: panelde butona basıldıysa checkpoint'i sıfırla → son 24s tam re-scan
+BACKFILL_RESP=$(curl -sSf --max-time 8 \
+    "$PANEL_URL/api/outbound/backfill-signal?license_key=$LICENSE_KEY" 2>/dev/null || echo '{"pending":false}')
+BACKFILL_ACTIVE=0
+if echo "$BACKFILL_RESP" | grep -q '"pending":true'; then
+    log_line "Backfill signal → checkpoint sıfırlanıyor + panel checkpoint sıfırla"
+    LAST_POS=0
+    BACKFILL_ACTIVE=1
+    # Panel'e ACK gönder + panel-side checkpoint sıfırla (reset flag ile)
+    curl -sSf --max-time 8 -X POST -H "Content-Type: application/json" \
+        "$PANEL_URL/api/outbound/backfill-ack" \
+        -d "{\"license_key\":\"$LICENSE_KEY\",\"pushed\":0}" >/dev/null 2>&1 || true
+fi
+if [ "$BACKFILL_ACTIVE" -eq 0 ]; then
+    REMOTE_POS=$(curl -sSf --max-time 8 \
+        "$PANEL_URL/api/outbound/exim-log-checkpoint?license_key=$LICENSE_KEY" 2>/dev/null \
+        | grep -oE '"last_position":[0-9]+' | grep -oE '[0-9]+$' || echo "0")
+    if [ "$REMOTE_POS" -gt "$LAST_POS" ]; then LAST_POS="$REMOTE_POS"; fi
+fi
 
 FILE_SIZE=$(stat -c%s "$EXIM_LOG" 2>/dev/null || echo "0")
 if [ "$FILE_SIZE" -lt "$LAST_POS" ]; then log_line "Log rotate → reset"; LAST_POS=0; fi
@@ -6751,8 +6766,8 @@ EXIM_LOG=/var/log/exim_mainlog
 EOF
 chmod 600 /etc/gws-exim-push.conf
 
-echo "==> Cron entry ekleniyor…"
-(crontab -l 2>/dev/null | grep -v gws-exim-push; echo '*/5 * * * * /usr/local/bin/gws-exim-push >/dev/null 2>&1') | crontab -
+echo "==> Cron entry ekleniyor (her dakika — anlık akış)…"
+(crontab -l 2>/dev/null | grep -v gws-exim-push; echo '* * * * * /usr/local/bin/gws-exim-push >/dev/null 2>&1') | crontab -
 
 echo "==> İlk çalıştırma test ediliyor…"
 /usr/local/bin/gws-exim-push || echo "(İlk çalıştırma başarısız olabilir; log dosyasına bakın: /var/log/gws-exim-push/push.log)"

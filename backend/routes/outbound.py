@@ -955,12 +955,23 @@ async def exim_log_checkpoint(license_key: str = Query(..., min_length=8)):
 @router.post("/exim-backfill/trigger")
 async def exim_backfill_trigger(request: Request):
     """Master UI 'Son 24s Exim log çek' butonu → bayi lisanslara sinyal yaz.
-    heartbeat.pl bir sonraki cycle'da (max 15dk) sinyali görüp 24s backfill çalıştırır."""
+    v43.48 — Cron her dakika çalıştığından max 60sn içinde backfill başlar.
+    Signal geldiğinde bash script kendi checkpoint'ini + panel checkpoint'ini sıfırlar."""
     master_key = (request.headers.get("x-master-key") or "").strip()
     if not master_key.startswith("MS-"):
         raise HTTPException(403, "Master anahtarı gerekli")
     now = datetime.now(timezone.utc).isoformat()
     signaled = 0
+    # v43.48 — Auto-register master license (v43.47 mantığıyla senkron)
+    known = await db.licenses.find_one(
+        {"license_key": master_key, "active": True}, {"_id": 0, "license_key": 1})
+    if not known:
+        await db.licenses.update_one(
+            {"license_key": master_key},
+            {"$set": {"license_key": master_key, "active": True,
+                      "kind": "master_self_hosted", "auto_registered_at": now}},
+            upsert=True,
+        )
     async for lic in db.licenses.find(
         {"active": True, "$or": [
             {"license_key": master_key},
@@ -968,6 +979,7 @@ async def exim_backfill_trigger(request: Request):
         ]},
         {"license_key": 1, "hostname": 1},
     ):
+        # Sinyal yaz
         await db.settings.update_one(
             {"_key": f"exim_backfill_signal:{lic['license_key']}"},
             {"$set": {
@@ -979,11 +991,19 @@ async def exim_backfill_trigger(request: Request):
             }},
             upsert=True,
         )
+        # Panel-side checkpoint'i de sıfırla — daemon tekrar tam log'u okusun
+        await db.settings.update_one(
+            {"_key": f"exim_logtail_pos:{lic['license_key']}"},
+            {"$set": {"last_position": 0}},
+        )
         signaled += 1
     return {
         "ok": True, "signaled_licenses": signaled,
-        "note": f"{signaled} bayi WHM sunucusuna 24s Exim log backfill sinyali yazıldı. "
-                f"Bayi plugin daemon 15dk cycle'ında Exim mainlog'un son 24 saatini panele push edecek.",
+        "note": (f"{signaled} sunucuya backfill sinyali yazıldı + panel checkpoint sıfırlandı. "
+                 f"Cron 1 dakikada bir çalıştığından 60sn içinde son 24s log push edilecek."
+                 if signaled > 0 else
+                 "⚠ Aktif master lisansınız veritabanında yok. Önce bash script'i sunucunuzda "
+                 "en az bir kez çalıştırın (kendini otomatik register eder)."),
     }
 
 
