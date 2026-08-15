@@ -135,9 +135,12 @@ export default function Outbound() {
       verdict: verdict !== "all" ? verdict : undefined,
     }),
     refetchInterval: 20000,
+    refetchOnWindowFocus: "always",
+    refetchOnMount: "always",
+    staleTime: 0,
   });
 
-  const statsQuery = useQuery({ queryKey: ["outbound-stats"], queryFn: () => api.outboundStats(), refetchInterval: 20000 });
+  const statsQuery = useQuery({ queryKey: ["outbound-stats"], queryFn: () => api.outboundStats(), refetchInterval: 20000, refetchOnWindowFocus: "always", staleTime: 0 });
   const bulkAlertsQuery = useQuery({ queryKey: ["outbound-bulk-alerts"], queryFn: () => api.outboundBulkAlerts(), refetchInterval: 30000 });
   const throttlesQuery = useQuery({ queryKey: ["outbound-throttles"], queryFn: () => api.outboundThrottles(), refetchInterval: 30000 });
 
@@ -222,6 +225,18 @@ export default function Outbound() {
           title="Bayi WHM plugin daemon: /var/log/exim_mainlog son 24 saati anında panele çek"
         >
           <span>⚡</span> Son 24s Exim Backfill
+        </button>
+        <button
+          data-testid="ob-refresh-btn"
+          onClick={() => {
+            qc.invalidateQueries({ queryKey: ["outbound-events"] });
+            qc.invalidateQueries({ queryKey: ["outbound-stats"] });
+            toast.success("Veriler yenileniyor…");
+          }}
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+          title="DB'den en güncel outbound verilerini tekrar çek"
+        >
+          <span>🔄</span> Yenile
         </button>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
@@ -498,7 +513,7 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
                 return (
                   <tr key={e.id} data-testid={`ob-row-${e.id}`} className="border-b border-slate-800/60 hover:bg-slate-900/40">
                     <td className="px-3 py-2 mono text-[11px] text-slate-500 whitespace-nowrap">{fmtTime(e.ts)}</td>
-                    <td className={`px-3 py-2 mono truncate max-w-[200px] ${ds.isBounce ? "text-slate-500 italic" : "text-slate-200"}`}
+                    <td className={`px-3 py-2 mono break-all ${ds.isBounce ? "text-slate-500 italic" : "text-slate-200"}`}
                         title={ds.isBounce ? `Bounce mesajı — envelope sender boş (${ds.raw || "<>"})` : e.from_addr}>
                       {ds.isBounce ? (
                         <span className="inline-flex items-center gap-1">
@@ -507,7 +522,7 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
                         </span>
                       ) : ds.label}
                     </td>
-                    <td className="px-3 py-2 mono text-slate-300 truncate max-w-[180px]" title={e.to_addr}>{e.to_addr}</td>
+                    <td className="px-3 py-2 mono text-slate-300 break-all" title={e.to_addr}>{e.to_addr}</td>
                     <td className="px-3 py-2 text-slate-300 truncate max-w-[240px]" title={e.subject}>{e.subject || "(konusuz)"}</td>
                     <td className="px-3 py-2 text-right mono text-amber-300">{Number(e.total_score ?? 0).toFixed(1)}</td>
                     <td className="px-3 py-2 text-center"><Badge tone={vt.tone}>{vt.label}</Badge></td>

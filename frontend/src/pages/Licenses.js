@@ -690,7 +690,7 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
                       {r.license_key.slice(0, 20)}… <Copy className="w-3 h-3" />
                     </button>
                   </td>
-                  <td className="px-4 py-2.5"><Badge tone={PLAN_TONE[r.plan]}>{r.plan.toUpperCase()}</Badge></td>
+                  <td className="px-4 py-2.5"><Badge tone={PLAN_TONE[r.plan] || "info"}>{(r.plan || "unknown").toUpperCase()}</Badge></td>
                   <td className="px-4 py-2.5">
                     <div className="flex flex-wrap gap-1">
                       {(r.ip_addresses || []).map(ip => (

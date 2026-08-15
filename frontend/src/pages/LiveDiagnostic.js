@@ -107,7 +107,7 @@ function LicenseCard({ row }) {
           </div>
           <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-3 flex-wrap">
             {row.server_ip && <span className="mono">IP: {row.server_ip}</span>}
-            <span>Plugin: <span className="mono text-indigo-300">v{row.plugin_version}</span></span>
+            <span>Kurulum: <span className="text-indigo-300">{row.installation_label || row.plugin_version || "—"}</span></span>
             <span>Son 1s outbound: <span className="mono text-emerald-300">{nfmt(row.outbound_1h)}</span></span>
             <span>Son 24s: <span className="mono text-emerald-300">{nfmt(row.outbound_24h)}</span></span>
           </div>

@@ -257,7 +257,7 @@ function ResellerDashboard({ token, onLogout }) {
           <div className="flex items-center gap-3">
             <div className="text-right text-xs">
               <div className="text-slate-300" data-testid="reseller-header-email">{reseller.email}</div>
-              <div className="mono text-slate-500">{reseller.company} · {reseller.plan.toUpperCase()}</div>
+              <div className="mono text-slate-500">{reseller.company} · {(reseller.plan || "unknown").toUpperCase()}</div>
             </div>
             <button data-testid="reseller-logout" onClick={onLogout}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700 text-xs">
@@ -280,7 +280,7 @@ function ResellerDashboard({ token, onLogout }) {
             value={scopedQ.data?.length || 0}
             hint="Yalnızca alt hesaplarınız için" />
           <StatCard label="Plan" tone="success" icon={CheckCircle2} testid="stat-plan"
-            value={reseller.plan.toUpperCase()}
+            value={(reseller.plan || "unknown").toUpperCase()}
             hint="Yükseltme için /shop" />
         </div>
 

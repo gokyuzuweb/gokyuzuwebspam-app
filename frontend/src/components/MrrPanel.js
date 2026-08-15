@@ -92,7 +92,7 @@ export default function MrrPanel() {
               <tbody>
                 {(d?.plans_breakdown || []).map((p) => (
                   <tr key={p.plan} className="border-t border-slate-800">
-                    <td className="py-2"><Badge tone={PLAN_TONE[p.plan] || "info"}>{p.plan.toUpperCase()}</Badge></td>
+                    <td className="py-2"><Badge tone={PLAN_TONE[p.plan] || "info"}>{(p.plan || "unknown").toUpperCase()}</Badge></td>
                     <td className="py-2 text-right mono text-slate-200">{fmtNumber(p.count, locale)}</td>
                     <td className="py-2 text-right mono text-emerald-300">{fmtCurrency(p.mrr, cur, locale)}</td>
                   </tr>

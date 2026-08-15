@@ -39,19 +39,26 @@ async def diagnostic_status(request: Request):
             {"master_license_key": master_key},
         ]},
         {"_id": 0, "license_key": 1, "hostname": 1, "server_ip": 1,
-         "activated_at": 1, "last_heartbeat_at": 1, "plugin_version": 1}
+         "activated_at": 1, "last_heartbeat_at": 1, "plugin_version": 1, "kind": 1}
     ).to_list(200)
 
     rows = []
     for lic in licenses:
         lic_key = lic["license_key"]
-        # Son heartbeat plugin_state'ten
+        # Son heartbeat plugin_state'ten (Perl heartbeat.pl kurulumları için)
         pstate = await db.plugin_state.find_one({"license_key": lic_key}, {"_id": 0}) or {}
         # Son 24s outbound event
         last_out = await db.mail_events.find_one(
             {"license_key": lic_key, "direction": "out"},
-            {"_id": 0, "ts": 1, "source": 1}, sort=[("ts", -1)]
+            {"_id": 0, "ts": 1, "source": 1, "server_hostname": 1}, sort=[("ts", -1)]
         )
+        # Son push zamanı (bash script'in tetiklendiği en son "ingested_at")
+        last_ingest = await db.mail_events.find_one(
+            {"license_key": lic_key, "direction": "out",
+             "source": {"$in": ["exim_logtail_heartbeat", "exim_logtail", "exim_bash"]}},
+            {"_id": 0, "ingested_at": 1, "source": 1},
+            sort=[("ingested_at", -1)]
+        ) or {}
         out_24h = await db.mail_events.count_documents(
             {"license_key": lic_key, "direction": "out", "ts": {"$gte": since_24h}})
         out_1h = await db.mail_events.count_documents(
@@ -62,48 +69,55 @@ async def diagnostic_status(request: Request):
         # Backfill signal
         bf = await db.settings.find_one(
             {"_key": f"exim_backfill_signal:{lic_key}"}, {"_id": 0}) or {}
-        # Health assessment
+
+        # v43.49 — Kurulum tipini tespit et
+        installation_type = "unknown"
+        installation_label = "Bilinmiyor"
+        if pstate.get("plugin_version"):
+            installation_type = "perl_heartbeat"
+            installation_label = f"WHM Perl Plugin v{pstate.get('plugin_version')}"
+        elif ck.get("last_push_at") or (last_ingest.get("source") in ("exim_logtail_heartbeat", "exim_logtail")):
+            installation_type = "bash_cron"
+            installation_label = "Docker + Bash Cron (gws-exim-push)"
+        elif lic.get("kind") == "master_self_hosted":
+            installation_type = "master_self_hosted"
+            installation_label = "Self-Hosted Master (henüz push yok)"
+
         checks = []
-        # 1. Heartbeat received in last 30min?
-        last_hb = pstate.get("last_heartbeat_at") or lic.get("last_heartbeat_at")
-        hb_fresh = False
-        if last_hb:
+        # 1. Son push 2dk içinde mi? (bash cron her dakika çalıştığı için)
+        last_push_dt = None
+        push_source = ck.get("last_push_at") or last_ingest.get("ingested_at")
+        push_fresh = False
+        if push_source:
             try:
-                dt = datetime.fromisoformat(last_hb.replace("Z", "+00:00"))
-                hb_fresh = (now - dt).total_seconds() < 1800
+                dt = datetime.fromisoformat(push_source.replace("Z", "+00:00"))
+                seconds_ago = (now - dt).total_seconds()
+                push_fresh = seconds_ago < 180  # 3dk toleransı
+                last_push_dt = push_source
             except Exception:
                 pass
         checks.append({
-            "id": "heartbeat",
-            "label": "heartbeat.pl daemon 30dk içinde ping attı",
-            "pass": hb_fresh,
-            "detail": f"Son ping: {last_hb or 'yok'}",
-            "hint": "systemctl status gws-heartbeat && journalctl -u gws-heartbeat -n 20",
+            "id": "push_fresh",
+            "label": "Son push 3 dakika içinde (cron çalışıyor)",
+            "pass": push_fresh,
+            "detail": f"Son push: {last_push_dt or 'yok'}",
+            "hint": "SSH: crontab -l | grep gws · systemctl status crond · tail /var/log/gws-exim-push/push.log",
         })
-        # 2. Plugin version >= 1.2.0?
-        pv = pstate.get("plugin_version") or lic.get("plugin_version", "")
-        v_ok = pv >= "1.2.0" if pv else False
+        # 2. Kurulum tipi tespit edildi mi?
         checks.append({
-            "id": "plugin_version",
-            "label": "heartbeat.pl v1.2.0+ (Exim log tailer içeriyor)",
-            "pass": v_ok,
-            "detail": f"Sürüm: {pv or 'bilinmiyor'}",
-            "hint": "sudo gws-update  ← YENİ heartbeat.pl'i indirir",
+            "id": "install_type",
+            "label": "Kurulum tipi tespit edildi",
+            "pass": installation_type not in ("unknown",),
+            "detail": installation_label,
+            "hint": "Bir kez /usr/local/bin/gws-exim-push elle çalıştırın; ilk başarılı push tipiyle otomatik anlaşılır.",
         })
-        # 3. Exim log push last 15min?
-        push_ok = False
-        if ck.get("last_push_at"):
-            try:
-                dt = datetime.fromisoformat(ck["last_push_at"].replace("Z", "+00:00"))
-                push_ok = (now - dt).total_seconds() < 900
-            except Exception:
-                pass
+        # 3. Checkpoint kaydı var mı?
         checks.append({
-            "id": "exim_push",
-            "label": "Exim log push son 15dk içinde",
-            "pass": push_ok,
-            "detail": f"Son push: {ck.get('last_push_at') or 'yok'} · pos: {ck.get('last_position', 0)}",
-            "hint": "tail /var/log/mailshield/exim-tail.log · perl /usr/local/bin/heartbeat.pl (elle çalıştır)",
+            "id": "checkpoint",
+            "label": "Exim log checkpoint kayıtlı",
+            "pass": bool(ck.get("last_push_at")),
+            "detail": f"Pozisyon: {ck.get('last_position', 0)} bytes · son push: {ck.get('last_push_at') or 'yok'}",
+            "hint": "Bash script hiç çalışmamış — SSH: /usr/local/bin/gws-exim-push",
         })
         # 4. Outbound data flowing?
         data_ok = out_1h > 0 or out_24h > 0
@@ -113,32 +127,35 @@ async def diagnostic_status(request: Request):
             "pass": data_ok,
             "detail": f"1s: {out_1h} · 24s: {out_24h}",
             "hint": (
-                "Sunucunuzda mail hiç gitmiyor olabilir (Exim boşta) VEYA "
-                "heartbeat.pl push yapmıyor (yukarıdaki 3 check'e bakın)"
+                "Sunucunuzda mail gitmiyor olabilir VEYA script çalıştıysa ama Exim log'unda "
+                "outbound (U= / A=dovecot_login / userdomains eşleşen) yok. cat /var/log/gws-exim-push/push.log"
             ),
         })
-        # 5. Backfill status
+        # 5. Backfill state
         bf_status = "hazır"
         if bf.get("requested_at") and not bf.get("handled"):
             bf_status = f"bekliyor (istek: {bf['requested_at']})"
         elif bf.get("handled") and bf.get("pushed") is not None:
-            bf_status = f"tamamlandı: {bf.get('pushed', 0)} event push edildi"
+            bf_status = f"tamamlandı"
         checks.append({
             "id": "backfill",
             "label": "24s Backfill sinyali",
             "pass": True,
             "detail": bf_status,
-            "hint": "'⚡ Son 24s Exim Backfill' butonu ile tetiklenebilir",
+            "hint": "'⚡ Son 24s Exim Backfill' butonu ile tetiklenir · cron 1dk cycle'da işler",
         })
 
         passed = sum(1 for c in checks if c["pass"])
         rows.append({
             "license_key": lic_key,
             "license_masked": lic_key[:8] + "…" + lic_key[-4:],
-            "hostname": lic.get("hostname") or pstate.get("hostname"),
+            "hostname": lic.get("hostname") or pstate.get("hostname") or (last_out.get("server_hostname") if last_out else None),
             "server_ip": lic.get("server_ip") or pstate.get("server_ip"),
-            "plugin_version": pv or "bilinmiyor",
-            "last_heartbeat_at": last_hb,
+            "plugin_version": pstate.get("plugin_version") or "-",
+            "installation_type": installation_type,
+            "installation_label": installation_label,
+            "last_heartbeat_at": pstate.get("last_heartbeat_at") or lic.get("last_heartbeat_at"),
+            "last_push_at": ck.get("last_push_at") or last_ingest.get("ingested_at"),
             "last_outbound_ts": (last_out.get("ts") if last_out else None),
             "last_outbound_source": (last_out.get("source") if last_out else None),
             "outbound_1h": out_1h,
@@ -193,49 +210,54 @@ async def install_reports(request: Request, limit: int = 10):
 
 @router.get("/commands")
 async def commands():
-    """Kullanıcının sunucuda çalıştırması gereken adım-adım komutlar."""
+    """Kullanıcının sunucuda çalıştırması gereken adım-adım komutlar (v43.49 — Docker/bash)."""
     return {
         "phases": [
             {
                 "id": "1_check",
                 "title": "1) MEVCUT DURUMU KONTROL ET",
                 "commands": [
-                    {"cmd": "cat /usr/local/bin/heartbeat.pl | grep '\\$version'",
-                     "expects": "my $version = '1.2.0';",
-                     "if_not": "heartbeat.pl eski sürüm — 2. adıma geçin"},
-                    {"cmd": "systemctl status gws-heartbeat",
-                     "expects": "Active: active (running) veya (waiting)",
-                     "if_not": "Daemon çalışmıyor — 2. adım sonrası restart lazım"},
-                    {"cmd": "ls -lh /var/log/exim_mainlog",
-                     "expects": "en az birkaç MB boyut",
-                     "if_not": "Exim log yoksa mail servisi çalışmıyor demektir"},
+                    {"cmd": "gws-update",
+                     "expects": "v43.48+ · en güncel sürüm",
+                     "if_not": "Docker container'ı update edilemiyor — /var/log/gokyuzuwebspam/update.log"},
+                    {"cmd": "which gws-exim-push && ls -la /usr/local/bin/gws-exim-push",
+                     "expects": "/usr/local/bin/gws-exim-push · executable",
+                     "if_not": "Bash tailer kurulmamış — 2. adıma geçin"},
+                    {"cmd": "crontab -l | grep gws-exim-push",
+                     "expects": "* * * * * /usr/local/bin/gws-exim-push …",
+                     "if_not": "Cron kaydı yok — 2. adıma geçin"},
                 ],
             },
             {
-                "id": "2_update",
-                "title": "2) SUNUCUYU GÜNCELLE (tek komut)",
+                "id": "2_install",
+                "title": "2) KURULUM (tek komut)",
                 "commands": [
-                    {"cmd": "sudo gws-update",
-                     "expects": "'heartbeat.pl güncellendi' + 'systemctl reload' başarılı çıktısı",
-                     "if_not": "İnternet erişimi veya panel URL problemi olabilir"},
-                    {"cmd": "cat /usr/local/bin/heartbeat.pl | grep '\\$version'",
-                     "expects": "my $version = '1.2.0'",
-                     "if_not": "Güncelleme başarısız — /var/log/gokyuzuwebspam/update.log kontrol edin"},
+                    {"cmd": ("curl -sSf \"https://panel.gokyuzuhosting.com/api/tools/gws-exim-push.sh\" "
+                             "-o /usr/local/bin/gws-exim-push && chmod +x /usr/local/bin/gws-exim-push"),
+                     "expects": "Sessiz başarı",
+                     "if_not": "Panel URL erişilebilir mi? curl -I panel.gokyuzuhosting.com"},
+                    {"cmd": ("(crontab -l 2>/dev/null | grep -v gws-exim-push; "
+                             "echo '* * * * * /usr/local/bin/gws-exim-push >/dev/null 2>&1') | crontab -"),
+                     "expects": "Cron kaydı eklendi",
+                     "if_not": "Cron daemon aktif mi? systemctl status crond"},
+                    {"cmd": "test -f /etc/gws-exim-push.conf && cat /etc/gws-exim-push.conf",
+                     "expects": "LICENSE_KEY=MS-... satırı görünmeli",
+                     "if_not": "Config yok: install-exim-push.sh oneliner'ını çalıştırın"},
                 ],
             },
             {
                 "id": "3_test",
-                "title": "3) MANUEL TEST",
+                "title": "3) MANUEL TEST (log gerçek gelecek mi?)",
                 "commands": [
-                    {"cmd": "perl /usr/local/bin/heartbeat.pl",
-                     "expects": "Sessiz çalışır ve çıkar; hata verirse ekrana yazar",
-                     "if_not": "Perl modülü eksik olabilir — gws-update yeniden çalıştırın"},
-                    {"cmd": "cat /var/log/mailshield/exim-tail.log",
-                     "expects": "'pushed N events · pos=…' satırları görünmeli",
-                     "if_not": "Exim log'undan hiç OUTBOUND satır bulunamadı (U= field'ı olmayan mailler)"},
-                    {"cmd": "systemctl restart gws-heartbeat && journalctl -u gws-heartbeat -n 30",
-                     "expects": "Restart başarılı, hata log'u yok",
-                     "if_not": "Systemd hata mesajını okuyun, /etc/systemd/system/gws-heartbeat.service kontrol edin"},
+                    {"cmd": "DEBUG=1 /usr/local/bin/gws-exim-push",
+                     "expects": "Sessiz çıkar VEYA hata mesajı ekrana yazar",
+                     "if_not": "Config veya panel bağlantı problemi — log dosyasını kontrol edin"},
+                    {"cmd": "tail -10 /var/log/gws-exim-push/push.log",
+                     "expects": "'OK · parsed=N · inserted=N · pos=…' satırı",
+                     "if_not": "Parsed 0 çıkarsa: /etc/userdomains içeriğini kontrol edin (cPanel domain listesi)"},
+                    {"cmd": "curl -s http://localhost:8001/api/outbound/stats -H \"X-Master-Key: $LICENSE_KEY\" 2>/dev/null | head -c 200",
+                     "expects": "today_total > 0",
+                     "if_not": "Panel'de master anahtarı aktif değil VEYA event push başarısız"},
                 ],
             },
             {
@@ -243,11 +265,11 @@ async def commands():
                 "title": "4) 24 SAATLİK BACKFILL",
                 "commands": [
                     {"cmd": "Panelde '⚡ Son 24s Exim Backfill' butonuna tıklayın",
-                     "expects": "'Sunucuya sinyal yazıldı' toast mesajı",
-                     "if_not": "Master anahtarı aktif değil olabilir"},
-                    {"cmd": "sleep 60 && perl /usr/local/bin/heartbeat.pl",
-                     "expects": "Sinyal alınır, son 24s Exim mainlog 200'lük batch'lerle push edilir",
-                     "if_not": "'/var/log/mailshield/exim-tail.log' kontrol edin, BACKFILL 24h pushed N events görünmeli"},
+                     "expects": "'1 sunucuya sinyal + panel checkpoint sıfırlandı · 60sn içinde push' toast",
+                     "if_not": "Master anahtarı aktif değil — sağ üstteki MASTER badge'e bakın"},
+                    {"cmd": "sleep 65 && tail -5 /var/log/gws-exim-push/push.log",
+                     "expects": "'Backfill signal → checkpoint sıfırlanıyor' + 'OK · parsed=N · inserted=N'",
+                     "if_not": "Cron çalışmıyor OR Exim log çok küçük"},
                 ],
             },
         ],

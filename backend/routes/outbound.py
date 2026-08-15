@@ -859,12 +859,14 @@ async def exim_log_push(payload: EximPushIn):
                 {"license_key": pk},
                 {"$set": {
                     "license_key": pk, "active": True, "kind": "master_self_hosted",
+                    "plan": "master", "company": "Self-Hosted Master",
+                    "email": "master@self-hosted.local",
                     "hostname": payload.hostname or "unknown",
                     "auto_registered_at": datetime.now(timezone.utc).isoformat(),
                 }},
                 upsert=True,
             )
-            lic = {"license_key": pk, "active": True, "kind": "master_self_hosted"}
+            lic = {"license_key": pk, "active": True, "kind": "master_self_hosted", "plan": "master"}
         else:
             raise HTTPException(403, "Geçersiz lisans")
     now = datetime.now(timezone.utc).isoformat()
@@ -969,7 +971,10 @@ async def exim_backfill_trigger(request: Request):
         await db.licenses.update_one(
             {"license_key": master_key},
             {"$set": {"license_key": master_key, "active": True,
-                      "kind": "master_self_hosted", "auto_registered_at": now}},
+                      "kind": "master_self_hosted", "plan": "master",
+                      "company": "Self-Hosted Master",
+                      "email": "master@self-hosted.local",
+                      "auto_registered_at": now}},
             upsert=True,
         )
     async for lic in db.licenses.find(
