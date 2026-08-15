@@ -553,12 +553,16 @@ function NumField({ label, value, onSave }) {
 }
 
 function Toggle({ label, value, onChange, testid }) {
+  // v43.25 — Label'ı value-aware yap: "Aktif" / "Pasif" net görünsün
+  const stateLabel = value ? "Aktif" : "Pasif";
+  const displayLabel = label && label !== "Aktif" ? `${label}: ${stateLabel}` : stateLabel;
   return (
     <button data-testid={testid} onClick={() => onChange(!value)}
-            className={`text-xs px-3 py-1.5 rounded-md border transition-colors
-              ${value ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/40"
-                     : "bg-slate-800 text-slate-500 border-slate-700"}`}>
-      {value ? "● " : "○ "}{label}
+            data-state={value ? "on" : "off"}
+            className={`text-xs px-3 py-1.5 rounded-md border transition-colors font-semibold
+              ${value ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/25"
+                     : "bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700 hover:text-slate-200"}`}>
+      {value ? "● " : "○ "}{displayLabel}
     </button>
   );
 }

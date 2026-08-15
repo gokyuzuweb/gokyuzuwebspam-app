@@ -130,6 +130,21 @@ function Sidebar() {
     staleTime: 10000,
   });
   const pendingCount = pendingPayments.data?.notified_count || 0;
+  // v43.25 — Kolayilebilir grup başlıkları (localStorage persist)
+  const [collapsed, setCollapsed] = React.useState(() => {
+    try {
+      const raw = localStorage.getItem("gws.sidebar.collapsed");
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  });
+  const toggleGroup = (key) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      try { localStorage.setItem("gws.sidebar.collapsed", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
   const items = NAV.filter((n) => {
     if (n.sellerOnly && !isSeller) return false;
     if (n.masterOnly && !isMaster) return false;
@@ -163,52 +178,63 @@ function Sidebar() {
           <span>Home</span>
         </NavLink>
         <div className="h-px bg-slate-800/60 my-2" />
-        {grouped.map((g, gi) => (
-          <div key={g.key} className={gi > 0 ? "pt-3" : ""} data-testid={`nav-group-${g.key}`}>
-            <div className="px-3 mb-1 flex items-center gap-1.5 text-[9.5px] uppercase tracking-[0.2em] font-bold text-slate-600 select-none">
-              <span className="text-[11px] opacity-90">{g.icon}</span>
-              <span>{g.label}</span>
-              <span className="flex-1 h-px bg-gradient-to-r from-slate-800/60 to-transparent ml-1" />
+        {grouped.map((g, gi) => {
+          const isCollapsed = collapsed.has(g.key);
+          return (
+            <div key={g.key} className={gi > 0 ? "pt-3" : ""} data-testid={`nav-group-${g.key}`}>
+              <button
+                type="button"
+                onClick={() => toggleGroup(g.key)}
+                data-testid={`nav-group-toggle-${g.key}`}
+                className="w-full px-3 mb-1 flex items-center gap-1.5 text-[9.5px] uppercase tracking-[0.2em] font-bold text-slate-600 hover:text-indigo-400 select-none transition-colors group"
+                title={isCollapsed ? "Aç" : "Kapat"}
+              >
+                <span className={`inline-block transition-transform duration-200 ${isCollapsed ? "" : "rotate-90"}`}>▶</span>
+                <span className="text-[11px] opacity-90">{g.icon}</span>
+                <span>{g.label}</span>
+                <span className="mono text-[8.5px] text-slate-700 group-hover:text-indigo-500">{g.items.length}</span>
+                <span className="flex-1 h-px bg-gradient-to-r from-slate-800/60 to-transparent ml-1" />
+              </button>
+              <div className={`space-y-0.5 overflow-hidden transition-all duration-200 ${isCollapsed ? "max-h-0 opacity-0" : "max-h-[999px] opacity-100"}`}>
+                {g.items.map((n) => {
+                  const showBadge = n.key === "payments_admin" && pendingCount > 0;
+                  return (
+                    <NavLink
+                      key={n.to}
+                      to={n.to}
+                      end={n.end}
+                      data-testid={n.testid}
+                      className={({ isActive }) =>
+                        `group relative flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition-all duration-150 ${
+                          isActive
+                            ? "bg-gradient-to-r from-indigo-500/15 to-transparent text-indigo-200 border border-indigo-500/30 shadow-sm shadow-indigo-500/10"
+                            : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent hover:border-slate-700/40"
+                        }`
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r bg-indigo-400 shadow-[0_0_6px_rgba(129,140,248,0.6)]" />}
+                          <n.icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-indigo-300" : "text-slate-500 group-hover:text-slate-300"}`} strokeWidth={1.75} />
+                          <span className="flex-1 truncate">{n.label || t(`nav.${n.key}`)}</span>
+                          {showBadge && (
+                            <span
+                              data-testid={`nav-badge-${n.key}`}
+                              className="ml-auto shrink-0 mono text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500 text-white leading-none min-w-[16px] text-center animate-pulse"
+                              title={`${pendingCount} bekleyen havale bildirimi`}
+                            >
+                              {pendingCount}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </NavLink>
+                  );
+                })}
+              </div>
             </div>
-            <div className="space-y-0.5">
-              {g.items.map((n) => {
-                const showBadge = n.key === "payments_admin" && pendingCount > 0;
-                return (
-                  <NavLink
-                    key={n.to}
-                    to={n.to}
-                    end={n.end}
-                    data-testid={n.testid}
-                    className={({ isActive }) =>
-                      `group relative flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition-all duration-150 ${
-                        isActive
-                          ? "bg-gradient-to-r from-indigo-500/15 to-transparent text-indigo-200 border border-indigo-500/30 shadow-sm shadow-indigo-500/10"
-                          : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent hover:border-slate-700/40"
-                      }`
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r bg-indigo-400 shadow-[0_0_6px_rgba(129,140,248,0.6)]" />}
-                        <n.icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-indigo-300" : "text-slate-500 group-hover:text-slate-300"}`} strokeWidth={1.75} />
-                        <span className="flex-1 truncate">{n.label || t(`nav.${n.key}`)}</span>
-                        {showBadge && (
-                          <span
-                            data-testid={`nav-badge-${n.key}`}
-                            className="ml-auto shrink-0 mono text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500 text-white leading-none min-w-[16px] text-center animate-pulse"
-                            title={`${pendingCount} bekleyen havale bildirimi`}
-                          >
-                            {pendingCount}
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </NavLink>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {ungrouped.length > 0 && (
           <div className="pt-3">
             <div className="px-3 mb-1 text-[9.5px] uppercase tracking-[0.2em] font-bold text-slate-600 select-none">Diğer</div>
