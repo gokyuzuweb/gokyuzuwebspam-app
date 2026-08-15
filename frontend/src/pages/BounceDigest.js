@@ -125,17 +125,53 @@ export default function BounceDigest() {
             </select>
           </label>
           {form.delivery_method === "webhook" && (
-            <label className="block">
-              <span className="text-[11px] uppercase text-slate-500 mb-1 block flex items-center gap-1"><Webhook className="w-3 h-3"/> Webhook URL</span>
-              <input
-                type="url"
-                value={form.webhook_url}
-                onChange={(e) => setForm({ ...form, webhook_url: e.target.value })}
-                data-testid="bd-webhook"
-                placeholder="https://hooks.slack.com/…"
-                className="w-full text-sm mono bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200"
-              />
-            </label>
+            <>
+              <label className="block">
+                <span className="text-[11px] uppercase text-slate-500 mb-1 block flex items-center gap-1"><Webhook className="w-3 h-3"/> Webhook URL</span>
+                <input
+                  type="url"
+                  value={form.webhook_url}
+                  onChange={(e) => setForm({ ...form, webhook_url: e.target.value })}
+                  data-testid="bd-webhook"
+                  placeholder="https://hooks.slack.com/…"
+                  className="w-full text-sm mono bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200"
+                />
+              </label>
+              <div className="md:col-span-2 rounded border border-emerald-500/25 bg-emerald-500/5 p-3 text-xs space-y-2" data-testid="bd-slack-template">
+                <div className="font-semibold text-emerald-300 flex items-center gap-1.5">💡 Slack/Discord Webhook Kurulumu</div>
+                <ol className="text-slate-400 space-y-1 list-decimal pl-5">
+                  <li><b>Slack:</b> Kanal → ⚙️ Ayarlar → Integrations → <span className="mono text-emerald-300">Incoming Webhooks</span> → yeni webhook oluşturun, URL'i yukarı yapıştırın.</li>
+                  <li><b>Discord:</b> Sunucu → Kanal Ayarları → Integrations → <span className="mono text-emerald-300">Webhooks</span> → Yeni Webhook → URL kopyala.</li>
+                  <li><b>Test:</b> "Şimdi Üret" butonuna basın — kanala mesaj gelecek.</li>
+                </ol>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-slate-300 hover:text-slate-100 text-[11px]">📋 Gönderilen JSON payload örneği</summary>
+                  <pre className="mt-1 text-[10px] mono bg-slate-950 border border-slate-800 rounded p-2 text-slate-300 whitespace-pre-wrap">{`{
+  "kind": "bounce_digest",
+  "license_key": "MS-...",
+  "total_bounces": 42,
+  "top_users": [["destek", 12], ["admin", 8]],
+  "generated_at": "2026-08-15T09:00:00Z"
+}`}</pre>
+                </details>
+                <details>
+                  <summary className="cursor-pointer text-slate-300 hover:text-slate-100 text-[11px]">🎨 Slack için zenginleştirilmiş Block Kit örneği</summary>
+                  <div className="mt-1 text-[10px] text-slate-400 space-y-1">
+                    <div>Slack'in <span className="mono text-emerald-300">text</span> field'ı desteklediği ekstra formatı kullanabilirsiniz. Webhook proxy (Zapier/n8n) ile aşağıdaki Block Kit'e dönüştürün:</div>
+                    <pre className="mono bg-slate-950 border border-slate-800 rounded p-2 text-slate-300 whitespace-pre-wrap">{`{
+  "text": "📉 Bounce Digest — 42 bounce",
+  "blocks": [
+    { "type": "header", "text": {"type":"plain_text","text":"📉 Günlük Bounce Özeti"} },
+    { "type": "section", "text": {"type":"mrkdwn","text":"*Toplam:* 42 bounce\\n*En çok:* destek (12)"} },
+    { "type": "actions", "elements": [
+      { "type": "button", "text": {"type":"plain_text","text":"Panelde Aç"}, "url": "https://panel.gokyuzuhosting.com/panel/bounce-digest" }
+    ]}
+  ]
+}`}</pre>
+                  </div>
+                </details>
+              </div>
+            </>
           )}
           <label className="flex items-center gap-2 text-sm text-slate-300 md:col-span-2">
             <input

@@ -9,6 +9,7 @@ import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-pri
 import { api } from "@/lib/api";
 import SavedFiltersBar from "@/components/SavedFiltersBar";
 import OutboundGeoHeatmap from "@/components/OutboundGeoHeatmap";
+import OutboundGlobe3D from "@/components/OutboundGlobe3D";
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const fmtTime = (iso) => {
@@ -585,6 +586,9 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
 
       {/* v43.40 — Outbound Geo/Threat Heatmap */}
       <OutboundGeoHeatmap />
+
+      {/* v43.55 — Dünya Üzerinde 3D Outbound Trafik */}
+      <OutboundGlobe3D />
 
       <Card>
         <CardHeader
