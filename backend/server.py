@@ -745,6 +745,12 @@ async def _startup() -> None:
         asyncio.create_task(_threat_intel_auto_sync_loop())
     except Exception as _ex:
         log.warning("threat_intel auto-sync task not scheduled: %s", _ex)
+    # v43.41 — Outbound anomaly detection (rolling 7d baseline vs last 1h)
+    try:
+        from routes.outbound import _outbound_anomaly_loop
+        asyncio.create_task(_outbound_anomaly_loop())
+    except Exception as _ex:
+        log.warning("outbound anomaly loop not scheduled: %s", _ex)
 
 
 async def _daily_violations_cleanup_task():
@@ -1937,23 +1943,10 @@ async def lists_purge(request: Request, list_type: str = "white"):
 
 
 # ----- Rules -----
-@api.get("/rules")
-async def rules_get(request: Request, license_key: Optional[str] = None):
-    """Kurallar listesi — bayi/master scope'a göre filtrelenir.
-
-    • Master (x-master-key veya gws_master_session cookie): tüm kuralları görür,
-      `?license_key=WS-…` ile belirli bir bayinin kurallarına drill-down yapabilir.
-    • Bayi: sadece **kendi lisansının** eklediği kurallar görünür.
-    """
-    scope = await _tenant_scope(request, license_key)
-    q = {}
-    if scope["is_master"]:
-        if scope["owner_license_key"]:
-            q = {"owner_license_key": scope["owner_license_key"]}
-        # aksi halde tüm kurallar
-    else:
-        q = {"owner_license_key": scope["owner_license_key"]}
-    return await db.rules.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+@api.get("/rules-legacy-removed", include_in_schema=False)
+async def _rules_legacy_placeholder():
+    """v1.5 refactor: /rules endpoints moved to routes/rules.py"""
+    raise HTTPException(410, "Bu endpoint modüle taşındı (routes/rules.py)")
 
 
 async def _rules_scope(request: Request, license_key_arg: Optional[str]) -> dict:
@@ -2026,23 +2019,9 @@ class RuleIn(BaseModel):
     description: Optional[str] = ""
 
 
-@api.post("/rules")
-async def rules_add(rule: RuleIn, request: Request, license_key: Optional[str] = None):
-    scope = await _tenant_scope(request, license_key)
-    # Ziyaretçi (lisanssız ziyaretçi) kural ekleyemez — demo_write_guard zaten
-    # engelliyor ama defense-in-depth için burada da doğrulayalım.
-    if not scope["is_master"] and not scope["owner_license_key"]:
-        raise HTTPException(403, "Kural eklemek için lisans gerekli")
-    # Plan matrisi custom_rules kapalıysa engel (master her zaman geçer)
-    if not scope["is_master"]:
-        await _require_feature(scope, "custom_rules")
-    obj = Rule(**rule.model_dump())
-    doc = obj.model_dump()
-    # scope.owner_license_key: bayi ise kendi lisansı; master global için "";
-    # master drill-down için hedef bayi lisansı.
-    doc["owner_license_key"] = scope["owner_license_key"]
-    await db.rules.insert_one(doc)
-    return {k: v for k, v in doc.items() if k != "_id"}
+@api.post("/rules-legacy-post-removed", include_in_schema=False)
+async def _rules_post_legacy():
+    raise HTTPException(410, "Bu endpoint modüle taşındı (routes/rules.py)")
 
 
 async def _authorize_rule_action(rule_id: str, request: Request, license_key: Optional[str]) -> dict:
@@ -2062,35 +2041,8 @@ async def _authorize_rule_action(rule_id: str, request: Request, license_key: Op
     return rule
 
 
-@api.put("/rules/{rule_id}")
-async def rules_update(rule_id: str, rule: RuleIn, request: Request, license_key: Optional[str] = None):
-    existing = await _authorize_rule_action(rule_id, request, license_key)
-    upd = rule.model_dump()
-    upd["owner_license_key"] = existing.get("owner_license_key", "")  # sahiplik değişmez
-    r = await db.rules.update_one({"id": rule_id}, {"$set": upd})
-    if r.matched_count == 0:
-        raise HTTPException(404, "Kural bulunamadı")
-    return {"updated": True}
-
-
-# Apache/cPanel PUT/DELETE bloğu için POST alternatifleri
-@api.post("/rules/{rule_id}/update")
-async def rules_update_post(rule_id: str, rule: RuleIn, request: Request, license_key: Optional[str] = None):
-    return await rules_update(rule_id, rule, request, license_key)
-
-
-@api.delete("/rules/{rule_id}")
-async def rules_delete(rule_id: str, request: Request, license_key: Optional[str] = None):
-    await _authorize_rule_action(rule_id, request, license_key)
-    r = await db.rules.delete_one({"id": rule_id})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Kural bulunamadı")
-    return {"deleted": True}
-
-
-@api.post("/rules/{rule_id}/delete")
-async def rules_delete_post(rule_id: str, request: Request, license_key: Optional[str] = None):
-    return await rules_delete(rule_id, request, license_key)
+# v1.5 refactor: PUT/DELETE /rules/{id} moved to routes/rules.py.
+# Kept alias-only endpoints for backward-compat while router loads.
 
 
 # ----- Engines -----
@@ -8753,6 +8705,7 @@ from routes.smart_pos import router as _smart_pos_router  # noqa: E402
 from routes.outbound import router as _outbound_router  # noqa: E402
 from routes.marketplace import router as _marketplace_router  # noqa: E402
 from routes.users_sync import router as _users_sync_router  # noqa: E402
+from routes.rules import router as _rules_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -8772,6 +8725,7 @@ app.include_router(_smart_pos_router, prefix="/api")
 app.include_router(_outbound_router, prefix="/api")
 app.include_router(_marketplace_router, prefix="/api")
 app.include_router(_users_sync_router, prefix="/api")
+app.include_router(_rules_router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Demo mode write-guard middleware

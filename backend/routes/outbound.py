@@ -665,15 +665,24 @@ async def outbound_diagnostic(request: Request):
     # Değerlendirme
     diagnosis = []
     fix_hints = []
+    # v43.41 — Plugin version detection (heartbeat.pl / systemd state)
+    plugin_states = await db.plugin_state.find({}, {"_id": 0, "plugin_version": 1, "hostname": 1, "last_heartbeat_at": 1}).sort("last_heartbeat_at", -1).limit(5).to_list(5)
+    stale_plugins = [p for p in plugin_states if (p.get("plugin_version") or "").startswith(("1.0", "1.1"))]
+    if plugin_states:
+        latest_plugin = plugin_states[0]
+        pv = latest_plugin.get("plugin_version", "")
+        if pv and pv < "1.2.0":
+            diagnosis.append(f"⚠ Bayi WHM plugin sürümünüz eski: v{pv} (heartbeat.pl Exim log tailer'ı v1.2+ ile geldi)")
+            fix_hints.append("Sunucunuza SSH ile bağlanıp: sudo gws-update  → sonra heartbeat.pl otomatik güncellenir ve 15dk cycle'ında Exim log push başlar")
     if not is_master and not lic_key:
         diagnosis.append("Master anahtarı gitmiyor — X-Master-Key header yok")
         fix_hints.append("Header'da 'Master Aktif Et' butonuna tıklayıp MS- anahtarınızı girin")
     if outbound_total == 0:
         diagnosis.append("Veritabanında hiç outbound kaydı yok")
-        fix_hints.append("Milter/logtail v43+ kurulu değil veya direction=out yazmıyor. WHM sunucusunda 'gws-update' çalıştırın")
+        fix_hints.append("Sunucunuzda: 'sudo gws-update' çalıştırın. Yeni heartbeat.pl (v43.38+) Exim mainlog'u okuyup panele push eder — MILTER kurmak GEREKMEZ.")
     elif outbound_24h == 0 and outbound_total > 0:
-        diagnosis.append(f"DB'de {outbound_total} outbound var ama son 24 saatte 0 — Milter durmuş olabilir")
-        fix_hints.append("Bayi WHM sunucusunda: 'systemctl status gws-milter' + 'tail /var/log/gokyuzuwebspam/milter.log'")
+        diagnosis.append(f"DB'de {outbound_total} outbound var ama son 24 saatte 0 — heartbeat.pl durmuş veya eski sürüm")
+        fix_hints.append("Sunucuda: 'systemctl status gws-heartbeat' + 'tail /var/log/mailshield/exim-tail.log' + 'perl /usr/local/bin/heartbeat.pl' manuel deneyin")
     if outbound_total > 0 and is_master:
         diagnosis.append("Backend outbound veri sunuyor, panel görmelidir — cache/browser sorunu olabilir")
         fix_hints.append("Sayfayı yenileyin (Ctrl+F5) veya query cache'i temizleyin")
@@ -686,6 +695,8 @@ async def outbound_diagnostic(request: Request):
         "outbound_last_24h": outbound_24h,
         "inbound_last_24h": inbound_24h,
         "last_outbound_ts": last_out,
+        "plugin_states": plugin_states,
+        "stale_plugins_count": len(stale_plugins),
         "diagnosis": diagnosis or ["Her şey normal görünüyor"],
         "fix_hints": fix_hints or [],
     }
@@ -1078,3 +1089,248 @@ async def outbound_geo_stats(request: Request, hours: int = 24, license_key: Opt
         "risky_tlds": sorted({d["tld"] for d in domains if d["risk"]}),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ============================================================================
+# v43.41 — AI Insights on Geo Heatmap Data (LLM-powered risk summary)
+# ============================================================================
+@router.post("/ai-insights")
+async def outbound_ai_insights(request: Request, hours: int = 24, license_key: Optional[str] = None):
+    """LLM'e son N saatlik heatmap + top user + top domain verisini gönderir,
+    3 maddede Türkçe risk analizi + aksiyon önerisi döner. Cache 5dk."""
+    import os as _os
+    from cache import cache as _cache
+
+    scope = await resolve_tenant_scope(request, license_key, db)
+    lic_key = scope.get("owner_license_key") or ""
+    cache_key = f"ob:ai-insights:{lic_key or 'MASTER'}:{hours}"
+    cached = await _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    api_key = _os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(500, "EMERGENT_LLM_KEY yok")
+
+    # Aggregate — reuse geo-stats logic
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    match: dict = {"direction": "out", "ts": {"$gte": since}}
+    if lic_key:
+        match["license_key"] = lic_key
+
+    total = await db.mail_events.count_documents(match)
+    spam = await db.mail_events.count_documents(
+        {**match, "verdict": {"$in": ["spam", "high_spam", "virus"]}})
+    high_spam = await db.mail_events.count_documents(
+        {**match, "verdict": "high_spam"})
+
+    # Top users
+    top_users: list[dict] = []
+    async for row in db.mail_events.aggregate([
+        {"$match": match},
+        {"$group": {"_id": "$from_user", "sent": {"$sum": 1},
+                    "spam": {"$sum": {"$cond": [
+                        {"$in": ["$verdict", ["spam", "high_spam", "virus"]]}, 1, 0]}}}},
+        {"$sort": {"sent": -1}}, {"$limit": 5},
+    ]):
+        top_users.append({"user": row["_id"] or "(bilinmeyen)",
+                          "sent": row["sent"], "spam": row["spam"]})
+
+    # Top domains (reuse geo)
+    per_domain: dict[str, dict] = {}
+    async for e in db.mail_events.find(
+        match, {"_id": 0, "to_addr": 1, "verdict": 1}).limit(5000):
+        rcpt = e.get("to_addr") or ""
+        if "@" not in rcpt: continue
+        dom = rcpt.split("@", 1)[1].lower()
+        d = per_domain.setdefault(dom, {"domain": dom, "mail": 0, "spam": 0})
+        d["mail"] += 1
+        if e.get("verdict") in ("spam", "high_spam", "virus"):
+            d["spam"] += 1
+    top_domains = sorted(per_domain.values(), key=lambda x: x["mail"], reverse=True)[:8]
+
+    # High-risk TLDs
+    risky_tlds_hit: list[str] = []
+    for d in top_domains:
+        tld = _tld_of("x@" + d["domain"])
+        if tld in _TLD_RISK:
+            risky_tlds_hit.append(f".{tld} ({d['domain']})")
+
+    if total == 0:
+        result = {
+            "ok": True,
+            "hours": hours,
+            "summary": "Son " + str(hours) + " saatte outbound trafik yok — analiz için veri gerekli. "
+                       "Butondan '⚡ Son 24s Backfill' ile geçmiş veri çekebilir veya '🧪 Demo Outbound Ekle' ile örnekleyebilirsiniz.",
+            "risk_level": "unknown",
+            "actions": [],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await _cache.set(cache_key, result, 60.0)
+        return result
+
+    # Build LLM prompt
+    spam_ratio = round((spam / max(total, 1)) * 100, 1)
+    prompt = (
+        f"GökyüzüWebSpam outbound mail sunucusu için {hours} saatlik analiz:\n"
+        f"- Toplam giden mail: {total}\n"
+        f"- Spam olarak işaretlenen: {spam} ({spam_ratio}%)\n"
+        f"- Yüksek risk (high_spam): {high_spam}\n\n"
+        f"Top 5 gönderen kullanıcı:\n"
+        + "\n".join([f"  · {u['user']}: {u['sent']} mail ({u['spam']} spam)" for u in top_users])
+        + f"\n\nTop alıcı domainler:\n"
+        + "\n".join([f"  · {d['domain']}: {d['mail']} mail ({d['spam']} spam)" for d in top_domains])
+        + (f"\n\nYüksek riskli TLD tespit edildi: {', '.join(risky_tlds_hit)}"
+           if risky_tlds_hit else "\n\nYüksek riskli TLD tespit edilmedi.")
+        + "\n\nTürkçe cevapla, kısa net cümleler:\n"
+          "1) 'summary' — 2 cümlelik durum özeti (en kritik noktayı vurgula)\n"
+          "2) 'risk_level' — 'low' / 'medium' / 'high' / 'critical' arası tek kelime\n"
+          "3) 'actions' — 3 maddelik somut aksiyon listesi ('kullanıcı X'i throttle et', "
+          "'.tk TLD'ni bloklayın' gibi eyleme yönelik)\n\n"
+          "Yalnızca JSON dön:\n"
+          '{"summary":"…","risk_level":"…","actions":["…","…","…"]}'
+    )
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=api_key, session_id=f"ob-ai-{uuid.uuid4().hex[:8]}",
+            system_message="Sen bir outbound e-posta güvenlik analistisin. JSON dön.",
+        ).with_model("anthropic", "claude-sonnet-4-6")
+        r = await chat.send_message(UserMessage(text=prompt))
+        import json as _json, re
+        m = re.search(r"\{[\s\S]*\}", r or "")
+        parsed = _json.loads(m.group(0)) if m else {}
+    except Exception as ex:
+        raise HTTPException(500, f"LLM hata: {type(ex).__name__}")
+
+    result = {
+        "ok": True,
+        "hours": hours,
+        "summary": parsed.get("summary", ""),
+        "risk_level": (parsed.get("risk_level") or "medium").lower(),
+        "actions": (parsed.get("actions") or [])[:3],
+        "metrics": {
+            "total": total, "spam": spam, "high_spam": high_spam,
+            "spam_ratio_pct": spam_ratio,
+            "top_users": top_users, "top_domains": top_domains,
+            "risky_tlds_hit": risky_tlds_hit,
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await _cache.set(cache_key, result, 300.0)
+    return result
+
+
+# ============================================================================
+# v43.41 — Outbound Anomaly Detection (rolling 7-day baseline)
+# ============================================================================
+async def run_outbound_anomaly_check_once() -> dict:
+    """Her aktif lisans için son 1 saatteki gönderim vs 7 gün ortalamasını
+    kıyaslar. Ratio >= 5x ise master_alerts'e kayıt yazar (idempotent — aynı
+    kullanıcı 24 saat içinde tekrar tetiklenmez)."""
+    import uuid as _uuid
+    now = datetime.now(timezone.utc)
+    since_1h = (now - timedelta(hours=1)).isoformat()
+    since_7d = (now - timedelta(days=7)).isoformat()
+    since_dedupe = (now - timedelta(hours=24)).isoformat()
+    licenses = await db.mail_events.distinct(
+        "license_key", {"direction": "out", "ts": {"$gte": since_7d}})
+    flagged = 0
+    for lic in licenses:
+        if not lic:
+            continue
+        # 7-day baseline hourly average per user
+        base_pipeline = [
+            {"$match": {"license_key": lic, "direction": "out",
+                         "ts": {"$gte": since_7d}}},
+            {"$group": {"_id": "$from_user", "sent_7d": {"$sum": 1}}},
+        ]
+        baselines: dict[str, float] = {}
+        async for r in db.mail_events.aggregate(base_pipeline):
+            u = r["_id"]
+            if not u: continue
+            # 7 gün = 168 saat, dolayısıyla saatlik ortalama
+            baselines[u] = max(r["sent_7d"] / 168.0, 0.2)  # min 0.2/saat (aksi halde spam olmasa dahi trigger olur)
+        # Son 1 saat per user
+        last_hour_pipeline = [
+            {"$match": {"license_key": lic, "direction": "out",
+                         "ts": {"$gte": since_1h}}},
+            {"$group": {"_id": "$from_user", "sent_1h": {"$sum": 1}}},
+        ]
+        async for r in db.mail_events.aggregate(last_hour_pipeline):
+            u = r["_id"]
+            sent = r["sent_1h"]
+            if not u or sent < 5:
+                continue  # 5'ten az mail için anomali kabul etme
+            base = baselines.get(u, 0.2)
+            ratio = sent / base
+            if ratio < 5.0:
+                continue
+            # Dedupe: son 24 saatte aynı user için alert varsa atla
+            dupe = await db.master_alerts.find_one({
+                "kind": "outbound_anomaly",
+                "license_key": lic,
+                "user": u,
+                "created_at": {"$gte": since_dedupe},
+            }, {"_id": 0, "id": 1})
+            if dupe:
+                continue
+            severity = "error" if ratio >= 10 else "warning"
+            await db.master_alerts.insert_one({
+                "id": str(_uuid.uuid4()),
+                "kind": "outbound_anomaly",
+                "severity": severity,
+                "license_key": lic,
+                "user": u,
+                "title": f"Outbound anomali: {u} son 1 saatte {sent} mail ({ratio:.1f}x baseline)",
+                "detail": f"7 gün ortalama: {base:.2f}/saat. Şu an: {sent}. Throttle önerilir.",
+                "ratio": round(ratio, 2),
+                "sent_last_hour": sent,
+                "baseline_per_hour": round(base, 2),
+                "created_at": now.isoformat(),
+                "read": False,
+            })
+            flagged += 1
+    return {"ok": True, "licenses_scanned": len(licenses), "flagged": flagged,
+            "generated_at": now.isoformat()}
+
+
+@router.post("/anomaly/run-now")
+async def anomaly_run_now(request: Request):
+    """Kullanıcı manuel çalıştırabilsin. Master gerekli."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli")
+    return await run_outbound_anomaly_check_once()
+
+
+@router.get("/anomaly/status")
+async def anomaly_status():
+    """Son çalıştırma bilgisi + son 20 anomali."""
+    doc = await db.settings.find_one({"_key": "outbound_anomaly_last"}, {"_id": 0}) or {}
+    items = await db.master_alerts.find(
+        {"kind": "outbound_anomaly"}, {"_id": 0}
+    ).sort("created_at", -1).limit(20).to_list(20)
+    return {
+        "last_run_at": doc.get("last_run_at"),
+        "last_flagged": doc.get("last_flagged", 0),
+        "recent": items,
+    }
+
+
+async def _outbound_anomaly_loop():
+    """Background task — her 15dk anomali check. server.py startup'ta başlatılır."""
+    import asyncio as _asyncio
+    while True:
+        try:
+            res = await run_outbound_anomaly_check_once()
+            await db.settings.update_one(
+                {"_key": "outbound_anomaly_last"},
+                {"$set": {"_key": "outbound_anomaly_last",
+                          "last_run_at": res["generated_at"],
+                          "last_flagged": res["flagged"]}},
+                upsert=True,
+            )
+        except Exception:
+            pass
+        await _asyncio.sleep(900)  # 15 dakika

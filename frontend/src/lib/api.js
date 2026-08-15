@@ -607,6 +607,10 @@ export const api = {
   // v43.40 — Outbound backfill + geo heatmap
   outboundEximBackfill: () => client.post("/outbound/exim-backfill/trigger").then(r => r.data),
   outboundGeoStats: (hours = 24) => client.get("/outbound/geo-stats", { params: { hours } }).then(r => r.data),
+  // v43.41 — AI Insights + Anomaly
+  outboundAiInsights: (hours = 24) => client.post(`/outbound/ai-insights?hours=${hours}`, {}, { timeout: 60000 }).then(r => r.data),
+  outboundAnomalyStatus: () => client.get("/outbound/anomaly/status").then(r => r.data),
+  outboundAnomalyRunNow: () => client.post("/outbound/anomaly/run-now").then(r => r.data),
   // v43.38 — Signature Marketplace
   mpSignatures: (opts = {}) => client.get("/marketplace/signatures", { params: opts }).then(r => r.data),
   mpSignature: (id) => client.get(`/marketplace/signature/${id}`).then(r => r.data),

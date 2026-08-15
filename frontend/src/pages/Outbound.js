@@ -205,6 +205,8 @@ export default function Outbound() {
 
   return (
     <div className="p-6 space-y-4" data-testid="outbound-page">
+      {/* v43.41 — Plugin version banner (eğer eski sürümdeyse) */}
+      <PluginVersionBanner />
       {/* v43.40 — Master action bar (backfill etc.) always visible */}
       <div className="flex items-center justify-end gap-2 -mb-2">
         <button
@@ -840,3 +842,55 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
     </div>
   );
 }
+
+// v43.41 — Bayi WHM plugin (heartbeat.pl) eski sürümdeyse büyük uyarı bandı
+function PluginVersionBanner() {
+  const diag = useQuery({
+    queryKey: ["outbound-diagnostic-banner"],
+    queryFn: () => api.outboundDiagnostic(),
+    refetchInterval: 120_000,
+    staleTime: 60_000,
+  });
+  const d = diag.data;
+  if (!d) return null;
+  const states = d.plugin_states || [];
+  const oldestVer = states.find((p) => p.plugin_version && p.plugin_version < "1.2.0");
+  const noPlugin = states.length === 0 && d.outbound_last_24h === 0;
+  if (!oldestVer && !noPlugin) return null;
+  return (
+    <div className="rounded-xl border border-rose-500/40 bg-gradient-to-r from-rose-500/15 via-rose-500/5 to-transparent p-4" data-testid="ob-version-banner">
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-lg bg-rose-500/20 border border-rose-500/40 flex items-center justify-center shrink-0">
+          <span className="text-2xl">⚡</span>
+        </div>
+        <div className="flex-1">
+          <div className="text-sm font-bold text-rose-200 flex items-center gap-2">
+            {oldestVer ? `Sunucunuzda eski plugin sürümü: v${oldestVer.plugin_version}` : "Sunucunuzda henüz heartbeat.pl aktif değil"}
+          </div>
+          <div className="text-xs text-slate-300 mt-1 leading-relaxed">
+            {oldestVer ? (
+              <>
+                <b className="text-emerald-300">Exim mainlog tailer</b> (giden mailleri milter olmadan çeker) <b>v1.2.0</b> ile eklendi.
+                Sunucunuza SSH ile bağlanıp <code className="mono bg-slate-950 px-1.5 py-0.5 rounded text-amber-300">sudo gws-update</code> çalıştırın —
+                yeni heartbeat.pl kurulacak ve <b>15 dakika içinde</b> Exim log'unuzdan tüm outbound mailler panelde görünecek.
+              </>
+            ) : (
+              <>
+                Sunucunuzdaki heartbeat.pl daemon'ı bize sinyal göndermiyor. SSH ile bağlanıp <code className="mono bg-slate-950 px-1.5 py-0.5 rounded text-amber-300">sudo gws-update</code>
+                &nbsp;çalıştırın. Kurulum yoksa <code className="mono bg-slate-950 px-1.5 py-0.5 rounded text-amber-300">bash &lt;(wget -qO- panel.gokyuzuhosting.com/install)</code> ile başlayın.
+              </>
+            )}
+          </div>
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">sudo gws-update</code>
+            <span className="text-[11px] text-slate-500">→</span>
+            <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">systemctl status gws-heartbeat</code>
+            <span className="text-[11px] text-slate-500">→</span>
+            <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">tail /var/log/mailshield/exim-tail.log</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+

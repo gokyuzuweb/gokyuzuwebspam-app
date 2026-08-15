@@ -43,7 +43,7 @@ if (open my $fh, '<', $CONF) {
 }
 
 my $license_key = $conf{license}{key} // '';
-my $version     = '1.1.0';
+my $version     = '1.2.0';  # v43.38+ — Exim log tailer, v43.40 verdict enrichment, v43.41 anomaly-friendly
 
 # --- IP tespiti (birden çok kaynak)
 sub detect_ip {

@@ -1,0 +1,25 @@
+{
+  "summary": "v43.41 backend testing: AI Insights (LLM), Outbound Anomaly Detection (rolling 7d baseline + run-now/status), Diagnostic plugin_states enhancement, and full Rules CRUD refactor regression (routes/rules.py) all validated end-to-end. 12/12 tests passed against public preview URL.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v43_41_ai_anomaly_rules.py",
+    "/app/test_reports/pytest/v43_41.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "POST /api/outbound/anomaly/run-now does NOT persist last_run_at/last_flagged into db.settings.outbound_anomaly_last — only the 15-minute background loop writes that doc. Manual runs are therefore invisible in /anomaly/status.last_run_at. Suggest calling the same update_one in run-now for consistency.",
+    "outbound.py is now ~1330 lines (grew again with ai-insights + anomaly) — the earlier split recommendation is more pressing; suggest routes/outbound/{stats,events,exim,anomaly,ai}.py sub-package.",
+    "ai-insights hardcodes model 'anthropic/claude-sonnet-4-6'. Consider env-configurable OB_INSIGHTS_MODEL for cost/latency tuning, and lower cache TTL (currently 300s) may be too short given LLM cost — consider 15m default.",
+    "ai-insights catches all LLM exceptions with HTTPException(500, 'LLM hata: <type>') without logging — hard to debug prod failures; add logger.exception before raising.",
+    "routes/rules.py uses lazy `from server import _tenant_scope, _require_feature` on every request — cheap after first import but a module-level import inside a helper adds function-call overhead; a one-shot cache in _helpers() (module-level singleton) would be cleaner.",
+    "run_outbound_anomaly_check_once iterates every license with a Python-side loop and 2 aggregations per license; for tenants with 100+ licenses this is O(N) round-trips. A single pipeline with $facet keyed by license_key would scale better."
+  ],
+  "updated_files": ["/app/backend/tests/test_v43_41_ai_anomaly_rules.py"],
+  "success_rate": {"backend": "100%", "frontend": "N/A"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676",
+  "seed_data_creation": "None — preview already had 40+ test_spammer_ab0162 outbound events and prior anomaly alert in master_alerts. Created + deleted two TEST_v43_41_rule* rules during CRUD test (cleaned up).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "v43.41 endpoints validated: POST /api/outbound/ai-insights?hours=N (X-Master-Key, returns {ok,summary,risk_level,actions,metrics}), POST /api/outbound/anomaly/run-now (X-Master-Key), GET /api/outbound/anomaly/status (public). /api/outbound/diagnostic now returns plugin_states[] + stale_plugins_count. Rules moved to routes/rules.py — CRUD + POST /rules/{id}/update and /delete aliases work identically to old server.py routes. Test file: test_v43_41_ai_anomaly_rules.py."
+}

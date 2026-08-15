@@ -13,6 +13,16 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 15, v43.41) — AI Insights + World Map + Anomaly + Refactor v2
+- ✅ **AI Insights Panel**: `POST /api/outbound/ai-insights` — Claude Sonnet son N saatlik geo+user+domain verisini analiz eder, JSON döner {summary, risk_level, actions[3], metrics}. UI card: risk rozeti (LOW/MEDIUM/HIGH/CRITICAL) + numaralı aksiyon listesi. 5dk cache.
+- ✅ **Outbound Anomaly Detection**: `run_outbound_anomaly_check_once()` — 7 gün rolling baseline vs son 1 saat kıyaslar, >=5x → master_alerts insert (24h dedupe). Background loop 15dk cycle. Manual trigger endpoint. Frontend AnomalyPanel — sadece kayıt varsa görünür.
+- ✅ **World Map**: SVG-tabanlı basit dünya haritası — ülkeler animasyonlu pulse ring pinlerle işaretli, spam oranına göre yeşil/sarı/turuncu/kırmızı. 29 ülke koordinatı hardcode.
+- ✅ **Refactor v2**: `/rules` CRUD endpoint'leri (GET/POST/PUT/DELETE + POST alias'ları) `routes/rules.py`'ye taşındı. Late-binding `_helpers()` factory — server.py'nin `_tenant_scope`/`_require_feature`'unu import eder, dairesel bağlılık yok.
+- ✅ **User's Live Server Diagnostic**: `/api/outbound/diagnostic` artık `plugin_states[]` + `stale_plugins_count` döner. Frontend `PluginVersionBanner` — heartbeat.pl v1.2.0'dan eski ise sağ üstte büyük kırmızı uyarı: "sudo gws-update çalıştırın" + 3 kod bloklu adım.
+- ✅ `heartbeat.pl` versiyon **1.1.0 → 1.2.0** bump'landı (Exim tailer resmi olarak "v1.2.0 ile geldi" ibaresi tutarlı olsun diye).
+- ✅ Backend testing agent: **12/12 test geçti** (iteration_41.json).
+
+
 ## Feb 15, 2026 (Session 15, v43.40) — Verdict Enrichment + Auto Backfill + Geo Heatmap
 - ✅ **X-Spam-Score Verdict Enrichment**: `heartbeat.pl::_read_exim_spool_verdict()` — Exim spool `-H` başlık dosyasından `X-Spam-Score` / `X-Spam-Status` / `X-Spam-Report` okur ve verdict hesaplar (>=5 spam, >=10 high_spam, >=15 blocked). Push edilen event artık `total_score` + `scores.spamassassin` + `sa_report` içerir.
 - ✅ **24s Backfill**: 3 yeni endpoint (`POST /outbound/exim-backfill/trigger` master, `GET /outbound/backfill-signal` daemon poll, `POST /outbound/backfill-ack` daemon complete). heartbeat.pl `run_exim_backfill_24h()` implementasyonu — son 24 saatlik Exim mainlog'u tarayıp 200'lük batch'lerle push eder. Frontend butonu: `⚡ Son 24s Exim Backfill` (Outbound sağ üst).
