@@ -230,6 +230,33 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
     return result
 
 
+# ---------------------------------------------------------------------------
+# v43.52 — Exim message ID → timestamp decoder
+# ---------------------------------------------------------------------------
+# Exim MID formatı: AAAAAA-BBBBBB-CC (örn: 1uHqCk-000123-A2)
+# İlk 6 karakter = epoch saniye, base62 (0-9, A-Z, a-z).
+# awk parser boş `ts` gönderirse mid'den doğru timestamp'i türetiriz —
+# böylece 473 kayıt hepsi aynı ts'ye düşmesin (v43.51 bug fix).
+_EXIM_B62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+
+def _decode_exim_mid_ts(mid: str) -> Optional[str]:
+    """Exim message ID'den ISO8601 timestamp türet. Başarısız olursa None."""
+    if not mid or len(mid) < 6:
+        return None
+    try:
+        secs = 0
+        for c in mid[:6]:
+            v = _EXIM_B62.index(c)
+            secs = secs * 62 + v
+        # Sanity check: 2000-01-01 .. 2050-01-01 arası kabul et
+        if 946684800 < secs < 2524608000:
+            return datetime.fromtimestamp(secs, tz=timezone.utc).isoformat()
+    except (ValueError, IndexError):
+        return None
+    return None
+
+
 async def _get_last_push_at(license_key: str) -> Optional[str]:
     """Son bash push zamanı — Outbound sayfası göstergesi."""
     if license_key == "MASTER":
@@ -884,10 +911,12 @@ async def exim_log_push(payload: EximPushIn):
             lic = {"license_key": pk, "active": True, "kind": "master_self_hosted", "plan": "master"}
         else:
             raise HTTPException(403, "Geçersiz lisans")
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
     inserted = 0
     updated = 0
-    for e in payload.events[:1000]:
+    ts_fallback_count = 0  # v43.52 — kaç eventte ts fallback devreye girdi
+    for idx, e in enumerate(payload.events[:1000]):
         mid = str(e.get("exim_mid") or e.get("mid") or "").strip()
         from_addr = str(e.get("from_addr") or "").strip()
         to_addr = str(e.get("to_addr") or "").strip()
@@ -902,6 +931,23 @@ async def exim_log_push(payload: EximPushIn):
         # Verdict + score: heartbeat pl usually cannot compute — use "unknown"
         verdict = e.get("verdict") or "clean"
         score = float(e.get("total_score") or 0)
+
+        # v43.52 — Robust timestamp resolution:
+        # 1) awk'dan gelen ts geçerliyse kullan
+        # 2) Değilse Exim mid'in ilk 6 char'ından türet (base62 epoch)
+        # 3) Yine olmadıysa now - offset (batch içi sıralı spread)
+        raw_ts = str(e.get("ts") or "").strip()
+        ts_val = ""
+        if raw_ts and raw_ts.startswith(("19", "20")) and len(raw_ts) >= 10:
+            ts_val = raw_ts
+        else:
+            decoded = _decode_exim_mid_ts(mid)
+            if decoded:
+                ts_val = decoded
+            else:
+                # Son çare: batch içindeki idx kadar geriye kaydır
+                ts_val = (now - timedelta(seconds=idx)).isoformat()
+                ts_fallback_count += 1
         doc = {
             "id": str(uuid.uuid4()),
             "license_key": payload.license_key,
@@ -916,8 +962,8 @@ async def exim_log_push(payload: EximPushIn):
             "action": e.get("action") or "accept",
             "sender_ip": e.get("sender_ip") or payload.server_ip,
             "size_bytes": int(e.get("size_bytes") or 0),
-            "ts": e.get("ts") or now,
-            "ingested_at": now,
+            "ts": ts_val,
+            "ingested_at": now_iso,
             "source": "exim_logtail_heartbeat",
             "server_hostname": payload.hostname or lic.get("hostname"),
         }
@@ -927,7 +973,7 @@ async def exim_log_push(payload: EximPushIn):
                          "to_addr": to_addr, "ts": doc["ts"]}
         r = await db.mail_events.update_one(
             key,
-            {"$set": doc, "$setOnInsert": {"first_seen": now}},
+            {"$set": doc, "$setOnInsert": {"first_seen": now_iso}},
             upsert=True,
         )
         if r.upserted_id is not None:
@@ -944,14 +990,15 @@ async def exim_log_push(payload: EximPushIn):
                 "license_key": payload.license_key,
                 "hostname": payload.hostname,
                 "last_position": payload.checkpoint_position,
-                "last_push_at": now,
+                "last_push_at": now_iso,
                 "last_inserted": inserted,
             }},
             upsert=True,
         )
 
     return {"ok": True, "inserted": inserted, "updated": updated,
-            "total": inserted + updated, "checkpoint": payload.checkpoint_position}
+            "total": inserted + updated, "checkpoint": payload.checkpoint_position,
+            "ts_fallback_used": ts_fallback_count}
 
 
 @router.get("/exim-log-checkpoint")
@@ -963,6 +1010,71 @@ async def exim_log_checkpoint(license_key: str = Query(..., min_length=8)):
         "last_position": doc.get("last_position", 0),
         "last_push_at": doc.get("last_push_at"),
         "last_inserted": doc.get("last_inserted", 0),
+    }
+
+
+# ============================================================================
+# v43.52 — Timestamp Repair (473 kayıt aynı ts bug'ı için tek seferlik migration)
+# ============================================================================
+@router.post("/repair-timestamps")
+async def repair_timestamps(request: Request, dry_run: bool = False):
+    """Aynı ts'ye sıkışmış outbound mail_events'a Exim mid'inden türetilmiş
+    doğru timestamp'i yaz. Master anahtarı ile korunur. Idempotent.
+
+    Bug: v43.51 öncesi awk parser bazen boş ts gönderiyordu → backend `now`
+    fallback → tek batch'te 473 kayıt aynı ts'ye düştü. Bu endpoint mid'den
+    base62 decode ederek gerçek timestamp'i geri getirir.
+    """
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli")
+
+    # 1) Tekrarlanan ts değerlerini bul (aynı ts'ye ≥3 kayıt sıkışmışsa şüpheli)
+    pipeline = [
+        {"$match": {"direction": "out", "source": "exim_logtail_heartbeat"}},
+        {"$group": {"_id": "$ts", "n": {"$sum": 1},
+                    "ids": {"$push": {"id": "$id", "mid": "$exim_mid"}}}},
+        {"$match": {"n": {"$gte": 3}}},
+        {"$sort": {"n": -1}},
+        {"$limit": 50},
+    ]
+    dup_groups = await db.mail_events.aggregate(pipeline).to_list(50)
+
+    repaired = 0
+    unresolved = 0
+    scanned = 0
+    dup_ts_list = []
+    for grp in dup_groups:
+        dup_ts_list.append({"ts": grp["_id"], "count": grp["n"]})
+        for entry in grp["ids"]:
+            scanned += 1
+            mid = entry.get("mid") or ""
+            derived = _decode_exim_mid_ts(mid)
+            if not derived:
+                unresolved += 1
+                continue
+            if derived == grp["_id"]:
+                # zaten doğru
+                continue
+            if dry_run:
+                repaired += 1
+                continue
+            await db.mail_events.update_one(
+                {"id": entry["id"]},
+                {"$set": {"ts": derived, "ts_repaired_at":
+                          datetime.now(timezone.utc).isoformat()}}
+            )
+            repaired += 1
+
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "duplicate_groups": dup_ts_list,
+        "scanned": scanned,
+        "repaired": repaired,
+        "unresolved": unresolved,
+        "note": ("Aynı ts'ye ≥3 kayıt bulunan grupları taradı. mid'i olan "
+                 "kayıtlarda base62 decode ile gerçek zamanı geri getirdi."),
     }
 
 

@@ -240,6 +240,30 @@ export default function Outbound() {
         >
           <span>🔄</span> Yenile
         </button>
+        <button
+          data-testid="ob-repair-ts-btn"
+          onClick={async () => {
+            try {
+              const dry = await api.outboundRepairTimestamps(true);
+              const groups = dry.duplicate_groups || [];
+              if (groups.length === 0) {
+                toast.success("Aynı ts'ye sıkışmış kayıt bulunamadı", { duration: 6000 });
+                return;
+              }
+              const summary = groups.slice(0, 5).map(g => `• ${g.count} kayıt @ ${g.ts}`).join("\n");
+              if (!window.confirm(`${groups.length} zaman damgası grubu tespit edildi (toplam ${dry.scanned} kayıt).\n\n${summary}\n\nExim mid'lerinden gerçek zaman damgalarını türetip onarım yapılsın mı?`)) return;
+              const res = await api.outboundRepairTimestamps(false);
+              toast.success(`✓ ${res.repaired} kayıt onarıldı`, { description: `${res.unresolved} kayıt mid'siz olduğu için atlandı`, duration: 10000 });
+              qc.invalidateQueries({ queryKey: ["outbound-events"] });
+            } catch (e) {
+              toast.error(e?.response?.data?.detail || e.message);
+            }
+          }}
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+          title="Aynı zaman damgasına sıkışmış outbound kayıtları için mid'den gerçek zamanı türetir"
+        >
+          <span>🛠</span> Zaman Damgası Onar
+        </button>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <StatCard label="Bugün Giden" value={nfmt(s.today_total)} icon={ArrowUpRight} tone="brand" testid="ob-today-total" />
@@ -901,6 +925,15 @@ function PluginVersionBanner() {
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">sudo gws-update</code>
             <span className="text-[11px] text-slate-500">→</span>
+            <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">systemctl status gws-heartbeat</code>
+            <span className="text-[11px] text-slate-500">→</span>
+            <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">tail /var/log/mailshield/exim-tail.log</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // v43.50 — Son bash push zaman göstergesi (cron sağlığı)
 function LastPushIndicator({ lastPushAt }) {
@@ -941,16 +974,6 @@ function LastPushIndicator({ lastPushAt }) {
         </div>
       </div>
       <div className="text-[10px] mono text-slate-500">{dt.toLocaleString("tr-TR")}</div>
-    </div>
-  );
-}
-
-            <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">systemctl status gws-heartbeat</code>
-            <span className="text-[11px] text-slate-500">→</span>
-            <code className="mono text-[11px] bg-slate-950 px-2 py-1 rounded text-emerald-300 border border-emerald-500/20">tail /var/log/mailshield/exim-tail.log</code>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

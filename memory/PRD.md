@@ -13,6 +13,23 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 16, v43.52) — P0 Blank Screen & Identical Timestamps Fix
+**Kök neden:** Önceki oturumda `/app/frontend/src/pages/Outbound.js` içinde `LastPushIndicator`
+fonksiyonu yanlışlıkla `PluginVersionBanner`'ın JSX return'ünün ORTASINA gömülmüş → tüm
+frontend derlemesi çöktü → hem Outbound hem Bounce Digest hem tüm React tree boş ekran.
+
+**Timestamp bug:** `exim_log_push` handler'ında `now = datetime.now(...)` bir kez hesaplanıp
+tüm batch event'lerinde reuse edildi → awk boş `ts` gönderdiğinde 473 event aynı ts'ye düştü.
+
+**Fixes:**
+- ✅ `Outbound.js` restructured — `LastPushIndicator` module-level function; frontend derleniyor.
+- ✅ `_decode_exim_mid_ts()` eklendi — Exim message ID'nin ilk 6 char (base62) → ISO ts.
+- ✅ `exim_log_push` her event için 3 aşamalı ts resolution: (1) payload ts geçerliyse, (2) mid'den decode, (3) `now - idx sn` spread.
+- ✅ `POST /api/outbound/repair-timestamps` (X-Master-Key ile korunuyor) — aynı ts'ye sıkışmış eski kayıtları mid'den yeniden türeterek onarır (dry_run desteği ile).
+- ✅ Outbound sayfasına "🛠 Zaman Damgası Onar" butonu.
+- ✅ Backend testing agent 6/6 pass (iteration_43.json).
+
+
 ## Feb 15, 2026 (Session 15, v43.43) — Docker Deployment Reality + Bash Exim Tailer
 Kullanıcının canlı sunucusunda mailler gelmiyor sorununun **kök sebebi bulundu**:
 - Kullanıcı Docker container ile deploy ediyor (WHM Perl plugin DEĞİL)
