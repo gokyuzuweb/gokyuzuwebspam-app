@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Clock, RefreshCw, Search, Sparkles } from "lucide-react";
+import { Clock, RefreshCw, Search, Sparkles, KeyRound, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
 import ThreatAlertBell from "@/components/ThreatAlertBell";
 import { ImpersonatePicker } from "@/components/Impersonate";
 
@@ -37,6 +38,71 @@ function GlobalSearch() {
         </span>
       </button>
     </div>
+  );
+}
+
+/**
+ * v43.24 — Master Modu chip:
+ * localStorage.gws.master_license set edilmemişse (veya MS- prefix'siz),
+ * "Master Modu Aktive Et" butonu gösterir. Tıklandığında MS- key promptu
+ * çıkar, localStorage'a yazar ve tüm React Query cache'ini invalidate eder.
+ * Set edilmişse yeşil "MASTER" chip gösterir.
+ */
+function MasterModeToggle() {
+  const qc = useQueryClient();
+  // Trigger re-render whenever localStorage'a yazılırsa
+  const active = typeof window !== "undefined"
+    && (localStorage.getItem("gws.master_license") || "").startsWith("MS-");
+  const activate = () => {
+    const val = window.prompt(
+      "Master Lisans Anahtarınızı Girin (MS- prefix'li 24 karakter):",
+      localStorage.getItem("gws.event_license") || ""
+    );
+    if (!val) return;
+    const v = val.trim();
+    if (!v.startsWith("MS-")) {
+      toast.error("Geçersiz anahtar — MS- ile başlamalı");
+      return;
+    }
+    localStorage.setItem("gws.master_license", v);
+    localStorage.setItem("gws.event_license", v);
+    localStorage.setItem("gws.license.dismissed", "1");
+    toast.success("Master modu aktive edildi — tüm sorgular yenileniyor");
+    qc.invalidateQueries();
+    setTimeout(() => window.location.reload(), 800);
+  };
+  const deactivate = () => {
+    if (!window.confirm("Master modundan çıkılsın mı? Yazma işlemleri demo kilidiyle korunur.")) return;
+    localStorage.removeItem("gws.master_license");
+    toast.info("Master modu kapatıldı");
+    qc.invalidateQueries();
+    setTimeout(() => window.location.reload(), 500);
+  };
+  if (active) {
+    return (
+      <button
+        type="button"
+        data-testid="header-master-active"
+        onClick={deactivate}
+        title="Master modu aktif — kapatmak için tıklayın"
+        className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono tracking-wide px-2 py-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-all shrink-0"
+      >
+        <ShieldCheck className="w-3 h-3" />
+        <span>MASTER</span>
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-testid="header-master-activate"
+      onClick={activate}
+      title="Yazma işlemleri (toggle, düzenleme, upload) için master lisans gerekli"
+      className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono tracking-wide px-2 py-1 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 hover:border-amber-500/60 transition-all shrink-0 animate-pulse"
+    >
+      <KeyRound className="w-3 h-3" />
+      <span>Master Aktif Et</span>
+    </button>
   );
 }
 
@@ -77,7 +143,8 @@ export default function Header({ title }) {
         )}
       </div>
       <GlobalSearch />
-      <div className="flex items-center gap-4 shrink-0">
+      <div className="flex items-center gap-3 shrink-0">
+        <MasterModeToggle />
         <div className="hidden xl:flex items-center gap-2 text-xs text-slate-400 mono">
           <Clock className="w-3.5 h-3.5" />
           Son 24 saat
