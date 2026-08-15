@@ -214,6 +214,7 @@ export default function UsersPage() {
 
 function UserDetailModal({ username, onClose }) {
   const q = useQuery({ queryKey: ["user-detail", username], queryFn: () => api.userDetail(username), enabled: !!username });
+  const emails = useQuery({ queryKey: ["user-emails", username], queryFn: () => api.userEmailAddresses(username), enabled: !!username, staleTime: 60_000 });
   const d = q.data;
   return (
     <div className="fixed inset-0 bg-black/75 z-50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose} data-testid="user-detail-backdrop">
@@ -272,6 +273,36 @@ function UserDetailModal({ username, onClose }) {
                     );
                   })}
                 </div>
+              </div>
+            )}
+            {/* v43.33 — cPanel Email Adres Listesi */}
+            {(emails.data?.addresses || []).length > 0 && (
+              <div>
+                <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-1.5 flex items-center gap-1">
+                  <Mail className="w-3 h-3"/> Mail Adresleri ({emails.data.count})
+                  <span className={`ml-2 text-[9px] px-1 rounded ${emails.data.source === "uapi_live" ? "bg-emerald-500/15 text-emerald-300" : "bg-slate-800 text-slate-500"}`}>
+                    {emails.data.source === "uapi_live" ? "CANLI (UAPI)" : "ÖNBELLEK"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto border border-slate-800 rounded p-2 bg-slate-950/40">
+                  {emails.data.addresses.map((e, i) => (
+                    <div key={i} className={`text-xs mono px-2 py-1 rounded flex items-center gap-2 ${e.suspended ? "bg-rose-500/5 text-rose-300 line-through" : "bg-slate-900 text-slate-300"}`}>
+                      <Mail className="w-3 h-3 shrink-0 text-indigo-400"/>
+                      <span className="truncate flex-1" title={e.email}>{e.email}</span>
+                      {e.diskused != null && (
+                        <span className="text-[9px] text-slate-500">{e.diskused}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {emails.isLoading && (
+              <div className="text-xs text-slate-500 italic">Mail adresleri yükleniyor…</div>
+            )}
+            {emails.data && (emails.data.addresses || []).length === 0 && (
+              <div className="text-xs text-slate-500 italic px-2 py-3 text-center bg-slate-950/50 rounded border border-slate-800">
+                Bu hesap altında mail adresi bulunamadı (WHM Email::listpops boş döndü veya bu sunucuda uapi yok)
               </div>
             )}
             {/* Son mailler */}

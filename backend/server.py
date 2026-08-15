@@ -599,6 +599,67 @@ async def _startup() -> None:
             pass
     _asyncio_root.create_task(_ioc_feed_scheduler())
 
+    # v43.33 — Milter Health Auto-Reset Scheduler
+    # Milter down algılanırsa 5dk boyunca 3 kez retry, sonra otomatik restart sinyali.
+    async def _milter_auto_reset_watcher():
+        import asyncio as _a
+        try:
+            await _a.sleep(180)  # startup + IOC scheduler önce çalışsın
+            consecutive_down = 0
+            while True:
+                try:
+                    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                    now = _dt.now(_tz.utc)
+                    last_ingest = None
+                    async for d in db.mail_events.find({}, {"ts": 1}).sort("ts", -1).limit(1):
+                        last_ingest = d.get("ts")
+                        break
+                    minutes_since = 9999
+                    if last_ingest:
+                        try:
+                            lt = _dt.fromisoformat(last_ingest.replace("Z", "+00:00"))
+                            minutes_since = int((now - lt).total_seconds() / 60)
+                        except Exception:
+                            pass
+                    if minutes_since > 60:  # 1 saatten fazla ingest yok = down
+                        consecutive_down += 1
+                        logging.warning(f"[milter-auto-reset] cycle #{consecutive_down}: {minutes_since}dk ingest yok")
+                        if consecutive_down >= 3:
+                            # Reset sinyali yaz
+                            now_iso = _iso()
+                            signaled = 0
+                            async for lic in db.licenses.find({"active": True}, {"license_key": 1}).limit(100):
+                                await db.settings.update_one(
+                                    {"_key": f"plugin_demand_milter_restart:{lic['license_key']}"},
+                                    {"$set": {
+                                        "_key": f"plugin_demand_milter_restart:{lic['license_key']}",
+                                        "license_key": lic["license_key"],
+                                        "requested_at": now_iso,
+                                        "requested_by": "auto_reset_watcher",
+                                        "handled": False,
+                                    }},
+                                    upsert=True,
+                                )
+                                signaled += 1
+                            # Log alert
+                            await db.master_alerts.insert_one({
+                                "id": str(uuid.uuid4()),
+                                "type": "milter_auto_reset",
+                                "severity": "warning",
+                                "message": f"Milter {minutes_since}dk ingest yapmadı — {signaled} bayiye otomatik restart sinyali gönderildi",
+                                "created_at": now_iso, "seen": False,
+                            })
+                            consecutive_down = 0  # reset counter, sinyal gönderildi
+                            logging.warning(f"[milter-auto-reset] AUTO-RESTART signal sent to {signaled} bayi")
+                    else:
+                        consecutive_down = 0  # sağlıklı
+                except Exception as e:
+                    logging.warning(f"[milter-auto-reset] cycle failed: {e}")
+                await _a.sleep(5 * 60)  # her 5dk kontrol
+        except _a.CancelledError:
+            pass
+    _asyncio_root.create_task(_milter_auto_reset_watcher())
+
     # Deduplicate engines by (name, owner_license_key) — multi-tenant safe.
     # Legacy pre-multitenancy dedupe used only `name` which wiped bayi copies,
     # and legacy `name_1` unique index conflicts with per-bayi rows.
@@ -4912,6 +4973,142 @@ async def plugin_signal_ack(payload: dict):
         {"$set": {"handled": True, "handled_at": _iso()}},
     )
     return {"ok": True, "matched": r.matched_count}
+
+
+# v43.33 — Plugin Signal Log (son 20 sinyal ve durum)
+@api.get("/plugin/signal-log")
+async def plugin_signal_log(limit: int = 20):
+    """Master panelde son N plugin sinyalinin listesi + handled durumu."""
+    items = []
+    cursor = db.settings.find(
+        {"_key": {"$regex": r"^plugin_demand_(sync|update|milter_restart|bayes_train):"}},
+        {"_id": 0}
+    ).sort("requested_at", -1).limit(min(max(limit, 1), 100))
+    async for d in cursor:
+        key = d.get("_key", "")
+        # Extract type from _key
+        signal_type = "unknown"
+        if ":" in key:
+            signal_type = key.split(":", 1)[0].replace("plugin_demand_", "")
+        items.append({
+            "key": key,
+            "signal_type": signal_type,
+            "license_key": d.get("license_key"),
+            "hostname": d.get("hostname"),
+            "requested_at": d.get("requested_at"),
+            "requested_by": d.get("requested_by", "system"),
+            "handled": d.get("handled", False),
+            "handled_at": d.get("handled_at"),
+        })
+    return {"items": items, "count": len(items)}
+
+
+# v43.33 — cPanel Email Adres Listesi (Email::listpops passthrough)
+@api.get("/users/{username}/email-addresses")
+async def user_email_addresses(username: str, request: Request):
+    """Kullanıcının cPanel altındaki mail adres listesini döner.
+    - Yerel WHM: `uapi --user=<u> Email list_pops` çalıştırır
+    - Yerel WHM yok: Bayi plugin daemon'a signal yaz — plugin push edecek
+    - Cache: user document'inde `email_addresses` alanı"""
+    import os, subprocess, json
+    doc = await db.users.find_one({"username": username}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Kullanıcı bulunamadı")
+    cached = doc.get("email_addresses") or []
+    uapi = "/usr/local/cpanel/bin/uapi"
+    live_list = None
+    if os.path.exists(uapi) and os.access(uapi, os.X_OK):
+        try:
+            proc = subprocess.run(
+                [uapi, f"--user={username}", "--output=json", "Email", "list_pops"],
+                capture_output=True, text=True, timeout=15,
+            )
+            data = json.loads(proc.stdout or "{}")
+            pops = ((data.get("result") or {}).get("data")) or []
+            live_list = [{
+                "email": p.get("email"),
+                "domain": p.get("domain"),
+                "diskused": p.get("diskused"),
+                "diskquota": p.get("diskquota"),
+                "suspended": bool(p.get("suspended_login") or p.get("suspended_incoming")),
+            } for p in pops if p.get("email")]
+            # Cache güncelle
+            await db.users.update_one(
+                {"username": username},
+                {"$set": {"email_addresses": live_list, "email_addresses_updated_at": _iso()}},
+            )
+        except Exception as e:
+            logging.warning(f"[email-addresses] uapi failed: {e}")
+    return {
+        "username": username,
+        "source": "uapi_live" if live_list is not None else "cached_or_empty",
+        "addresses": live_list if live_list is not None else cached,
+        "count": len(live_list) if live_list is not None else len(cached),
+    }
+
+
+# v43.33 — Bayes Manuel Eğitim (ham/spam örnek yükle)
+class BayesTrainIn(BaseModel):
+    kind: str  # "ham" veya "spam"
+    samples: list[str]  # her item: mail body veya "subject: ... body: ..."
+
+
+@api.post("/mailscanner/bayes/train-manual")
+async def bayes_train_manual(payload: BayesTrainIn, request: Request):
+    """Master'a manuel ham/spam örneği yükleyip Bayes counter'ı güncelle.
+    Bayi plugin daemon aynı örneği kendi `sa-learn --ham` / `--spam` ile eğitir."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli")
+    if payload.kind not in ("ham", "spam"):
+        raise HTTPException(400, "kind sadece 'ham' veya 'spam' olabilir")
+    samples = [s for s in (payload.samples or []) if s and s.strip()][:100]
+    if not samples:
+        raise HTTPException(400, "En az 1 örnek gerekli")
+    # Sample'ları DB'ye kaydet (bayi daemon çekecek)
+    now = _iso()
+    for s in samples:
+        await db.bayes_training_queue.insert_one({
+            "id": str(uuid.uuid4()),
+            "kind": payload.kind,
+            "sample": s[:8192],
+            "requested_by": "master_ui",
+            "created_at": now,
+            "consumed": False,
+        })
+    # Bayes counter'ı güncelle (istatistik)
+    field = "ham_learned" if payload.kind == "ham" else "spam_learned"
+    await db.settings.update_one(
+        {"_key": "bayes_status"},
+        {"$inc": {field: len(samples)}, "$set": {"last_train_at": now}},
+        upsert=True,
+    )
+    # Bayi plugin'e sinyal
+    async for lic in db.licenses.find({"active": True}, {"license_key": 1}).limit(50):
+        await db.settings.update_one(
+            {"_key": f"plugin_demand_bayes_train:{lic['license_key']}"},
+            {"$set": {
+                "_key": f"plugin_demand_bayes_train:{lic['license_key']}",
+                "license_key": lic["license_key"],
+                "requested_at": now, "handled": False,
+                "kind": payload.kind, "sample_count": len(samples),
+            }},
+            upsert=True,
+        )
+    return {"ok": True, "kind": payload.kind, "added": len(samples), "queued_for_learning": True}
+
+
+@api.get("/mailscanner/bayes/train-queue")
+async def bayes_train_queue(license_key: str, limit: int = 50):
+    """Bayi plugin daemon burayı 15dk cycle'ında sorgulayıp consumed=false örnekleri
+    çekip yerel `sa-learn` ile eğitir."""
+    items = []
+    cursor = db.bayes_training_queue.find(
+        {"consumed": False}, {"_id": 0}
+    ).sort("created_at", 1).limit(min(limit, 200))
+    async for d in cursor:
+        items.append(d)
+    return {"items": items, "count": len(items)}
 
 
 @api.post("/users/refresh-from-cpanel")

@@ -460,30 +460,87 @@ function BayesTab() {
     mutationFn: () => api.msBayesTrain(LICKEY(), label, [text]),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["bayes-status"] }); toast.success("Bayes eğitildi"); setText(""); },
   });
+  // v43.33 — Toplu eğitim (satır başına 1 örnek)
+  const [bulkText, setBulkText] = useState("");
+  const [bulkKind, setBulkKind] = useState("spam");
+  const bulkTrain = useMutation({
+    mutationFn: () => api.bayesTrainManual(bulkKind, bulkText.split(/\n---+\n|\n\n\n/).map(s => s.trim()).filter(Boolean)),
+    onSuccess: (d) => {
+      toast.success(`${d.added} ${d.kind} örneği eğitim kuyruğuna eklendi — bayilere de push edilecek`);
+      qc.invalidateQueries({ queryKey: ["bayes-status"] });
+      setBulkText("");
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const bulkCount = bulkText.split(/\n---+\n|\n\n\n/).map(s => s.trim()).filter(Boolean).length;
   return (
-    <Card>
-      <CardHeader title="Bayes Trainer (Kendi motor)" subtitle="Token counter — spam/ham örnek besleyin"/>
-      <CardBody className="space-y-4">
-        <div className="grid grid-cols-3 gap-3">
-          <Stat label="Token Sayısı" value={status.data?.total_tokens ?? 0}/>
-          <Stat label="Spam Örnekler" value={status.data?.spam_samples ?? 0} tone="text-rose-300"/>
-          <Stat label="Ham Örnekler" value={status.data?.ham_samples ?? 0} tone="text-emerald-300"/>
-        </div>
-        <textarea data-testid="bayes-sample" value={text} onChange={e => setText(e.target.value)} rows={4}
-                  placeholder="Örnek e-posta metni yapıştırın..."
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm"/>
-        <div className="flex items-center gap-2">
-          <select data-testid="bayes-label" value={label} onChange={e => setLabel(e.target.value)}
-                  className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm">
-            <option value="spam">spam</option><option value="ham">ham</option>
-          </select>
-          <button data-testid="bayes-train" disabled={!text || train.isPending} onClick={() => train.mutate()}
-                  className="text-xs px-3 py-1.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-40">
-            <Brain className="w-3 h-3 inline mr-1"/>Eğit
-          </button>
-        </div>
-      </CardBody>
-    </Card>
+    <div className="space-y-4">
+      <Card>
+        <CardHeader title="Bayes Trainer (Kendi motor)" subtitle="Token counter — spam/ham örnek besleyin"/>
+        <CardBody className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <Stat label="Token Sayısı" value={status.data?.total_tokens ?? 0}/>
+            <Stat label="Spam Örnekler" value={status.data?.spam_samples ?? 0} tone="text-rose-300"/>
+            <Stat label="Ham Örnekler" value={status.data?.ham_samples ?? 0} tone="text-emerald-300"/>
+          </div>
+          <textarea data-testid="bayes-sample" value={text} onChange={e => setText(e.target.value)} rows={4}
+                    placeholder="Örnek e-posta metni yapıştırın..."
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm"/>
+          <div className="flex items-center gap-2">
+            <select data-testid="bayes-label" value={label} onChange={e => setLabel(e.target.value)}
+                    className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm">
+              <option value="spam">spam</option><option value="ham">ham</option>
+            </select>
+            <button data-testid="bayes-train" disabled={!text || train.isPending} onClick={() => train.mutate()}
+                    className="text-xs px-3 py-1.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-40">
+              <Brain className="w-3 h-3 inline mr-1"/>Tek Örnek Eğit
+            </button>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* v43.33 — Toplu Bayes Eğitim (bayilere de push eder) */}
+      <Card>
+        <CardHeader
+          title="🧠 Toplu Bayes Eğitim (Master → Bayilere Push)"
+          subtitle="Her mail örneğini boş satırla ayırın (--- veya ⏎⏎⏎). Master DB'ye kaydedilir + bayi plugin daemon'lara sa-learn için push edilir."
+        />
+        <CardBody className="space-y-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-400">Etiket:</label>
+            <select value={bulkKind} onChange={e => setBulkKind(e.target.value)}
+                    data-testid="bayes-bulk-kind"
+                    className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs">
+              <option value="spam">spam (kötü örnekler)</option>
+              <option value="ham">ham (temiz örnekler)</option>
+            </select>
+            <span className="text-[11px] text-slate-500 ml-auto mono">{bulkCount} örnek hazır</span>
+          </div>
+          <textarea
+            value={bulkText}
+            onChange={e => setBulkText(e.target.value)}
+            rows={10}
+            data-testid="bayes-bulk-textarea"
+            placeholder={`Subject: Kazandın!\nSelam Ahmet, bugün 5000TL kazandın, tıkla al...\n\n---\n\nSubject: Fatura no 123\nDeğerli müşterimiz, faturanız hazır...`}
+            className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded text-xs mono text-slate-200 focus:border-indigo-500/40 focus:outline-none"
+          />
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] text-slate-500">
+              📌 Ayrıca "spam değildir"/"spam" işaretlediğiniz her karantina otomatik olarak Bayes'e eklenir.
+            </div>
+            <button
+              data-testid="bayes-bulk-train"
+              disabled={bulkCount === 0 || bulkTrain.isPending}
+              onClick={() => bulkTrain.mutate()}
+              className="text-xs px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 inline-flex items-center gap-1.5"
+            >
+              <Brain className="w-3 h-3"/>
+              {bulkTrain.isPending ? "Yükleniyor…" : `${bulkCount} Örneği Eğit`}
+            </button>
+          </div>
+        </CardBody>
+      </Card>
+    </div>
   );
 }
 

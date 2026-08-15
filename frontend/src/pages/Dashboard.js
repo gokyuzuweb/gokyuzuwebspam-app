@@ -118,6 +118,9 @@ export default function Dashboard() {
             <div className="col-span-12 lg:col-span-8"><TopDomainsWidget /></div>
             <div className="col-span-12 lg:col-span-4"><MilterHealthWidget /></div>
           </div>
+          <div className="grid grid-cols-12 gap-4">
+            <div className="col-span-12"><PluginSignalLogWidget /></div>
+          </div>
         </div>
       )}
 
@@ -461,6 +464,87 @@ function MilterHealthWidget() {
           >
             {resetting ? "Sinyal gönderiliyor…" : "🔄 Milter'ı Yeniden Başlat"}
           </button>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+
+// v43.33 — Plugin Signal Log Widget
+function PluginSignalLogWidget() {
+  const q = useQuery({
+    queryKey: ["plugin-signal-log"],
+    queryFn: () => api.pluginSignalLog(20),
+    refetchInterval: 20000,
+  });
+  const items = q.data?.items || [];
+  const typeIcons = {
+    sync: "🔄", update: "⬇", milter_restart: "🛡", bayes_train: "🧠", unknown: "❓"
+  };
+  const typeLabels = {
+    sync: "cPanel Sync", update: "gws-update", milter_restart: "Milter Restart", bayes_train: "Bayes Train"
+  };
+  return (
+    <Card data-testid="signal-log-widget">
+      <CardHeader
+        title="📡 Plugin Sinyal Kayıtları"
+        subtitle="Son 20 plugin sinyali — master'dan bayilere gönderilen komutlar ve durumları"
+        right={<Badge tone="info">{items.length}</Badge>}
+      />
+      <CardBody>
+        {q.isLoading && <div className="py-6 text-center text-slate-500 text-sm">Yükleniyor…</div>}
+        {items.length === 0 && !q.isLoading && (
+          <div className="py-6 text-center text-slate-500 text-sm">Henüz sinyal gönderilmedi</div>
+        )}
+        {items.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
+                <tr>
+                  <th className="text-left px-3 py-2">Tür</th>
+                  <th className="text-left px-3 py-2">Bayi</th>
+                  <th className="text-left px-3 py-2">İstek Zamanı</th>
+                  <th className="text-left px-3 py-2">Kaynak</th>
+                  <th className="text-right px-3 py-2">Durum</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((s, i) => (
+                  <tr key={i} data-testid={`signal-row-${i}`} className="border-b border-slate-800 hover:bg-slate-800/30">
+                    <td className="px-3 py-2">
+                      <span className="mr-1">{typeIcons[s.signal_type] || typeIcons.unknown}</span>
+                      <span className="text-slate-300">{typeLabels[s.signal_type] || s.signal_type}</span>
+                    </td>
+                    <td className="px-3 py-2 mono text-slate-400 text-[11px]">
+                      {s.hostname || s.license_key?.slice(0, 12) + "…"}
+                    </td>
+                    <td className="px-3 py-2 mono text-slate-500 text-[11px]">
+                      {s.requested_at ? new Date(s.requested_at).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={`text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded ${
+                        s.requested_by === "master_ui" ? "bg-indigo-500/15 text-indigo-300"
+                        : s.requested_by === "auto_reset_watcher" ? "bg-rose-500/15 text-rose-300"
+                        : "bg-slate-800 text-slate-500"
+                      }`}>{s.requested_by || "system"}</span>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {s.handled ? (
+                        <span className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" title={s.handled_at}>
+                          ✓ İşlendi
+                        </span>
+                      ) : (
+                        <span className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 animate-pulse">
+                          ⏳ Bekliyor
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </CardBody>
     </Card>

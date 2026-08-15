@@ -611,6 +611,10 @@ export const api = {
   pluginDemandUpdate: () => client.post("/plugin/demand-update").then(r => r.data),
   pluginMilterHealth: () => client.get("/plugin/milter-health").then(r => r.data),
   pluginMilterReset: () => client.post("/plugin/milter-reset").then(r => r.data),
+  // v43.33 — Signal log + Email addresses + Bayes manuel train
+  pluginSignalLog: (limit = 20) => client.get("/plugin/signal-log", { params: { limit } }).then(r => r.data),
+  userEmailAddresses: (username) => client.get(`/users/${username}/email-addresses`).then(r => r.data),
+  bayesTrainManual: (kind, samples) => client.post("/mailscanner/bayes/train-manual", { kind, samples }).then(r => r.data),
   tiDmarcSummary: (days = 30) => client.get("/threat-intel/dmarc/summary", { params: { days } }).then(r => r.data),
   tiDmarcIngest: (payload) => client.post("/threat-intel/dmarc/ingest", payload).then(r => r.data),
   tiFeeds: () => client.get("/threat-intel/feeds").then(r => r.data),
