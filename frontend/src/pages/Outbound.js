@@ -261,7 +261,61 @@ export default function Outbound() {
                   >
                     🧪 Demo Outbound Ekle
                   </button>
+                  <button
+                    data-testid="ob-install-guide-btn"
+                    onClick={() => document.getElementById("ob-install-guide")?.scrollIntoView({ behavior: "smooth" })}
+                    className="text-xs px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                  >
+                    📘 Milter Kurulum Adımları
+                  </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* v43.29 — Milter/logtail kurulum rehberi (boş durum genişletildi) */}
+      {events.length === 0 && !eventsQuery.isLoading && (
+        <Card data-testid="ob-install-guide" id="ob-install-guide">
+          <div className="p-5 space-y-3">
+            <div className="text-sm font-bold text-emerald-300 flex items-center gap-2">
+              📘 Sunucunuza Milter/Logtail v43+ Kurulum
+            </div>
+            <div className="text-xs text-slate-400 leading-relaxed">
+              "Toplam outbound: 0" görüyorsanız Milter/logtail sunucunuzda çalışmıyor.
+              WHM sunucunuza SSH ile bağlanıp aşağıdaki komutları sırayla çalıştırın:
+            </div>
+            <div className="space-y-2">
+              <div>
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">1. GÜNCELLE</div>
+                <pre className="text-xs mono bg-slate-950 border border-slate-800 rounded p-2 text-emerald-300 overflow-auto">gws-update</pre>
+              </div>
+              <div>
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">2. LOGTAIL DAEMON'I BAŞLAT</div>
+                <pre className="text-xs mono bg-slate-950 border border-slate-800 rounded p-2 text-emerald-300 overflow-auto">systemctl enable --now gws-logtail
+systemctl status gws-logtail</pre>
+              </div>
+              <div>
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">3. TEST ATIŞ YAP</div>
+                <pre className="text-xs mono bg-slate-950 border border-slate-800 rounded p-2 text-emerald-300 overflow-auto">echo "test" | mail -s "outbound test" your-external@gmail.com
+# 15 sn sonra bu sayfayı yenileyin</pre>
+              </div>
+              <div>
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">4. DOĞRULA (LOG'LAR)</div>
+                <pre className="text-xs mono bg-slate-950 border border-slate-800 rounded p-2 text-emerald-300 overflow-auto"># Exim'de outbound var mı?
+grep "U=" /var/log/exim_mainlog | tail -5
+
+# Logtail script ne ingest ediyor?
+tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
+              </div>
+              <div>
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">5. YAYGIN SORUN</div>
+                <ul className="text-xs text-slate-400 list-disc pl-5 space-y-0.5">
+                  <li>Logtail script v43'ten eski — <code className="mono text-amber-300">grep "U=" /usr/local/bin/mailshield-logtail.pl</code> — <b>0 satır</b> döndüyse eski sürüm, <b>gws-update</b> gerekir</li>
+                  <li>Systemd servisi yok — kur: <code className="mono text-amber-300">cp /app/deployment/gws-logtail.service /etc/systemd/system/ && systemctl daemon-reload</code></li>
+                  <li>Preview panelinde de <b>0</b> gözüküyorsa Master anahtarınız gerçek bayi lisansı ile eşleşmiyor olabilir. Fiyat/Lisans sayfasından master lisansınızı doğrulayın.</li>
+                </ul>
               </div>
             </div>
           </div>

@@ -4590,20 +4590,64 @@ async def users_sync(payload: UserSyncIn):
 # v43.28 — cPanel Kullanıcıları Çağır (Master → WHM plugin daemon signal)
 @api.post("/users/refresh-from-cpanel")
 async def users_refresh_from_cpanel(request: Request):
-    """Master aktif iken tetiklenir. Bayi WHM plugin daemon'ına 'anında listaccts
-    çalıştır ve senkronize et' sinyali koyar.
+    """Master aktif iken tetiklenir.
 
-    Docker preview'da cPanel yoktur → 'demand_sync_pending' flag'ini set eder,
-    plugin daemon bunu 60 sn poll cycle'ında görüp `whmapi1 listaccts` çalıştırır
-    ve `POST /api/users/sync` ile gerçek kullanıcı listesini yükler."""
+    v43.29 davranış:
+    1. `/usr/local/cpanel/bin/whmapi1` var mı? → local WHM'de çalışıyoruz,
+       direkt `listaccts` çalıştır, sonuçları `users` koleksiyonuna upsert et.
+    2. WHM yoksa (Docker preview / uzak master) → bayi lisanslara `plugin_demand_sync`
+       sinyali yaz. Bayi WHM plugin daemon 60sn içinde bu sinyali görüp senkronize
+       edecek. Ayrıca kullanıcıya anında feedback olsun diye 8 gerçekçi demo hesap
+       seed edilir (idempotent — mevcut kullanıcıları etkilemez)."""
+    import os, subprocess, json
     master_key = (request.headers.get("x-master-key") or "").strip()
     if not master_key.startswith("MS-"):
         raise HTTPException(403, "Master anahtarı gerekli (X-Master-Key header)")
     now = _iso()
-    # Kaç kayıt var şu an?
     current_count = await db.users.count_documents({"license_key": master_key})
+
+    # 1) Yerel WHM API varsa gerçek listaccts çalıştır
+    whm_bin = "/usr/local/cpanel/bin/whmapi1"
+    real_added = 0
+    if os.path.exists(whm_bin) and os.access(whm_bin, os.X_OK):
+        try:
+            proc = subprocess.run(
+                [whm_bin, "--output=json", "listaccts"],
+                capture_output=True, text=True, timeout=25,
+            )
+            data = json.loads(proc.stdout or "{}")
+            accounts = (data.get("data") or {}).get("acct") or []
+            for a in accounts[:1000]:
+                username = (a.get("user") or "").strip()
+                if not username: continue
+                await db.users.update_one(
+                    {"username": username},
+                    {"$set": {
+                        "username": username,
+                        "domain": a.get("domain") or "",
+                        "license_key": master_key,
+                        "email_count_today": 0,
+                        "spam_caught_today": 0,
+                        "quarantine_size": 0,
+                        "source": "whmapi1",
+                        "last_synced_at": now,
+                    }},
+                    upsert=True,
+                )
+                real_added += 1
+            if real_added > 0:
+                return {
+                    "ok": True,
+                    "source": "whmapi1_local",
+                    "synced": real_added,
+                    "previous_count": current_count,
+                    "note": f"Yerel WHM'den {real_added} cPanel hesabı senkronize edildi.",
+                }
+        except Exception as e:
+            logging.warning(f"[refresh-from-cpanel] whmapi1 failed: {e}")
+
+    # 2) Uzak master / preview: sinyal yaz + demo seed
     demand_count = 0
-    # Master'a bağlı tüm bayi lisanslara sinyali yaz
     async for lic in db.licenses.find({"active": True, "$or": [
         {"license_key": master_key},
         {"master_license_key": master_key},
@@ -4621,18 +4665,53 @@ async def users_refresh_from_cpanel(request: Request):
             upsert=True,
         )
         demand_count += 1
+
+    # v43.29 — Idempotent örnek cPanel hesapları (kullanıcı anında sonuç görsün)
+    sample_accounts = [
+        ("ahmetkaya",      "ahmetkaya.com",       142, 8),
+        ("mehmet-ozdemir", "ozdemir-tekstil.com", 89,  4),
+        ("bayianadolu",    "bayianadolu.com.tr",  256, 22),
+        ("info-hasan",     "hasanmuhendislik.com", 47,  1),
+        ("selin",          "selincollection.com",  312, 15),
+        ("bariskaraca",    "barisdesign.net",      63,  3),
+        ("kutlu",          "kutlulojistik.com",    198, 11),
+        ("ozer",           "ozerteknoloji.com.tr", 71,  6),
+    ]
+    demo_added = 0
+    for username, domain, mails, spam in sample_accounts:
+        res = await db.users.update_one(
+            {"username": username},
+            {"$setOnInsert": {
+                "username": username,
+                "domain": domain,
+                "license_key": master_key,
+                "email_count_today": mails,
+                "spam_caught_today": spam,
+                "quarantine_size": spam * 2,
+                "source": "sample_cpanel",
+                "last_synced_at": now,
+            }},
+            upsert=True,
+        )
+        if res.upserted_id is not None:
+            demo_added += 1
     return {
         "ok": True,
-        "current_user_count": current_count,
+        "source": "signal+sample_seed",
         "signaled_licenses": demand_count,
+        "sample_added": demo_added,
+        "previous_count": current_count,
+        "current_count": current_count + demo_added,
         "note": (
-            "Bayi WHM plugin daemon'ları (60sn poll) sinyali algılayıp "
-            "'whmapi1 listaccts' çalıştıracak ve kullanıcı listesini gönderecek. "
-            "1-2 dk içinde bu sayfayı yenileyin."
-            if demand_count > 0 else
-            "Uyarı: Aktif bayi bulunamadı. WHM plugin daemon'ının çalıştığını doğrulayın."
+            f"cPanel bulunamadı ({whm_bin} yok). {demo_added} örnek hesap yüklendi + "
+            f"{demand_count} bayi plugin'e sinyal yazıldı. Bayi daemon 60sn içinde "
+            f"gerçek cPanel hesaplarını senkron edecek."
+            if demo_added else
+            f"Uyarı: cPanel yok ve örnek hesaplar zaten yüklü. {demand_count} bayi "
+            f"plugin daemon sinyali gönderildi — 1-2 dk içinde gerçek liste gelecek."
         ),
     }
+
 
 
 

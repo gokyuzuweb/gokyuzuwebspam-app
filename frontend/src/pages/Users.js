@@ -23,15 +23,19 @@ export default function UsersPage() {
     onError: (e) => toast.error(e?.response?.data?.detail || "Hata"),
   });
 
-  // v43.28 — cPanel kullanıcılarını çağır
+  // v43.29 — cPanel kullanıcılarını çağır (yerel WHM varsa gerçek listaccts,
+  // yoksa örnek 8 hesap seed edilir + bayi plugin daemon'a sinyal yazılır)
   const refreshFromCpanel = useMutation({
     mutationFn: () => api.usersRefreshFromCpanel(),
     onSuccess: (d) => {
-      toast.success(d.note, { duration: 6000 });
-      // 3sn sonra tekrar sorgula (plugin daemon sync yaparsa görsün)
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["users"] }), 3000);
+      const msg = d.source === "whmapi1_local"
+        ? `✓ ${d.synced} gerçek cPanel hesabı senkronize edildi`
+        : `+${d.sample_added} örnek hesap yüklendi (${d.current_count} toplam) · ${d.signaled_licenses} bayiye sinyal`;
+      toast.success(msg, { duration: 6000, description: d.note });
+      // Cache'i hemen invalidate et — tabloyu tazele
+      qc.invalidateQueries({ queryKey: ["users"] });
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message || "İstek başarısız"),
   });
 
   const rows = users.data || [];
