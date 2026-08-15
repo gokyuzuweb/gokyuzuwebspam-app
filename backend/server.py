@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.50"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v43.51"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
@@ -6716,6 +6716,54 @@ if [ "$EVENT_COUNT" -eq 0 ]; then
     echo "$NEW_POS" > "$CHECKPOINT_FILE"; exit 0
 fi
 
+# v43.51 — Verdict enrichment: Exim spool -H dosyasından X-Spam-Score oku ve JSON'a inject et
+enrich_verdict() {
+    local events_file="$1"
+    [ ! -s "$events_file" ] && return 0
+    python3 - "$events_file" <<'PYEOF' 2>/dev/null || cat "$events_file"
+import sys, os, json, glob, re
+p = sys.argv[1]
+try:
+    with open(p) as f:
+        events = json.load(f)
+except Exception:
+    sys.exit(0)
+for e in events:
+    mid = e.get("exim_mid", "")
+    if not mid: continue
+    # Exim spool candidate paths
+    candidates = [f"/var/spool/exim/input/{mid[5]}/{mid}-H", f"/var/spool/exim/input/{mid}-H"]
+    spool_file = next((c for c in candidates if os.path.exists(c)), None)
+    if not spool_file: continue
+    try:
+        with open(spool_file, "rb") as sf:
+            data = sf.read(20000).decode("utf-8", errors="ignore")
+    except Exception: continue
+    m = re.search(r"X-Spam-Score:\s*(-?\d+(?:\.\d+)?)", data, re.I) \
+        or re.search(r"X-Spam-Status:.*?score=(-?\d+(?:\.\d+)?)", data, re.I | re.S)
+    if not m: continue
+    score = float(m.group(1))
+    e["total_score"] = round(score, 2)
+    e["scores"] = {"spamassassin": round(score, 2)}
+    if score >= 15: e["verdict"] = "blocked"
+    elif score >= 10: e["verdict"] = "high_spam"
+    elif score >= 5: e["verdict"] = "spam"
+    elif score >= 3: e["verdict"] = "suspicious"
+    else: e["verdict"] = "clean"
+    rm = re.search(r"X-Spam-Report:\s*(.+?)(?:\n[A-Z]|\n\n)", data, re.I | re.S)
+    if rm: e["sa_report"] = rm.group(1).strip()[:400]
+print(json.dumps(events, ensure_ascii=False))
+PYEOF
+}
+
+# Enrichment: sadece python3 varsa ve spool erişilebilirse çalışır (silent fallback)
+if [ -x "$(command -v python3)" ]; then
+    ENRICHED=$(enrich_verdict "$TMP.events")
+    if [ -n "$ENRICHED" ] && echo "$ENRICHED" | head -c 1 | grep -q '\['; then
+        echo "$ENRICHED" > "$TMP.events"
+    fi
+fi
+
 HOSTNAME=$(hostname)
 SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
 EVENTS_JSON=$(cat "$TMP.events")
@@ -6734,6 +6782,44 @@ if echo "$RESP" | grep -q '"ok":true'; then
     echo "$NEW_POS" > "$CHECKPOINT_FILE"
 else
     log_line "FAIL: $RESP"; exit 1
+fi
+
+# ============================================================================
+# v43.51 — cPanel Users Auto-Import (whmapi1 varsa)
+# ============================================================================
+if [ -x /usr/local/cpanel/bin/whmapi1 ]; then
+    USERS_STAMP="$STATE_DIR/users_last_sync"
+    NOW_EPOCH=$(date +%s)
+    LAST_USERS_SYNC=0
+    [ -f "$USERS_STAMP" ] && LAST_USERS_SYNC=$(cat "$USERS_STAMP" 2>/dev/null || echo "0")
+    # 1 saatte bir push
+    if [ $((NOW_EPOCH - LAST_USERS_SYNC)) -gt 3600 ]; then
+        ACCT_JSON=$(/usr/local/cpanel/bin/whmapi1 --output=json listaccts 2>/dev/null || echo '{}')
+        USERS_ARR=$(echo "$ACCT_JSON" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    accts = (d.get("data") or {}).get("acct") or []
+    out = [{"username": a.get("user"), "domain": a.get("domain"),
+            "email_count_today": 0, "spam_caught_today": 0, "quarantine_size": 0}
+           for a in accts if a.get("user")]
+    print(json.dumps({"license_key": "'"$LICENSE_KEY"'", "accounts": out}))
+except Exception as e:
+    print("{}")
+' 2>/dev/null)
+        if [ -n "$USERS_ARR" ] && [ "$USERS_ARR" != "{}" ]; then
+            USERS_RESP=$(curl -sSf --max-time 20 -H "Content-Type: application/json" \
+                -X POST "$PANEL_URL/api/users/sync" \
+                --data-binary "$USERS_ARR" 2>&1 || echo "ERROR")
+            if echo "$USERS_RESP" | grep -q '"synced"'; then
+                SYNCED=$(echo "$USERS_RESP" | grep -oE '"synced":[0-9]+' | grep -oE '[0-9]+' | head -1)
+                log_line "USERS-SYNC ok · $SYNCED hesap"
+                echo "$NOW_EPOCH" > "$USERS_STAMP"
+            else
+                log_line "USERS-SYNC fail: $USERS_RESP"
+            fi
+        fi
+    fi
 fi
 """
 
@@ -6802,6 +6888,29 @@ Unit=gws-exim-push.service
 [Install]
 WantedBy=timers.target
 TMR
+    # v43.51 — inotify real-time servis (opsiyonel, inotifywait varsa)
+    if command -v inotifywait >/dev/null 2>&1; then
+        cat > /etc/systemd/system/gws-exim-inotify.service <<'INO'
+[Unit]
+Description=GWS Exim Log Real-Time Push (inotify)
+After=network-online.target
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStart=/bin/bash -c 'while inotifywait -qq -e modify /var/log/exim_mainlog; do sleep 2; /usr/local/bin/gws-exim-push; done'
+[Install]
+WantedBy=multi-user.target
+INO
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable --now gws-exim-inotify.service 2>/dev/null && \
+            echo "  ✓ inotify real-time servis aktif (sub-second push)"
+        # Timer'a gerek yok inotify varsa — devre dışı bırak
+        systemctl disable --now gws-exim-push.timer 2>/dev/null || true
+    else
+        echo "  ℹ inotify-tools bulunamadı; fallback → 15sn timer"
+        echo "     Sub-second push için: yum install -y inotify-tools (veya apt-get install inotify-tools)"
+    fi
     systemctl daemon-reload 2>/dev/null || true
     systemctl enable --now gws-exim-push.timer 2>/dev/null && \
         echo "  ✓ systemd timer aktif — her 15sn push"
