@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.43"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v43.44"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
@@ -6547,17 +6547,117 @@ echo "  Log   : journalctl -u gokyuzuwebspam-logtail -f"
 @api.get("/tools/gws-exim-push.sh")
 async def download_exim_push_script():
     """Bayi WHM host'unda çalışacak bash Exim log tailer script'ini indirir.
-    Kullanım:
-      curl -o /usr/local/bin/gws-exim-push https://panel.gokyuzuhosting.com/tools/gws-exim-push.sh
-      chmod +x /usr/local/bin/gws-exim-push
+
+    v43.44 — Script Python koduna gömüldü (dosya bağımlılığı yok). Böylece
+    Docker container'ında /app/deployment/ mount edilmemiş olsa dahi çalışır.
     """
-    import os as _os
-    path = "/app/deployment/gws-exim-push.sh"
-    if not _os.path.exists(path):
-        raise HTTPException(404, "Script bulunamadı")
-    from fastapi.responses import FileResponse as _FR
-    return _FR(path, media_type="text/x-shellscript",
+    from fastapi.responses import PlainTextResponse as _PT
+    return _PT(_EXIM_PUSH_SH_SOURCE, media_type="text/x-shellscript",
                headers={"Content-Disposition": "attachment; filename=gws-exim-push"})
+
+
+# Embedded bash source — /app/deployment/gws-exim-push.sh ile senkron tut
+_EXIM_PUSH_SH_SOURCE = r"""#!/bin/bash
+# gws-exim-push — GökyüzüWebSpam Exim log tailer (host cron için)
+# Perl gerektirmez — bash + awk + curl kullanır.
+set -euo pipefail
+
+CONF="/etc/gws-exim-push.conf"
+if [ -f "$CONF" ]; then . "$CONF"; fi
+PANEL_URL="${PANEL_URL:-https://panel.gokyuzuhosting.com}"
+LICENSE_KEY="${LICENSE_KEY:-}"
+EXIM_LOG="${EXIM_LOG:-/var/log/exim_mainlog}"
+STATE_DIR="${STATE_DIR:-/var/lib/gws-exim-push}"
+BATCH_MAX="${BATCH_MAX:-500}"
+
+mkdir -p "$STATE_DIR" /var/log/gws-exim-push
+LOG="/var/log/gws-exim-push/push.log"
+log_line() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$LOG"; }
+
+if [ -z "$LICENSE_KEY" ]; then
+    log_line "FATAL: LICENSE_KEY yok. $CONF dosyasına LICENSE_KEY=MS-... ekleyin."; exit 1
+fi
+if [ ! -r "$EXIM_LOG" ]; then
+    log_line "FATAL: $EXIM_LOG okunamıyor. Root yetkisi + dosya var mı kontrol edin."; exit 1
+fi
+
+CHECKPOINT_FILE="$STATE_DIR/checkpoint"
+LAST_POS=0
+if [ -f "$CHECKPOINT_FILE" ]; then LAST_POS=$(cat "$CHECKPOINT_FILE" 2>/dev/null || echo "0"); fi
+REMOTE_POS=$(curl -sSf --max-time 8 \
+    "$PANEL_URL/api/outbound/exim-log-checkpoint?license_key=$LICENSE_KEY" 2>/dev/null \
+    | grep -oE '"last_position":[0-9]+' | grep -oE '[0-9]+$' || echo "0")
+if [ "$REMOTE_POS" -gt "$LAST_POS" ]; then LAST_POS="$REMOTE_POS"; fi
+
+FILE_SIZE=$(stat -c%s "$EXIM_LOG" 2>/dev/null || echo "0")
+if [ "$FILE_SIZE" -lt "$LAST_POS" ]; then log_line "Log rotate → reset"; LAST_POS=0; fi
+if [ "$FILE_SIZE" -eq "$LAST_POS" ]; then log_line "No new data (pos=$LAST_POS)"; exit 0; fi
+
+DELTA=$(dd if="$EXIM_LOG" bs=1 skip="$LAST_POS" 2>/dev/null || true)
+NEW_POS=$FILE_SIZE
+
+TMP=$(mktemp); trap "rm -f $TMP $TMP.events $TMP.count" EXIT
+
+echo "$DELTA" | awk -v batch_max="$BATCH_MAX" '
+BEGIN { count=0; first=1; print "[" }
+function j(s) { gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); gsub(/\r/,"",s); gsub(/\n/," ",s); gsub(/\t/," ",s); return s }
+/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/ {
+    if (count >= batch_max) next
+    date=$1; time=$2; mid=$3; dir=$4; ts=date"T"time"+00:00"
+    if (dir=="<=") {
+        sender=$5; user=""; size=0; subj=""
+        for (i=6; i<=NF; i++) {
+            if ($i ~ /^U=/) user=substr($i,3)
+            if ($i ~ /^S=/) size=substr($i,3)+0
+            if ($i ~ /^T=/) {
+                subj_str=""
+                for (k=i; k<=NF; k++) subj_str=subj_str " " $k
+                if (subj_str ~ /T="/) { match(subj_str,/T="[^"]*"/); if (RLENGTH>0) subj=substr(subj_str,RSTART+3,RLENGTH-4) }
+                break
+            }
+        }
+        in_flight[mid] = ts"|"sender"|"user"|"size"|"subj
+    } else if (dir=="=>" || dir=="->" || dir=="**" || dir=="==") {
+        rcpt=$5
+        if (!(mid in in_flight)) next
+        n=split(in_flight[mid],parts,"|")
+        s_ts=parts[1]; s_from=parts[2]; s_user=parts[3]; s_size=parts[4]; s_subj=parts[5]
+        if (s_user=="") next
+        action=(dir=="**"?"bounce":(dir=="=="?"defer":"accept"))
+        if (!first) print ","
+        first=0
+        printf "{\"exim_mid\":\"%s\",\"ts\":\"%s\",\"from_addr\":\"%s\",\"from_user\":\"%s\",\"to_addr\":\"%s\",\"subject\":\"%s\",\"size_bytes\":%s,\"verdict\":\"clean\",\"total_score\":0,\"action\":\"%s\"}", j(mid),j(s_ts),j(s_from),j(s_user),j(rcpt),j(s_subj),s_size,action
+        count++
+    }
+}
+END { print ""; print "]"; print "COUNT:"count > "/dev/stderr" }
+' 2> "$TMP.count" > "$TMP.events"
+
+EVENT_COUNT=$(grep -oE 'COUNT:[0-9]+' "$TMP.count" 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "0")
+if [ "$EVENT_COUNT" -eq 0 ]; then
+    log_line "Parsed 0 outbound events from $((NEW_POS-LAST_POS)) bytes (U= yok)"
+    echo "$NEW_POS" > "$CHECKPOINT_FILE"; exit 0
+fi
+
+HOSTNAME=$(hostname)
+SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+EVENTS_JSON=$(cat "$TMP.events")
+PAYLOAD=$(cat <<EOF
+{"license_key":"$LICENSE_KEY","hostname":"$HOSTNAME","server_ip":"$SERVER_IP","events":$EVENTS_JSON,"checkpoint_position":$NEW_POS}
+EOF
+)
+RESP=$(curl -sSf --max-time 30 -H "Content-Type: application/json" \
+    -X POST "$PANEL_URL/api/outbound/exim-log-push" -d "$PAYLOAD" 2>&1 || echo "ERROR")
+
+if echo "$RESP" | grep -q '"ok":true'; then
+    INSERTED=$(echo "$RESP" | grep -oE '"inserted":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "?")
+    UPDATED=$(echo "$RESP" | grep -oE '"updated":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "?")
+    log_line "OK · parsed=$EVENT_COUNT · inserted=$INSERTED · updated=$UPDATED · pos=$NEW_POS"
+    echo "$NEW_POS" > "$CHECKPOINT_FILE"
+else
+    log_line "FAIL: $RESP"; exit 1
+fi
+"""
 
 
 @api.get("/tools/install-exim-push.sh")
