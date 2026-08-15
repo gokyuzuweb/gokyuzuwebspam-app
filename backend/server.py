@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.31"  # backend bundle içindeki varsayılan
+    _PACKAGE_VERSION = "v43.43"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
@@ -6535,6 +6535,85 @@ echo "  Panel : ${{MASTER_URL}}/panel/my-server"
 echo "  Log   : journalctl -u gokyuzuwebspam-logtail -f"
 '''
     return PlainTextResponse(script, media_type="text/x-shellscript")
+
+
+# ============================================================================
+# v43.43 — Docker/native Exim log tailer script (bash-only, no Perl deps)
+# ---------------------------------------------------------------------------
+# Docker container'lı deployment'larda sunucunuzun /var/log/exim_mainlog'una
+# container'dan erişilemez. Bu script sunucu HOST'unda cron ile çalışıp
+# tailer görevini yapar.
+# ============================================================================
+@api.get("/tools/gws-exim-push.sh")
+async def download_exim_push_script():
+    """Bayi WHM host'unda çalışacak bash Exim log tailer script'ini indirir.
+    Kullanım:
+      curl -o /usr/local/bin/gws-exim-push https://panel.gokyuzuhosting.com/tools/gws-exim-push.sh
+      chmod +x /usr/local/bin/gws-exim-push
+    """
+    import os as _os
+    path = "/app/deployment/gws-exim-push.sh"
+    if not _os.path.exists(path):
+        raise HTTPException(404, "Script bulunamadı")
+    from fastapi.responses import FileResponse as _FR
+    return _FR(path, media_type="text/x-shellscript",
+               headers={"Content-Disposition": "attachment; filename=gws-exim-push"})
+
+
+@api.get("/tools/install-exim-push.sh")
+async def install_exim_push_oneliner(license_key: str = "", panel_url: str = ""):
+    """1-satırlık kurulum. Sunucuda:
+      bash <(curl -s https://panel.gokyuzuhosting.com/tools/install-exim-push.sh?license_key=MS-...)
+    """
+    from fastapi.responses import PlainTextResponse as _PT
+    if not panel_url:
+        panel_url = "https://panel.gokyuzuhosting.com"
+    # license_key ilk arg olarak da verilebilir
+    script = f"""#!/bin/bash
+# GökyüzüWebSpam Exim log tailer — 1-satırlık kurulum
+set -euo pipefail
+
+LICENSE_KEY="{license_key}"
+PANEL_URL="{panel_url}"
+
+if [ -z "$LICENSE_KEY" ] && [ -n "${{1:-}}" ]; then
+    LICENSE_KEY="$1"
+fi
+
+if [ -z "$LICENSE_KEY" ]; then
+    echo "HATA: License key gerekli"
+    echo "Kullanım: bash <(curl -s $PANEL_URL/tools/install-exim-push.sh?license_key=MS-...)"
+    echo "  veya:  $0 MS-..."
+    exit 1
+fi
+
+echo "==> Script indiriliyor…"
+curl -sSf -o /usr/local/bin/gws-exim-push "$PANEL_URL/api/tools/gws-exim-push.sh"
+chmod +x /usr/local/bin/gws-exim-push
+echo "==> Config yazılıyor: /etc/gws-exim-push.conf"
+cat > /etc/gws-exim-push.conf <<EOF
+PANEL_URL=$PANEL_URL
+LICENSE_KEY=$LICENSE_KEY
+EXIM_LOG=/var/log/exim_mainlog
+EOF
+chmod 600 /etc/gws-exim-push.conf
+
+echo "==> Cron entry ekleniyor…"
+(crontab -l 2>/dev/null | grep -v gws-exim-push; echo '*/5 * * * * /usr/local/bin/gws-exim-push >/dev/null 2>&1') | crontab -
+
+echo "==> İlk çalıştırma test ediliyor…"
+/usr/local/bin/gws-exim-push || echo "(İlk çalıştırma başarısız olabilir; log dosyasına bakın: /var/log/gws-exim-push/push.log)"
+echo ""
+echo "✓ Kurulum tamamlandı."
+echo "  · Log:    tail -f /var/log/gws-exim-push/push.log"
+echo "  · Cron:   crontab -l | grep gws-exim-push"
+echo "  · Check:  /usr/local/bin/gws-exim-push (elle çalıştır)"
+echo ""
+echo "  Sonraki 5 dakika içinde panel'de outbound mailleriniz görünmeye başlayacak."
+"""
+    return _PT(script, media_type="text/x-shellscript")
+
+
 
 
 @api.get("/plugin/renewal-info")

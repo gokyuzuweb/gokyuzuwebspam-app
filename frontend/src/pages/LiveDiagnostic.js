@@ -46,6 +46,9 @@ export default function LiveDiagnostic() {
         </div>
       </div>
 
+      {/* v43.43 — DOCKER DEPLOYMENT için tek-satır Exim log tailer kurulumu */}
+      <DockerDeploymentInstaller />
+
       {/* License rows */}
       {status.isLoading && <div className="p-8 text-center text-slate-500 text-sm">Tanı yapılıyor…</div>}
       {rows.length === 0 && !status.isLoading && (
@@ -179,3 +182,69 @@ function PhaseCommand({ cmd }) {
     </div>
   );
 }
+
+// v43.43 — Docker deployment kullanıcıları için tek-satır Exim log tailer kurulumu
+function DockerDeploymentInstaller() {
+  const [copied, setCopied] = useState(false);
+  const masterKey = typeof window !== "undefined"
+    ? (localStorage.getItem("gws.master_license") || "MS-YOUR-KEY-HERE")
+    : "MS-YOUR-KEY-HERE";
+  const panelHost = typeof window !== "undefined" ? window.location.origin : "https://panel.gokyuzuhosting.com";
+  const oneliner = `bash <(curl -sSf "${panelHost}/api/tools/install-exim-push.sh?license_key=${masterKey}")`;
+  const doCopy = () => {
+    navigator.clipboard.writeText(oneliner);
+    setCopied(true);
+    toast.success("Komut kopyalandı — sunucunuzda root olarak yapıştırıp çalıştırın");
+    setTimeout(() => setCopied(false), 2500);
+  };
+  return (
+    <Card data-testid="docker-installer" className="border-emerald-500/40">
+      <div className="p-5">
+        <div className="flex items-start gap-3">
+          <div className="w-11 h-11 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+            <span className="text-2xl">⚡</span>
+          </div>
+          <div className="flex-1">
+            <div className="text-slate-100 font-bold text-base">Docker Deployment · Tek-Satır Exim Kurulumu</div>
+            <div className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+              Sunucunuzda Docker container ile GökyüzüWebSpam çalıştırıyorsanız, container <code className="mono text-amber-300">/var/log/exim_mainlog</code>'a erişemez.
+              Aşağıdaki tek komut host'unuzda cron + tailer kurar (Perl gerektirmez):
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <code className="mono flex-1 text-xs bg-slate-950 border border-emerald-500/30 rounded px-3 py-2 text-emerald-300 select-all break-all">
+                {oneliner}
+              </code>
+              <button
+                onClick={doCopy}
+                data-testid="docker-installer-copy"
+                className="text-xs px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white inline-flex items-center gap-1"
+              >
+                <Copy className="w-3.5 h-3.5"/>
+                {copied ? "Kopyalandı" : "Kopyala"}
+              </button>
+            </div>
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+              <div className="bg-slate-950/60 border border-slate-800 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">1. Bash script indirir</div>
+                <div className="text-slate-500">/usr/local/bin/gws-exim-push</div>
+              </div>
+              <div className="bg-slate-950/60 border border-slate-800 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">2. Cron entry ekler</div>
+                <div className="text-slate-500">*/5 * * * * (her 5dk)</div>
+              </div>
+              <div className="bg-slate-950/60 border border-slate-800 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">3. İlk push'ı test eder</div>
+                <div className="text-slate-500">Log: /var/log/gws-exim-push/push.log</div>
+              </div>
+            </div>
+            <div className="mt-2 text-[11px] text-amber-300 flex items-start gap-1">
+              <span>⚠</span>
+              <span>Sunucunuzda <b>root olarak</b> çalıştırın (Exim log root'un okuyabildiği dosyadır). 5 dk sonra Outbound sayfanız dolmaya başlayacak.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+

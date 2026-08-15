@@ -13,6 +13,21 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 15, v43.43) — Docker Deployment Reality + Bash Exim Tailer
+Kullanıcının canlı sunucusunda mailler gelmiyor sorununun **kök sebebi bulundu**:
+- Kullanıcı Docker container ile deploy ediyor (WHM Perl plugin DEĞİL)
+- Container `/var/log/exim_mainlog`'a erişemez → heartbeat.pl mantığı burada geçersiz
+
+Çözüm:
+- ✅ **`/app/deployment/gws-exim-push.sh`** — bash + awk + curl ile Exim log tailer (Perl gerektirmez). Host'un cron'una eklenir, her 5dk `/var/log/exim_mainlog` delta'sını `/api/outbound/exim-log-push`'a POST eder. Checkpoint state dosyası + panel senkronu (yedekli).
+- ✅ **`GET /api/tools/gws-exim-push.sh`** ham script indirir.
+- ✅ **`GET /api/tools/install-exim-push.sh?license_key=...`** tek-satırlık kurulum: script indir + config yaz + cron ekle + ilk test.
+- ✅ **LiveDiagnostic sayfasına DockerDeploymentInstaller kartı** eklendi — kullanıcı master lisansı ile hazır tek-satır komutu görüp kopyalayabilir.
+- ✅ Backend `_PACKAGE_VERSION` fallback v43.31 → v43.43 (VERSION dosyası bulunamadığında bile doğru sürüm görünür).
+
+Kullanıcı komutu: `bash <(curl -sSf "https://panel.example.com/api/tools/install-exim-push.sh?license_key=MS-...")`
+
+
 ## Feb 15, 2026 (Session 15, v43.42) — Bounce Digest + Marketplace Leaderboard + Live Diagnostic Wizard
 - ✅ **Bounce Digest** (`/panel/bounce-digest`): 5 backend endpoint (`config` GET/POST, `preview`, `run-now`, `history`). HTML template render, config formu (recipient email, send_hour_utc, delivery_method: panel/webhook, webhook_url). Background loop her saat başı kontrol eder, o gün digest üretilmediyse ve saat matches ise oluşturur.
 - ✅ **Marketplace Leaderboard**: `GET /api/marketplace/leaderboard?period=week|month|all`. Publisher rozet sistemi: starter (0-4), bronze (5+), silver (20+), gold (50+), diamond (100+). Widget Marketplace sayfası "Keşfet" tab'ına eklendi.
