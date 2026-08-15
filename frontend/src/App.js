@@ -130,20 +130,25 @@ function Sidebar() {
     staleTime: 10000,
   });
   const pendingCount = pendingPayments.data?.notified_count || 0;
-  // v43.25 — Kolayilebilir grup başlıkları (localStorage persist)
-  const [collapsed, setCollapsed] = React.useState(() => {
+  // v43.26 — Akordiyon modu: `collapsed` yerine "açık olan tek grup" (accordion).
+  // Kullanıcı bir grubu açınca diğerleri otomatik kapanır.
+  // "gws.sidebar.openGroup" localStorage'da tutulur; boş = hepsi kapalı.
+  const [openGroup, setOpenGroup] = React.useState(() => {
     try {
-      const raw = localStorage.getItem("gws.sidebar.collapsed");
-      return raw ? new Set(JSON.parse(raw)) : new Set();
-    } catch { return new Set(); }
+      const raw = localStorage.getItem("gws.sidebar.openGroup");
+      // Default: aktif rotanın grubunu aç (ilk render'da URL'e göre karar veriyoruz)
+      if (raw !== null) return raw;
+    } catch {}
+    return "izleme";
   });
   const toggleGroup = (key) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      try { localStorage.setItem("gws.sidebar.collapsed", JSON.stringify([...next])); } catch {}
-      return next;
-    });
+    const next = openGroup === key ? "" : key;
+    setOpenGroup(next);
+    try { localStorage.setItem("gws.sidebar.openGroup", next); } catch {}
+  };
+  const collapseAll = () => {
+    setOpenGroup("");
+    try { localStorage.setItem("gws.sidebar.openGroup", ""); } catch {}
   };
   const items = NAV.filter((n) => {
     if (n.sellerOnly && !isSeller) return false;
@@ -177,23 +182,46 @@ function Sidebar() {
           <Home className="w-4 h-4" strokeWidth={1.75} />
           <span>Home</span>
         </NavLink>
+        {openGroup && (
+          <button
+            type="button"
+            onClick={collapseAll}
+            data-testid="nav-collapse-all"
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] text-slate-500 hover:text-rose-300 hover:bg-rose-500/5 border border-transparent hover:border-rose-500/20 transition-colors"
+            title="Tüm menü gruplarını kapat"
+          >
+            <span className="text-xs">✕</span>
+            <span>Hepsini Kapat</span>
+          </button>
+        )}
         <div className="h-px bg-slate-800/60 my-2" />
         {grouped.map((g, gi) => {
-          const isCollapsed = collapsed.has(g.key);
+          const isCollapsed = openGroup !== g.key;
           return (
             <div key={g.key} className={gi > 0 ? "pt-3" : ""} data-testid={`nav-group-${g.key}`}>
               <button
                 type="button"
                 onClick={() => toggleGroup(g.key)}
                 data-testid={`nav-group-toggle-${g.key}`}
-                className="w-full px-3 mb-1 flex items-center gap-1.5 text-[9.5px] uppercase tracking-[0.2em] font-bold text-slate-600 hover:text-indigo-400 select-none transition-colors group"
+                className={`w-full px-2.5 py-2 mb-1 flex items-center gap-2 rounded-md text-[11px] uppercase tracking-[0.14em] font-black select-none transition-all duration-200 group ${
+                  isCollapsed
+                    ? "text-slate-400 hover:text-indigo-200 hover:bg-slate-800/40 border border-transparent hover:border-indigo-500/20"
+                    : "text-indigo-200 bg-gradient-to-r from-indigo-500/15 via-slate-900/30 to-transparent border border-indigo-500/30 shadow-sm shadow-indigo-500/10"
+                }`}
                 title={isCollapsed ? "Aç" : "Kapat"}
               >
-                <span className={`inline-block transition-transform duration-200 ${isCollapsed ? "" : "rotate-90"}`}>▶</span>
-                <span className="text-[11px] opacity-90">{g.icon}</span>
-                <span>{g.label}</span>
-                <span className="mono text-[8.5px] text-slate-700 group-hover:text-indigo-500">{g.items.length}</span>
-                <span className="flex-1 h-px bg-gradient-to-r from-slate-800/60 to-transparent ml-1" />
+                <span className={`inline-flex items-center justify-center w-4 h-4 rounded transition-all duration-200 ${
+                  isCollapsed
+                    ? "text-slate-600 group-hover:text-indigo-400"
+                    : "text-indigo-300 rotate-90"
+                }`}>▶</span>
+                <span className="text-[13px] leading-none">{g.icon}</span>
+                <span className="tracking-[0.14em]">{g.label}</span>
+                <span className={`ml-auto mono text-[9.5px] px-1.5 py-0.5 rounded-full ${
+                  isCollapsed
+                    ? "bg-slate-800/60 text-slate-500"
+                    : "bg-indigo-500/20 text-indigo-300"
+                }`}>{g.items.length}</span>
               </button>
               <div className={`space-y-0.5 overflow-hidden transition-all duration-200 ${isCollapsed ? "max-h-0 opacity-0" : "max-h-[999px] opacity-100"}`}>
                 {g.items.map((n) => {

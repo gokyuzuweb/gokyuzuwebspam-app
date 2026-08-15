@@ -40,10 +40,10 @@ export default function OnboardingWizard() {
   if (q.data.completed) return null;
 
   const stepMeta = {
-    license:  { Icon: Key,       route: "/panel/licenses",     hint: "Master için aktif Enterprise lisans" },
-    smtp:     { Icon: Server,    route: "/panel/notifications", hint: "Mail bildirimleri için SMTP relay" },
-    branding: { Icon: Palette,   route: "/reseller",            hint: "Logo + marka rengi (bayi paneli görünümü)" },
-    stripe:   { Icon: CreditCard,route: "/panel/pricing",       hint: "Ödeme kabul etmek için Stripe key" },
+    license:  { Icon: Key,       route: "/panel/licenses",       hint: "Master için aktif Enterprise lisans" },
+    smtp:     { Icon: Server,    route: "/panel/notifications",  hint: "Mail bildirimleri için SMTP relay" },
+    branding: { Icon: Palette,   route: "/panel/email-templates", hint: "Logo + marka rengi (Marka Ayarları bölümü)" },
+    stripe:   { Icon: CreditCard,route: "/panel/payments-admin", hint: "Ödeme kabul etmek için Stripe key" },
   };
   const pct = Math.round((q.data.done_count / q.data.total) * 100);
 
