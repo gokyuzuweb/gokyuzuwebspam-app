@@ -114,6 +114,9 @@ export default function Dashboard() {
             <div className="col-span-12 lg:col-span-8"><ThreatDistribution stats={stats}/></div>
             <div className="col-span-12 lg:col-span-4"><ThreatIntelTodayWidget /></div>
           </div>
+          <div className="grid grid-cols-12 gap-4">
+            <div className="col-span-12"><TopDomainsWidget /></div>
+          </div>
         </div>
       )}
 
@@ -316,6 +319,76 @@ function ThreatDistribution({ stats }) {
           Otomatik yenileme: <span className="mono text-slate-400">15s</span> ·
           Toplam taranan: <span className="mono text-slate-300">{nfmt(stats.scanned_today)}</span>
         </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+
+// v43.30 — Dashboard Top Domains Widget
+function TopDomainsWidget() {
+  const q = useQuery({
+    queryKey: ["dashboard-top-domains"],
+    queryFn: () => api.dashboardTopDomains(5),
+    refetchInterval: 30000,
+  });
+  const items = q.data?.items || [];
+  return (
+    <Card data-testid="top-domains-widget">
+      <CardHeader
+        title="🌐 En Aktif Alan Adları"
+        subtitle="Son 24 saatte en çok mail trafiği + spam oranı"
+        right={<Badge tone="info">Top 5</Badge>}
+      />
+      <CardBody>
+        {q.isLoading && <div className="py-8 text-center text-slate-500 text-sm">Yükleniyor…</div>}
+        {!q.isLoading && items.length === 0 && (
+          <div className="py-8 text-center text-slate-500 text-sm">Son 24 saatte trafik yok</div>
+        )}
+        {items.length > 0 && (
+          <div className="space-y-2">
+            {(() => {
+              const max = Math.max(...items.map(i => i.total), 1);
+              return items.map((d, i) => {
+                const pct = (d.total / max) * 100;
+                const spamPct = d.total ? (d.spam / d.total) * 100 : 0;
+                const tone = spamPct > 30 ? "bg-rose-500" : spamPct > 15 ? "bg-amber-500" : "bg-emerald-500";
+                return (
+                  <div key={d.domain} data-testid={`top-domain-${i}`} className="group">
+                    <div className="flex items-center justify-between mb-1 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="mono text-[10px] text-slate-600 w-4">{i + 1}.</span>
+                        <span className="mono text-slate-200 font-semibold">{d.domain}</span>
+                        {d.outbound > 0 && (
+                          <span className="text-[9px] uppercase tracking-widest text-cyan-400 mono px-1 rounded bg-cyan-500/10">
+                            ↗ {d.outbound} giden
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mono">
+                        <span className="text-slate-300">{d.total}</span>
+                        <span className={spamPct > 30 ? "text-rose-400" : spamPct > 15 ? "text-amber-400" : "text-emerald-400"}>
+                          %{d.spam_rate} spam
+                        </span>
+                      </div>
+                    </div>
+                    <div className="relative h-2 bg-slate-800/60 rounded-full overflow-hidden">
+                      <div className={`absolute inset-y-0 left-0 ${tone} rounded-full transition-all duration-500 group-hover:brightness-125`}
+                           style={{ width: `${pct}%` }}
+                      />
+                      {/* Spam kırmızı katman (üstte) */}
+                      {d.spam > 0 && (
+                        <div className="absolute inset-y-0 left-0 bg-rose-500/70"
+                             style={{ width: `${(d.spam / max) * 100}%` }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        )}
       </CardBody>
     </Card>
   );

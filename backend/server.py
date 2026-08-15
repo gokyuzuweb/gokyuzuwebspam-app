@@ -2137,6 +2137,162 @@ async def users_get():
     return await db.users.find({}, {"_id": 0}).to_list(500)
 
 
+# v43.30 — User Detay Modal + Bulk Import + Top Domains
+@api.get("/users/{username}/detail")
+async def user_detail(username: str, request: Request):
+    """cPanel hesap detayı: profil + son 24 saat trafiği + son 10 mail + verdict dağılımı."""
+    from datetime import datetime, timezone, timedelta
+    user = await db.users.find_one({"username": username}, {"_id": 0})
+    if not user:
+        raise HTTPException(404, "Kullanıcı bulunamadı")
+    # Son 24 saat trafiği (mail_events'ten from_user veya from_addr eşleşen)
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    match = {"$or": [{"from_user": username}, {"from_addr": {"$regex": f"^{username}@"}}], "ts": {"$gte": since}}
+    # Verdict dağılımı
+    verdict_agg = {}
+    async for d in db.mail_events.find(match, {"verdict": 1, "direction": 1}).limit(500):
+        v = d.get("verdict") or "unknown"
+        verdict_agg[v] = verdict_agg.get(v, 0) + 1
+    total_24h = sum(verdict_agg.values())
+    # Son 10 mail
+    recent = []
+    async for d in db.mail_events.find(match, {"_id": 0}).sort("ts", -1).limit(10):
+        recent.append({
+            "ts": d.get("ts"),
+            "direction": d.get("direction", "in"),
+            "from": d.get("from_addr"),
+            "to": d.get("to_addr"),
+            "subject": (d.get("subject") or "")[:80],
+            "verdict": d.get("verdict"),
+            "score": d.get("total_score"),
+        })
+    # Karantina
+    quarantine_count = await db.quarantine.count_documents({"$or": [{"from_user": username}, {"from": {"$regex": f"^{username}@"}}]})
+    return {
+        "username": user.get("username"),
+        "domain": user.get("domain"),
+        "source": user.get("source", "?"),
+        "last_synced_at": user.get("last_synced_at"),
+        "profile": {
+            "email_count_today": user.get("email_count_today", 0),
+            "spam_caught_today": user.get("spam_caught_today", 0),
+            "quarantine_size": user.get("quarantine_size", 0),
+        },
+        "traffic_24h": {
+            "total": total_24h,
+            "verdicts": verdict_agg,
+        },
+        "quarantine_total": quarantine_count,
+        "recent_mails": recent,
+        # cPanel'de bu hesabın altındaki email adresleri (whmapi1'den gelirse doldur)
+        "email_addresses": user.get("email_addresses", []),
+        "disk_used_mb": user.get("disk_used_mb"),
+        "disk_quota_mb": user.get("disk_quota_mb"),
+    }
+
+
+class BulkUserImportIn(BaseModel):
+    csv_content: str  # Format: username,domain,email_count_today,spam_caught_today (header opsiyonel)
+    delimiter: Optional[str] = ","
+
+
+@api.post("/users/bulk-import")
+async def users_bulk_import(payload: BulkUserImportIn, request: Request):
+    """CSV içerikten toplu kullanıcı import (upsert). Master yetkisi gerekli."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli")
+    lines = [l for l in (payload.csv_content or "").strip().split("\n") if l.strip()]
+    if not lines:
+        raise HTTPException(400, "Boş CSV")
+    delim = payload.delimiter or ","
+    # Header skip: ilk satır 'username' içeriyorsa header'dir
+    first = lines[0].lower()
+    if "user" in first and "domain" in first:
+        lines = lines[1:]
+    added, updated, errors = 0, 0, []
+    now = _iso()
+    for i, line in enumerate(lines, 1):
+        parts = [p.strip() for p in line.split(delim)]
+        if len(parts) < 2:
+            errors.append(f"Satır {i}: en az username,domain gerekli")
+            continue
+        username = parts[0]
+        domain = parts[1]
+        if not username or not domain:
+            errors.append(f"Satır {i}: boş username veya domain")
+            continue
+        try:
+            mails = int(parts[2]) if len(parts) > 2 and parts[2] else 0
+            spam = int(parts[3]) if len(parts) > 3 and parts[3] else 0
+        except ValueError:
+            mails, spam = 0, 0
+        res = await db.users.update_one(
+            {"username": username},
+            {"$set": {
+                "username": username, "domain": domain,
+                "email_count_today": mails, "spam_caught_today": spam,
+                "quarantine_size": 0, "source": "csv_import",
+                "license_key": master_key,
+                "last_synced_at": now,
+            }},
+            upsert=True,
+        )
+        if res.upserted_id is not None:
+            added += 1
+        elif res.modified_count > 0:
+            updated += 1
+    return {
+        "ok": True,
+        "added": added, "updated": updated,
+        "total_processed": added + updated,
+        "errors": errors[:10],
+        "error_count": len(errors),
+    }
+
+
+@api.get("/dashboard/top-domains")
+async def dashboard_top_domains(limit: int = 5, request: Request = None):
+    """Dashboard widget: son 24 saatte en aktif alan adları + mail trafiği."""
+    from datetime import datetime, timezone, timedelta
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    # Master iseniz tenant filtresi yok, değilseniz kendi license'ınız
+    master = ((request.headers.get("x-master-key") or "").strip() if request else "").startswith("MS-")
+    lic_filter = {} if master else {}  # events endpoint ile aynı davranış
+    # Aggregate: from_addr'dan domain çıkart ve grupla
+    pipeline = [
+        {"$match": {**lic_filter, "ts": {"$gte": since}, "from_addr": {"$exists": True, "$ne": None}}},
+        {"$project": {
+            "domain": {
+                "$arrayElemAt": [{"$split": ["$from_addr", "@"]}, 1]
+            },
+            "verdict": 1, "direction": 1,
+        }},
+        {"$match": {"domain": {"$nin": [None, ""]}}},
+        {"$group": {
+            "_id": "$domain",
+            "total": {"$sum": 1},
+            "spam": {"$sum": {"$cond": [{"$in": ["$verdict", ["spam", "high_spam", "phishing", "phish", "virus"]]}, 1, 0]}},
+            "clean": {"$sum": {"$cond": [{"$eq": ["$verdict", "clean"]}, 1, 0]}},
+            "outbound": {"$sum": {"$cond": [{"$eq": ["$direction", "out"]}, 1, 0]}},
+        }},
+        {"$sort": {"total": -1}},
+        {"$limit": max(1, min(limit, 20))},
+    ]
+    items = []
+    async for r in db.mail_events.aggregate(pipeline):
+        total = r.get("total", 0)
+        items.append({
+            "domain": r["_id"],
+            "total": total,
+            "spam": r.get("spam", 0),
+            "clean": r.get("clean", 0),
+            "outbound": r.get("outbound", 0),
+            "spam_rate": round((r.get("spam", 0) / total * 100), 1) if total else 0,
+        })
+    return {"items": items, "since": since, "window_hours": 24}
+
+
 # ----- Logs -----
 @api.get("/logs")
 async def logs_get(limit: int = 100, level: Optional[str] = None):
