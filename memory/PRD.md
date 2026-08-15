@@ -13,6 +13,31 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 16, v43.53) — Bash State Persistence + Bounce Digest Fix
+**Kullanıcı sunucu log analizi (SSH tail):**
+```
+[14:57Z] Parsed 0 events from 3242 bytes · COUNT:0
+[14:58Z] Parsed 0 events from 1145 bytes · COUNT:0
+...
+```
+Cron çalışıyor, bytes okunuyor ama 0 event çıkıyor.
+
+**Kök neden:** Awk `in_flight[]` array her cron cycle sonunda memory'de kayboluyordu.
+cPanel Exim'de bir mail'in `<= arrival` ve `=> delivery` satırları farklı dakikalara
+düşer → delivery satırları eşleşecek arrival bulamayınca hepsi skip'lendi.
+
+**Fix v43.53:**
+- ✅ Bash script'e in-flight state persistence: `$STATE_DIR/in_flight.state` TSV dosyası, 5000 mesaj FIFO cap
+- ✅ Awk BEGIN'de state load, END'de state dump
+- ✅ Log output: `in_flight=X` metriği eklendi (state sağlığı gözlemlenebilir)
+- ✅ Local awk test: Cycle1 (arrival)→state persist; Cycle2 (delivery)→state load, event üret ✓
+- ✅ **Bounce Digest /run-now bug fix**: Master key her zaman iterate setine dahil (db.licenses'ta olmasa bile). Response `total_scanned`, `zero_bounce_licenses`, `per_license` alanları ile detaylı bilgi döndürüyor. Frontend toast: "1 lisans için digest üretildi — 67 tarandı, 66 temiz".
+- ✅ Yeni `BounceDigestWidget` Dashboard'a eklendi (bounce > 0 iken görünür, yönlendirme linki).
+- ✅ Backend testing agent 6/6 pass (iteration_44.json).
+
+**Kullanıcının aksiyonu:** SSH → `sudo curl -sSf -o /usr/local/bin/gws-exim-push "https://panel.gokyuzuhosting.com/api/tools/gws-exim-push.sh" && sudo chmod +x /usr/local/bin/gws-exim-push && sudo /usr/local/bin/gws-exim-push`
+
+
 ## Feb 15, 2026 (Session 16, v43.52) — P0 Blank Screen & Identical Timestamps Fix
 **Kök neden:** Önceki oturumda `/app/frontend/src/pages/Outbound.js` içinde `LastPushIndicator`
 fonksiyonu yanlışlıkla `PluginVersionBanner`'ın JSX return'ünün ORTASINA gömülmüş → tüm
