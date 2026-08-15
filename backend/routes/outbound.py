@@ -1014,6 +1014,228 @@ async def exim_log_checkpoint(license_key: str = Query(..., min_length=8)):
 
 
 # ============================================================================
+# v43.54 — RAW Exim log push (bash awk parser silent-fail çözüm)
+# ---------------------------------------------------------------------------
+# Sunucudan raw exim log text'i alınır, Python ile parse edilir. Bash awk
+# script'inin silent-fail sorunlarını atlar; tek gereklilik curl + tail.
+# Kullanıcı SSH tek satır: tail -n 5000 /var/log/exim_mainlog | \
+#   curl -X POST panel.gokyuzuhosting.com/api/outbound/exim-log-push-raw \
+#     -H "X-License-Key: MS-..." --data-binary @-
+# ============================================================================
+import re as _re_raw
+
+
+_ARRIVAL_RE = _re_raw.compile(
+    r"^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s(\S+)\s<=\s(\S+)(.*)$"
+)
+_DELIVERY_RE = _re_raw.compile(
+    r"^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s(\S+)\s(=>|->|\*\*|==)\s(\S+)(.*)$"
+)
+
+
+def _parse_exim_log_raw(text: str, userdomains: set[str] | None = None) -> list[dict]:
+    """Raw exim log text'i events'lere parse et. Awk yerine Python — daha robust."""
+    userdomains = userdomains or set()
+    in_flight: dict[str, dict] = {}
+    events: list[dict] = []
+    for line in text.splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        m_arr = _ARRIVAL_RE.match(line)
+        if m_arr:
+            date, time_, mid, sender, rest = m_arr.groups()
+            ts = f"{date}T{time_}+00:00"
+            user = ""
+            auth_user = ""
+            size = 0
+            subj = ""
+            # Parse rest for U=, A=dovecot_login, S=, T=
+            for token in rest.split():
+                if token.startswith("U="):
+                    user = token[2:]
+                elif token.startswith("A=dovecot_login:") or token.startswith("A=courier_login:"):
+                    auth_user = token.split(":", 1)[1] if ":" in token else ""
+                elif token.startswith("S="):
+                    try:
+                        size = int(token[2:])
+                    except ValueError:
+                        pass
+            # Subject: T="..." pattern
+            m_subj = _re_raw.search(r'T="([^"]*)"', rest)
+            if m_subj:
+                subj = m_subj.group(1)
+            in_flight[mid] = {
+                "ts": ts, "from_addr": sender,
+                "from_user": auth_user or user, "size_bytes": size, "subject": subj,
+            }
+            continue
+        m_del = _DELIVERY_RE.match(line)
+        if m_del:
+            date, time_, mid, direction, rcpt, rest = m_del.groups()
+            arr = in_flight.get(mid)
+            if not arr:
+                continue
+            # Recipient: rest'te <full@email> varsa onu al
+            m_full = _re_raw.search(r"<([^>]+@[^>]+)>", rest)
+            if m_full:
+                rcpt = m_full.group(1)
+            elif "@" not in rcpt:
+                sd = arr["from_addr"].split("@", 1)[-1] if "@" in arr["from_addr"] else ""
+                if sd:
+                    rcpt = f"{rcpt}@{sd}"
+            # Outbound check
+            u = arr["from_user"]
+            is_outbound = bool(u and u not in ("root", "mailnull", "Debian-exim"))
+            if not is_outbound:
+                sd = arr["from_addr"].split("@", 1)[-1].lower() if "@" in arr["from_addr"] else ""
+                if sd in userdomains:
+                    is_outbound = True
+            if not is_outbound:
+                continue
+            display_user = u.split("@", 1)[0] if "@" in u else u
+            action = {"**": "bounce", "==": "defer"}.get(direction, "accept")
+            events.append({
+                "exim_mid": mid,
+                "ts": arr["ts"],
+                "from_addr": arr["from_addr"],
+                "from_user": display_user,
+                "to_addr": rcpt,
+                "subject": arr["subject"],
+                "size_bytes": arr["size_bytes"],
+                "verdict": "clean",
+                "total_score": 0,
+                "action": action,
+            })
+    return events
+
+
+class RawPushIn(BaseModel):
+    license_key: str = Field(..., min_length=8)
+    log_text: Optional[str] = None  # Explicit text
+    userdomains: Optional[list[str]] = None
+    hostname: Optional[str] = ""
+
+
+@router.post("/exim-log-push-raw")
+async def exim_log_push_raw(request: Request):
+    """Raw exim log text kabul eder, Python ile parse eder, DB'ye yazar.
+
+    İki kullanım (Content-Type'a göre otomatik seçim):
+    1) Content-Type: application/json → body: {"license_key":"MS-…", "log_text":"...", "userdomains":["..."]}
+    2) Content-Type: text/plain veya diğer → X-License-Key header + raw body
+
+    Bash awk silent-fail sorununu bypass eder. Basit tail-and-post workflow'una uyar.
+    """
+    import os as _os_lic
+    lic_key = ""
+    log_text = ""
+    userdomains_set: set[str] = set()
+    hostname = ""
+
+    ct = (request.headers.get("content-type") or "").lower()
+    body = await request.body()
+
+    if "application/json" in ct and body:
+        try:
+            import json as _json
+            data = _json.loads(body.decode("utf-8", errors="ignore"))
+            lic_key = str(data.get("license_key") or "").strip()
+            log_text = data.get("log_text") or ""
+            userdomains_set = set(data.get("userdomains") or [])
+            hostname = data.get("hostname") or ""
+        except Exception as e:
+            raise HTTPException(400, f"JSON parse hatası: {e}")
+    else:
+        lic_key = (request.headers.get("x-license-key") or "").strip()
+        log_text = body.decode("utf-8", errors="ignore")
+        hostname = request.headers.get("x-hostname") or ""
+
+    if not lic_key or (not lic_key.startswith("MS-") and len(lic_key) < 8):
+        raise HTTPException(400, "License key gerekli (X-License-Key header veya JSON body)")
+
+    # License doğrula/oluştur (v43.47 auto-register mantığı)
+    lic = await db.licenses.find_one(
+        {"license_key": lic_key, "active": True}, {"_id": 0})
+    if not lic:
+        env_master = _os_lic.environ.get("MASTER_LICENSE_KEY", "").strip()
+        is_master_shape = lic_key.startswith("MS-") and len(lic_key) >= 20
+        if lic_key == env_master or is_master_shape:
+            await db.licenses.update_one(
+                {"license_key": lic_key},
+                {"$set": {"license_key": lic_key, "active": True,
+                          "kind": "master_self_hosted", "plan": "master",
+                          "company": "Self-Hosted Master",
+                          "email": "master@self-hosted.local",
+                          "auto_registered_at": datetime.now(timezone.utc).isoformat()}},
+                upsert=True,
+            )
+        else:
+            raise HTTPException(403, "Geçersiz lisans")
+
+    if not log_text.strip():
+        raise HTTPException(400, "log_text boş — tail çıktısı gönderin")
+
+    events = _parse_exim_log_raw(log_text, userdomains_set)
+    if not events:
+        return {"ok": True, "parsed": 0, "inserted": 0, "updated": 0,
+                "note": "Parse edilebilir arrival/delivery çifti bulunamadı — daha fazla log satırı gönderin"}
+
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    inserted = 0
+    updated = 0
+    for idx, e in enumerate(events[:1000]):
+        mid = e.get("exim_mid", "")
+        from_addr = e.get("from_addr", "")
+        to_addr = e.get("to_addr", "")
+        raw_ts = e.get("ts", "")
+        if raw_ts and raw_ts.startswith(("19", "20")):
+            ts_val = raw_ts
+        else:
+            decoded = _decode_exim_mid_ts(mid)
+            ts_val = decoded or (now - timedelta(seconds=idx)).isoformat()
+
+        doc = {
+            "id": str(uuid.uuid4()),
+            "license_key": lic_key,
+            "direction": "out",
+            "exim_mid": mid,
+            "from_addr": from_addr,
+            "from_user": e.get("from_user", ""),
+            "to_addr": to_addr,
+            "subject": e.get("subject", ""),
+            "verdict": e.get("verdict", "clean"),
+            "total_score": e.get("total_score", 0),
+            "action": e.get("action", "accept"),
+            "size_bytes": e.get("size_bytes", 0),
+            "ts": ts_val,
+            "ingested_at": now_iso,
+            "source": "exim_raw_push",
+            "server_hostname": hostname,
+        }
+        key = {"license_key": lic_key, "exim_mid": mid, "to_addr": to_addr}
+        r = await db.mail_events.update_one(
+            key, {"$set": doc, "$setOnInsert": {"first_seen": now_iso}}, upsert=True)
+        if r.upserted_id is not None:
+            inserted += 1
+        else:
+            updated += 1
+
+    await db.settings.update_one(
+        {"_key": f"exim_logtail_pos:{lic_key}"},
+        {"$set": {"_key": f"exim_logtail_pos:{lic_key}",
+                  "license_key": lic_key,
+                  "last_push_at": now_iso,
+                  "last_inserted": inserted,
+                  "source": "raw_push"}},
+        upsert=True,
+    )
+    return {"ok": True, "parsed": len(events), "inserted": inserted,
+            "updated": updated, "total": inserted + updated}
+
+
+# ============================================================================
 # v43.52 — Timestamp Repair (473 kayıt aynı ts bug'ı için tek seferlik migration)
 # ============================================================================
 @router.post("/repair-timestamps")
