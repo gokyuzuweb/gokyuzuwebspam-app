@@ -10,6 +10,7 @@ const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 
 export default function UsersPage() {
   const users = useQuery({ queryKey: ["users"], queryFn: api.users });
+  const syncStatus = useQuery({ queryKey: ["users-sync-status"], queryFn: api.usersSyncStatus, refetchInterval: 60_000, staleTime: 30_000 });
   const { isMaster } = useIsMaster();
   const qc = useQueryClient();
   const [detailUsername, setDetailUsername] = useState(null);
@@ -38,6 +39,7 @@ export default function UsersPage() {
       toast.success(msg, { duration: 6000, description: d.note });
       // Cache'i hemen invalidate et — tabloyu tazele
       qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["users-sync-status"] });
     },
     onError: (e) => toast.error(e?.response?.data?.detail || e.message || "İstek başarısız"),
   });
@@ -106,7 +108,24 @@ export default function UsersPage() {
       <Card>
         <CardHeader
           title="cPanel Kullanıcıları"
-          subtitle="Hesap bazlı e-posta trafiği ve spam metrikleri"
+          subtitle={
+            <span data-testid="users-sync-subtitle">
+              Hesap bazlı e-posta trafiği ve spam metrikleri
+              {syncStatus.data?.last_synced_at && (
+                <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-slate-500">
+                  <Clock className="w-3 h-3 text-emerald-400" />
+                  Son toplu senkron:
+                  <span className="mono text-emerald-300" data-testid="users-last-sync-time">
+                    {new Date(syncStatus.data.last_synced_at).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  <span className="text-slate-600">·</span>
+                  <span className="text-slate-400" data-testid="users-sync-source">
+                    kaynak: <span className="mono text-slate-300">{syncStatus.data.last_source || "—"}</span>
+                  </span>
+                </span>
+              )}
+            </span>
+          }
           right={
             <div className="flex items-center gap-2">
               {isMaster && (

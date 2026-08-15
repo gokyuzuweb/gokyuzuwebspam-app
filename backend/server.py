@@ -4815,6 +4815,32 @@ class UserSyncIn(BaseModel):
     accounts: list[dict]  # [{username, domain, email_count_today?, ...}]
 
 
+@api.get("/users/sync-status")
+async def users_sync_status(request: Request):
+    """v43.37 — Global cPanel sync durumu.
+    Users sayfasının üst şeridinde "Son senkron: <zaman> · <n> kullanıcı" göstergesi
+    bunu tüketir. Bayi WHM plugin daemon her heartbeat cycle'da
+    `POST /api/users/sync` çağırırsa buradaki last_synced_at değeri güncellenir."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    q = {"license_key": master_key} if master_key.startswith("MS-") else {}
+    total = await db.users.count_documents(q)
+    latest = await db.users.find(q, {"_id": 0, "last_synced_at": 1, "source": 1, "license_key": 1}) \
+        .sort("last_synced_at", -1).limit(1).to_list(1)
+    # Kaynak kırılımı
+    src = {}
+    async for row in db.users.aggregate([
+        {"$match": q}, {"$group": {"_id": "$source", "count": {"$sum": 1}}},
+    ]):
+        src[row["_id"] or "unknown"] = row["count"]
+    return {
+        "total": total,
+        "last_synced_at": (latest[0].get("last_synced_at") if latest else None),
+        "last_source": (latest[0].get("source") if latest else None),
+        "sources": src,
+        "generated_at": _iso(),
+    }
+
+
 @api.post("/users/sync")
 async def users_sync(payload: UserSyncIn):
     """WHM plugin daemon POSTs the real cPanel accounts list here. Purges old

@@ -514,8 +514,11 @@ async def auto_sync_run_now():
 async def _threat_intel_auto_sync_loop():
     """Background task — settings.threat_intel_auto_sync.enabled=true iken
     her interval_min dakikada tüm feed'leri senkronize eder. server.py'nin
-    startup task listesine eklenmesi gerekir."""
-    import asyncio as _asyncio
+    startup task listesine eklenmesi gerekir.
+
+    v43.37 — Feed başına hata master_alerts'e yazılır (Kullanıcı Dashboard'da
+    kırmızı sistem bildirimi olarak görür)."""
+    import asyncio as _asyncio, uuid as _uuid
     while True:
         try:
             cfg = await db.settings.find_one({"_key": "threat_intel_auto_sync"}, {"_id": 0}) or {}
@@ -533,16 +536,41 @@ async def _threat_intel_auto_sync_loop():
                         pass
                 if should_run:
                     total = 0
+                    fail_feeds: list[dict] = []
                     for f in GLOBAL_FEEDS:
                         try:
                             r = await trigger_sync(f["key"])
-                            total += r.get("added", 0)
-                        except Exception:
-                            pass
+                            added = r.get("added", 0)
+                            total += added
+                            if r.get("errors"):
+                                fail_feeds.append({"feed": f["key"], "errors": r["errors"][:3]})
+                        except Exception as ex:
+                            fail_feeds.append({"feed": f["key"], "errors": [str(ex)[:200]]})
                     await db.settings.update_one(
                         {"_key": "threat_intel_auto_sync"},
-                        {"$set": {"last_run_at": _iso(), "last_added": total}},
+                        {"$set": {
+                            "last_run_at": _iso(),
+                            "last_added": total,
+                            "last_fail_count": len(fail_feeds),
+                            "last_failures": fail_feeds[:10],
+                        }},
                     )
+                    # v43.37 — Alert kaydı (fail varsa)
+                    if fail_feeds:
+                        try:
+                            await db.master_alerts.insert_one({
+                                "id": str(_uuid.uuid4()),
+                                "kind": "threat_intel_sync_failed",
+                                "severity": "warning" if len(fail_feeds) < len(GLOBAL_FEEDS) else "error",
+                                "title": f"Threat Intel senkronizasyonu: {len(fail_feeds)}/{len(GLOBAL_FEEDS)} feed başarısız",
+                                "detail": ", ".join(f["feed"] for f in fail_feeds[:5]),
+                                "failures": fail_feeds,
+                                "added_iocs": total,
+                                "created_at": _iso(),
+                                "read": False,
+                            })
+                        except Exception:
+                            pass
         except Exception:
             pass
         # Her 60sn'de check (her interval_min dakikada sync)

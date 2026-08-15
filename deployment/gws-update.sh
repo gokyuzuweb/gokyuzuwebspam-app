@@ -175,6 +175,26 @@ fi
 if [ "$SKIP_PLUGIN" = "0" ] && [ -d "$APP_DIR/whm-plugin" ]; then
     log "🔌 WHM Plugin dosyaları güncelleniyor…"
 
+    # v43.37 — Perl bağımlılıklarını denetle & otomatik kur
+    #   heartbeat.pl / logtail için: JSON::XS, LWP::UserAgent, File::Slurp, Sys::Hostname
+    #   İlk kurulumda cpanm yoksa cpan ile fallback.
+    missing_perl=""
+    for m in JSON::XS LWP::UserAgent File::Slurp; do
+        perl -M"$m" -e 1 >/dev/null 2>&1 || missing_perl="$missing_perl $m"
+    done
+    if [ -n "$missing_perl" ]; then
+        log "  ⏳ Eksik Perl modülleri:$missing_perl → kurulum başlıyor…"
+        if command -v cpanm >/dev/null 2>&1; then
+            cpanm --quiet --notest $missing_perl 2>&1 | tee -a "$LOG_FILE" || err "cpanm bazı modülleri kuramadı"
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y perl-JSON-XS perl-libwww-perl perl-File-Slurp 2>&1 | tee -a "$LOG_FILE" || err "yum install uyarı"
+        elif command -v apt-get >/dev/null 2>&1; then
+            apt-get install -y libjson-xs-perl libwww-perl libfile-slurp-perl 2>&1 | tee -a "$LOG_FILE" || err "apt-get install uyarı"
+        else
+            err "cpanm/yum/apt-get bulunamadı — Perl modüllerini elle kurun:$missing_perl"
+        fi
+    fi
+
     # Perl kütüphaneler
     if [ -d "$APP_DIR/whm-plugin/lib" ]; then
         mkdir -p /usr/local/lib/gws
@@ -264,6 +284,41 @@ if [ ! -x "/usr/local/bin/gws-update" ] || [ "$FORCE" = "1" ]; then
     cp "$APP_DIR/deployment/gws-update.sh" /usr/local/bin/gws-update
     chmod 755 /usr/local/bin/gws-update
     log "  ✓ /usr/local/bin/gws-update güncellendi"
+fi
+
+# v43.37 — Systemd timer (opsiyonel, systemd varsa daha güvenilir cron alternatifi)
+if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+    if [ ! -f /etc/systemd/system/gws-update.service ]; then
+        cat > /etc/systemd/system/gws-update.service <<'EOF'
+[Unit]
+Description=GokyuzuWebSpam Auto-Update Service
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gws-update
+User=root
+StandardOutput=append:/var/log/gokyuzuwebspam/update.log
+StandardError=append:/var/log/gokyuzuwebspam/update.log
+EOF
+        cat > /etc/systemd/system/gws-update.timer <<'EOF'
+[Unit]
+Description=GokyuzuWebSpam Auto-Update Timer (every 6 hours)
+After=network-online.target
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+Persistent=true
+Unit=gws-update.service
+
+[Install]
+WantedBy=timers.target
+EOF
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable --now gws-update.timer 2>&1 | tee -a "$LOG_FILE" || true
+        log "  ✓ systemd timer aktif (gws-update.timer, 6 saatte bir)"
+    fi
 fi
 
 # ============================================================================

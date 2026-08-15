@@ -603,6 +603,7 @@ export const api = {
   tiIocExtractDomainsFromUrls: () => client.post("/threat-intel/ioc/extract-domains-from-urls").then(r => r.data),
   // v43.28 — cPanel kullanıcılarını çağır
   usersRefreshFromCpanel: () => client.post("/users/refresh-from-cpanel").then(r => r.data),
+  usersSyncStatus: () => client.get("/users/sync-status").then(r => r.data),
   // v43.30 — User detay + bulk import + dashboard top domains
   userDetail: (username) => client.get(`/users/${username}/detail`).then(r => r.data),
   usersBulkImport: (payload) => client.post("/users/bulk-import", payload).then(r => r.data),

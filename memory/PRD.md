@@ -13,6 +13,17 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 15, v43.37) — Sync Visibility, Threat Intel Alerts, gws-update Perl deps
+- ✅ Added `GET /api/users/sync-status` — returns global last sync timestamp, source, and per-source breakdown. Consumed by Users page.
+- ✅ Users page: `CardHeader.subtitle` now renders "Son toplu senkron: <zaman> · kaynak: <src>" strip (auto-refresh 60s). data-testid: `users-last-sync-time`, `users-sync-source`.
+- ✅ Threat Intel `_threat_intel_auto_sync_loop`: feed failures now recorded in `db.master_alerts` (kind=`threat_intel_sync_failed`, severity=warning|error) and `settings.threat_intel_auto_sync.last_failures` capped at 10.
+- ✅ `gws-update.sh` (v43.37):
+  - Auto-installs missing Perl modules (JSON::XS, LWP::UserAgent, File::Slurp) via cpanm / yum / apt-get.
+  - Registers `/etc/systemd/system/gws-update.timer` (6-hour cadence) as more reliable alternative to cron.
+- ✅ Backend testing agent: 9/9 tests pass on new endpoints + regressions (`/api/plugin/signal-log`, `/api/mailscanner/config`, `/api/users`).
+- Test file: `/app/backend/tests/test_v44_sync_status_threat_intel.py`.
+
+
 ## Feb 13, 2026 (Session 14, v43.18) — Milter Body+Attachment, Body Search, Mojibake, WHM Fullscreen ULTRA
 
 ### Kullanıcı istekleri (öncelik sırası)

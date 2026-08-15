@@ -409,3 +409,55 @@ sub _handle_demand_sync {
 # main flow'da tetiklensin).
 poll_and_handle_signals($license_key, $CENTER);
 
+# ============================================================================
+# v43.36 — Live User Auto-Sync
+# ============================================================================
+# heartbeat.pl her cycle'da (15dk) son push zamanını kontrol eder. Master'a
+# gönderilen son sync 60dk'dan eski ise otomatik yeni listaccts push yapar.
+# Böylece kullanıcı "cPanel Kullanıcıları Çağır" butonuna basmasa da Master
+# panelinde Users sayfası saatlik olarak güncel kalır.
+#
+# State: /var/lib/gokyuzuwebspam/last-user-sync.txt (epoch)
+# ============================================================================
+
+sub auto_sync_users_if_stale {
+    my ($license_key, $center) = @_;
+    return unless $license_key;
+    return unless -x '/usr/local/cpanel/bin/whmapi1';
+
+    my $state_file = '/var/lib/gokyuzuwebspam/last-user-sync.txt';
+    my $stale_after = 3600;  # 60 dakika
+
+    # Son push zamanını oku
+    my $last = 0;
+    if (open(my $fh, '<', $state_file)) {
+        chomp(my $line = <$fh> // '');
+        $last = int($line) if $line =~ /^\d+$/;
+        close($fh);
+    }
+    my $now = time();
+    my $age = $now - $last;
+    return if $age < $stale_after;  # Fresh — atla
+
+    # Stale → push
+    my $ua = LWP::UserAgent->new(timeout => 25);
+    eval {
+        _handle_demand_sync($license_key, $center, $ua);
+    };
+    if ($@) {
+        warn "[auto-sync-users] failed: $@";
+        return;
+    }
+
+    # State güncelle
+    mkdir '/var/lib/gokyuzuwebspam' unless -d '/var/lib/gokyuzuwebspam';
+    if (open(my $fh, '>', $state_file)) {
+        print $fh $now;
+        close($fh);
+    }
+    return 1;
+}
+
+auto_sync_users_if_stale($license_key, $CENTER);
+
+
