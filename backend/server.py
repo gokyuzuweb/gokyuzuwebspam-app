@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.44"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v43.45"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
@@ -6596,7 +6596,7 @@ if [ "$FILE_SIZE" -eq "$LAST_POS" ]; then log_line "No new data (pos=$LAST_POS)"
 DELTA=$(dd if="$EXIM_LOG" bs=1 skip="$LAST_POS" 2>/dev/null || true)
 NEW_POS=$FILE_SIZE
 
-TMP=$(mktemp); trap "rm -f $TMP $TMP.events $TMP.count" EXIT
+TMP=$(mktemp); trap "rm -f $TMP $TMP.events $TMP.count $TMP.payload" EXIT
 
 echo "$DELTA" | awk -v batch_max="$BATCH_MAX" '
 BEGIN { count=0; first=1; print "[" }
@@ -6642,12 +6642,13 @@ fi
 HOSTNAME=$(hostname)
 SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
 EVENTS_JSON=$(cat "$TMP.events")
-PAYLOAD=$(cat <<EOF
+PAYLOAD_FILE="$TMP.payload"
+cat > "$PAYLOAD_FILE" <<EOF
 {"license_key":"$LICENSE_KEY","hostname":"$HOSTNAME","server_ip":"$SERVER_IP","events":$EVENTS_JSON,"checkpoint_position":$NEW_POS}
 EOF
-)
 RESP=$(curl -sSf --max-time 30 -H "Content-Type: application/json" \
-    -X POST "$PANEL_URL/api/outbound/exim-log-push" -d "$PAYLOAD" 2>&1 || echo "ERROR")
+    -X POST "$PANEL_URL/api/outbound/exim-log-push" \
+    --data-binary "@$PAYLOAD_FILE" 2>&1 || echo "ERROR")
 
 if echo "$RESP" | grep -q '"ok":true'; then
     INSERTED=$(echo "$RESP" | grep -oE '"inserted":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "?")
