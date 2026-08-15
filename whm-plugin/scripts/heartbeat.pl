@@ -328,3 +328,84 @@ sub _iso_time {
     return sprintf("%04d-%02d-%02dT%02d:%02d:%02d+00:00",
                    $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1], $t[0]);
 }
+
+# ============================================================================
+# v43.32 — plugin_demand_sync Polling Loop
+# ============================================================================
+# Master panelde "cPanel Kullanıcıları Çağır" tıklandığında backend
+# `plugin_demand_sync:<license_key>` sinyalini `settings` collection'ına yazar.
+# Heartbeat her 15dk'da bu sinyali sorgular. Sinyal varsa `whmapi1 listaccts`
+# çalıştırıp master'a `/api/users/sync` ile gerçek cPanel hesap listesini push
+# eder. Sonrasında `handled=true` işaretler.
+#
+# Aynı loop 3 sinyal tipini destekler:
+#   plugin_demand_sync           → listaccts + push
+#   plugin_demand_update         → gws-update çalıştır (bash script)
+#   plugin_demand_milter_restart → systemctl restart gws-milter
+#
+# Backend GET endpoint: /api/plugin/pending-signals?license_key=<lic>
+# Backend POST endpoint: /api/users/sync (payload: license_key + accounts[])
+# ============================================================================
+
+sub poll_and_handle_signals {
+    my ($license_key, $center) = @_;
+    return unless $license_key;
+    my $ua = LWP::UserAgent->new(timeout => 15);
+    my $r = $ua->get("$center/api/plugin/pending-signals?license_key=$license_key");
+    return unless $r->is_success;
+    my $signals = eval { decode_json($r->decoded_content) };
+    return unless ref($signals) eq 'HASH' && $signals->{items};
+
+    for my $sig (@{$signals->{items}}) {
+        my $type = $sig->{signal_type} // '';
+        my $sig_key = $sig->{_key} // '';
+        eval {
+            if ($type eq 'demand_sync') {
+                _handle_demand_sync($license_key, $center, $ua);
+            } elsif ($type eq 'demand_update') {
+                system("gws-update > /var/log/gokyuzuwebspam/update.log 2>&1 &");
+            } elsif ($type eq 'demand_milter_restart') {
+                system("systemctl restart gws-milter 2>/dev/null || systemctl restart gws-logtail 2>/dev/null");
+            }
+        };
+        # Ack sinyali handled=true olarak işaretle (backend ack endpoint)
+        $ua->post("$center/api/plugin/signal-ack", 'Content-Type' => 'application/json',
+                  Content => encode_json({ _key => $sig_key }));
+    }
+}
+
+sub _handle_demand_sync {
+    my ($license_key, $center, $ua) = @_;
+    # whmapi1 listaccts
+    my $whm = '/usr/local/cpanel/bin/whmapi1';
+    return unless -x $whm;
+    my $out = `$whm --output=json listaccts 2>/dev/null`;
+    return unless $out;
+    my $data = eval { decode_json($out) };
+    return unless ref($data) eq 'HASH';
+    my $accts = $data->{data}{acct} || [];
+    my @payload_accts;
+    for my $a (@$accts) {
+        my $user = $a->{user} // '';
+        next unless $user;
+        push @payload_accts, {
+            username           => $user,
+            domain             => $a->{domain}   // '',
+            email_count_today  => 0,
+            spam_caught_today  => 0,
+            quarantine_size    => 0,
+        };
+    }
+    $ua->post("$center/api/users/sync", 'Content-Type' => 'application/json',
+              Content => encode_json({
+                  license_key => $license_key,
+                  accounts    => \@payload_accts,
+              }));
+}
+
+# Sinyal polling'i heartbeat cycle'ının sonunda çalıştır (ana loop yoktan sonra
+# çağrılmalı — bu dosyanın son satırından hemen önce main sub'a bir çağrı
+# ekleyin, veya cron/timer 15dk'da bu script'i çalıştırırken __END__'te değil
+# main flow'da tetiklensin).
+poll_and_handle_signals($license_key, $CENTER);
+

@@ -115,7 +115,8 @@ export default function Dashboard() {
             <div className="col-span-12 lg:col-span-4"><ThreatIntelTodayWidget /></div>
           </div>
           <div className="grid grid-cols-12 gap-4">
-            <div className="col-span-12"><TopDomainsWidget /></div>
+            <div className="col-span-12 lg:col-span-8"><TopDomainsWidget /></div>
+            <div className="col-span-12 lg:col-span-4"><MilterHealthWidget /></div>
           </div>
         </div>
       )}
@@ -393,3 +394,76 @@ function TopDomainsWidget() {
     </Card>
   );
 }
+
+// v43.32 — Milter Health Widget
+function MilterHealthWidget() {
+  const q = useQuery({
+    queryKey: ["milter-health"],
+    queryFn: api.pluginMilterHealth,
+    refetchInterval: 30000,
+  });
+  const [resetting, setResetting] = useState(false);
+  const d = q.data || {};
+  const status = d.status || "unknown";
+  const meta = {
+    healthy:  { bg: "bg-emerald-500/10", border: "border-emerald-500/40", text: "text-emerald-300", label: "AKTİF", icon: "✅" },
+    warning:  { bg: "bg-amber-500/10",   border: "border-amber-500/40",   text: "text-amber-300",   label: "GECİKMELİ", icon: "⚠" },
+    down:     { bg: "bg-rose-500/10",    border: "border-rose-500/40",    text: "text-rose-300",    label: "DURUYOR", icon: "✕" },
+    no_data:  { bg: "bg-slate-800",      border: "border-slate-700",     text: "text-slate-400",   label: "VERİ YOK", icon: "?" },
+    unknown:  { bg: "bg-slate-800",      border: "border-slate-700",     text: "text-slate-400",   label: "?", icon: "?" },
+  }[status];
+  const doReset = async () => {
+    if (!window.confirm("Bayi WHM sunucularında 'systemctl restart gws-milter' çalıştırılsın mı?")) return;
+    setResetting(true);
+    try {
+      const r = await import("sonner").then(m => m.toast);
+      const d = await api.pluginMilterReset();
+      r.success(`${d.signaled} bayi milter'ına restart sinyali gönderildi`);
+      setTimeout(() => q.refetch(), 3000);
+    } catch (e) {
+      const t = await import("sonner").then(m => m.toast);
+      t.error(e?.response?.data?.detail || e.message);
+    } finally { setResetting(false); }
+  };
+  return (
+    <Card data-testid="milter-health-widget">
+      <CardHeader title="🛡️ Milter Sağlığı" subtitle="Logtail/Milter ingest izleme" right={
+        <span className={`text-[10px] mono uppercase tracking-widest px-2 py-1 rounded ${meta.bg} ${meta.border} ${meta.text} border`}>
+          {meta.icon} {meta.label}
+        </span>
+      }/>
+      <CardBody className="space-y-3">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="p-2 rounded bg-slate-950/60 border border-slate-800">
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">Son 1 saat</div>
+            <div className="text-xl font-bold mono text-indigo-300">{d.ingest_last_1h ?? "—"}</div>
+          </div>
+          <div className="p-2 rounded bg-slate-950/60 border border-slate-800">
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">Son 24 saat</div>
+            <div className="text-xl font-bold mono text-cyan-300">{d.ingest_last_24h ?? "—"}</div>
+          </div>
+        </div>
+        <div className="text-xs text-slate-400">
+          Son ingest: <span className={`mono font-semibold ${meta.text}`}>
+            {d.minutes_since_last_ingest != null
+              ? (d.minutes_since_last_ingest < 60
+                  ? `${d.minutes_since_last_ingest} dk önce`
+                  : `${Math.floor(d.minutes_since_last_ingest / 60)} sa ${d.minutes_since_last_ingest % 60} dk önce`)
+              : "yok"}
+          </span>
+        </div>
+        {(status === "down" || status === "no_data" || status === "warning") && (
+          <button
+            onClick={doReset}
+            disabled={resetting}
+            data-testid="milter-reset-btn"
+            className="w-full text-xs px-3 py-2 rounded border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 disabled:opacity-40"
+          >
+            {resetting ? "Sinyal gönderiliyor…" : "🔄 Milter'ı Yeniden Başlat"}
+          </button>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+

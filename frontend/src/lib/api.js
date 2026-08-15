@@ -607,6 +607,10 @@ export const api = {
   userDetail: (username) => client.get(`/users/${username}/detail`).then(r => r.data),
   usersBulkImport: (payload) => client.post("/users/bulk-import", payload).then(r => r.data),
   dashboardTopDomains: (limit = 5) => client.get("/dashboard/top-domains", { params: { limit } }).then(r => r.data),
+  // v43.32 — Sunucumu Güncelle + Milter Health + Bayes train
+  pluginDemandUpdate: () => client.post("/plugin/demand-update").then(r => r.data),
+  pluginMilterHealth: () => client.get("/plugin/milter-health").then(r => r.data),
+  pluginMilterReset: () => client.post("/plugin/milter-reset").then(r => r.data),
   tiDmarcSummary: (days = 30) => client.get("/threat-intel/dmarc/summary", { params: { days } }).then(r => r.data),
   tiDmarcIngest: (payload) => client.post("/threat-intel/dmarc/ingest", payload).then(r => r.data),
   tiFeeds: () => client.get("/threat-intel/feeds").then(r => r.data),

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Clock, RefreshCw, Search, Sparkles, KeyRound, ShieldCheck } from "lucide-react";
+import { Clock, RefreshCw, Search, Sparkles, KeyRound, ShieldCheck, DownloadCloud } from "lucide-react";
 import { toast } from "sonner";
 import ThreatAlertBell from "@/components/ThreatAlertBell";
 import { ImpersonatePicker } from "@/components/Impersonate";
@@ -109,7 +109,36 @@ function MasterModeToggle() {
   );
 }
 
+function MasterUpdatePush() {
+  const active = typeof window !== "undefined"
+    && (localStorage.getItem("gws.master_license") || "").startsWith("MS-");
+  if (!active) return null;
+  const push = async () => {
+    if (!window.confirm("Master'a bağlı tüm bayilere 'gws-update çalıştır' sinyali gönderilsin mi?")) return;
+    try {
+      const d = await api.pluginDemandUpdate();
+      toast.success(`${d.signaled_licenses} bayiye güncelleme sinyali gönderildi`, { description: d.note, duration: 6000 });
+    } catch (e) { toast.error(e?.response?.data?.detail || e.message); }
+  };
+  return (
+    <button
+      type="button"
+      onClick={push}
+      data-testid="header-server-update-btn"
+      title="Master'a bağlı tüm bayi WHM sunucularına 'gws-update çalıştır' sinyali gönderir"
+      className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono tracking-wide px-2 py-1 rounded-md border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 transition-all shrink-0"
+    >
+      <DownloadCloud className="w-3 h-3" />
+      <span>Sunucumu Güncelle</span>
+    </button>
+  );
+}
+
 export default function Header({ title }) {
+  return <HeaderMain title={title} />;
+}
+
+function HeaderMain({ title }) {
   const { data, refetch, isFetching } = useQuery({
     queryKey: ["overview-header"],
     queryFn: api.overview,
@@ -148,6 +177,7 @@ export default function Header({ title }) {
       <GlobalSearch />
       <div className="flex items-center gap-3 shrink-0">
         <MasterModeToggle />
+        <MasterUpdatePush />
         <div className="hidden xl:flex items-center gap-2 text-xs text-slate-400 mono">
           <Clock className="w-3.5 h-3.5" />
           Son 24 saat

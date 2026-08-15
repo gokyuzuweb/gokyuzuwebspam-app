@@ -82,6 +82,27 @@ export default function UsersPage() {
         </div>
       </div>
 
+      {/* Ana kart */}
+      {rows.length === 0 && (
+        <Card data-testid="users-empty-info">
+          <div className="p-4 border-l-4 border-sky-500 bg-sky-500/5">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+              <div className="flex-1 text-sm text-slate-300 space-y-1.5">
+                <div className="font-semibold text-sky-300">Kullanıcı listesi boş</div>
+                <div className="text-xs text-slate-400 leading-relaxed">
+                  Kullanıcılar cPanel'den 3 yolla senkronize edilir:
+                </div>
+                <ul className="text-xs text-slate-400 list-disc pl-5 space-y-0.5">
+                  <li><b>Yerel WHM</b>: Master sunucusu WHM'in kendisi ise <code className="mono text-amber-300">whmapi1 listaccts</code> anlık çalışır. Bu sunucuda <code>/usr/local/cpanel/bin/whmapi1</code> yoksa yerel çağrı devre dışıdır.</li>
+                  <li><b>Bayi Plugin Daemon</b>: "🔄 cPanel Kullanıcıları Çağır" tıklandığında bağlı bayi WHM sunucularına sinyal yazılır. Bayi'nin GökyüzüWebSpam plugin daemon'ı (heartbeat.pl) 15dk cycle'ında sinyali görüp cPanel'den anlık liste push eder.</li>
+                  <li><b>Toplu İçe Aktar</b>: WHM erişimi yoksa CSV ile manuel yükleyin (yukarıdaki buton).</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
       <Card>
         <CardHeader
           title="cPanel Kullanıcıları"

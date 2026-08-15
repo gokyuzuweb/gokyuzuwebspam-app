@@ -4788,17 +4788,145 @@ async def users_sync(payload: UserSyncIn):
 
 
 # v43.28 — cPanel Kullanıcıları Çağır (Master → WHM plugin daemon signal)
+# v43.32 — Sunucumu Güncelle + Milter Health
+@api.post("/plugin/demand-update")
+async def plugin_demand_update(request: Request):
+    """Master aktif iken bayi plugin daemon'lara 'anında gws-update çalıştır' sinyali.
+    Plugin daemon 60sn polling'de bu sinyali görüp `gws-update` çalıştırır."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli")
+    now = _iso()
+    signaled = 0
+    async for lic in db.licenses.find({"active": True, "$or": [
+        {"license_key": master_key},
+        {"master_license_key": master_key},
+    ]}, {"license_key": 1, "hostname": 1}):
+        await db.settings.update_one(
+            {"_key": f"plugin_demand_update:{lic['license_key']}"},
+            {"$set": {
+                "_key": f"plugin_demand_update:{lic['license_key']}",
+                "license_key": lic["license_key"],
+                "hostname": lic.get("hostname"),
+                "requested_at": now, "handled": False,
+            }},
+            upsert=True,
+        )
+        signaled += 1
+    return {"ok": True, "signaled_licenses": signaled,
+            "note": f"{signaled} bayiye 'gws-update çalıştır' sinyali gönderildi. Bayi plugin daemon 60sn içinde algılayacak."}
+
+
+@api.get("/plugin/milter-health")
+async def plugin_milter_health(request: Request):
+    """Milter/logtail son ingest zamanı + son 1 saat ingest sayısı + verdict oranı."""
+    from datetime import datetime, timezone, timedelta
+    now_dt = datetime.now(timezone.utc)
+    since_1h = (now_dt - timedelta(hours=1)).isoformat()
+    since_24h = (now_dt - timedelta(hours=24)).isoformat()
+    last = None
+    async for d in db.mail_events.find({}, {"ts": 1}).sort("ts", -1).limit(1):
+        last = d.get("ts")
+        break
+    ingest_1h = await db.mail_events.count_documents({"ts": {"$gte": since_1h}})
+    ingest_24h = await db.mail_events.count_documents({"ts": {"$gte": since_24h}})
+    # Son ingest kaç dakika önce?
+    minutes_since = None
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+            minutes_since = int((now_dt - last_dt).total_seconds() / 60)
+        except Exception:
+            minutes_since = None
+    # Durum: 5dk içinde ingest → healthy, 60dk içinde → warning, aksi → down
+    status = "unknown"
+    if minutes_since is not None:
+        if minutes_since <= 5: status = "healthy"
+        elif minutes_since <= 60: status = "warning"
+        else: status = "down"
+    elif last is None:
+        status = "no_data"
+    return {
+        "status": status,
+        "last_ingest_at": last,
+        "minutes_since_last_ingest": minutes_since,
+        "ingest_last_1h": ingest_1h,
+        "ingest_last_24h": ingest_24h,
+    }
+
+
+@api.post("/plugin/milter-reset")
+async def plugin_milter_reset(request: Request):
+    """Master iken bayilere 'milter'ı yeniden başlat' sinyali."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli")
+    now = _iso()
+    signaled = 0
+    async for lic in db.licenses.find({"active": True}, {"license_key": 1}):
+        await db.settings.update_one(
+            {"_key": f"plugin_demand_milter_restart:{lic['license_key']}"},
+            {"$set": {
+                "_key": f"plugin_demand_milter_restart:{lic['license_key']}",
+                "license_key": lic["license_key"],
+                "requested_at": now, "handled": False,
+            }},
+            upsert=True,
+        )
+        signaled += 1
+    return {"ok": True, "signaled": signaled, "note": "Bayi plugin daemon 'systemctl restart gws-milter' çalıştıracak"}
+
+
+# v43.32 — Perl heartbeat.pl daemon polling endpoint'leri
+@api.get("/plugin/pending-signals")
+async def plugin_pending_signals(license_key: str):
+    """Bayi WHM plugin daemon 15dk cycle'ında bunu çağırır — kendisine ait handled=false
+    sinyalleri liste olarak alır ve icra eder (listaccts push, gws-update, milter restart)."""
+    items = []
+    prefixes = {
+        "plugin_demand_sync":            "demand_sync",
+        "plugin_demand_update":          "demand_update",
+        "plugin_demand_milter_restart":  "demand_milter_restart",
+    }
+    for prefix, signal_type in prefixes.items():
+        doc = await db.settings.find_one(
+            {"_key": f"{prefix}:{license_key}", "handled": False},
+            {"_id": 0},
+        )
+        if doc:
+            items.append({
+                "_key": doc.get("_key"),
+                "signal_type": signal_type,
+                "requested_at": doc.get("requested_at"),
+            })
+    return {"license_key": license_key, "items": items, "count": len(items)}
+
+
+@api.post("/plugin/signal-ack")
+async def plugin_signal_ack(payload: dict):
+    """Perl daemon sinyali işleyince handled=true olarak işaretler."""
+    key = payload.get("_key")
+    if not key: raise HTTPException(400, "_key gerekli")
+    r = await db.settings.update_one(
+        {"_key": key},
+        {"$set": {"handled": True, "handled_at": _iso()}},
+    )
+    return {"ok": True, "matched": r.matched_count}
+
+
 @api.post("/users/refresh-from-cpanel")
 async def users_refresh_from_cpanel(request: Request):
-    """Master aktif iken tetiklenir.
+    """v43.32 — SADECE gerçek WHM cPanel hesaplarını çağırır. Demo seed kaldırıldı.
 
-    v43.29 davranış:
+    Akış:
     1. `/usr/local/cpanel/bin/whmapi1` var mı? → local WHM'de çalışıyoruz,
        direkt `listaccts` çalıştır, sonuçları `users` koleksiyonuna upsert et.
-    2. WHM yoksa (Docker preview / uzak master) → bayi lisanslara `plugin_demand_sync`
-       sinyali yaz. Bayi WHM plugin daemon 60sn içinde bu sinyali görüp senkronize
-       edecek. Ayrıca kullanıcıya anında feedback olsun diye 8 gerçekçi demo hesap
-       seed edilir (idempotent — mevcut kullanıcıları etkilemez)."""
+    2. WHM yoksa (uzak master) → bayi lisanslara `plugin_demand_sync` sinyali yaz.
+       Bayi WHM plugin daemon 60sn içinde bu sinyali görüp whmapi1 listaccts çalıştırıp
+       `POST /api/users/sync` ile gerçek listeyi push eder.
+
+    Demo/örnek hesaplar ARTIK EKLENMEZ. Kullanıcı gerçek WHM yoksa boş görür +
+    ne yapılması gerektiği bilgilendirilir."""
     import os, subprocess, json
     master_key = (request.headers.get("x-master-key") or "").strip()
     if not master_key.startswith("MS-"):
@@ -4808,7 +4936,7 @@ async def users_refresh_from_cpanel(request: Request):
 
     # 1) Yerel WHM API varsa gerçek listaccts çalıştır
     whm_bin = "/usr/local/cpanel/bin/whmapi1"
-    real_added = 0
+    real_added, real_updated = 0, 0
     if os.path.exists(whm_bin) and os.access(whm_bin, os.X_OK):
         try:
             proc = subprocess.run(
@@ -4817,10 +4945,10 @@ async def users_refresh_from_cpanel(request: Request):
             )
             data = json.loads(proc.stdout or "{}")
             accounts = (data.get("data") or {}).get("acct") or []
-            for a in accounts[:1000]:
+            for a in accounts[:2000]:
                 username = (a.get("user") or "").strip()
                 if not username: continue
-                await db.users.update_one(
+                res = await db.users.update_one(
                     {"username": username},
                     {"$set": {
                         "username": username,
@@ -4831,22 +4959,33 @@ async def users_refresh_from_cpanel(request: Request):
                         "quarantine_size": 0,
                         "source": "whmapi1",
                         "last_synced_at": now,
+                        # cPanel'den ek meta
+                        "disk_used_mb": int(a.get("diskused", "0M").rstrip("M") or 0)
+                                        if isinstance(a.get("diskused"), str) else None,
+                        "disk_quota_mb": int(a.get("disklimit", "0M").rstrip("M") or 0)
+                                         if isinstance(a.get("disklimit"), str) else None,
+                        "email_addresses": [],  # ayrı endpoint ile doldurulur (Email::listpops)
                     }},
                     upsert=True,
                 )
-                real_added += 1
-            if real_added > 0:
-                return {
-                    "ok": True,
-                    "source": "whmapi1_local",
-                    "synced": real_added,
-                    "previous_count": current_count,
-                    "note": f"Yerel WHM'den {real_added} cPanel hesabı senkronize edildi.",
-                }
+                if res.upserted_id is not None: real_added += 1
+                elif res.modified_count > 0:   real_updated += 1
+            return {
+                "ok": True,
+                "source": "whmapi1_local",
+                "synced": real_added + real_updated,
+                "added": real_added,
+                "updated": real_updated,
+                "previous_count": current_count,
+                "note": f"Yerel WHM'den {real_added} yeni + {real_updated} güncellenen cPanel hesabı senkronize edildi.",
+            }
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504, "WHM API zaman aşımı (listaccts 25sn'de yanıt vermedi)")
         except Exception as e:
             logging.warning(f"[refresh-from-cpanel] whmapi1 failed: {e}")
+            raise HTTPException(500, f"whmapi1 hata: {str(e)[:200]}")
 
-    # 2) Uzak master / preview: sinyal yaz + demo seed
+    # 2) Uzak master / preview: sinyal yaz, DEMO SEED YAPMA
     demand_count = 0
     async for lic in db.licenses.find({"active": True, "$or": [
         {"license_key": master_key},
@@ -4866,51 +5005,22 @@ async def users_refresh_from_cpanel(request: Request):
         )
         demand_count += 1
 
-    # v43.29 — Idempotent örnek cPanel hesapları (kullanıcı anında sonuç görsün)
-    sample_accounts = [
-        ("ahmetkaya",      "ahmetkaya.com",       142, 8),
-        ("mehmet-ozdemir", "ozdemir-tekstil.com", 89,  4),
-        ("bayianadolu",    "bayianadolu.com.tr",  256, 22),
-        ("info-hasan",     "hasanmuhendislik.com", 47,  1),
-        ("selin",          "selincollection.com",  312, 15),
-        ("bariskaraca",    "barisdesign.net",      63,  3),
-        ("kutlu",          "kutlulojistik.com",    198, 11),
-        ("ozer",           "ozerteknoloji.com.tr", 71,  6),
-    ]
-    demo_added = 0
-    for username, domain, mails, spam in sample_accounts:
-        res = await db.users.update_one(
-            {"username": username},
-            {"$setOnInsert": {
-                "username": username,
-                "domain": domain,
-                "license_key": master_key,
-                "email_count_today": mails,
-                "spam_caught_today": spam,
-                "quarantine_size": spam * 2,
-                "source": "sample_cpanel",
-                "last_synced_at": now,
-            }},
-            upsert=True,
-        )
-        if res.upserted_id is not None:
-            demo_added += 1
     return {
         "ok": True,
-        "source": "signal+sample_seed",
+        "source": "signal_only",
         "signaled_licenses": demand_count,
-        "sample_added": demo_added,
         "previous_count": current_count,
-        "current_count": current_count + demo_added,
+        "current_count": current_count,  # Değişmedi, demo eklenmedi
         "note": (
-            f"cPanel bulunamadı ({whm_bin} yok). {demo_added} örnek hesap yüklendi + "
-            f"{demand_count} bayi plugin'e sinyal yazıldı. Bayi daemon 60sn içinde "
-            f"gerçek cPanel hesaplarını senkron edecek."
-            if demo_added else
-            f"Uyarı: cPanel yok ve örnek hesaplar zaten yüklü. {demand_count} bayi "
-            f"plugin daemon sinyali gönderildi — 1-2 dk içinde gerçek liste gelecek."
+            f"⚠ Bu sunucuda cPanel yok ({whm_bin} bulunamadı). {demand_count} bayi WHM "
+            f"sunucusuna 'listaccts çalıştır ve gönder' sinyali yazıldı. Bayi plugin "
+            f"daemon 60sn içinde algılayıp gerçek cPanel hesaplarını master'a push edecek."
+            if demand_count > 0 else
+            f"❌ Bu sunucuda cPanel yok ({whm_bin} bulunamadı) VE master'a bağlı aktif bayi lisansı yok. "
+            f"Kullanıcı listesi için bayi WHM sunucularına GökyüzüWebSpam plugin kurulu ve aktif olmalı."
         ),
     }
+
 
 
 
