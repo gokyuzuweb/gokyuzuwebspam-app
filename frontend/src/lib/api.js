@@ -611,6 +611,18 @@ export const api = {
   outboundAiInsights: (hours = 24) => client.post(`/outbound/ai-insights?hours=${hours}`, {}, { timeout: 60000 }).then(r => r.data),
   outboundAnomalyStatus: () => client.get("/outbound/anomaly/status").then(r => r.data),
   outboundAnomalyRunNow: () => client.post("/outbound/anomaly/run-now").then(r => r.data),
+  // v43.42 — Bounce digest
+  bounceDigestPreview: (hours = 24) => client.get("/bounce-digest/preview", { params: { hours } }).then(r => r.data),
+  bounceDigestConfig: () => client.get("/bounce-digest/config").then(r => r.data),
+  bounceDigestSetConfig: (payload) => client.post("/bounce-digest/config", payload).then(r => r.data),
+  bounceDigestRunNow: () => client.post("/bounce-digest/run-now").then(r => r.data),
+  bounceDigestHistory: () => client.get("/bounce-digest/history").then(r => r.data),
+  // v43.42 — Marketplace leaderboard
+  mpLeaderboard: (period = "week") => client.get("/marketplace/leaderboard", { params: { period } }).then(r => r.data),
+  // v43.42 — Live diagnostic
+  liveDiagnostic: () => client.get("/live-diagnostic/status").then(r => r.data),
+  liveDiagnosticCommands: () => client.get("/live-diagnostic/commands").then(r => r.data),
+  liveInstallReports: () => client.get("/live-diagnostic/install-reports").then(r => r.data),
   // v43.38 — Signature Marketplace
   mpSignatures: (opts = {}) => client.get("/marketplace/signatures", { params: opts }).then(r => r.data),
   mpSignature: (id) => client.get(`/marketplace/signature/${id}`).then(r => r.data),

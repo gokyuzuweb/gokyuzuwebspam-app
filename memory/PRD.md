@@ -13,6 +13,13 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 15, v43.42) — Bounce Digest + Marketplace Leaderboard + Live Diagnostic Wizard
+- ✅ **Bounce Digest** (`/panel/bounce-digest`): 5 backend endpoint (`config` GET/POST, `preview`, `run-now`, `history`). HTML template render, config formu (recipient email, send_hour_utc, delivery_method: panel/webhook, webhook_url). Background loop her saat başı kontrol eder, o gün digest üretilmediyse ve saat matches ise oluşturur.
+- ✅ **Marketplace Leaderboard**: `GET /api/marketplace/leaderboard?period=week|month|all`. Publisher rozet sistemi: starter (0-4), bronze (5+), silver (20+), gold (50+), diamond (100+). Widget Marketplace sayfası "Keşfet" tab'ına eklendi.
+- ✅ **Live Server Diagnostic Wizard** (`/panel/live-diagnostic`): 5 kontrol per lisans (heartbeat 30dk, plugin version ≥1.2.0, exim push 15dk, outbound data 24s, backfill status). Sağlık skoru % + kırmızı/sarı/yeşil badge. 4 fazlık SSH komut listesi (kopyala-yapıştır) + beklenen çıktı + değilse ne yapmalı. `POST /report-install` bayi WHM'den install çıktısını master'a push eder.
+- ✅ Backend testing agent: **15/15 test geçti** (iteration_42.json).
+
+
 ## Feb 15, 2026 (Session 15, v43.41) — AI Insights + World Map + Anomaly + Refactor v2
 - ✅ **AI Insights Panel**: `POST /api/outbound/ai-insights` — Claude Sonnet son N saatlik geo+user+domain verisini analiz eder, JSON döner {summary, risk_level, actions[3], metrics}. UI card: risk rozeti (LOW/MEDIUM/HIGH/CRITICAL) + numaralı aksiyon listesi. 5dk cache.
 - ✅ **Outbound Anomaly Detection**: `run_outbound_anomaly_check_once()` — 7 gün rolling baseline vs son 1 saat kıyaslar, >=5x → master_alerts insert (24h dedupe). Background loop 15dk cycle. Manual trigger endpoint. Frontend AnomalyPanel — sadece kayıt varsa görünür.

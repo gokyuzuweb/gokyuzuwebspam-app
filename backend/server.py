@@ -751,6 +751,12 @@ async def _startup() -> None:
         asyncio.create_task(_outbound_anomaly_loop())
     except Exception as _ex:
         log.warning("outbound anomaly loop not scheduled: %s", _ex)
+    # v43.42 — Daily bounce digest (per-license configured send hour)
+    try:
+        from routes.bounce_digest import _bounce_digest_daily_loop
+        asyncio.create_task(_bounce_digest_daily_loop())
+    except Exception as _ex:
+        log.warning("bounce digest loop not scheduled: %s", _ex)
 
 
 async def _daily_violations_cleanup_task():
@@ -8706,6 +8712,8 @@ from routes.outbound import router as _outbound_router  # noqa: E402
 from routes.marketplace import router as _marketplace_router  # noqa: E402
 from routes.users_sync import router as _users_sync_router  # noqa: E402
 from routes.rules import router as _rules_router  # noqa: E402
+from routes.bounce_digest import router as _bounce_router, _leaderboard_router  # noqa: E402
+from routes.live_diagnostic import router as _live_diag_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -8726,6 +8734,9 @@ app.include_router(_outbound_router, prefix="/api")
 app.include_router(_marketplace_router, prefix="/api")
 app.include_router(_users_sync_router, prefix="/api")
 app.include_router(_rules_router, prefix="/api")
+app.include_router(_bounce_router, prefix="/api")
+app.include_router(_leaderboard_router, prefix="/api")
+app.include_router(_live_diag_router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Demo mode write-guard middleware
@@ -8758,6 +8769,7 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/mail/ingest",        # alternatif mail ingest
     "/api/outbound/exim-log-push",  # v43.38 heartbeat.pl Exim log tailer
     "/api/outbound/backfill-ack",   # v43.40 heartbeat.pl backfill completion callback
+    "/api/live-diagnostic/report-install",  # v43.42 install report push
     "/api/heartbeat",          # plugin heartbeat (license_key ile doğrulanır)
     "/api/threat/report",      # threat feed report
     "/api/blacklist/",         # RBL/blacklist sorgu + delisting (lisanslı panellerin

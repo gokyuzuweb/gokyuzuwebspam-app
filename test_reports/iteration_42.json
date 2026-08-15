@@ -1,0 +1,27 @@
+{
+  "summary": "v43.42 backend testing: Bounce Digest (config GET/POST, preview, run-now, history), Marketplace Leaderboard (week/month/all with 5 badge tiers), and Live Server Diagnostic (status/commands/report-install allowlisted/install-reports) all validated end-to-end against public preview URL. 15/15 tests passed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v43_42_bounce_leaderboard_diagnostic.py",
+    "/app/test_reports/pytest/v43_42.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "bounce_digest.py /run-now stores html_preview inside every db.bounce_digests document — payloads with hundreds of samples can bloat the collection over months. Consider storing html_preview separately or omitting on write (it can be re-rendered from stored aggregates).",
+    "bounce_digest.py /run-now iterates ALL active licenses but always uses the caller's master key check — however the caller's key is not scoped: any MS- prefix key triggers digest generation for every license in db.licenses. If multi-tenant, this leaks scope. Recommend scoping to lic.master_license_key == master_key.",
+    "bounce_digest.py _bounce_digest_daily_loop uses `pv >= '1.2.0'` string compare — will break at 1.10.0. Same pattern exists in live_diagnostic.py check #2. Use packaging.version.parse or tuple comparison.",
+    "bounce_digest.py DigestConfig.recipient_email is Optional[str] with no EmailStr validation — invalid email addresses can be persisted silently. Use pydantic.EmailStr.",
+    "bounce_digest.py /preview accepts arbitrary license_key query param (no auth on it) when X-Master-Key not provided but returns full bounce data. `lk = license_key or master_key` should require master_key.startswith('MS-') before allowing external license_key.",
+    "live_diagnostic.py /report-install has ZERO auth — any unauthenticated caller can flood db.install_reports with arbitrary payloads (any license_key string). Being in the demo-write allowlist is intentional, but there is no rate limit, no license_key existence check, and no size limit on stdout/stderr fields. Add basic validation (license_key startswith 'MS-' + exists in db.licenses) and cap field length to e.g. 100KB.",
+    "live_diagnostic.py /status queries licenses with $or on license_key AND master_license_key — but master_license_key is not indexed by default; verify index exists for tenant scale.",
+    "bounce_digest.py grew module coupling: marketplace leaderboard router lives inside bounce_digest.py despite being a separate feature. Split into routes/marketplace_leaderboard.py to keep single-responsibility."
+  ],
+  "updated_files": ["/app/backend/tests/test_v43_42_bounce_leaderboard_diagnostic.py"],
+  "success_rate": {"backend": "100%", "frontend": "N/A"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676",
+  "seed_data_creation": "Wrote 1 TEST_v43_42 install report via /api/live-diagnostic/report-install (persisted in db.install_reports). Also upserted bounce_digest_config setting for the master license. Neither cleaned up (small, tagged).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "v43.42 endpoints all green: /api/bounce-digest/{config,preview,run-now,history}, /api/marketplace/leaderboard?period={week,month,all}, /api/live-diagnostic/{status,commands,report-install,install-reports}. Note /report-install is intentionally in the demo-write allowlist (no X-Master-Key required) — flagged as security concern in code review. Preview env: 5 marketplace signatures, backfill signal completed, 200+ outbound events for MS-C02AB012652A4FE692D69676."
+}

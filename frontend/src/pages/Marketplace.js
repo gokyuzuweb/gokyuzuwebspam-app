@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { useIsMaster } from "@/hooks/useIsMaster";
-
 const CAT_LABELS = {
   spam: "Spam", phishing: "Phishing", malware: "Malware",
   scam: "Dolandırıcılık", commercial: "Ticari", other: "Diğer",
@@ -108,6 +107,8 @@ export default function Marketplace() {
 
       {tab === "browse" && (
         <>
+          {/* v43.42 — Leaderboard */}
+          <LeaderboardWidget />
           {/* Filters */}
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative flex-1 max-w-xs">
@@ -460,3 +461,98 @@ function Field({ label, children }) {
     </label>
   );
 }
+
+// v43.42 — Leaderboard widget
+function LeaderboardWidget() {
+  const [period, setPeriod] = useState("week");
+  const q = useQuery({
+    queryKey: ["mp-leaderboard", period],
+    queryFn: () => api.mpLeaderboard(period),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const data = q.data;
+  if (q.isLoading || !data || data.top_publishers.length === 0) return null;
+  return (
+    <Card data-testid="mp-leaderboard">
+      <CardHeader
+        title="🏆 Marketplace Liderlik Tablosu"
+        subtitle={period === "week" ? "Bu haftanın en aktif yayıncıları ve en çok kurulan imzaları" : period === "month" ? "Aylık liderler" : "Tüm zamanların şampiyonları"}
+        right={
+          <div className="flex items-center gap-1">
+            {["week", "month", "all"].map((p) => (
+              <button key={p} onClick={() => setPeriod(p)}
+                data-testid={`mp-lb-period-${p}`}
+                className={`text-[11px] px-2 py-1 rounded border ${period === p ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-300" : "border-slate-800 text-slate-500 hover:text-slate-300"}`}>
+                {p === "week" ? "Bu Hafta" : p === "month" ? "Bu Ay" : "Tüm Zaman"}
+              </button>
+            ))}
+          </div>
+        }
+      />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-2">Top Yayıncılar</div>
+          <div className="space-y-1.5">
+            {data.top_publishers.slice(0, 5).map((p, i) => (
+              <div key={p.publisher_license}
+                data-testid={`mp-lb-pub-${i}`}
+                className="flex items-center gap-3 px-3 py-2 rounded border border-slate-800 bg-slate-950/40 hover:bg-slate-900/40">
+                <span className={`text-lg font-bold mono w-6 text-center ${i === 0 ? "text-amber-400" : i === 1 ? "text-slate-300" : i === 2 ? "text-orange-500" : "text-slate-600"}`}>
+                  {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-slate-200 mono truncate">{p.publisher_masked}</div>
+                  <div className="text-[10px] text-slate-500">
+                    <span style={{ color: p.badge.color }}>{p.badge.label}</span>
+                    <span className="mx-1 text-slate-700">·</span>
+                    {p.signatures} imza · {p.total_upvotes} beğeni
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm mono font-bold text-emerald-300">{p.period_installs}</div>
+                  <div className="text-[9px] text-slate-500">bu dönem</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-2">Top İmzalar</div>
+          <div className="space-y-1.5">
+            {data.top_signatures.slice(0, 5).map((s, i) => (
+              <div key={s.id}
+                data-testid={`mp-lb-sig-${i}`}
+                className="px-3 py-2 rounded border border-slate-800 bg-slate-950/40">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 mono text-xs">#{i + 1}</span>
+                  <span className="text-sm text-slate-200 flex-1 truncate">{s.name}</span>
+                  <span className="text-[10px] mono text-emerald-400">{s.period_installs}↓</span>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-2">
+                  <Badge tone={CAT_TONES[s.category]}>{CAT_LABELS[s.category]}</Badge>
+                  <span>v{s.version}</span>
+                  <span>· ↑{s.stats?.upvotes || 0}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      {/* Badge tiers legend */}
+      <div className="px-4 pb-4">
+        <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1.5">Rozet Seviyeleri</div>
+        <div className="flex flex-wrap gap-2">
+          {data.badge_tiers.map((b) => (
+            <span key={b.tier}
+              className="text-[11px] px-2 py-0.5 rounded border mono"
+              style={{ borderColor: `${b.color}66`, color: b.color, background: `${b.color}11` }}>
+              {b.label} — ≥{b.min} kurulum
+            </span>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+

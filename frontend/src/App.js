@@ -6,7 +6,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal, Server, History, Mail,
-  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck, Palette, Store,
+  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck, Palette, Store, MailX, Stethoscope,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -58,6 +58,8 @@ import BayiServer from "@/pages/BayiServer";
 import WhitelistHistory from "@/pages/WhitelistHistory";
 import LandingCMS from "@/pages/LandingCMS";
 import Marketplace from "@/pages/Marketplace";
+import BounceDigest from "@/pages/BounceDigest";
+import LiveDiagnostic from "@/pages/LiveDiagnostic";
 import CustomDomainGuide from "@/pages/CustomDomainGuide";
 import CommandPalette from "@/components/CommandPalette";
 import Header from "@/components/Header";
@@ -69,6 +71,8 @@ const NAV = [
   { to: "/panel/mail-health", key: "mail_health", icon: HeartPulse, testid: "nav-mail-health", label: "Mail Sağlık", group: "izleme" },
   { to: "/panel/threat-intel", key: "threat_intel", icon: Globe, testid: "nav-threat-intel", label: "Tehdit Zekası", group: "izleme" },
   { to: "/panel/marketplace", key: "marketplace", icon: Store, testid: "nav-marketplace", label: "İmza Marketplace", group: "koruma" },
+  { to: "/panel/bounce-digest", key: "bounce_digest", icon: MailX, testid: "nav-bounce-digest", label: "Bounce Digest", group: "izleme" },
+  { to: "/panel/live-diagnostic", key: "live_diagnostic", icon: Stethoscope, testid: "nav-live-diagnostic", label: "Canlı Sunucu Tanı", group: "sistem" },
   { to: "/panel/master-live", key: "master_live", icon: Activity, testid: "nav-master-live", label: "Canlı Bayi Trafiği", masterOnly: true, sellerOnly: true, group: "izleme" },
   // 🛡️ KORUMA
   { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine", group: "koruma" },
@@ -394,6 +398,8 @@ function Shell() {
             <Route path="/docs" element={<Docs />} />
             <Route path="/custom-domain" element={<CustomDomainGuide />} />
             <Route path="/marketplace" element={<Marketplace />} />
+            <Route path="/bounce-digest" element={<BounceDigest />} />
+            <Route path="/live-diagnostic" element={<LiveDiagnostic />} />
             <Route path="/quarantine" element={<Quarantine />} />
             <Route path="/lists" element={<Lists />} />
             <Route path="/rules" element={<Rules />} />
