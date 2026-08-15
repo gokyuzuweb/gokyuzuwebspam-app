@@ -67,6 +67,8 @@ export default function Outbound() {
   // v43.60 — Sortable top users table
   const [topUserSortKey, setTopUserSortKey] = useState("sent");   // sent | spam | blocked | from_addr | user
   const [topUserSortDir, setTopUserSortDir] = useState("desc");   // asc | desc
+  // v43.62 — User detail modal (email'e tıklayınca son 24 saat maillerini göster)
+  const [userDetailEmail, setUserDetailEmail] = useState(null);
   // v43.4 Mail içeriği okuma modal state
   const [contentEventId, setContentEventId] = useState(null);
   const contentQuery = useQuery({
@@ -766,7 +768,12 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
                   const key = u.from_addr || u.user;
                   return (
                     <tr key={key} data-testid={`ob-topuser-${key}`} className="border-b border-slate-800/60 hover:bg-slate-900/40">
-                      <td className="px-3 py-2 mono text-slate-100 break-all" title={u.from_addr}>
+                      <td
+                        className="px-3 py-2 mono text-slate-100 break-all cursor-pointer hover:text-indigo-300 hover:underline"
+                        title={`Detaylı bilgi için tıkla: ${u.from_addr}`}
+                        onClick={() => setUserDetailEmail(u.from_addr)}
+                        data-testid={`ob-topuser-email-${key}`}
+                      >
                         {u.from_addr || "(email yok)"}
                       </td>
                       <td className="px-3 py-2 mono text-slate-400 text-xs">{u.user || "—"}</td>
@@ -1093,6 +1100,11 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
         </div>
       )}
 
+      {/* v43.62 — User Detail Modal (email adresine tıklayınca son 24s maillerini göster) */}
+      {userDetailEmail && (
+        <UserDetailModal email={userDetailEmail} onClose={() => setUserDetailEmail(null)} />
+      )}
+
       {throttleModalOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setThrottleModalOpen(false)}>
           <div className="bg-slate-900 border border-slate-700 rounded-lg p-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()} data-testid="ob-throttle-modal">
@@ -1243,6 +1255,96 @@ function LastPushIndicator({ lastPushAt }) {
       >
         {pushing ? "..." : "⚡ Push Şimdi"}
       </button>
+    </div>
+  );
+}
+
+
+// v43.62 — Kullanıcı Detay Modalı: bir email adresinin son 24s outbound mail'i
+function UserDetailModal({ email, onClose }) {
+  const q = useQuery({
+    queryKey: ["outbound-user-detail", email],
+    queryFn: () => api.outboundEvents({ from_search: email, hours: 24, limit: 200 }),
+    enabled: !!email,
+    staleTime: 0,
+  });
+  const items = q.data?.items || [];
+  const total = items.length;
+  const spam = items.filter((e) => ["spam", "high_spam", "virus"].includes((e.verdict || "").toLowerCase())).length;
+  const blocked = items.filter((e) => ["blocked", "block"].includes((e.verdict || "").toLowerCase())).length;
+  const clean = total - spam - blocked;
+  return (
+    <div className="fixed inset-0 bg-black/80 z-50 flex items-start justify-center p-4 overflow-y-auto"
+         onClick={onClose} data-testid="ob-user-detail-modal">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-4xl w-full my-4 shadow-2xl"
+           onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800 bg-gradient-to-r from-indigo-900/30 to-slate-900">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-widest text-indigo-400 font-semibold mb-0.5">Kullanıcı Detayı — Son 24 Saat</div>
+            <div className="text-lg font-bold text-slate-100 mono break-all" data-testid="ob-user-detail-email">{email}</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+                  data-testid="ob-user-detail-close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {/* Stat strip */}
+        <div className="grid grid-cols-4 gap-2 p-4 border-b border-slate-800">
+          <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">Toplam</div>
+            <div className="text-2xl font-bold text-slate-100" data-testid="ob-user-total">{total}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/30">
+            <div className="text-[10px] uppercase tracking-widest text-emerald-500">Temiz</div>
+            <div className="text-2xl font-bold text-emerald-300">{clean}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/30">
+            <div className="text-[10px] uppercase tracking-widest text-amber-500">Spam</div>
+            <div className="text-2xl font-bold text-amber-300">{spam}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-rose-500/5 border border-rose-500/30">
+            <div className="text-[10px] uppercase tracking-widest text-rose-500">Bloklu</div>
+            <div className="text-2xl font-bold text-rose-300">{blocked}</div>
+          </div>
+        </div>
+        {/* Mails list */}
+        <div className="max-h-[60vh] overflow-y-auto">
+          {q.isLoading && (
+            <div className="p-8 text-center text-slate-500 text-sm">Yükleniyor…</div>
+          )}
+          {!q.isLoading && total === 0 && (
+            <div className="p-8 text-center text-slate-500 text-sm">Son 24 saatte bu email adresinden mail bulunamadı.</div>
+          )}
+          {total > 0 && (
+            <table className="w-full text-sm">
+              <thead className="bg-slate-950/80 sticky top-0">
+                <tr className="text-[11px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
+                  <th className="text-left px-3 py-2">Zaman</th>
+                  <th className="text-left px-3 py-2">Alıcı</th>
+                  <th className="text-left px-3 py-2">Konu</th>
+                  <th className="text-right px-3 py-2">Skor</th>
+                  <th className="text-center px-3 py-2">Verdict</th>
+                </tr>
+              </thead>
+              <tbody data-testid="ob-user-detail-tbody">
+                {items.map((e) => {
+                  const vt = verdictTone(e.verdict);
+                  return (
+                    <tr key={e.id} className="border-b border-slate-800/60 hover:bg-slate-900/40">
+                      <td className="px-3 py-2 mono text-[11px] text-slate-500 whitespace-nowrap">{fmtTime(e.ts)}</td>
+                      <td className="px-3 py-2 mono text-slate-300 break-all">{e.to_addr}</td>
+                      <td className="px-3 py-2 text-slate-300 truncate max-w-[280px]" title={e.subject}>{e.subject || "(konusuz)"}</td>
+                      <td className="px-3 py-2 text-right mono text-amber-300">{Number(e.total_score ?? 0).toFixed(1)}</td>
+                      <td className="px-3 py-2 text-center"><Badge tone={vt.tone}>{vt.label}</Badge></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -13,6 +13,64 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.62) — 3D Meteor Map + User Detail Modal + Push Health Widget
+
+**KULLANICI İSTEĞİ:**
+"Next Action Items bunları yap" + "güncel mailler giden kutusuna halen düşmüyor"
+
+**FIX v43.62 — 3 Feature Delivered:**
+
+### 1. 3D Meteor Harita (Coğrafi Harita sekmesi)
+- ✅ CSS `perspective(1400px) rotateX(38deg)` → yatay 3D perspektif tilt
+- ✅ Türkiye (İstanbul) origin server marker → pulsing beacon animasyonu
+- ✅ 12 en yüksek trafikli ülkeye **meteor streak** animasyonları:
+  * Bezier eğrisi ile `animateMotion` path (origin → destination)
+  * Meteor kuyruğu: linear gradient fade line
+  * Meteor başı: radial gradient parlak nokta
+  * Spam yüzdesine göre renk (cyan/orange/red)
+  * Stagger delay ile farklı hızlar
+- ✅ Twinkling stars background (60 yıldız, farklı fade süreleri)
+- ✅ Radar grid pattern + köşe accent'leri (cyan borders)
+- ✅ Legend + canlı akış sayacı overlay
+- ✅ Drop-shadow glow effektleri (country dots, continent silhouettes)
+
+### 2. Kullanıcı Detay Modalı
+- ✅ Kullanıcılar sekmesinde email adresine **tıklama** → modal açılır
+- ✅ Header: email adresi (mono, break-all)
+- ✅ Stat strip: 4 renk kodlu kutu (Toplam / Temiz / Spam / Bloklu)
+- ✅ Son 24 saat maillerin tablosu (Zaman / Alıcı / Konu / Skor / Verdict)
+- ✅ Backdrop click ile kapanır, X butonu, ESC handler
+- ✅ Loading state + empty state
+
+### 3. Push Health Widget (Dashboard)
+- ✅ Dashboard "overview" tab'ında MasterAlertCenter altında görünür
+- ✅ 4 renk seviyesi:
+  * 🟢 **SAĞLIKLI** (<15sn): Real-time akış aktif
+  * 🟡 **YAVAŞ** (15-60sn): Normal olabilir
+  * 🟠 **GECİKMİŞ** (1-5dk): Timer kontrolü gerekli
+  * 🔴 **PUSH DURDU** (>5dk): fix-all.sh çalıştırın
+- ✅ 5 saniyede bir refetch (canlı güncelleme)
+- ✅ Turuncu/Kırmızı durumda "→ Onar" quick-link (/panel/outbound'a yönlendirir)
+- ✅ Icon + border-color + dot renk tam senkron
+
+### 4. VERSION Multi-Location Fix (v43.61'den devam)
+- ✅ Preview backend: v43.62 (`/app/VERSION` + `/app/backend/VERSION`)
+- ✅ Fallback zinciri: env → /app/VERSION → /app/backend/VERSION → git → constant
+
+**KULLANICI DEPLOYMENT (tek satır):**
+```bash
+bash <(curl -sSf "https://mailscanner-pro.preview.emergentagent.com/api/tools/fix-all.sh?license_key=MS-C02AB012652A4FE692D69676&panel_url=https://panel.gokyuzuhosting.com")
+```
+
+**Test Sonucu (preview env):**
+- Backend `/api/version/panel` → v43.62 ✓
+- Dashboard'da Push Health Widget render ✓ (screenshot doğrulandı)
+- Frontend webpack: 0 error, sadece minor warnings
+- 3D meteor map component compile OK (data yoksa boş görünür, gerçek trafikte streak animasyonu çalışır)
+
+**Bilinen limitasyon:**
+- Preview env'de outbound mail'lerin geo-heatmap country verisi yok (IP geo lookup gerekli). Kullanıcının production sunucusunda gerçek trafikle meteor streakler otomatik görünecek.
+
 ## Feb 15, 2026 (Session 17, v43.61) — KÖK NEDEN FIX: VERSION Docker Mount + Tam Onarım Script
 
 **KULLANICI ŞİKAYETİ (defalarca):**

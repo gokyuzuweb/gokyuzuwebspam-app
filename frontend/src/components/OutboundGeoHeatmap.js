@@ -383,78 +383,233 @@ const COUNTRY_COORDS = {
 
 function WorldMap({ countries, totalMail, hours }) {
   const maxCount = Math.max(...countries.map((c) => c.mail_count), 1);
+  // v43.62 — 3D Meteor Map: Turkey (Istanbul) server origin → countries
+  const ORIGIN = { x: 560, y: 170 }; // TR (Istanbul)
+  // Aktif ülkeler için meteor animation yolları
+  const meteorPaths = countries
+    .map((c) => ({ c, coord: COUNTRY_COORDS[c.country] }))
+    .filter((x) => x.coord && x.c.mail_count > 0)
+    .sort((a, b) => b.c.mail_count - a.c.mail_count)
+    .slice(0, 12); // en yüksek trafikli 12 ülke için meteor animasyonu
   return (
     <Card data-testid="ob-world-map">
       <CardHeader
-        title={<span className="flex items-center gap-2"><Globe2 className="w-4 h-4 text-sky-400"/> Dünya Üzerinde Outbound Trafik</span>}
-        subtitle={`${totalMail} mail · ${countries.length} ülke · son ${hours} saat`}
+        title={<span className="flex items-center gap-2"><Globe2 className="w-4 h-4 text-sky-400"/> 3D Dünya Üzerinde Kayan Mail Trafiği</span>}
+        subtitle={`${totalMail} mail · ${countries.length} ülke · son ${hours} saat · Türkiye orijinli meteor akışı`}
       />
       <div className="p-4">
-        <div className="relative w-full aspect-[2/1] bg-slate-950/60 border border-slate-800 rounded overflow-hidden">
-          {/* Basit continent silüetleri (SVG paths) */}
-          <svg viewBox="0 0 900 450" className="w-full h-full" xmlns="http://www.w3.org/2000/svg" data-testid="ob-world-svg">
-            {/* Kıtalar — simplified paths */}
-            <g fill="#1e293b" stroke="#334155" strokeWidth="0.8">
-              {/* North America */}
-              <path d="M 120 120 L 260 110 L 290 180 L 260 240 L 200 260 L 150 230 L 110 180 Z" />
-              {/* Central + South America */}
-              <path d="M 210 240 L 280 250 L 290 300 L 310 340 L 320 400 L 280 420 L 250 380 L 240 320 L 220 280 Z" />
-              {/* Europe */}
-              <path d="M 460 130 L 570 125 L 590 165 L 570 195 L 500 200 L 465 180 L 455 150 Z" />
-              {/* Africa */}
-              <path d="M 480 220 L 590 220 L 610 280 L 600 340 L 560 400 L 510 380 L 480 320 L 470 260 Z" />
-              {/* Asia */}
-              <path d="M 570 130 L 720 115 L 810 140 L 850 190 L 830 250 L 750 260 L 700 240 L 650 230 L 610 210 L 580 180 Z" />
-              {/* South Asia + India */}
-              <path d="M 660 220 L 730 225 L 730 280 L 700 300 L 675 280 Z" />
-              {/* Southeast Asia */}
-              <path d="M 760 260 L 820 270 L 830 320 L 790 330 L 760 300 Z" />
-              {/* Australia */}
-              <path d="M 790 340 L 870 340 L 880 390 L 830 400 L 790 380 Z" />
-            </g>
-            {/* Grid lat/long lines */}
-            <g stroke="#1e293b" strokeWidth="0.4" opacity="0.5">
-              <line x1="0" y1="225" x2="900" y2="225" strokeDasharray="2,4" />
-              <line x1="450" y1="0" x2="450" y2="450" strokeDasharray="2,4" />
-            </g>
-            {/* Country dots — sized by mail_count */}
-            {countries.map((c) => {
-              const coord = COUNTRY_COORDS[c.country];
-              if (!coord) return null;
-              const r = 4 + (c.mail_count / maxCount) * 22;
-              const spamPct = c.spam_count / Math.max(c.mail_count, 1);
-              const fill = c.risky ? "#f43f5e"
-                : spamPct >= 0.3 ? "#f97316"
-                : spamPct >= 0.15 ? "#eab308"
-                : "#10b981";
+        <div
+          className="relative w-full aspect-[2/1] rounded-xl overflow-hidden"
+          style={{
+            perspective: "1400px",
+            background: "radial-gradient(ellipse at 50% 40%, #0f172a 0%, #020617 60%, #000000 100%)",
+          }}
+          data-testid="ob-meteor-container"
+        >
+          {/* Twinkling stars background */}
+          <svg className="absolute inset-0 w-full h-full" viewBox="0 0 900 450" preserveAspectRatio="none">
+            {Array.from({ length: 60 }).map((_, i) => {
+              const cx = (i * 137.5) % 900;
+              const cy = ((i * 63.7) + 40) % 450;
+              const r = 0.4 + ((i * 7) % 12) / 10;
+              const dur = 2 + ((i * 3) % 5);
               return (
-                <g key={c.country} data-testid={`ob-worldmap-${coord.code}`}>
-                  {/* pulse ring */}
-                  <circle cx={coord.x} cy={coord.y} r={r + 4} fill={fill} opacity="0.15">
-                    <animate attributeName="r" values={`${r};${r + 10};${r}`} dur="2.5s" repeatCount="indefinite"/>
-                    <animate attributeName="opacity" values="0.4;0;0.4" dur="2.5s" repeatCount="indefinite"/>
-                  </circle>
-                  {/* main dot */}
-                  <circle cx={coord.x} cy={coord.y} r={r} fill={fill} opacity="0.75" stroke={fill} strokeWidth="1.5">
-                    <title>{c.country}: {c.mail_count} mail ({c.spam_count} spam)</title>
-                  </circle>
-                  {/* label */}
-                  <text x={coord.x} y={coord.y - r - 4} textAnchor="middle" fill="#e2e8f0" fontSize="10" fontWeight="600">
-                    {c.country === "Uluslararası" ? "🌐" : coord.code}
-                  </text>
-                  <text x={coord.x} y={coord.y + r + 12} textAnchor="middle" fill={fill} fontSize="9" fontWeight="700">
-                    {c.mail_count}
-                  </text>
-                </g>
+                <circle key={`star-${i}`} cx={cx} cy={cy} r={r} fill="#e2e8f0" opacity="0.7">
+                  <animate attributeName="opacity"
+                           values="0.15;0.9;0.15" dur={`${dur}s`}
+                           repeatCount="indefinite" begin={`${(i * 0.13) % 3}s`} />
+                </circle>
               );
             })}
           </svg>
-          <div className="absolute bottom-2 right-2 flex gap-2 text-[10px] text-slate-400 mono">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400"/>Temiz</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400"/>~15%</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"/>~30%</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500"/>Yüksek risk</span>
+
+          {/* 3D-tilted map layer (perspective transform) */}
+          <div
+            className="absolute inset-0"
+            style={{
+              transform: "rotateX(38deg) scale(1.05) translateY(6%)",
+              transformOrigin: "center 55%",
+              transformStyle: "preserve-3d",
+            }}
+          >
+            <svg viewBox="0 0 900 450" className="w-full h-full" xmlns="http://www.w3.org/2000/svg" data-testid="ob-world-svg">
+              <defs>
+                {/* Meteor gradient (bright head → fading tail) */}
+                <linearGradient id="meteor-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#22d3ee" stopOpacity="0"/>
+                  <stop offset="60%" stopColor="#22d3ee" stopOpacity="0.7"/>
+                  <stop offset="100%" stopColor="#f0f9ff" stopOpacity="1"/>
+                </linearGradient>
+                <linearGradient id="meteor-warn" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#f97316" stopOpacity="0"/>
+                  <stop offset="60%" stopColor="#f97316" stopOpacity="0.7"/>
+                  <stop offset="100%" stopColor="#fff7ed" stopOpacity="1"/>
+                </linearGradient>
+                <linearGradient id="meteor-danger" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#f43f5e" stopOpacity="0"/>
+                  <stop offset="60%" stopColor="#f43f5e" stopOpacity="0.7"/>
+                  <stop offset="100%" stopColor="#fef2f2" stopOpacity="1"/>
+                </linearGradient>
+                {/* Meteor head glow */}
+                <radialGradient id="meteor-head" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#ffffff" stopOpacity="1"/>
+                  <stop offset="40%" stopColor="#22d3ee" stopOpacity="0.8"/>
+                  <stop offset="100%" stopColor="#22d3ee" stopOpacity="0"/>
+                </radialGradient>
+                {/* Grid pattern (radar-like) */}
+                <pattern id="grid-pattern" width="30" height="30" patternUnits="userSpaceOnUse">
+                  <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#1e293b" strokeWidth="0.3" opacity="0.6"/>
+                </pattern>
+              </defs>
+
+              {/* Grid overlay */}
+              <rect width="900" height="450" fill="url(#grid-pattern)" opacity="0.4"/>
+
+              {/* Continent silhouettes (darker + subtle glow) */}
+              <g fill="#0f172a" stroke="#1e40af" strokeWidth="1.2" strokeOpacity="0.4"
+                 style={{ filter: "drop-shadow(0 0 6px rgba(59,130,246,0.15))" }}>
+                <path d="M 120 120 L 260 110 L 290 180 L 260 240 L 200 260 L 150 230 L 110 180 Z" />
+                <path d="M 210 240 L 280 250 L 290 300 L 310 340 L 320 400 L 280 420 L 250 380 L 240 320 L 220 280 Z" />
+                <path d="M 460 130 L 570 125 L 590 165 L 570 195 L 500 200 L 465 180 L 455 150 Z" />
+                <path d="M 480 220 L 590 220 L 610 280 L 600 340 L 560 400 L 510 380 L 480 320 L 470 260 Z" />
+                <path d="M 570 130 L 720 115 L 810 140 L 850 190 L 830 250 L 750 260 L 700 240 L 650 230 L 610 210 L 580 180 Z" />
+                <path d="M 660 220 L 730 225 L 730 280 L 700 300 L 675 280 Z" />
+                <path d="M 760 260 L 820 270 L 830 320 L 790 330 L 760 300 Z" />
+                <path d="M 790 340 L 870 340 L 880 390 L 830 400 L 790 380 Z" />
+              </g>
+
+              {/* Equator + prime meridian */}
+              <g stroke="#3b82f6" strokeWidth="0.5" strokeOpacity="0.3">
+                <line x1="0" y1="225" x2="900" y2="225" strokeDasharray="4,8" />
+                <line x1="450" y1="0" x2="450" y2="450" strokeDasharray="4,8" />
+              </g>
+
+              {/* Origin server marker — Türkiye pulsing beacon */}
+              <g data-testid="ob-meteor-origin">
+                <circle cx={ORIGIN.x} cy={ORIGIN.y} r="22" fill="#22d3ee" opacity="0.08">
+                  <animate attributeName="r" values="22;35;22" dur="3s" repeatCount="indefinite"/>
+                  <animate attributeName="opacity" values="0.3;0;0.3" dur="3s" repeatCount="indefinite"/>
+                </circle>
+                <circle cx={ORIGIN.x} cy={ORIGIN.y} r="10" fill="#22d3ee" opacity="0.25">
+                  <animate attributeName="r" values="10;16;10" dur="1.5s" repeatCount="indefinite"/>
+                </circle>
+                <circle cx={ORIGIN.x} cy={ORIGIN.y} r="5" fill="#f0f9ff" stroke="#22d3ee" strokeWidth="2">
+                  <animate attributeName="opacity" values="1;0.6;1" dur="1.5s" repeatCount="indefinite"/>
+                </circle>
+                <text x={ORIGIN.x} y={ORIGIN.y - 26} textAnchor="middle" fill="#67e8f9" fontSize="11"
+                      fontWeight="700" style={{ letterSpacing: "0.15em" }}>
+                  ◉ SERVER TR
+                </text>
+              </g>
+
+              {/* Meteor streaks — origin → destination */}
+              {meteorPaths.map(({ c, coord }, i) => {
+                const dx = coord.x - ORIGIN.x;
+                const dy = coord.y - ORIGIN.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                const spamPct = c.spam_count / Math.max(c.mail_count, 1);
+                const grad = c.risky ? "meteor-danger" : spamPct >= 0.2 ? "meteor-warn" : "meteor-grad";
+                const dur = 1.6 + (i * 0.13);          // farklı hızlar için stagger
+                const delay = (i * 0.4) % 3;
+                const streakLen = 60;                    // meteor kuyruğu uzunluğu
+                return (
+                  <g key={`meteor-${c.country}`} data-testid={`ob-meteor-${coord.code}`}>
+                    {/* Path curve (görünmez ama motion için) — bezier ile hafif eğri */}
+                    <path
+                      id={`meteor-path-${i}`}
+                      d={`M ${ORIGIN.x} ${ORIGIN.y} Q ${(ORIGIN.x + coord.x) / 2} ${Math.min(ORIGIN.y, coord.y) - 40} ${coord.x} ${coord.y}`}
+                      fill="none"
+                      stroke="none"
+                    />
+                    {/* Meteor kuyruğu (fade line) */}
+                    <line
+                      x1={ORIGIN.x} y1={ORIGIN.y}
+                      x2={ORIGIN.x + Math.cos(angle * Math.PI / 180) * streakLen}
+                      y2={ORIGIN.y + Math.sin(angle * Math.PI / 180) * streakLen}
+                      stroke={`url(#${grad})`}
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      opacity="0.85"
+                    >
+                      <animateMotion dur={`${dur}s`} repeatCount="indefinite" begin={`${delay}s`}
+                                     path={`M 0,0 L ${dx - Math.cos(angle * Math.PI / 180) * streakLen},${dy - Math.sin(angle * Math.PI / 180) * streakLen}`} />
+                      <animate attributeName="opacity" values="0;0.85;0.85;0"
+                               keyTimes="0;0.15;0.85;1" dur={`${dur}s`}
+                               repeatCount="indefinite" begin={`${delay}s`} />
+                    </line>
+                    {/* Meteor başı (parlak nokta) */}
+                    <circle r="4" fill="url(#meteor-head)">
+                      <animateMotion dur={`${dur}s`} repeatCount="indefinite" begin={`${delay}s`}
+                                     path={`M ${ORIGIN.x},${ORIGIN.y} Q ${(ORIGIN.x + coord.x) / 2},${Math.min(ORIGIN.y, coord.y) - 40} ${coord.x},${coord.y}`} />
+                      <animate attributeName="opacity" values="0;1;1;0"
+                               keyTimes="0;0.1;0.9;1" dur={`${dur}s`}
+                               repeatCount="indefinite" begin={`${delay}s`} />
+                    </circle>
+                  </g>
+                );
+              })}
+
+              {/* Country destinations */}
+              {countries.map((c) => {
+                const coord = COUNTRY_COORDS[c.country];
+                if (!coord) return null;
+                const r = 4 + (c.mail_count / maxCount) * 22;
+                const spamPct = c.spam_count / Math.max(c.mail_count, 1);
+                const fill = c.risky ? "#f43f5e"
+                  : spamPct >= 0.3 ? "#f97316"
+                  : spamPct >= 0.15 ? "#eab308"
+                  : "#10b981";
+                return (
+                  <g key={c.country} data-testid={`ob-worldmap-${coord.code}`}>
+                    {/* pulse ring */}
+                    <circle cx={coord.x} cy={coord.y} r={r + 4} fill={fill} opacity="0.15">
+                      <animate attributeName="r" values={`${r};${r + 10};${r}`} dur="2.5s" repeatCount="indefinite"/>
+                      <animate attributeName="opacity" values="0.4;0;0.4" dur="2.5s" repeatCount="indefinite"/>
+                    </circle>
+                    {/* main dot with glow */}
+                    <circle cx={coord.x} cy={coord.y} r={r} fill={fill} opacity="0.9"
+                            stroke={fill} strokeWidth="1.5"
+                            style={{ filter: `drop-shadow(0 0 ${r * 0.8}px ${fill})` }}>
+                      <title>{c.country}: {c.mail_count} mail ({c.spam_count} spam)</title>
+                    </circle>
+                    {/* label */}
+                    <text x={coord.x} y={coord.y - r - 6} textAnchor="middle" fill="#f1f5f9"
+                          fontSize="10" fontWeight="700"
+                          style={{ textShadow: "0 0 4px rgba(0,0,0,0.9)" }}>
+                      {c.country === "Uluslararası" ? "🌐" : coord.code}
+                    </text>
+                    <text x={coord.x} y={coord.y + r + 12} textAnchor="middle" fill={fill}
+                          fontSize="9" fontWeight="700"
+                          style={{ textShadow: "0 0 4px rgba(0,0,0,0.9)" }}>
+                      {c.mail_count}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
           </div>
+
+          {/* Legend + stats overlay */}
+          <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end pointer-events-none">
+            <div className="text-[10px] mono text-slate-400 space-y-0.5 bg-slate-950/70 rounded px-2 py-1.5 backdrop-blur">
+              <div className="text-cyan-300 font-semibold">🌊 CANLI AKIŞ</div>
+              <div>{meteorPaths.length} rota aktif</div>
+              <div className="text-slate-500">Türkiye → {countries.length} ülke</div>
+            </div>
+            <div className="flex gap-2 text-[10px] text-slate-300 mono bg-slate-950/70 rounded px-2 py-1.5 backdrop-blur">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400"/>Temiz</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400"/>~15%</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"/>~30%</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500"/>Risk</span>
+            </div>
+          </div>
+
+          {/* Corner accents (radar aesthetic) */}
+          <div className="absolute top-2 left-2 w-8 h-8 border-l-2 border-t-2 border-cyan-500/40"/>
+          <div className="absolute top-2 right-2 w-8 h-8 border-r-2 border-t-2 border-cyan-500/40"/>
+          <div className="absolute bottom-2 left-2 w-8 h-8 border-l-2 border-b-2 border-cyan-500/40"/>
+          <div className="absolute bottom-2 right-2 w-8 h-8 border-r-2 border-b-2 border-cyan-500/40"/>
         </div>
       </div>
     </Card>
