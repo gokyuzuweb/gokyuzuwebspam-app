@@ -432,6 +432,22 @@ export default function App() {
         const cleanUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "") + window.location.hash;
         window.history.replaceState({}, "", cleanUrl);
       }
+
+      // v43.35 — Preview otomatik master activation: kullanıcı manuel key girmesin diye
+      // preview subdomain'inde varsayılan master key otomatik set edilir.
+      // Production'da bu bloka girmez (host name filtresi).
+      try {
+        const host = window.location.hostname;
+        const isPreview = host.includes("preview.emergentagent.com") || host === "localhost";
+        const existing = localStorage.getItem("gws.master_license") || "";
+        if (isPreview && !existing.startsWith("MS-")) {
+          const DEFAULT_PREVIEW_KEY = "MS-C02AB012652A4FE692D69676";
+          localStorage.setItem("gws.master_license", DEFAULT_PREVIEW_KEY);
+          localStorage.setItem("gws.event_license", DEFAULT_PREVIEW_KEY);
+          localStorage.setItem("gws.license.dismissed", "1");
+          console.log("[GWS] Preview auto-activated master mode");
+        }
+      } catch (_) {}
     } catch (_) {}
 
     // v43.19 iframe detection
