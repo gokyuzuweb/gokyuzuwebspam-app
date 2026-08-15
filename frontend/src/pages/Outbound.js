@@ -151,13 +151,13 @@ export default function Outbound() {
       hours: dHours ? Number(dHours) : undefined,
       verdict: verdict !== "all" ? verdict : undefined,
     }),
-    refetchInterval: 20000,
+    refetchInterval: 3000,
     refetchOnWindowFocus: "always",
     refetchOnMount: "always",
     staleTime: 0,
   });
 
-  const statsQuery = useQuery({ queryKey: ["outbound-stats"], queryFn: () => api.outboundStats(), refetchInterval: 20000, refetchOnWindowFocus: "always", staleTime: 0 });
+  const statsQuery = useQuery({ queryKey: ["outbound-stats"], queryFn: () => api.outboundStats(), refetchInterval: 3000, refetchOnWindowFocus: "always", staleTime: 0 });
   const bulkAlertsQuery = useQuery({ queryKey: ["outbound-bulk-alerts"], queryFn: () => api.outboundBulkAlerts(), refetchInterval: 30000 });
   const throttlesQuery = useQuery({ queryKey: ["outbound-throttles"], queryFn: () => api.outboundThrottles(), refetchInterval: 30000 });
 

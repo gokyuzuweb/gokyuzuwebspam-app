@@ -7001,6 +7001,380 @@ echo "  Sonraki 5 dakika içinde panel'de outbound mailleriniz görünmeye başl
     return _PT(script, media_type="text/x-shellscript")
 
 
+# ============================================================================
+# v43.57 — REAL-TIME EXIM DAEMON (continuous tail -F, 2s buffer flush)
+# ---------------------------------------------------------------------------
+# ConfigServer parity: mailler dashboard'a **anlık** düşer.
+# - `tail -Fn0 /var/log/exim_mainlog` sürekli takip
+# - Her 2 saniyede bir buffer flush → base64 encode → /api/outbound/exim-log-push-raw
+# - Systemd auto-restart + nohup fallback
+# - Eski cron/timer/inotify job'ları otomatik disable edilir
+# ============================================================================
+_EXIM_DAEMON_SH_SOURCE = r"""#!/bin/bash
+# gws-exim-daemon — GökyüzüWebSpam real-time Exim log daemon
+# Sub-second panel updates via continuous tail + rolling 2s flush.
+GWS_DAEMON_VERSION="v43.57"
+set -uo pipefail
+
+CONF="/etc/gws-exim-push.conf"  # aynı config paylaşılır
+[ -f "$CONF" ] && . "$CONF" 2>/dev/null || true
+PANEL_URL="${PANEL_URL:-https://panel.gokyuzuhosting.com}"
+LICENSE_KEY="${LICENSE_KEY:-}"
+EXIM_LOG="${EXIM_LOG:-/var/log/exim_mainlog}"
+FLUSH_INTERVAL="${FLUSH_INTERVAL:-2}"
+STATE_DIR="${STATE_DIR:-/var/lib/gws-exim-daemon}"
+LOG_DIR="/var/log/gws-exim-daemon"
+LOG="$LOG_DIR/daemon.log"
+PID_FILE="$STATE_DIR/daemon.pid"
+
+mkdir -p "$STATE_DIR" "$LOG_DIR" 2>/dev/null || true
+
+# Log rotation basit (10MB üstü rotate)
+_rotate_log() {
+    [ -f "$LOG" ] || return 0
+    local sz=$(stat -c%s "$LOG" 2>/dev/null || echo 0)
+    if [ "$sz" -gt 10485760 ]; then
+        mv "$LOG" "$LOG.1" 2>/dev/null || true
+        : > "$LOG"
+    fi
+}
+_log() { _rotate_log; echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$LOG" 2>/dev/null; }
+
+case "${1:-}" in
+    --version|-v) echo "$GWS_DAEMON_VERSION"; exit 0 ;;
+    --help|-h)
+        cat <<HLP
+gws-exim-daemon $GWS_DAEMON_VERSION — real-time Exim log push
+Usage:
+  gws-exim-daemon --start        Start in background (nohup)
+  gws-exim-daemon --stop         Stop running daemon
+  gws-exim-daemon --restart      Stop + start
+  gws-exim-daemon --status       Show status + last log lines
+  gws-exim-daemon --foreground   Run in foreground (used by systemd)
+  gws-exim-daemon --version      Print version
+Config: /etc/gws-exim-push.conf (LICENSE_KEY, PANEL_URL, EXIM_LOG, FLUSH_INTERVAL)
+Logs:   $LOG
+HLP
+        exit 0 ;;
+esac
+
+_pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+
+cmd_status() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null || echo)
+        if _pid_alive "$pid"; then
+            echo "RUNNING (pid=$pid) since $(ps -o lstart= -p "$pid" 2>/dev/null | xargs)"
+            echo "--- Last 10 log lines ---"
+            tail -n 10 "$LOG" 2>/dev/null
+            return 0
+        fi
+    fi
+    echo "STOPPED"
+    return 1
+}
+
+cmd_stop() {
+    local killed=0
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null || echo)
+        if _pid_alive "$pid"; then
+            pkill -TERM -P "$pid" 2>/dev/null || true
+            kill -TERM "$pid" 2>/dev/null || true
+            sleep 1
+            _pid_alive "$pid" && kill -KILL "$pid" 2>/dev/null || true
+            killed=1
+            _log "STOP signal sent to pid=$pid"
+        fi
+        rm -f "$PID_FILE"
+    fi
+    # Orphan tail'leri de temizle
+    pkill -f "tail -Fn0 $EXIM_LOG" 2>/dev/null && killed=1
+    [ "$killed" -eq 1 ] && echo "Stopped" || echo "Not running"
+}
+
+cmd_start() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null || echo)
+        if _pid_alive "$pid"; then
+            echo "Already running (pid=$pid). Use --restart to reload."
+            exit 1
+        fi
+        rm -f "$PID_FILE"
+    fi
+    [ -z "$LICENSE_KEY" ] && { echo "FATAL: LICENSE_KEY missing in $CONF"; exit 1; }
+    [ ! -r "$EXIM_LOG" ] && { echo "FATAL: $EXIM_LOG not readable (run as root?)"; exit 1; }
+    nohup "$0" --foreground >>"$LOG" 2>&1 &
+    local newpid=$!
+    disown 2>/dev/null || true
+    echo "$newpid" > "$PID_FILE"
+    sleep 1
+    if _pid_alive "$newpid"; then
+        echo "Started (pid=$newpid). Flush every ${FLUSH_INTERVAL}s. Log: tail -f $LOG"
+    else
+        echo "FAILED to start. Check log: tail -n 30 $LOG"
+        exit 1
+    fi
+}
+
+cmd_foreground() {
+    [ -z "$LICENSE_KEY" ] && { _log "FATAL: LICENSE_KEY missing"; exit 1; }
+    [ ! -r "$EXIM_LOG" ] && { _log "FATAL: $EXIM_LOG not readable"; exit 1; }
+    HOSTNAME_STR=$(hostname 2>/dev/null || echo "unknown")
+    echo $$ > "$PID_FILE"
+    _log "DAEMON START pid=$$ v=$GWS_DAEMON_VERSION flush=${FLUSH_INTERVAL}s log=$EXIM_LOG panel=$PANEL_URL"
+
+    # Trap cleanup — fd 3 tail child'ı + pid file'ı temizle
+    _cleanup() {
+        _log "DAEMON STOP (signal)"
+        # fd 3'ün arkasındaki subshell'i öldür (tail)
+        pkill -P $$ 2>/dev/null || true
+        rm -f "$PID_FILE"
+        exit 0
+    }
+    trap _cleanup TERM INT HUP
+
+    # Buffer + carryover: son batch'i her push'a prepend et ki
+    # arrival ile delivery ayrı batch'lerde bile eşleşsin (backend dedup upsert eder).
+    BUFFER=""
+    CARRY=""
+    LAST_FLUSH=$(date +%s)
+    PUSH_COUNT=0
+    LINES_ACCUM=0
+    ERR_COUNT=0
+
+    _flush() {
+        local payload="${CARRY}${BUFFER}"
+        if [ -z "$payload" ]; then return 0; fi
+        # Base64 encode (WAF bypass: <, >, ** karakterlerinden kaçın)
+        local b64
+        b64=$(printf '%s' "$payload" | base64 -w0 2>/dev/null)
+        if [ -z "$b64" ]; then
+            _log "WARN base64 encode boş sonuç"
+            return 1
+        fi
+        local jfile
+        jfile=$(mktemp 2>/dev/null || echo "/tmp/gws-daemon.$$.json")
+        printf '{"license_key":"%s","hostname":"%s","log_text_b64":"%s"}' \
+            "$LICENSE_KEY" "$HOSTNAME_STR" "$b64" > "$jfile"
+        local http
+        http=$(curl -sS --max-time 15 -o /tmp/gws-daemon.resp -w '%{http_code}' \
+            -H "Content-Type: application/json" \
+            -X POST "$PANEL_URL/api/outbound/exim-log-push-raw" \
+            --data-binary "@$jfile" 2>/dev/null || echo "000")
+        rm -f "$jfile"
+        PUSH_COUNT=$((PUSH_COUNT + 1))
+        if [ "$http" = "200" ]; then
+            local parsed inserted
+            parsed=$(grep -oE '"parsed":[0-9]+' /tmp/gws-daemon.resp 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo 0)
+            inserted=$(grep -oE '"inserted":[0-9]+' /tmp/gws-daemon.resp 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo 0)
+            _log "OK push=$PUSH_COUNT lines=$LINES_ACCUM parsed=$parsed inserted=$inserted bytes=${#payload}"
+        else
+            ERR_COUNT=$((ERR_COUNT + 1))
+            local rh
+            rh=$(head -c 200 /tmp/gws-daemon.resp 2>/dev/null | tr '\n' ' ')
+            _log "FAIL push=$PUSH_COUNT http=$http err=$ERR_COUNT bytes=${#payload} resp=$rh"
+        fi
+        rm -f /tmp/gws-daemon.resp
+        CARRY="$BUFFER"
+        BUFFER=""
+        LINES_ACCUM=0
+    }
+
+    # `stdbuf -oL` line-buffered mode — piped tail default block-buffered olur.
+    # `tail -Fn0` = son satırdan başla, rotate/truncate'e dayanıklı
+    # Süreç substitution ile fd 3'e bağlarız
+    if command -v stdbuf >/dev/null 2>&1; then
+        exec 3< <(stdbuf -oL tail -Fn0 "$EXIM_LOG" 2>/dev/null)
+    else
+        exec 3< <(tail -Fn0 "$EXIM_LOG" 2>/dev/null)
+    fi
+    _log "tail source attached (fd 3)"
+
+    # Ana loop: read timeout ile hem line topla hem periyodik flush yap
+    while true; do
+        line=""
+        if IFS= read -r -t "$FLUSH_INTERVAL" line <&3; then
+            if [ -n "$line" ]; then
+                BUFFER="${BUFFER}${line}"$'\n'
+                LINES_ACCUM=$((LINES_ACCUM + 1))
+            fi
+        fi
+        NOW=$(date +%s)
+        if [ $((NOW - LAST_FLUSH)) -ge "$FLUSH_INTERVAL" ]; then
+            if [ -n "$BUFFER" ] || [ -n "$CARRY" ]; then
+                _flush
+            fi
+            LAST_FLUSH=$NOW
+        fi
+    done
+    _log "DAEMON EXIT (unreachable)"
+}
+
+case "${1:-}" in
+    --start) cmd_start ;;
+    --stop) cmd_stop ;;
+    --restart) cmd_stop; sleep 1; cmd_start ;;
+    --status) cmd_status ;;
+    --foreground) cmd_foreground ;;
+    *) exec "$0" --help ;;
+esac
+"""
+
+
+@api.get("/tools/gws-exim-daemon.sh")
+async def download_exim_daemon_script():
+    """v43.57 — Sürekli çalışan real-time Exim daemon script'i indirir."""
+    from fastapi.responses import PlainTextResponse as _PT
+    return _PT(_EXIM_DAEMON_SH_SOURCE, media_type="text/x-shellscript",
+               headers={"Content-Disposition": "attachment; filename=gws-exim-daemon"})
+
+
+@api.get("/tools/install-exim-daemon.sh")
+async def install_exim_daemon_oneliner(license_key: str = "", panel_url: str = "",
+                                        flush_interval: int = 2):
+    """v43.57 — Real-time daemon 1-satırlık kurulum:
+      bash <(curl -s https://panel.gokyuzuhosting.com/api/tools/install-exim-daemon.sh?license_key=MS-...)
+
+    Eski cron/timer/inotify job'ları otomatik disable eder, yerine:
+      1. gws-exim-daemon.service (systemd, auto-restart, boot'ta başlar)
+      2. nohup fallback (systemd yoksa)
+    """
+    from fastapi.responses import PlainTextResponse as _PT
+    if not panel_url:
+        panel_url = "https://panel.gokyuzuhosting.com"
+    fi = max(1, min(int(flush_interval or 2), 10))
+    script = f"""#!/bin/bash
+# GökyüzüWebSpam Real-Time Exim Daemon — 1-satırlık kurulum (v43.57)
+set -euo pipefail
+
+LICENSE_KEY="{license_key}"
+PANEL_URL="{panel_url}"
+FLUSH_INTERVAL="{fi}"
+
+if [ -z "$LICENSE_KEY" ] && [ -n "${{1:-}}" ]; then
+    LICENSE_KEY="$1"
+fi
+
+if [ -z "$LICENSE_KEY" ]; then
+    echo "HATA: License key gerekli"
+    echo "Kullanım: bash <(curl -s $PANEL_URL/api/tools/install-exim-daemon.sh?license_key=MS-...)"
+    exit 1
+fi
+
+echo "══════════════════════════════════════════════════════"
+echo "  GökyüzüWebSpam Real-Time Daemon Kurulumu (v43.57)"
+echo "  ConfigServer parity → mailler anlık düşecek"
+echo "══════════════════════════════════════════════════════"
+echo ""
+
+echo "==> [1/6] Eski cron/timer/inotify jobları temizleniyor…"
+# Eski cron
+(crontab -l 2>/dev/null | grep -v gws-exim-push) | crontab - 2>/dev/null || true
+# Eski systemd unit'ler (v43.50/v43.51 timer + inotify)
+for U in gws-exim-push.timer gws-exim-push.service gws-exim-inotify.service; do
+    if systemctl list-unit-files 2>/dev/null | grep -q "^$U"; then
+        systemctl disable --now "$U" 2>/dev/null || true
+        rm -f "/etc/systemd/system/$U" 2>/dev/null || true
+        echo "  · $U kaldırıldı"
+    fi
+done
+systemctl daemon-reload 2>/dev/null || true
+
+echo "==> [2/6] Daemon script indiriliyor…"
+curl -sSf -o /usr/local/bin/gws-exim-daemon "$PANEL_URL/api/tools/gws-exim-daemon.sh"
+chmod +x /usr/local/bin/gws-exim-daemon
+DAEMON_VER=$(/usr/local/bin/gws-exim-daemon --version 2>/dev/null || echo "?")
+echo "  · /usr/local/bin/gws-exim-daemon ($DAEMON_VER)"
+
+echo "==> [3/6] Config yazılıyor: /etc/gws-exim-push.conf"
+cat > /etc/gws-exim-push.conf <<EOF
+PANEL_URL=$PANEL_URL
+LICENSE_KEY=$LICENSE_KEY
+EXIM_LOG=/var/log/exim_mainlog
+FLUSH_INTERVAL=$FLUSH_INTERVAL
+EOF
+chmod 600 /etc/gws-exim-push.conf
+
+echo "==> [4/6] Systemd service oluşturuluyor (auto-restart)…"
+INSTALLED_SYSTEMD=0
+if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+    cat > /etc/systemd/system/gws-exim-daemon.service <<'SVC'
+[Unit]
+Description=GokyuzuWebSpam Real-Time Exim Log Daemon
+Documentation=https://panel.gokyuzuhosting.com/panel/outbound
+After=network-online.target exim.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/gws-exim-daemon --foreground
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/gws-exim-daemon/daemon.log
+StandardError=append:/var/log/gws-exim-daemon/daemon.log
+# Kaynak koruması
+LimitNOFILE=4096
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
+SVC
+    systemctl daemon-reload
+    # Daha önce çalışan bir daemon (nohup) varsa durdur
+    /usr/local/bin/gws-exim-daemon --stop 2>/dev/null || true
+    systemctl enable --now gws-exim-daemon.service
+    sleep 2
+    if systemctl is-active --quiet gws-exim-daemon.service; then
+        echo "  ✓ systemd service AKTIF — boot'ta otomatik başlar, crash'te otomatik restart"
+        INSTALLED_SYSTEMD=1
+    else
+        echo "  ⚠ systemd service başlatılamadı — journalctl -u gws-exim-daemon çıktısına bakın"
+    fi
+fi
+
+if [ "$INSTALLED_SYSTEMD" -eq 0 ]; then
+    echo "==> [4/6-alt] systemd yok → nohup ile başlatılıyor…"
+    /usr/local/bin/gws-exim-daemon --start
+    # Boot'ta yeniden başlaması için rc.local'a ekle
+    if [ -f /etc/rc.local ]; then
+        if ! grep -q "gws-exim-daemon" /etc/rc.local; then
+            sed -i '/^exit 0/i /usr/local/bin/gws-exim-daemon --start >/dev/null 2>&1 || true' /etc/rc.local 2>/dev/null || true
+            echo "  · rc.local'a boot entry eklendi"
+        fi
+    fi
+fi
+
+echo "==> [5/6] Status kontrol ediliyor…"
+sleep 1
+/usr/local/bin/gws-exim-daemon --status
+
+echo "==> [6/6] İlk 5 saniye canlılık testi…"
+sleep 5
+if /usr/local/bin/gws-exim-daemon --status | head -1 | grep -q RUNNING; then
+    echo "  ✓ Daemon 5 saniye sonra hala çalışıyor"
+else
+    echo "  ⚠ Daemon durdu — tail -n 30 /var/log/gws-exim-daemon/daemon.log"
+fi
+
+echo ""
+echo "══════════════════════════════════════════════════════"
+echo "  ✓ Kurulum tamamlandı!"
+echo "══════════════════════════════════════════════════════"
+echo ""
+echo "  Mailler artık **$FLUSH_INTERVAL saniyede bir** panele push edilecek."
+echo "  Panel /panel/outbound her 3 saniyede bir refresh eder →"
+echo "  Toplam gecikme: ~5 saniye (ConfigServer paritesi)"
+echo ""
+echo "  Kullanışlı komutlar:"
+echo "  · Status:   gws-exim-daemon --status"
+echo "  · Log:      tail -f /var/log/gws-exim-daemon/daemon.log"
+echo "  · Restart:  gws-exim-daemon --restart  (veya systemctl restart gws-exim-daemon)"
+echo "  · Stop:     gws-exim-daemon --stop     (veya systemctl stop gws-exim-daemon)"
+echo ""
+"""
+    return _PT(script, media_type="text/x-shellscript")
 
 
 @api.get("/plugin/renewal-info")

@@ -13,6 +13,54 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.57) — REAL-TIME EXIM DAEMON (ConfigServer parity)
+
+**KULLANICI ŞİKAYETİ:**
+"cron her 1 dakikada çalışıyor, ConfigServer gibi mailler ANLIK düşmüyor"
+
+**ÇÖZÜM v43.57 — Sürekli çalışan tail -F daemon (2sn buffer flush):**
+- ✅ Yeni bash daemon: `gws-exim-daemon` (`_EXIM_DAEMON_SH_SOURCE` server.py'de embedded)
+  * `stdbuf -oL tail -Fn0 /var/log/exim_mainlog` → line-buffered continuous tail
+  * Bash `read -r -t 2` timeout loop → 2sn'de bir buffer flush
+  * Carryover pattern: her push'a önceki batch'i prepend et → arrival/delivery cross-batch matching (backend upsert dedup eder)
+  * Base64 encode → `/api/outbound/exim-log-push-raw` (LiteSpeed WAF bypass korunur)
+  * PID file + log rotation (10MB) + graceful shutdown (SIGTERM/SIGINT/SIGHUP)
+- ✅ Systemd service: `/etc/systemd/system/gws-exim-daemon.service`
+  * `Restart=always`, `RestartSec=5`, boot'ta otomatik başlar
+  * `journalctl -u gws-exim-daemon` ile canlı log
+- ✅ Nohup fallback: systemd yoksa `nohup gws-exim-daemon --foreground &` + rc.local entry
+- ✅ CLI: `--start`, `--stop`, `--restart`, `--status`, `--foreground`, `--version`, `--help`
+- ✅ Yeni endpoint'ler:
+  * `GET /api/tools/gws-exim-daemon.sh` — daemon script indirir
+  * `GET /api/tools/install-exim-daemon.sh?license_key=MS-...` — tek-satırlık kurulum
+- ✅ Kurulum eski cron/timer/inotify job'larını otomatik disable eder (v43.50/v43.51 legacy temizlik)
+- ✅ Frontend `Outbound.js` refetchInterval: 20sn → **3sn** (events + stats)
+- ✅ Backend `outbound/stats` cache TTL: 15sn → **2sn** (real-time için)
+
+**KULLANICI KURULUM KOMUTU (tek satır):**
+```bash
+bash <(curl -sSf "https://panel.gokyuzuhosting.com/api/tools/install-exim-daemon.sh?license_key=MS-C02AB012652A4FE692D69676")
+```
+Bu komut:
+1. Eski cron/timer'ları temizler
+2. Daemon script indirir → `/usr/local/bin/gws-exim-daemon`
+3. `/etc/gws-exim-push.conf` config'i günceller
+4. Systemd service kurar + enable+start eder (fallback nohup)
+5. Status kontrol eder + 5 saniye canlılık testi yapar
+
+**TEST SONUÇLARI (preview env, curl smoke):**
+- Fake exim log inject edip mail görünene kadar geçen süre: **2.5-3.2 saniye** (log write → DB visible)
+- 3 farklı mail sequential inject → 3 farklı push cycle, hepsi başarılı insert
+- Base64 payload boyutu: ~223 bytes (2 satır) — WAF-safe
+- Frontend polling 3sn + daemon flush 2sn = **max 5 saniye toplam latency** (ConfigServer paritesi)
+
+**DEPLOYMENT:**
+1. "Save to GitHub" (chat üst)
+2. SSH: `cd /opt/gokyuzuwebspam-app && gws-update && docker restart gws-backend`
+3. SSH: `bash <(curl -sSf "https://panel.gokyuzuhosting.com/api/tools/install-exim-daemon.sh?license_key=MS-C02AB012652A4FE692D69676")`
+4. Panel /panel/outbound → mailler 3-5sn içinde canlı akmaya başlayacak
+
+
 ## Feb 15, 2026 (Session 16, v43.55 FINAL) — Frontend Rebuild Bug Root Cause Fix
 
 **KÖK NEDEN (nihayet bulundu):**

@@ -226,7 +226,7 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
         "last_push_at": await _get_last_push_at(lic_key or "MASTER"),
         "generated_at": _iso(),
     }
-    await _cache.set(cache_key, result, 15.0)
+    await _cache.set(cache_key, result, 2.0)
     return result
 
 
