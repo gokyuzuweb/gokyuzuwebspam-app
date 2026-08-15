@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.53"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v43.54"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
@@ -6560,15 +6560,22 @@ async def download_exim_push_script():
 _EXIM_PUSH_SH_SOURCE = r"""#!/bin/bash
 # gws-exim-push — GökyüzüWebSpam Exim log tailer (host cron için)
 # Perl gerektirmez — bash + awk + curl kullanır.
-# v43.53 — In-flight state persistence (arrival/delivery cross-cron matching)
-GWS_EXIM_PUSH_VERSION="v43.53"
-set -euo pipefail
+# v43.54 — Silent-fail bug fix: -e kaldırıldı, STARTED log satırı + explicit error catches
+GWS_EXIM_PUSH_VERSION="v43.54"
+# v43.54: `set -e` REMOVED — bir komut hata verirse tüm script silent fail ediyordu.
+# Şimdi her hata log'a yazılır ve script mümkün olduğunca devam eder.
+set -uo pipefail
 
 # --version flag (kolay doğrulama için)
 if [ "${1:-}" = "--version" ]; then echo "$GWS_EXIM_PUSH_VERSION"; exit 0; fi
 
+# v43.54 — --diagnose flag: her adımı stdout'a bas (kullanıcı SSH'ta görsün)
+DIAGNOSE=0
+if [ "${1:-}" = "--diagnose" ] || [ "${1:-}" = "-d" ]; then DIAGNOSE=1; fi
+diag() { [ "$DIAGNOSE" = "1" ] && echo "[diag] $*"; }
+
 CONF="/etc/gws-exim-push.conf"
-if [ -f "$CONF" ]; then . "$CONF"; fi
+if [ -f "$CONF" ]; then . "$CONF" 2>/dev/null || true; fi
 PANEL_URL="${PANEL_URL:-https://panel.gokyuzuhosting.com}"
 LICENSE_KEY="${LICENSE_KEY:-}"
 EXIM_LOG="${EXIM_LOG:-/var/log/exim_mainlog}"
@@ -6576,9 +6583,16 @@ STATE_DIR="${STATE_DIR:-/var/lib/gws-exim-push}"
 BATCH_MAX="${BATCH_MAX:-500}"
 DEBUG="${DEBUG:-0}"
 
-mkdir -p "$STATE_DIR" /var/log/gws-exim-push
+mkdir -p "$STATE_DIR" /var/log/gws-exim-push 2>/dev/null || true
 LOG="/var/log/gws-exim-push/push.log"
-log_line() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$LOG"; }
+log_line() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$LOG" 2>/dev/null || true; [ "$DIAGNOSE" = "1" ] && echo "[log] $*"; }
+
+# v43.54 — En başta STARTED log — bundan sonraki silent exit'leri fark edebilelim
+log_line "START v$GWS_EXIM_PUSH_VERSION pid=$$ user=$(whoami) tz=$(date +%z)"
+diag "PANEL_URL=$PANEL_URL"
+diag "LICENSE_KEY=${LICENSE_KEY:0:10}…"
+diag "EXIM_LOG=$EXIM_LOG (readable: $([ -r "$EXIM_LOG" ] && echo yes || echo NO))"
+diag "STATE_DIR=$STATE_DIR (writable: $([ -w "$STATE_DIR" ] && echo yes || echo NO))"
 
 if [ -z "$LICENSE_KEY" ]; then
     log_line "FATAL: LICENSE_KEY yok. $CONF dosyasına LICENSE_KEY=MS-... ekleyin."; exit 1
@@ -6603,10 +6617,11 @@ if [ -f "$CHECKPOINT_FILE" ]; then LAST_POS=$(cat "$CHECKPOINT_FILE" 2>/dev/null
 if [ -f "$INFLIGHT_FILE" ]; then
     IF_LINES=$(wc -l < "$INFLIGHT_FILE" 2>/dev/null || echo "0")
     if [ "$IF_LINES" -gt "$INFLIGHT_MAX" ]; then
-        tail -n "$INFLIGHT_MAX" "$INFLIGHT_FILE" > "$INFLIGHT_FILE.tmp" && mv "$INFLIGHT_FILE.tmp" "$INFLIGHT_FILE"
+        tail -n "$INFLIGHT_MAX" "$INFLIGHT_FILE" > "$INFLIGHT_FILE.tmp" 2>/dev/null && \
+            mv "$INFLIGHT_FILE.tmp" "$INFLIGHT_FILE" 2>/dev/null || true
     fi
 fi
-# v43.48 — Backfill sinyali: panelde butona basıldıysa checkpoint'i sıfırla → son 24s tam re-scan
+# v43.48 — Backfill sinyali (panel'de butondan tetiklenirse)
 BACKFILL_RESP=$(curl -sSf --max-time 8 \
     "$PANEL_URL/api/outbound/backfill-signal?license_key=$LICENSE_KEY" 2>/dev/null || echo '{"pending":false}')
 BACKFILL_ACTIVE=0
@@ -6614,9 +6629,8 @@ if echo "$BACKFILL_RESP" | grep -q '"pending":true'; then
     log_line "Backfill signal → checkpoint sıfırlanıyor + in_flight state temizleniyor"
     LAST_POS=0
     BACKFILL_ACTIVE=1
-    # Backfill'de in_flight state'i de sıfırla — 24h re-scan sırasında karışıklık olmasın
-    : > "$INFLIGHT_FILE"
-    # Panel'e ACK gönder + panel-side checkpoint sıfırla (reset flag ile)
+    # Backfill'de in_flight state'i de sıfırla
+    : > "$INFLIGHT_FILE" 2>/dev/null || true
     curl -sSf --max-time 8 -X POST -H "Content-Type: application/json" \
         "$PANEL_URL/api/outbound/backfill-ack" \
         -d "{\"license_key\":\"$LICENSE_KEY\",\"pushed\":0}" >/dev/null 2>&1 || true
@@ -6629,13 +6643,21 @@ if [ "$BACKFILL_ACTIVE" -eq 0 ]; then
 fi
 
 FILE_SIZE=$(stat -c%s "$EXIM_LOG" 2>/dev/null || echo "0")
+if [ "$FILE_SIZE" -eq 0 ]; then
+    log_line "WARN: $EXIM_LOG boş veya stat başarısız → çıkılıyor"
+    exit 0
+fi
 if [ "$FILE_SIZE" -lt "$LAST_POS" ]; then log_line "Log rotate → reset"; LAST_POS=0; fi
-if [ "$FILE_SIZE" -eq "$LAST_POS" ]; then log_line "No new data (pos=$LAST_POS)"; exit 0; fi
+if [ "$FILE_SIZE" -eq "$LAST_POS" ]; then log_line "No new data (pos=$LAST_POS · size=$FILE_SIZE)"; exit 0; fi
 
-DELTA=$(dd if="$EXIM_LOG" bs=1 skip="$LAST_POS" 2>/dev/null || true)
+DELTA=$(dd if="$EXIM_LOG" bs=1 skip="$LAST_POS" 2>/dev/null || echo "")
+if [ -z "$DELTA" ]; then
+    log_line "WARN: dd delta read boş (pos=$LAST_POS size=$FILE_SIZE)"; exit 0
+fi
 NEW_POS=$FILE_SIZE
 
-TMP=$(mktemp); trap "rm -f $TMP $TMP.events $TMP.count $TMP.payload $TMP.debug $INFLIGHT_FILE.new" EXIT
+TMP=$(mktemp 2>/dev/null || echo "/tmp/gws-exim-push.$$")
+trap "rm -f $TMP $TMP.events $TMP.count $TMP.payload $TMP.debug $INFLIGHT_FILE.new 2>/dev/null" EXIT
 
 echo "$DELTA" | awk -v batch_max="$BATCH_MAX" -v userdomains="$USERDOMAINS_LIST" -v debug="$DEBUG" \
     -v inflight_in="$INFLIGHT_FILE" -v inflight_out="$INFLIGHT_FILE.new" '
@@ -6814,15 +6836,24 @@ cat > "$PAYLOAD_FILE" <<EOF
 EOF
 RESP=$(curl -sSf --max-time 30 -H "Content-Type: application/json" \
     -X POST "$PANEL_URL/api/outbound/exim-log-push" \
-    --data-binary "@$PAYLOAD_FILE" 2>&1 || echo "ERROR")
+    --data-binary "@$PAYLOAD_FILE" 2>&1)
+CURL_EXIT=$?
+
+if [ "$CURL_EXIT" -ne 0 ]; then
+    log_line "FAIL: curl exit=$CURL_EXIT · $(echo "$RESP" | head -c 200)"
+    # Yine de checkpoint'i güncelle — sonsuz döngüye girmesin
+    echo "$NEW_POS" > "$CHECKPOINT_FILE" 2>/dev/null || true
+    exit 1
+fi
 
 if echo "$RESP" | grep -q '"ok":true'; then
     INSERTED=$(echo "$RESP" | grep -oE '"inserted":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "?")
     UPDATED=$(echo "$RESP" | grep -oE '"updated":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "?")
     log_line "OK · parsed=$EVENT_COUNT · inserted=$INSERTED · updated=$UPDATED · pos=$NEW_POS · in_flight=$IF_SIZE · $DBG"
-    echo "$NEW_POS" > "$CHECKPOINT_FILE"
+    echo "$NEW_POS" > "$CHECKPOINT_FILE" 2>/dev/null || true
 else
-    log_line "FAIL: $RESP"; exit 1
+    log_line "FAIL panel yanıtı: $(echo "$RESP" | head -c 300)"
+    exit 1
 fi
 
 # ============================================================================
