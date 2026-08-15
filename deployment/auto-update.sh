@@ -134,6 +134,71 @@ if [ $API_OK -eq 0 ]; then
     log "⚠ API $((MAX_TRIES * SLEEP_BETWEEN + 4))sn içinde HTTP 200 vermedi — kontrol: docker logs --tail=50 gws-backend"
 fi
 
+# ---------------------------------------------------------------------------
+# v43.60 — WHM Plugin CGI badge refresh
+# ---------------------------------------------------------------------------
+# WHM plugin dosyası Docker DIŞINDA yaşar. gws-update sadece Docker'ı yeniler,
+# CGI badge (v43.xx) eski kalır → kullanıcı v43.56 görmeye devam eder.
+# Bu adım /usr/local/cpanel/whostmgr/docroot/cgi/mailshield/index.cgi'yi de günceller.
+CGI_DST="/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/index.cgi"
+if [ -d "$(dirname $CGI_DST)" ] && command -v curl >/dev/null 2>&1; then
+    log "🔄 WHM plugin CGI güncelleniyor…"
+    TARBALL=$(mktemp --suffix=.tgz)
+    if curl -sSL --max-time 30 "http://127.0.0.1:8001/api/plugin/download" -o "$TARBALL" 2>/dev/null; then
+        TMP_EXTRACT=$(mktemp -d)
+        if tar -xzf "$TARBALL" -C "$TMP_EXTRACT" 2>/dev/null; then
+            NEW_CGI=$(find "$TMP_EXTRACT" -name "mailshield.cgi" -type f 2>/dev/null | head -1)
+            if [ -n "$NEW_CGI" ] && [ -f "$NEW_CGI" ]; then
+                if ! cmp -s "$NEW_CGI" "$CGI_DST" 2>/dev/null; then
+                    install -m 0755 "$NEW_CGI" "$CGI_DST" 2>/dev/null && \
+                        log "✓ WHM CGI güncellendi → $CGI_DST" || \
+                        log "⚠ WHM CGI kopyalanamadı (izin?)"
+                else
+                    log "✓ WHM CGI zaten güncel"
+                fi
+            else
+                log "⚠ Tarball'da mailshield.cgi bulunamadı"
+            fi
+        fi
+        rm -rf "$TMP_EXTRACT"
+    else
+        log "⚠ Plugin tarball indirilemedi"
+    fi
+    rm -f "$TARBALL"
+else
+    log "ℹ WHM CGI dizini yok (bu sunucu WHM değil?) → CGI adımı atlandı"
+fi
+
+# ---------------------------------------------------------------------------
+# v43.60 — Simple-push daemon otomatik kurulum / güncelleme
+# ---------------------------------------------------------------------------
+# Sunucuda gws-simple-push kurulu değilse VEYA systemd timer aktif değilse
+# gws-update sırasında otomatik yeniden kur. Kullanıcı manuel adım atlamak
+# zorunda kalmasın (v43.58 install-simple-push endpoint'ini kullanır).
+if [ -r /etc/gws-exim-push.conf ]; then
+    . /etc/gws-exim-push.conf 2>/dev/null || true
+fi
+MASTER_KEY="${LICENSE_KEY:-}"
+if [ -z "$MASTER_KEY" ] && [ -f /root/.gws-license ]; then
+    MASTER_KEY=$(cat /root/.gws-license 2>/dev/null | tr -d '[:space:]')
+fi
+if [ -n "$MASTER_KEY" ] && command -v systemctl >/dev/null 2>&1; then
+    TIMER_ACTIVE=$(systemctl is-active gws-simple-push.timer 2>/dev/null || echo "inactive")
+    SCRIPT_MISSING=0
+    [ ! -x /usr/local/bin/gws-simple-push ] && SCRIPT_MISSING=1
+    if [ "$TIMER_ACTIVE" != "active" ] || [ "$SCRIPT_MISSING" -eq 1 ]; then
+        log "🔄 Simple-push timer aktif değil ($TIMER_ACTIVE) — yeniden kurulum yapılıyor…"
+        if curl -sSf --max-time 30 "http://127.0.0.1:8001/api/tools/install-simple-push.sh?license_key=$MASTER_KEY" -o /tmp/gws-install-simple.sh 2>/dev/null; then
+            bash /tmp/gws-install-simple.sh >> "$LOG_FILE" 2>&1 && \
+                log "✓ Simple-push timer kuruldu / güncellendi" || \
+                log "⚠ Simple-push kurulum başarısız — /var/log/gws-update.log kontrol edin"
+            rm -f /tmp/gws-install-simple.sh
+        fi
+    else
+        log "✓ Simple-push timer aktif (LICENSE_KEY=${MASTER_KEY:0:8}…)"
+    fi
+fi
+
 # 6. Yayınlanan sürümü bayilere duyur
 # (Panelden manuel yapın veya API ile otomatize edin — aşağı bkz.)
 

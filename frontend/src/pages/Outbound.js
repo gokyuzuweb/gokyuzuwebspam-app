@@ -63,6 +63,9 @@ export default function Outbound() {
   // v43.59 — Tab layout + top user search
   const [tab, setTab] = useState("live");           // live | geo | users | alerts
   const [topUserSearch, setTopUserSearch] = useState("");
+  // v43.60 — Sortable top users table
+  const [topUserSortKey, setTopUserSortKey] = useState("sent");   // sent | spam | blocked | from_addr | user
+  const [topUserSortDir, setTopUserSortDir] = useState("desc");   // asc | desc
   // v43.4 Mail içeriği okuma modal state
   const [contentEventId, setContentEventId] = useState(null);
   const contentQuery = useQuery({
@@ -700,12 +703,37 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-[11px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
-                <th className="text-left px-3 py-2 font-semibold">Email Adresi</th>
-                <th className="text-left px-3 py-2 font-semibold">Kullanıcı</th>
-                <th className="text-right px-3 py-2 font-semibold">Gönderilen</th>
-                <th className="text-right px-3 py-2 font-semibold">Spam</th>
-                <th className="text-right px-3 py-2 font-semibold">Bloklu</th>
+              <tr className="text-[11px] uppercase tracking-widest text-slate-500 border-b border-slate-800 select-none">
+                {[
+                  { key: "from_addr", label: "Email Adresi", align: "left" },
+                  { key: "user", label: "Kullanıcı", align: "left" },
+                  { key: "sent", label: "Gönderilen", align: "right" },
+                  { key: "spam", label: "Spam", align: "right" },
+                  { key: "blocked", label: "Bloklu", align: "right" },
+                ].map((col) => {
+                  const active = topUserSortKey === col.key;
+                  const arrow = active ? (topUserSortDir === "asc" ? "▲" : "▼") : "↕";
+                  return (
+                    <th
+                      key={col.key}
+                      data-testid={`ob-topuser-sort-${col.key}`}
+                      onClick={() => {
+                        if (topUserSortKey === col.key) {
+                          setTopUserSortDir(topUserSortDir === "asc" ? "desc" : "asc");
+                        } else {
+                          setTopUserSortKey(col.key);
+                          setTopUserSortDir(col.key === "from_addr" || col.key === "user" ? "asc" : "desc");
+                        }
+                      }}
+                      className={`text-${col.align} px-3 py-2 font-semibold cursor-pointer hover:text-indigo-300 transition-colors ${active ? "text-indigo-300" : ""}`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {col.label}
+                        <span className={`text-[9px] ${active ? "text-indigo-400" : "text-slate-600"}`}>{arrow}</span>
+                      </span>
+                    </th>
+                  );
+                })}
                 <th className="text-right px-3 py-2 font-semibold">Kullanım %</th>
                 <th className="text-center px-3 py-2 font-semibold">İşlem</th>
               </tr>
@@ -717,6 +745,18 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
                   const q = topUserSearch.toLowerCase();
                   return (u.from_addr || "").toLowerCase().includes(q)
                       || (u.user || "").toLowerCase().includes(q);
+                })
+                .slice()
+                .sort((a, b) => {
+                  const av = a[topUserSortKey] ?? "";
+                  const bv = b[topUserSortKey] ?? "";
+                  let cmp;
+                  if (typeof av === "number" || typeof bv === "number") {
+                    cmp = (Number(av) || 0) - (Number(bv) || 0);
+                  } else {
+                    cmp = String(av).localeCompare(String(bv), "tr");
+                  }
+                  return topUserSortDir === "asc" ? cmp : -cmp;
                 })
                 .map((u) => {
                   const usagePct = Math.round((u.sent / Math.max(1, s.limit_per_hour * 8)) * 100);

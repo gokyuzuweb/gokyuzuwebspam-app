@@ -9,15 +9,40 @@ import { useI18n } from "@/i18n";
 function AIRuleGenerator({ onAccept }) {
   const [prompt, setPrompt] = useState("");
   const [proposals, setProposals] = useState([]);
+  const [lastError, setLastError] = useState(null);
   const { effective } = useI18n();
   const [langOverride, setLangOverride] = useState("");
   const gen = useMutation({
     mutationFn: (p) => api.rulesGenerate(p, undefined, langOverride || effective),
     onSuccess: (data) => {
+      setLastError(null);
       setProposals(data.proposals);
       toast.success(`${data.count} kural önerisi (${data.model} · ${data.language.toUpperCase()})`);
     },
-    onError: (e) => toast.error("Üretim başarısız: " + (e?.response?.data?.detail || e.message)),
+    onError: (e) => {
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail || e?.response?.data?.code || e.message;
+      const fullMsg = status ? `HTTP ${status}: ${detail}` : detail;
+      setLastError(fullMsg);
+      if (status === 423) {
+        toast.error("Demo modunda AI kural üretilemez", {
+          description: "Master anahtarınızı Header'daki 'Master Aktif Et' butonundan girin.",
+          duration: 8000,
+        });
+      } else if (status === 500 && String(detail).includes("EMERGENT_LLM_KEY")) {
+        toast.error("AI anahtarı yapılandırılmamış", {
+          description: "Backend'de EMERGENT_LLM_KEY environment variable'ı eksik.",
+          duration: 10000,
+        });
+      } else if (status === 502) {
+        toast.error("AI kural üretemedi", {
+          description: "Daha spesifik/farklı bir ifade ile tekrar deneyin. Örn: 'Türkçe eczane spam' yerine 'Sildenafil/Viagra tanıtım maili'.",
+          duration: 8000,
+        });
+      } else {
+        toast.error("Üretim başarısız", { description: fullMsg, duration: 8000 });
+      }
+    },
   });
   const langLabel = (langOverride || effective || "tr").toUpperCase();
   return (
@@ -52,19 +77,48 @@ function AIRuleGenerator({ onAccept }) {
             data-testid="ai-rule-prompt"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && prompt.trim() && !gen.isPending) gen.mutate(prompt); }}
             placeholder='örn: "sahte kripto para yatırım daveti"  ya da  "Türkçe eczane spam"'
             className="flex-1 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/60"
           />
           <button
             data-testid="ai-rule-generate"
-            onClick={() => { if (prompt.trim()) gen.mutate(prompt); }}
-            disabled={gen.isPending || !prompt.trim()}
+            onClick={() => {
+              const p = (prompt || "").trim();
+              if (!p) {
+                toast.warning("Önce spam türünü kısaca yazın", {
+                  description: "Örn: 'Türkçe eczane spam' veya alttaki örnek çiplerden birine tıklayın.",
+                });
+                return;
+              }
+              setLastError(null);
+              gen.mutate(p);
+            }}
+            disabled={gen.isPending}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-40"
           >
             <Wand2 className={`w-4 h-4 ${gen.isPending ? "animate-pulse" : ""}`} />
             {gen.isPending ? "Üretiliyor…" : "Üret"}
           </button>
         </div>
+        {lastError && (
+          <div data-testid="ai-rule-error" className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded px-3 py-2 flex items-start gap-2">
+            <X className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0 break-words">
+              <div className="font-semibold">Hata: {lastError}</div>
+              {lastError.includes("423") && (
+                <div className="text-[11px] text-rose-200/80 mt-1">
+                  Bu istek yazma yetkisi gerektiriyor. Header'daki <b>"Master Aktif Et"</b> butonuna tıklayıp MS- anahtarınızı girin.
+                </div>
+              )}
+              {lastError.includes("EMERGENT_LLM_KEY") && (
+                <div className="text-[11px] text-rose-200/80 mt-1">
+                  Backend'de AI anahtarı eksik. <code className="mono bg-slate-900 px-1 rounded">/app/backend/.env</code> içine <code className="mono bg-slate-900 px-1 rounded">EMERGENT_LLM_KEY=sk-emergent-...</code> ekleyin ve <code className="mono bg-slate-900 px-1 rounded">supervisorctl restart backend</code>.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap gap-1.5 text-[11px]">
           {[
             "Türkçe eczane / viagra spam",

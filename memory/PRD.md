@@ -13,6 +13,52 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.60) — Kullanıcı Sıralama + AI Kural Fix + WHM Plugin CGI Auto-Refresh
+
+**KULLANICI ŞİKAYETLERİ:**
+1. WHM plugin badge hala v43.56 gösteriyor (gws-update sonrası bile) — Docker container güncellendi ama CGI dosyası değil
+2. Outbound (Giden Kutusu) güncel veri getirmiyor — install-simple-push kurulmamış / systemd timer aktif değil
+3. AI Kural Üretici "Üret" butonu çalışmıyor (auth veya farklı hata sessizce yutuluyor)
+4. Kullanıcılar tablosunda sıralama yok (spam sayısı, tarih vb.)
+
+**FIX v43.60:**
+
+### 1. WHM Plugin CGI Auto-Refresh (`deployment/auto-update.sh`)
+- ✅ gws-update artık `/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/index.cgi`'yi de günceller
+- ✅ /api/plugin/download tarball'ı indirir, `mailshield.cgi`'yi çıkarır, install -m 0755 ile deploy eder
+- ✅ CGI dizini yoksa (bu sunucu WHM değilse) sessizce atlar
+
+### 2. gws-simple-push Otomatik Kurulum (auto-update.sh içinde)
+- ✅ gws-update her çalıştığında `gws-simple-push.timer` aktif mi kontrol eder
+- ✅ Timer inactive VEYA script yoksa → /api/tools/install-simple-push.sh'ı otomatik çalıştırır
+- ✅ LICENSE_KEY /etc/gws-exim-push.conf'tan veya /root/.gws-license'tan okunur
+- ✅ Kullanıcı bir daha manuel install-simple-push komutu girmek zorunda kalmaz
+
+### 3. AI Kural Üretici Hata Görünürlüğü (`Rules.js`)
+- ✅ Persistent error card eklendi (toast dismiss olsa bile hata görünür kalır)
+- ✅ HTTP 423 → "Master Aktif Et" instruction + persistent kırmızı kart
+- ✅ HTTP 500 EMERGENT_LLM_KEY → backend .env talimatı
+- ✅ HTTP 502 → "Farklı ifade ile tekrar deneyin" öneri
+- ✅ Boş prompt → warning toast (silent disable yerine)
+- ✅ Enter key ile submit
+
+### 4. Kullanıcılar Tablosu Sortable
+- ✅ 5 kolon (Email, User, Gönderilen, Spam, Bloklu) tıklanabilir header
+- ✅ Aktif kolonda ▲/▼ arrow, diğerlerinde ↕ neutral
+- ✅ Aynı kolona tekrar tıklama → asc/desc toggle
+- ✅ Yeni kolona tıklama → number kolonları desc default, text kolonları asc default
+- ✅ Turkish localeCompare (Türkçe karakterler doğru sıralanır)
+
+**KULLANICI DEPLOYMENT:**
+1. "Save to GitHub" (chat üst)
+2. SSH: `cd /opt/gokyuzuwebspam-app && gws-update && docker restart gws-backend`
+3. gws-update ARTIK OTOMATIK:
+   - Docker container'ı v43.60'a çıkarır
+   - WHM plugin CGI'yı yeniler → badge v43.60 görünür
+   - gws-simple-push.timer'ı kurar / restart eder
+4. Ctrl+F5 ile hard refresh — tarayıcı cache'i temizlensin
+
+
 ## Feb 15, 2026 (Session 17, v43.59) — Outbound UI Cleanup: Tek Yatay Harita + Tab Layout + Full Email
 
 **KULLANICI ŞİKAYETLERİ:**
