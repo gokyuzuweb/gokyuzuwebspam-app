@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.45"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v43.46"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
@@ -6560,6 +6560,7 @@ async def download_exim_push_script():
 _EXIM_PUSH_SH_SOURCE = r"""#!/bin/bash
 # gws-exim-push — GökyüzüWebSpam Exim log tailer (host cron için)
 # Perl gerektirmez — bash + awk + curl kullanır.
+# v43.46 — cPanel Exim uyumlu: A=dovecot_login veya U= veya userdomains eşleşmesi
 set -euo pipefail
 
 CONF="/etc/gws-exim-push.conf"
@@ -6569,6 +6570,7 @@ LICENSE_KEY="${LICENSE_KEY:-}"
 EXIM_LOG="${EXIM_LOG:-/var/log/exim_mainlog}"
 STATE_DIR="${STATE_DIR:-/var/lib/gws-exim-push}"
 BATCH_MAX="${BATCH_MAX:-500}"
+DEBUG="${DEBUG:-0}"
 
 mkdir -p "$STATE_DIR" /var/log/gws-exim-push
 LOG="/var/log/gws-exim-push/push.log"
@@ -6579,6 +6581,13 @@ if [ -z "$LICENSE_KEY" ]; then
 fi
 if [ ! -r "$EXIM_LOG" ]; then
     log_line "FATAL: $EXIM_LOG okunamıyor. Root yetkisi + dosya var mı kontrol edin."; exit 1
+fi
+
+# ------ userdomains listesi (cPanel — domain'i olan mailler outbound) ------
+USERDOMAINS_FILE="/etc/userdomains"
+USERDOMAINS_LIST=""
+if [ -r "$USERDOMAINS_FILE" ]; then
+    USERDOMAINS_LIST=$(awk -F: '/^[^#]/ {print $1}' "$USERDOMAINS_FILE" 2>/dev/null | tr '\n' '|' | sed 's/|$//')
 fi
 
 CHECKPOINT_FILE="$STATE_DIR/checkpoint"
@@ -6596,18 +6605,32 @@ if [ "$FILE_SIZE" -eq "$LAST_POS" ]; then log_line "No new data (pos=$LAST_POS)"
 DELTA=$(dd if="$EXIM_LOG" bs=1 skip="$LAST_POS" 2>/dev/null || true)
 NEW_POS=$FILE_SIZE
 
-TMP=$(mktemp); trap "rm -f $TMP $TMP.events $TMP.count $TMP.payload" EXIT
+TMP=$(mktemp); trap "rm -f $TMP $TMP.events $TMP.count $TMP.payload $TMP.debug" EXIT
 
-echo "$DELTA" | awk -v batch_max="$BATCH_MAX" '
-BEGIN { count=0; first=1; print "[" }
+echo "$DELTA" | awk -v batch_max="$BATCH_MAX" -v userdomains="$USERDOMAINS_LIST" -v debug="$DEBUG" '
+BEGIN {
+    count=0; arrivals=0; deliveries=0; skipped=0; first=1
+    # userdomains: pipe-separated list → hash
+    n = split(userdomains, ud_arr, "|")
+    for (i=1; i<=n; i++) if (ud_arr[i] != "") ud[ud_arr[i]] = 1
+    print "["
+}
 function j(s) { gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); gsub(/\r/,"",s); gsub(/\n/," ",s); gsub(/\t/," ",s); return s }
-/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/ {
+function domain_of(email,   parts,at) {
+    at = index(email, "@")
+    if (at == 0) return ""
+    return tolower(substr(email, at+1))
+}
+/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ {
     if (count >= batch_max) next
     date=$1; time=$2; mid=$3; dir=$4; ts=date"T"time"+00:00"
     if (dir=="<=") {
-        sender=$5; user=""; size=0; subj=""
+        arrivals++
+        sender=$5; user=""; size=0; subj=""; auth_user=""
         for (i=6; i<=NF; i++) {
             if ($i ~ /^U=/) user=substr($i,3)
+            if ($i ~ /^A=dovecot_login:/) auth_user=substr($i,17)
+            if ($i ~ /^A=courier_login:/) auth_user=substr($i,17)
             if ($i ~ /^S=/) size=substr($i,3)+0
             if ($i ~ /^T=/) {
                 subj_str=""
@@ -6616,26 +6639,55 @@ function j(s) { gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); gsub(/\r/,"",s); gsub(/
                 break
             }
         }
-        in_flight[mid] = ts"|"sender"|"user"|"size"|"subj
+        # user precedence: auth_user > U=user > empty
+        eff_user = (auth_user != "") ? auth_user : user
+        in_flight[mid] = ts"|"sender"|"eff_user"|"size"|"subj
     } else if (dir=="=>" || dir=="->" || dir=="**" || dir=="==") {
+        deliveries++
         rcpt=$5
-        if (!(mid in in_flight)) next
+        if (!(mid in in_flight)) { skipped++; next }
         n=split(in_flight[mid],parts,"|")
         s_ts=parts[1]; s_from=parts[2]; s_user=parts[3]; s_size=parts[4]; s_subj=parts[5]
-        if (s_user=="") next
+
+        # Outbound decision — HER ÜÇ HALDE outbound sayılır:
+        # 1) auth_user veya U= dolu (kullanıcı login yaptı)
+        # 2) sender domain userdomains listesinde (cPanel hosted domain)
+        # 3) senders domain bilgisi yoksa ama recipient farklı domainden
+        is_outbound = 0
+        if (s_user != "" && s_user != "root" && s_user != "mailnull") is_outbound = 1
+        else {
+            sd = domain_of(s_from)
+            if (sd != "" && sd in ud) is_outbound = 1
+        }
+        if (!is_outbound) { skipped++; next }
+
+        # username çıkart: auth_user@domain formatındaysa @ öncesini al
+        display_user = s_user
+        at = index(display_user, "@")
+        if (at > 0) display_user = substr(display_user, 1, at-1)
+        if (display_user == "") display_user = domain_of(s_from)
+
         action=(dir=="**"?"bounce":(dir=="=="?"defer":"accept"))
         if (!first) print ","
         first=0
-        printf "{\"exim_mid\":\"%s\",\"ts\":\"%s\",\"from_addr\":\"%s\",\"from_user\":\"%s\",\"to_addr\":\"%s\",\"subject\":\"%s\",\"size_bytes\":%s,\"verdict\":\"clean\",\"total_score\":0,\"action\":\"%s\"}", j(mid),j(s_ts),j(s_from),j(s_user),j(rcpt),j(s_subj),s_size,action
+        printf "{\"exim_mid\":\"%s\",\"ts\":\"%s\",\"from_addr\":\"%s\",\"from_user\":\"%s\",\"to_addr\":\"%s\",\"subject\":\"%s\",\"size_bytes\":%s,\"verdict\":\"clean\",\"total_score\":0,\"action\":\"%s\"}", j(mid),j(s_ts),j(s_from),j(display_user),j(rcpt),j(s_subj),s_size,action
         count++
     }
 }
-END { print ""; print "]"; print "COUNT:"count > "/dev/stderr" }
+END {
+    print ""; print "]"
+    print "COUNT:"count > "/dev/stderr"
+    if (debug == "1") {
+        printf "DEBUG arrivals=%d deliveries=%d skipped=%d userdomains=%d\n", arrivals, deliveries, skipped, length(ud) > "/dev/stderr"
+    }
+}
 ' 2> "$TMP.count" > "$TMP.events"
 
 EVENT_COUNT=$(grep -oE 'COUNT:[0-9]+' "$TMP.count" 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "0")
+DBG=$(cat "$TMP.count" 2>/dev/null | tr '\n' ' ')
+
 if [ "$EVENT_COUNT" -eq 0 ]; then
-    log_line "Parsed 0 outbound events from $((NEW_POS-LAST_POS)) bytes (U= yok)"
+    log_line "Parsed 0 events from $((NEW_POS-LAST_POS)) bytes · $DBG"
     echo "$NEW_POS" > "$CHECKPOINT_FILE"; exit 0
 fi
 
@@ -6653,7 +6705,7 @@ RESP=$(curl -sSf --max-time 30 -H "Content-Type: application/json" \
 if echo "$RESP" | grep -q '"ok":true'; then
     INSERTED=$(echo "$RESP" | grep -oE '"inserted":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "?")
     UPDATED=$(echo "$RESP" | grep -oE '"updated":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "?")
-    log_line "OK · parsed=$EVENT_COUNT · inserted=$INSERTED · updated=$UPDATED · pos=$NEW_POS"
+    log_line "OK · parsed=$EVENT_COUNT · inserted=$INSERTED · updated=$UPDATED · pos=$NEW_POS · $DBG"
     echo "$NEW_POS" > "$CHECKPOINT_FILE"
 else
     log_line "FAIL: $RESP"; exit 1
