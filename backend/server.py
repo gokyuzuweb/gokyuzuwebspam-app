@@ -4815,63 +4815,9 @@ class UserSyncIn(BaseModel):
     accounts: list[dict]  # [{username, domain, email_count_today?, ...}]
 
 
-@api.get("/users/sync-status")
-async def users_sync_status(request: Request):
-    """v43.37 — Global cPanel sync durumu.
-    Users sayfasının üst şeridinde "Son senkron: <zaman> · <n> kullanıcı" göstergesi
-    bunu tüketir. Bayi WHM plugin daemon her heartbeat cycle'da
-    `POST /api/users/sync` çağırırsa buradaki last_synced_at değeri güncellenir."""
-    master_key = (request.headers.get("x-master-key") or "").strip()
-    q = {"license_key": master_key} if master_key.startswith("MS-") else {}
-    total = await db.users.count_documents(q)
-    latest = await db.users.find(q, {"_id": 0, "last_synced_at": 1, "source": 1, "license_key": 1}) \
-        .sort("last_synced_at", -1).limit(1).to_list(1)
-    # Kaynak kırılımı
-    src = {}
-    async for row in db.users.aggregate([
-        {"$match": q}, {"$group": {"_id": "$source", "count": {"$sum": 1}}},
-    ]):
-        src[row["_id"] or "unknown"] = row["count"]
-    return {
-        "total": total,
-        "last_synced_at": (latest[0].get("last_synced_at") if latest else None),
-        "last_source": (latest[0].get("source") if latest else None),
-        "sources": src,
-        "generated_at": _iso(),
-    }
-
-
-@api.post("/users/sync")
-async def users_sync(payload: UserSyncIn):
-    """WHM plugin daemon POSTs the real cPanel accounts list here. Purges old
-    demo users bound to same license and upserts each real account."""
-    # Inline license validation (avoid coupling to events module)
-    lic = await db.licenses.find_one({"license_key": payload.license_key, "active": True}, {"_id": 0})
-    if not lic:
-        raise HTTPException(403, "Gecersiz lisans")
-    # Remove seed/demo users on first real sync
-    _DEMO_USERNAMES = {"example", "sirket", "tekno", "deneme", "kobi"}
-    await db.users.delete_many({"username": {"$in": list(_DEMO_USERNAMES)}})
-    ups = 0
-    for a in payload.accounts[:1000]:
-        u = str(a.get("username") or "").strip()
-        if not u: continue
-        await db.users.update_one(
-            {"username": u},
-            {"$set": {
-                "username": u,
-                "domain": a.get("domain", ""),
-                "license_key": payload.license_key,
-                "email_count_today":  int(a.get("email_count_today")  or 0),
-                "spam_caught_today":  int(a.get("spam_caught_today")  or 0),
-                "quarantine_size":    int(a.get("quarantine_size")    or 0),
-                "source":             "whm",
-                "last_synced_at":     _iso(),
-            }},
-            upsert=True,
-        )
-        ups += 1
-    return {"synced": ups, "purged_demo": True}
+# NOTE: /users/sync-status, /users/sync, /users/refresh-from-cpanel moved to
+# routes/users_sync.py during v1.4 refactor (Feb 2026). This preserves the
+# UserSyncIn model for backward-compat with other modules.
 
 
 # v43.28 — cPanel Kullanıcıları Çağır (Master → WHM plugin daemon signal)
@@ -5137,112 +5083,12 @@ async def bayes_train_queue(license_key: str, limit: int = 50):
     return {"items": items, "count": len(items)}
 
 
-@api.post("/users/refresh-from-cpanel")
-async def users_refresh_from_cpanel(request: Request):
-    """v43.32 — SADECE gerçek WHM cPanel hesaplarını çağırır. Demo seed kaldırıldı.
-
-    Akış:
-    1. `/usr/local/cpanel/bin/whmapi1` var mı? → local WHM'de çalışıyoruz,
-       direkt `listaccts` çalıştır, sonuçları `users` koleksiyonuna upsert et.
-    2. WHM yoksa (uzak master) → bayi lisanslara `plugin_demand_sync` sinyali yaz.
-       Bayi WHM plugin daemon 60sn içinde bu sinyali görüp whmapi1 listaccts çalıştırıp
-       `POST /api/users/sync` ile gerçek listeyi push eder.
-
-    Demo/örnek hesaplar ARTIK EKLENMEZ. Kullanıcı gerçek WHM yoksa boş görür +
-    ne yapılması gerektiği bilgilendirilir."""
-    import os, subprocess, json
-    master_key = (request.headers.get("x-master-key") or "").strip()
-    if not master_key.startswith("MS-"):
-        raise HTTPException(403, "Master anahtarı gerekli (X-Master-Key header)")
-    now = _iso()
-    current_count = await db.users.count_documents({"license_key": master_key})
-
-    # 1) Yerel WHM API varsa gerçek listaccts çalıştır
-    whm_bin = "/usr/local/cpanel/bin/whmapi1"
-    real_added, real_updated = 0, 0
-    if os.path.exists(whm_bin) and os.access(whm_bin, os.X_OK):
-        try:
-            proc = subprocess.run(
-                [whm_bin, "--output=json", "listaccts"],
-                capture_output=True, text=True, timeout=25,
-            )
-            data = json.loads(proc.stdout or "{}")
-            accounts = (data.get("data") or {}).get("acct") or []
-            for a in accounts[:2000]:
-                username = (a.get("user") or "").strip()
-                if not username: continue
-                res = await db.users.update_one(
-                    {"username": username},
-                    {"$set": {
-                        "username": username,
-                        "domain": a.get("domain") or "",
-                        "license_key": master_key,
-                        "email_count_today": 0,
-                        "spam_caught_today": 0,
-                        "quarantine_size": 0,
-                        "source": "whmapi1",
-                        "last_synced_at": now,
-                        # cPanel'den ek meta
-                        "disk_used_mb": int(a.get("diskused", "0M").rstrip("M") or 0)
-                                        if isinstance(a.get("diskused"), str) else None,
-                        "disk_quota_mb": int(a.get("disklimit", "0M").rstrip("M") or 0)
-                                         if isinstance(a.get("disklimit"), str) else None,
-                        "email_addresses": [],  # ayrı endpoint ile doldurulur (Email::listpops)
-                    }},
-                    upsert=True,
-                )
-                if res.upserted_id is not None: real_added += 1
-                elif res.modified_count > 0:   real_updated += 1
-            return {
-                "ok": True,
-                "source": "whmapi1_local",
-                "synced": real_added + real_updated,
-                "added": real_added,
-                "updated": real_updated,
-                "previous_count": current_count,
-                "note": f"Yerel WHM'den {real_added} yeni + {real_updated} güncellenen cPanel hesabı senkronize edildi.",
-            }
-        except subprocess.TimeoutExpired:
-            raise HTTPException(504, "WHM API zaman aşımı (listaccts 25sn'de yanıt vermedi)")
-        except Exception as e:
-            logging.warning(f"[refresh-from-cpanel] whmapi1 failed: {e}")
-            raise HTTPException(500, f"whmapi1 hata: {str(e)[:200]}")
-
-    # 2) Uzak master / preview: sinyal yaz, DEMO SEED YAPMA
-    demand_count = 0
-    async for lic in db.licenses.find({"active": True, "$or": [
-        {"license_key": master_key},
-        {"master_license_key": master_key},
-    ]}, {"license_key": 1, "hostname": 1}):
-        await db.settings.update_one(
-            {"_key": f"plugin_demand_sync:{lic['license_key']}"},
-            {"$set": {
-                "_key": f"plugin_demand_sync:{lic['license_key']}",
-                "license_key": lic["license_key"],
-                "hostname": lic.get("hostname"),
-                "requested_at": now,
-                "requested_by": "master_ui",
-                "handled": False,
-            }},
-            upsert=True,
-        )
-        demand_count += 1
-
-    return {
-        "ok": True,
-        "source": "signal_only",
-        "signaled_licenses": demand_count,
-        "previous_count": current_count,
-        "current_count": current_count,  # Değişmedi, demo eklenmedi
-        "note": (
-            f"⚠ Bu sunucuda cPanel yok ({whm_bin} bulunamadı). {demand_count} bayi WHM "
-            f"sunucusuna 'listaccts çalıştır ve gönder' sinyali yazıldı. Bayi plugin "
-            f"daemon 60sn içinde algılayıp gerçek cPanel hesaplarını master'a push edecek."
-            if demand_count > 0 else
-            f"❌ Bu sunucuda cPanel yok ({whm_bin} bulunamadı) VE master'a bağlı aktif bayi lisansı yok. "
-            f"Kullanıcı listesi için bayi WHM sunucularına GökyüzüWebSpam plugin kurulu ve aktif olmalı."
-        ),
-    }
+@api.post("/users/refresh-from-cpanel-legacy-removed", include_in_schema=False)
+async def _users_refresh_removed():
+    # Removed in v1.4 refactor — active route is registered from
+    # routes/users_sync.py as `/api/users/refresh-from-cpanel`.
+    from fastapi import HTTPException as _HE
+    raise _HE(410, "Bu endpoint modüle taşındı (routes/users_sync.py)")
 
 
 
@@ -8905,6 +8751,8 @@ from routes.maintenance import router as _maintenance_router  # noqa: E402
 from routes.master import router as _master_router  # noqa: E402
 from routes.smart_pos import router as _smart_pos_router  # noqa: E402
 from routes.outbound import router as _outbound_router  # noqa: E402
+from routes.marketplace import router as _marketplace_router  # noqa: E402
+from routes.users_sync import router as _users_sync_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -8922,6 +8770,8 @@ app.include_router(_maintenance_router, prefix="/api")
 app.include_router(_master_router, prefix="/api")
 app.include_router(_smart_pos_router, prefix="/api")
 app.include_router(_outbound_router, prefix="/api")
+app.include_router(_marketplace_router, prefix="/api")
+app.include_router(_users_sync_router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Demo mode write-guard middleware

@@ -6,7 +6,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal, Server, History, Mail,
-  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck, Palette,
+  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck, Palette, Store,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -57,6 +57,8 @@ import PlanConfig from "@/pages/PlanConfig";
 import BayiServer from "@/pages/BayiServer";
 import WhitelistHistory from "@/pages/WhitelistHistory";
 import LandingCMS from "@/pages/LandingCMS";
+import Marketplace from "@/pages/Marketplace";
+import CustomDomainGuide from "@/pages/CustomDomainGuide";
 import CommandPalette from "@/components/CommandPalette";
 import Header from "@/components/Header";
 
@@ -66,6 +68,7 @@ const NAV = [
   { to: "/panel/mailscanner", key: "mailscanner", icon: Filter, testid: "nav-mailscanner", label: "MailScanner", group: "izleme" },
   { to: "/panel/mail-health", key: "mail_health", icon: HeartPulse, testid: "nav-mail-health", label: "Mail Sağlık", group: "izleme" },
   { to: "/panel/threat-intel", key: "threat_intel", icon: Globe, testid: "nav-threat-intel", label: "Tehdit Zekası", group: "izleme" },
+  { to: "/panel/marketplace", key: "marketplace", icon: Store, testid: "nav-marketplace", label: "İmza Marketplace", group: "koruma" },
   { to: "/panel/master-live", key: "master_live", icon: Activity, testid: "nav-master-live", label: "Canlı Bayi Trafiği", masterOnly: true, sellerOnly: true, group: "izleme" },
   // 🛡️ KORUMA
   { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine", group: "koruma" },
@@ -104,6 +107,7 @@ const NAV = [
   { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings", label: "Ayarlar", group: "sistem" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install", label: "Kurulum", group: "sistem" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Dokümantasyon", group: "sistem" },
+  { to: "/panel/custom-domain", key: "custom_domain", icon: Globe, testid: "nav-custom-domain", label: "Kendi Domain'im", group: "sistem" },
 ];
 
 const NAV_GROUPS = [
@@ -388,6 +392,8 @@ function Shell() {
             <Route path="/my-server" element={<BayiServer />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />
+            <Route path="/custom-domain" element={<CustomDomainGuide />} />
+            <Route path="/marketplace" element={<Marketplace />} />
             <Route path="/quarantine" element={<Quarantine />} />
             <Route path="/lists" element={<Lists />} />
             <Route path="/rules" element={<Rules />} />

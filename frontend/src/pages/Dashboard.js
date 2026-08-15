@@ -23,6 +23,7 @@ import QueueModal from "@/components/QueueModal";
 import IpDrilldownDrawer from "@/components/IpDrilldownDrawer";
 import CountryBlockCard from "@/components/CountryBlockCard";
 import ThreatIntelTodayWidget from "@/components/ThreatIntelTodayWidget";
+import MasterAlertCenter from "@/components/MasterAlertCenter";
 
 const LICKEY = () => (typeof window !== "undefined"
   ? (localStorage.getItem("gws.event_license") || "")
@@ -90,6 +91,8 @@ export default function Dashboard() {
       {/* Overview tab: 4 stat cards + threat dist */}
       {show("overview") && (
         <div className="space-y-5">
+          {/* v43.38 — Master Alert Center (Threat Intel sync fails etc.) — null if 0 alerts */}
+          <MasterAlertCenter />
           <div className="grid grid-cols-12 gap-4">
             <div className="col-span-12 md:col-span-3">
               <StatCard label={t("dashboard.scanned_today")} tone="info" icon={Activity} testid="stat-scanned"

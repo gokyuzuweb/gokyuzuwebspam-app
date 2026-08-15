@@ -604,6 +604,18 @@ export const api = {
   // v43.28 — cPanel kullanıcılarını çağır
   usersRefreshFromCpanel: () => client.post("/users/refresh-from-cpanel").then(r => r.data),
   usersSyncStatus: () => client.get("/users/sync-status").then(r => r.data),
+  // v43.38 — Signature Marketplace
+  mpSignatures: (opts = {}) => client.get("/marketplace/signatures", { params: opts }).then(r => r.data),
+  mpSignature: (id) => client.get(`/marketplace/signature/${id}`).then(r => r.data),
+  mpPublish: (payload) => client.post("/marketplace/publish", payload).then(r => r.data),
+  mpVote: (id, payload) => client.post(`/marketplace/vote/${id}`, payload).then(r => r.data),
+  mpInstall: (id, payload) => client.post(`/marketplace/install/${id}`, payload).then(r => r.data),
+  mpMine: (license_key) => client.get("/marketplace/mine", { params: { license_key } }).then(r => r.data),
+  mpDelete: (id, license_key) => client.delete(`/marketplace/signature/${id}`, { params: { license_key } }).then(r => r.data),
+  mpStats: () => client.get("/marketplace/stats").then(r => r.data),
+  mpSeed: () => client.post("/marketplace/seed-demo").then(r => r.data),
+  // v43.38 — Master alerts (Threat Intel sync fails vs.)
+  masterAlerts: (opts = {}) => client.get("/master/alerts", { params: opts }).then(r => r.data),
   // v43.30 — User detay + bulk import + dashboard top domains
   userDetail: (username) => client.get(`/users/${username}/detail`).then(r => r.data),
   usersBulkImport: (payload) => client.post("/users/bulk-import", payload).then(r => r.data),

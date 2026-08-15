@@ -13,6 +13,15 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 15, v43.38) — Marketplace + Alert Center + Domain Guide + Refactor v1
+- ✅ **Signature Marketplace** — 7 backend endpoint + full React page (Keşfet/Yayınlarım/Yeni Yayınla). Bayiler MailScanner kurallarını sürüm-kontrollü paylaşır, upvote/install eder. Collections: `marketplace_signatures`, `marketplace_votes`, `marketplace_install_log`. Seed komutu: `POST /api/marketplace/seed-demo`.
+- ✅ **Master Alert Center Widget** — Dashboard `overview` tab'ına eklendi. `GET /api/master/alerts` legacy (seen/type/message) ve yeni (read/kind/title/detail) şemaları birleştirip döner. Read/read-all endpoint'leri.
+- ✅ **Custom Domain Guide** (`/panel/custom-domain`) — Nginx + Apache config kopyala-yapıştır, Let's Encrypt komutları, WebSocket rewrite, 4 sık sorulan sorun.
+- ✅ **server.py Refactor v1** — `/users/sync-status`, `/users/sync`, `/users/refresh-from-cpanel` monolithic server.py'den `routes/users_sync.py`'ye taşındı. `server.py` ~50 satır azaldı; full refactor'un ilk adımı.
+- ✅ Backend testing agent: **17/17 test geçti** (Marketplace 12 test + Master Alerts 3 test + refactor regresyonu). Test agent bir MongoDB `$set/$setOnInsert` çakışmasını otomatik düzeltti (marketplace_rules.created_at).
+- Files: `routes/marketplace.py`, `routes/users_sync.py`, `pages/Marketplace.js`, `pages/CustomDomainGuide.js`, `components/MasterAlertCenter.js`.
+
+
 ## Feb 15, 2026 (Session 15, v43.37) — Sync Visibility, Threat Intel Alerts, gws-update Perl deps
 - ✅ Added `GET /api/users/sync-status` — returns global last sync timestamp, source, and per-source breakdown. Consumed by Users page.
 - ✅ Users page: `CardHeader.subtitle` now renders "Son toplu senkron: <zaman> · kaynak: <src>" strip (auto-refresh 60s). data-testid: `users-last-sync-time`, `users-sync-source`.

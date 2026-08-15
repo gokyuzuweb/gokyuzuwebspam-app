@@ -333,3 +333,57 @@ async def release_history(limit: int = 20):
     """Yayın geçmişi."""
     rows = await db.release_history.find({}, {"_id": 0}).sort("published_at", -1).limit(limit).to_list(limit)
     return {"items": rows, "current": CURRENT_VERSION}
+
+
+
+# ============================================================================
+# v43.38 — Master Alerts (Dashboard sistem bildirim kartı)
+# Threat Intel auto-sync loop, plugin daemon fail, license violation vb.
+# `master_alerts` koleksiyonuna yazar. Frontend Dashboard bunu tüketir.
+# ============================================================================
+@router.get("/alerts")
+async def list_master_alerts(limit: int = 20, unread_only: bool = False):
+    q: dict = {}
+    if unread_only:
+        # Legacy 'seen' field OR new 'read' field
+        q["$or"] = [{"read": False}, {"read": {"$exists": False}, "seen": False}]
+    items_raw = await db.master_alerts.find(q, {"_id": 0}) \
+        .sort("created_at", -1).limit(min(limit, 100)).to_list(limit)
+    # Normalize shape (new_version alerts use seen/type/message; new alerts use read/kind/title/detail)
+    items: list[dict] = []
+    for a in items_raw:
+        is_read = bool(a.get("read", a.get("seen", False)))
+        items.append({
+            "id": a.get("id"),
+            "kind": a.get("kind") or a.get("type") or "notice",
+            "severity": a.get("severity") or ("info" if a.get("type") == "new_version" else "warning"),
+            "title": a.get("title") or a.get("message") or a.get("kind") or "",
+            "detail": a.get("detail") or (f"Sürüm: {a.get('version')}" if a.get("type") == "new_version" else ""),
+            "added_iocs": a.get("added_iocs"),
+            "failures": a.get("failures"),
+            "created_at": a.get("created_at"),
+            "read": is_read,
+        })
+    total_unread = await db.master_alerts.count_documents(
+        {"$or": [{"read": False}, {"read": {"$exists": False}, "seen": False}]})
+    return {"items": items, "count": len(items), "total_unread": total_unread}
+
+
+@router.post("/alerts/{alert_id}/read")
+async def mark_alert_read(alert_id: str):
+    r = await db.master_alerts.update_one(
+        {"id": alert_id},
+        {"$set": {"read": True, "seen": True, "read_at": _iso()}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "Alert bulunamadı")
+    return {"ok": True}
+
+
+@router.post("/alerts/read-all")
+async def mark_all_alerts_read():
+    r = await db.master_alerts.update_many(
+        {"$or": [{"read": False}, {"read": {"$exists": False}, "seen": False}]},
+        {"$set": {"read": True, "seen": True, "read_at": _iso()}},
+    )
+    return {"ok": True, "modified": r.modified_count}

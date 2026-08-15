@@ -1,0 +1,36 @@
+{
+  "summary": "v44 backend testing: Signature Marketplace (7 endpoints), Master Alerts (list/read/read-all), and users_sync refactor regression. 17/17 tests pass after fixing one MongoDB bug in marketplace install (created_at conflict between $set and $setOnInsert).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/marketplace/install/{sig_id}", "issue": "FIXED — MongoDB WriteError code 40: 'created_at' present in both $set and $setOnInsert clauses caused 500 on every install call. Removed created_at from rule_doc dict so $setOnInsert is authoritative for that field."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v44_marketplace_alerts.py",
+    "/app/test_reports/pytest/v44_results.xml"
+  ],
+  "action_items": [
+    "Verify the marketplace install fix is acceptable (created_at now only set on insert; updated_at still set on every call).",
+    "Consider whitelisting /api/marketplace/ in _DEMO_ALLOW_PREFIXES or documenting that all marketplace mutations require X-Master-Key / a valid license header — currently visitors in demo mode get 423 even for endpoints that already require license_key in the body (redundant but correct)."
+  ],
+  "critical_code_review_comments": [
+    "marketplace.py install_signature had duplicate 'created_at' between $set and $setOnInsert — Mongo rejects this. Fixed by testing agent.",
+    "marketplace.py list_signatures: q param does regex-escape only for pattern search, not for name/description — a user searching with regex metachars in name field could get MongoDB regex errors. Consider escaping in name/description too.",
+    "master.py list_master_alerts: unread_only filter uses $or that only matches docs with seen=false explicitly; docs missing both 'read' and 'seen' would be considered read. If any legacy alert has neither field, it never appears in unread_only. Minor edge case.",
+    "server.py is now 8910 lines — still very large despite the users_sync extraction. Continue splitting into modules (payments, mailscanner, plugin, licensing) per the refactor goal.",
+    "master.py alerts endpoints do not require any auth — anyone can mark-read-all on the master's dashboard. Consider adding X-Master-Key check."
+  ],
+  "updated_files": [
+    "/app/backend/routes/marketplace.py (install_signature: removed duplicate created_at from $set clause)",
+    "/app/backend/tests/test_v44_marketplace_alerts.py (new test file)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676 (from /app/memory/test_credentials.md). Requests need X-Master-Key header to bypass demo_write_guard middleware for POST/DELETE.",
+  "seed_data_creation": "POST /api/marketplace/seed-demo inserts 5 demo signatures (Nijerya prensi, Sahte fatura eki, Kripto ödeme, Google Docs paylaşım, IBAN değişikliği). Idempotent: seeded=0 note='Zaten seed'lenmiş' if already >=5.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Marketplace test file at /app/backend/tests/test_v44_marketplace_alerts.py — set X-Master-Key header on session to bypass demo write guard. All 17 tests should pass. If the marketplace install fix is reverted, expect 500 with 'Updating the path created_at would create a conflict'.",
+  "rca of the issue": "Bug: POST /api/marketplace/install/{sig_id} returned 500 for every call. RCA: In routes/marketplace.py install_signature, rule_doc dict contained both 'created_at' and 'updated_at'. The Mongo update used {'$set': rule_doc, '$setOnInsert': {'created_at': _iso()}} — Mongo forbids the same top-level path appearing in both $set and $setOnInsert (error code 40). Repro: POST /api/marketplace/install/{any_valid_sig_id} with a valid license. Fix: removed 'created_at' from rule_doc so $setOnInsert alone sets it on first insert; updates only touch updated_at + mutable fields. Verified by re-running the full v44 test suite — all 17 tests pass, install returns {ok:true, rule_id}, second call returns already_installed=true, mailscanner_rules doc created for the license."
+}
