@@ -180,6 +180,9 @@ export const api = {
   // v43 Outbound Filtering + Bulk Detection
   outboundStats: (params = {}) => client.get("/outbound/stats", { params }).then(r => r.data),
   outboundEvents: (params = {}) => client.get("/outbound/events", { params }).then(r => r.data),
+  // v43.28 — Outbound tanı + demo seed
+  outboundDiagnostic: () => client.get("/outbound/diagnostic").then(r => r.data),
+  outboundSeedSample: () => client.post("/outbound/dev/seed-sample").then(r => r.data),
   outboundBulkAlerts: (params = {}) => client.get("/outbound/bulk-alerts", { params }).then(r => r.data),
   outboundThrottles: (params = {}) => client.get("/outbound/throttles", { params }).then(r => r.data),
   outboundThrottleAdd: (body) => client.post("/outbound/throttle", body).then(r => r.data),
@@ -596,6 +599,10 @@ export const api = {
   tiIocAdd: (payload) => client.post("/threat-intel/ioc", payload).then(r => r.data),
   tiIocDelete: (id) => client.delete(`/threat-intel/ioc/${id}`).then(r => r.data),
   tiIocSeedDemoCategories: () => client.post("/threat-intel/ioc/seed-demo-categories").then(r => r.data),
+  // v43.28 — URL feed'lerinden gerçek domain'leri çıkart
+  tiIocExtractDomainsFromUrls: () => client.post("/threat-intel/ioc/extract-domains-from-urls").then(r => r.data),
+  // v43.28 — cPanel kullanıcılarını çağır
+  usersRefreshFromCpanel: () => client.post("/users/refresh-from-cpanel").then(r => r.data),
   tiDmarcSummary: (days = 30) => client.get("/threat-intel/dmarc/summary", { params: { days } }).then(r => r.data),
   tiDmarcIngest: (payload) => client.post("/threat-intel/dmarc/ingest", payload).then(r => r.data),
   tiFeeds: () => client.get("/threat-intel/feeds").then(r => r.data),

@@ -23,6 +23,17 @@ export default function UsersPage() {
     onError: (e) => toast.error(e?.response?.data?.detail || "Hata"),
   });
 
+  // v43.28 — cPanel kullanıcılarını çağır
+  const refreshFromCpanel = useMutation({
+    mutationFn: () => api.usersRefreshFromCpanel(),
+    onSuccess: (d) => {
+      toast.success(d.note, { duration: 6000 });
+      // 3sn sonra tekrar sorgula (plugin daemon sync yaparsa görsün)
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["users"] }), 3000);
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+
   const rows = users.data || [];
   const demoCount = rows.filter((u) => ["example","sirket","tekno","deneme","kobi"].includes(u.username)).length;
   const realCount = rows.length - demoCount;
@@ -59,7 +70,23 @@ export default function UsersPage() {
         <CardHeader
           title="cPanel Kullanıcıları"
           subtitle="Hesap bazlı e-posta trafiği ve spam metrikleri"
-          right={<Badge tone="brand">{rows.length} hesap</Badge>}
+          right={
+            <div className="flex items-center gap-2">
+              {isMaster && (
+                <button
+                  onClick={() => refreshFromCpanel.mutate()}
+                  disabled={refreshFromCpanel.isPending}
+                  data-testid="users-cpanel-refresh"
+                  className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40"
+                  title="Bayi WHM plugin daemon'ına 'whmapi1 listaccts çalıştır' sinyali gönderir"
+                >
+                  <Server className="w-3 h-3" />
+                  {refreshFromCpanel.isPending ? "Çağırılıyor…" : "🔄 cPanel Kullanıcıları Çağır"}
+                </button>
+              )}
+              <Badge tone="brand">{rows.length} hesap</Badge>
+            </div>
+          }
         />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

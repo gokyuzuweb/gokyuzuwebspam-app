@@ -631,3 +631,100 @@ async def outbound_migrate_direction(request: Request, license_key: Optional[str
         "system_user_fixed": r3.modified_count,
         "total_fixed": r1.modified_count + r2.modified_count + r3.modified_count,
     }
+
+
+# v43.28 — Outbound Sunucu Tanısı + Demo Seed
+# Kullanıcının panelinde giden posta boş göründüğünde nedenini teşhis eder.
+@router.get("/diagnostic")
+async def outbound_diagnostic(request: Request):
+    """Outbound boş görünme nedenini teşhis eder.
+    Kontroller:
+      - Master session aktif mi?
+      - DB'de outbound event var mı?
+      - Milter'ın direction=out yazıp yazmadığı (son 24 saatte outbound ingest'i)
+    """
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(hours=24)).isoformat()
+    total_events = await db.mail_events.count_documents({})
+    outbound_total = await db.mail_events.count_documents({"direction": "out"})
+    outbound_24h = await db.mail_events.count_documents({"direction": "out", "ts": {"$gte": since}})
+    inbound_24h = await db.mail_events.count_documents({"direction": "in", "ts": {"$gte": since}})
+    # Master check
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    is_master = master_key.startswith("MS-")
+    # Bayi lisans
+    lic_key = None
+    if not is_master:
+        lic_key = request.query_params.get("license_key") or None
+    # Milter aktivite (son ingest)
+    last_out = None
+    async for d in db.mail_events.find({"direction": "out"}).sort("ts", -1).limit(1):
+        last_out = d.get("ts")
+        break
+    # Değerlendirme
+    diagnosis = []
+    fix_hints = []
+    if not is_master and not lic_key:
+        diagnosis.append("Master anahtarı gitmiyor — X-Master-Key header yok")
+        fix_hints.append("Header'da 'Master Aktif Et' butonuna tıklayıp MS- anahtarınızı girin")
+    if outbound_total == 0:
+        diagnosis.append("Veritabanında hiç outbound kaydı yok")
+        fix_hints.append("Milter/logtail v43+ kurulu değil veya direction=out yazmıyor. WHM sunucusunda 'gws-update' çalıştırın")
+    elif outbound_24h == 0 and outbound_total > 0:
+        diagnosis.append(f"DB'de {outbound_total} outbound var ama son 24 saatte 0 — Milter durmuş olabilir")
+        fix_hints.append("Bayi WHM sunucusunda: 'systemctl status gws-milter' + 'tail /var/log/gokyuzuwebspam/milter.log'")
+    if outbound_total > 0 and is_master:
+        diagnosis.append("Backend outbound veri sunuyor, panel görmelidir — cache/browser sorunu olabilir")
+        fix_hints.append("Sayfayı yenileyin (Ctrl+F5) veya query cache'i temizleyin")
+    return {
+        "ok": True,
+        "master_authenticated": is_master,
+        "license_scope": lic_key,
+        "total_events": total_events,
+        "outbound_total": outbound_total,
+        "outbound_last_24h": outbound_24h,
+        "inbound_last_24h": inbound_24h,
+        "last_outbound_ts": last_out,
+        "diagnosis": diagnosis or ["Her şey normal görünüyor"],
+        "fix_hints": fix_hints or [],
+    }
+
+
+@router.post("/dev/seed-sample")
+async def outbound_seed_sample(request: Request):
+    """Demo/test amaçlı 5 outbound event ekler. Milter kurulmadan panel'de
+    outbound akışının çalıştığını doğrulamak için. Master gerekli."""
+    from datetime import datetime, timezone, timedelta
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli (X-Master-Key header)")
+    import random, uuid
+    now = datetime.now(timezone.utc)
+    users = ["info", "admin", "sales", "support", "noreply"]
+    domains = ["ornek.com", "musteri.com.tr", "corporate.com"]
+    verdicts = [("clean", 0.5), ("spam", 6.2), ("clean", 1.1), ("high_spam", 8.9), ("clean", 0.2)]
+    inserted = []
+    for i, (verdict, score) in enumerate(verdicts):
+        from_user = random.choice(users)
+        domain = random.choice(domains)
+        doc = {
+            "id": str(uuid.uuid4()),
+            "license_key": master_key,
+            "direction": "out",
+            "from_addr": f"{from_user}@{domain}",
+            "from_user": from_user,
+            "to_addr": f"external{i}@gmail.com",
+            "subject": f"[DEMO SEED {i+1}] Test outbound mail — v43.28",
+            "verdict": verdict,
+            "total_score": score,
+            "action": "accept" if verdict == "clean" else "quarantine",
+            "sender_ip": None,
+            "body_preview": f"Bu bir demo giden mail. Kullanıcı: {from_user}@{domain}. Milter kurulmadan outbound akışı testi.",
+            "ts": (now - timedelta(minutes=i*2)).isoformat(),
+            "scores": {"spamassassin": score},
+        }
+        await db.mail_events.insert_one(doc)
+        inserted.append(doc["id"])
+    return {"ok": True, "inserted": len(inserted), "ids": inserted, "note": "Sayfayı yenileyin"}
+

@@ -48,6 +48,71 @@ async def add_ioc(payload: Indicator):
 # v43.25 — Boş kategori seed'i: Domain / Hash / Email için gerçek dünya feed'i
 # yok (URLhaus/PhishTank sadece URL, Spamhaus/Barracuda sadece IP). Kullanıcının
 # panelde 5 kategoriyi de dolu görebilmesi için tek tıkla demo IOC yükler.
+# v43.28 — URL Feed'lerinden Gerçek Domain'leri Çıkart
+# URLhaus/PhishTank feed'leri sadece URL formatında IOC'ları verir; kullanıcının
+# panelde "Domain" kategorisini boş görmesine neden olur. Bu endpoint URL
+# IOC'larından host kısmını extract edip ayrı domain IOC'ları oluşturur.
+@router.post("/ioc/extract-domains-from-urls")
+async def extract_domains_from_urls():
+    """URL IOC'lardan host'u ayıklar ve type=domain IOC olarak yükler.
+    Idempotent (upsert). Kullanıcının panelde 'Domain' kategorisini gerçek
+    (demo değil) veriyle doldurur."""
+    import re as _re
+    from urllib.parse import urlparse
+    added = 0
+    seen_domains = set()
+    # Mevcut domain IOC'ları önceden bir sete al (dup check için)
+    async for d in db.threat_iocs.find({"type": "domain"}, {"value": 1}):
+        seen_domains.add(d.get("value", "").lower())
+    now = _iso()
+    expires = (datetime.now(timezone.utc) + timedelta(days=90)).isoformat()
+    # URL IOC'larını al (yalnız ilk 2000 — güvenli limit)
+    async for url_doc in db.threat_iocs.find({"type": "url"}, {"value": 1, "tag": 1, "confidence": 1, "source": 1, "feed": 1}).limit(2000):
+        url = (url_doc.get("value") or "").strip()
+        if not url:
+            continue
+        # Basit host extract
+        try:
+            parsed = urlparse(url if "://" in url else "http://" + url)
+            host = (parsed.hostname or "").lower()
+        except Exception:
+            host = ""
+        if not host or "." not in host:
+            continue
+        # IP address ise atla (domain değil)
+        if _re.match(r"^\d+\.\d+\.\d+\.\d+$", host):
+            continue
+        if host in seen_domains:
+            continue
+        seen_domains.add(host)
+        # Confidence: URL confidence'ından -10 (host olmak URL'den zayıf sinyal)
+        conf = max(50, (url_doc.get("confidence") or 80) - 10)
+        source = url_doc.get("feed") or url_doc.get("source") or "url-extracted"
+        res = await db.threat_iocs.update_one(
+            {"type": "domain", "value": host},
+            {"$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "type": "domain", "value": host,
+                "tag": url_doc.get("tag") or "malicious",
+                "confidence": conf,
+                "source": f"{source}-derived",
+                "feed": f"{source}-derived",
+                "note": f"URL IOC'undan çıkartıldı (kaynak: {source})",
+                "created_at": now, "expires_at": expires,
+            }},
+            upsert=True,
+        )
+        if res.upserted_id:
+            added += 1
+    total_domains = await db.threat_iocs.count_documents({"type": "domain"})
+    return {
+        "ok": True,
+        "extracted": added,
+        "total_domains_now": total_domains,
+        "sources_scanned": "url IOC'ların hostname'i (max 2000)",
+    }
+
+
 @router.post("/ioc/seed-demo-categories")
 async def seed_demo_ioc_categories():
     """Idempotent — Domain / Hash / Email kategorilerine gerçekçi demo IOC'lar

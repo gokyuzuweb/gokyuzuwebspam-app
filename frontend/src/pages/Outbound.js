@@ -225,10 +225,43 @@ export default function Outbound() {
                   Olası nedenler:
                 </div>
                 <ul className="text-xs text-slate-400 list-disc pl-5 space-y-0.5">
-                  <li><b>Master anahtarı</b> tarayıcıda kayıtlı olmayabilir — panel'e MS- prefix'li anahtarla giriş yaptığınızdan emin olun.</li>
+                  <li><b>Master anahtarı</b> tarayıcıda kayıtlı olmayabilir — Header'daki <b>"Master Aktif Et"</b> butonuna tıklayın.</li>
                   <li><b>Milter/logtail v43+</b> henüz kurulu değilse yeni gönderilen mailler <code className="mono text-slate-300">direction=in</code> olarak yanlış sınıflanır. WHM sunucunuzda <code className="mono text-amber-300">gws-update</code> çalıştırın.</li>
                   <li>Filtre (verdict / arama / skor / saat) çok dar olabilir — üstteki filtreleri <b>Sıfırla</b> deneyin.</li>
                 </ul>
+                <div className="pt-2 flex flex-wrap gap-2">
+                  <button
+                    data-testid="ob-diagnostic-btn"
+                    onClick={async () => {
+                      try {
+                        const d = await api.outboundDiagnostic();
+                        const msg = `Master: ${d.master_authenticated ? "✓ aktif" : "✗ yok"}\n`
+                          + `Toplam outbound: ${d.outbound_total}\n`
+                          + `Son 24 saat: ${d.outbound_last_24h}\n`
+                          + `Son ingest: ${d.last_outbound_ts || "yok"}\n\n`
+                          + `Teşhis:\n- ${(d.diagnosis || []).join("\n- ")}\n\n`
+                          + `Çözüm:\n- ${(d.fix_hints || []).join("\n- ")}`;
+                        alert(msg);
+                      } catch (e) { toast.error(e?.response?.data?.detail || e.message); }
+                    }}
+                    className="text-xs px-3 py-1.5 rounded border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20"
+                  >
+                    🔍 Sunucumu Kontrol Et
+                  </button>
+                  <button
+                    data-testid="ob-seed-sample-btn"
+                    onClick={async () => {
+                      try {
+                        const d = await api.outboundSeedSample();
+                        toast.success(`${d.inserted} demo outbound eklendi — sayfa yenileniyor`);
+                        setTimeout(() => window.location.reload(), 800);
+                      } catch (e) { toast.error(e?.response?.data?.detail || e.message); }
+                    }}
+                    className="text-xs px-3 py-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                  >
+                    🧪 Demo Outbound Ekle
+                  </button>
+                </div>
               </div>
             </div>
           </div>

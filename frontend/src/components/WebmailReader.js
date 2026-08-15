@@ -13,8 +13,10 @@
  *     body_html, attachments[], action, clam_verdict, clam_threats[],
  *     content_source }
  */
-import { useQuery } from "@tanstack/react-query";
-import { Eye, X, ShieldCheck, ShieldAlert } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Eye, X, ShieldCheck, ShieldAlert, Ban } from "lucide-react";
+import { toast } from "sonner";
+import { api } from "@/lib/api";
 
 function fmtTime(iso) {
   if (!iso) return "";
@@ -28,12 +30,75 @@ function fmtTime(iso) {
 }
 
 export default function WebmailReader({ eventId, fetcher, onClose, queryKey = "mail-content" }) {
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: [queryKey, eventId],
     queryFn: () => fetcher(eventId),
     enabled: !!eventId,
     staleTime: 30_000,
     retry: false,
+  });
+
+  // v43.28 — "Buna benzer maili engelle" → Rule ekle
+  const blockSimilar = useMutation({
+    mutationFn: async () => {
+      const c = q.data;
+      if (!c) throw new Error("İçerik henüz yüklenmedi");
+      // Konu regex (özel karakterleri escape et)
+      const escapeRe = (s) => (s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const subject = (c.subject || "").trim();
+      const senderDom = c.from_addr && c.from_addr.includes("@") ? c.from_addr.split("@")[1] : "";
+      // 3 kural önerisi — kullanıcıya seçtir
+      const proposals = [];
+      if (subject) {
+        // İlk 3 kelimeyi al (uzun konu regex'i çok tetiklenir)
+        const words = subject.split(/\s+/).slice(0, 3).map(escapeRe).join("\\s+");
+        if (words) {
+          proposals.push({
+            name: `Konu: ${subject.slice(0, 40)}`,
+            pattern: `/${words}/i`,
+            score: 7.0, target: "subject", enabled: true,
+            description: `Karantina modalinden üretildi (${subject.slice(0, 60)})`,
+          });
+        }
+      }
+      if (senderDom) {
+        proposals.push({
+          name: `Gönderen alan: ${senderDom}`,
+          pattern: `/@${escapeRe(senderDom)}\\b/i`,
+          score: 6.0, target: "from", enabled: true,
+          description: `Karantina modalinden üretildi (gönderen alanı: ${senderDom})`,
+        });
+      }
+      if (proposals.length === 0) {
+        throw new Error("Kural üretecek yeterli veri yok (konu/gönderen)");
+      }
+      // Kullanıcıya sor: hangisi eklensin
+      const labels = proposals.map((p, i) => `${i+1}. ${p.name}\n   ${p.pattern} (skor ${p.score}, hedef ${p.target})`).join("\n\n");
+      const choice = window.prompt(
+        `Aşağıdaki kurallardan hangisini eklemek istiyorsunuz? (numarayı yazın veya boş bırakıp iptal edin)\n\n${labels}\n\nTümünü eklemek için 'a' yazın`,
+        "1"
+      );
+      if (!choice) throw new Error("İptal edildi");
+      const c2 = choice.trim().toLowerCase();
+      const targets = c2 === "a" ? proposals : (proposals[parseInt(c2, 10) - 1] ? [proposals[parseInt(c2, 10) - 1]] : []);
+      if (targets.length === 0) throw new Error("Geçersiz seçim");
+      const results = [];
+      for (const p of targets) {
+        try {
+          const r = await api.ruleAdd(p);
+          results.push({ ok: true, name: p.name, id: r.id });
+        } catch (e) {
+          results.push({ ok: false, name: p.name, error: e?.response?.data?.detail || e.message });
+        }
+      }
+      return { added: results.filter(r => r.ok).length, results };
+    },
+    onSuccess: (d) => {
+      toast.success(`${d.added} kural eklendi — Kurallar sayfasında düzenleyebilirsiniz`);
+      qc.invalidateQueries({ queryKey: ["rules"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
   });
 
   if (!eventId) return null;
@@ -72,6 +137,16 @@ export default function WebmailReader({ eventId, fetcher, onClose, queryKey = "m
               </span>
             )}
           </div>
+          <button
+            onClick={() => blockSimilar.mutate()}
+            disabled={blockSimilar.isPending || !q.data}
+            className="text-[10px] px-2 py-1 rounded bg-rose-500/15 text-rose-300 border border-rose-500/40 hover:bg-rose-500/25 disabled:opacity-40 inline-flex items-center gap-1"
+            title="Bu maile benzer mailleri engellemek için AI önerisiyle SpamAssassin kuralı ekle"
+            data-testid="wm-block-similar"
+          >
+            <Ban className="w-3 h-3" />
+            {blockSimilar.isPending ? "Kural üretiliyor…" : "Buna benzer maili engelle"}
+          </button>
           <button
             onClick={onClose}
             className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"

@@ -4587,6 +4587,55 @@ async def users_sync(payload: UserSyncIn):
     return {"synced": ups, "purged_demo": True}
 
 
+# v43.28 — cPanel Kullanıcıları Çağır (Master → WHM plugin daemon signal)
+@api.post("/users/refresh-from-cpanel")
+async def users_refresh_from_cpanel(request: Request):
+    """Master aktif iken tetiklenir. Bayi WHM plugin daemon'ına 'anında listaccts
+    çalıştır ve senkronize et' sinyali koyar.
+
+    Docker preview'da cPanel yoktur → 'demand_sync_pending' flag'ini set eder,
+    plugin daemon bunu 60 sn poll cycle'ında görüp `whmapi1 listaccts` çalıştırır
+    ve `POST /api/users/sync` ile gerçek kullanıcı listesini yükler."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli (X-Master-Key header)")
+    now = _iso()
+    # Kaç kayıt var şu an?
+    current_count = await db.users.count_documents({"license_key": master_key})
+    demand_count = 0
+    # Master'a bağlı tüm bayi lisanslara sinyali yaz
+    async for lic in db.licenses.find({"active": True, "$or": [
+        {"license_key": master_key},
+        {"master_license_key": master_key},
+    ]}, {"license_key": 1, "hostname": 1}):
+        await db.settings.update_one(
+            {"_key": f"plugin_demand_sync:{lic['license_key']}"},
+            {"$set": {
+                "_key": f"plugin_demand_sync:{lic['license_key']}",
+                "license_key": lic["license_key"],
+                "hostname": lic.get("hostname"),
+                "requested_at": now,
+                "requested_by": "master_ui",
+                "handled": False,
+            }},
+            upsert=True,
+        )
+        demand_count += 1
+    return {
+        "ok": True,
+        "current_user_count": current_count,
+        "signaled_licenses": demand_count,
+        "note": (
+            "Bayi WHM plugin daemon'ları (60sn poll) sinyali algılayıp "
+            "'whmapi1 listaccts' çalıştıracak ve kullanıcı listesini gönderecek. "
+            "1-2 dk içinde bu sayfayı yenileyin."
+            if demand_count > 0 else
+            "Uyarı: Aktif bayi bulunamadı. WHM plugin daemon'ının çalıştığını doğrulayın."
+        ),
+    }
+
+
+
 async def _require_master(request: Request, license_key: Optional[str]) -> None:
     # Accept cookie-based session too
     cookie_master = request.cookies.get("gws_master_session")

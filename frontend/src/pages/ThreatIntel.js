@@ -83,6 +83,14 @@ function IocTab() {
     },
     onError: (e) => toast.error(e?.response?.data?.detail || e.message),
   });
+  const extractDomains = useMutation({
+    mutationFn: () => api.tiIocExtractDomainsFromUrls(),
+    onSuccess: (d) => {
+      toast.success(`+${d.extracted} gerçek domain URL feed'lerinden çıkartıldı · toplam Domain: ${d.total_domains_now}`);
+      qc.invalidateQueries({ queryKey: ["ti-ioc"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
   const items = q.data?.items || [];
   const counts = q.data?.counts || {};
   const emptyCat = (counts.domain ?? 0) === 0 || (counts.hash ?? 0) === 0 || (counts.email ?? 0) === 0;
@@ -109,9 +117,10 @@ function IocTab() {
                 {["Domain", "Hash", "Email"].filter((_, i) => [counts.domain, counts.hash, counts.email][i] === 0).join(" · ")} kategorileri boş
               </div>
               <div className="text-xs text-slate-400 mt-0.5">
-                URLhaus/PhishTank sadece URL, Spamhaus/Barracuda sadece IP döner. Bu 3 kategori için gerçek üretim feed'i (OpenPhish/MalwareBazaar/Blocklist.de) satın alınmadan aşağıdaki demo veriyi yükleyebilirsiniz.
+                URLhaus/PhishTank sadece URL, Spamhaus/Barracuda sadece IP döner. Domain için <b>URL feed'lerinden gerçek domain çıkart</b> (yeşil buton) veya demo yükleyin.
               </div>
             </div>
+            <div className="shrink-0 flex flex-col gap-1.5">
             <button
               data-testid="ioc-seed-demo-btn"
               onClick={() => seedDemo.mutate()}
@@ -120,6 +129,16 @@ function IocTab() {
             >
               {seedDemo.isPending ? "Yükleniyor…" : "🌱 Demo Verilerini Yükle"}
             </button>
+            <button
+              data-testid="ioc-extract-domains-btn"
+              onClick={() => extractDomains.mutate()}
+              disabled={extractDomains.isPending}
+              className="shrink-0 text-xs px-3 py-1.5 rounded bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-40"
+              title="URLhaus/PhishTank URL feed'lerinden gerçek domain'leri çıkart"
+            >
+              {extractDomains.isPending ? "Çıkartılıyor…" : "🔗 URL'lerden Gerçek Domain Çıkart"}
+            </button>
+            </div>
           </div>
         )}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2 p-3 bg-slate-950/50 border border-slate-800 rounded">
