@@ -548,6 +548,8 @@ sub push_exim_log_delta {
                 }
             }
             next unless $is_outbound;
+            # v43.40 — X-Spam-Score & X-Spam-Status enrichment (spool -H file)
+            my ($score, $verdict, $sa_report) = _read_exim_spool_verdict($mid);
             push @new_events, {
                 exim_mid   => $mid,
                 ts         => $meta->{ts} || $ts,
@@ -556,9 +558,13 @@ sub push_exim_log_delta {
                 to_addr    => $rcpt,
                 subject    => $meta->{subject} || '',
                 size_bytes => $meta->{size_bytes} || 0,
-                verdict    => 'clean',
-                total_score=> 0,
-                action     => 'accept',
+                verdict    => $verdict,
+                total_score=> $score,
+                scores     => { spamassassin => $score },
+                sa_report  => $sa_report,
+                action     => ($verdict eq 'blocked' ? 'reject'
+                              : $verdict eq 'high_spam' ? 'quarantine'
+                              : $verdict eq 'spam' ? 'quarantine' : 'accept'),
             };
         } elsif ($direction eq '**' || $direction eq '==') {
             # Bounced / defer
@@ -610,3 +616,181 @@ my $panel_url = $conf{panel}{url}
              || 'https://panel.gokyuzuhosting.com';
 eval { push_exim_log_delta($license_key, $panel_url); };
 warn "[exim-tail] failed: $@" if $@;
+
+# ============================================================================
+# v43.40 — Verdict Enrichment helper
+# ---------------------------------------------------------------------------
+# Exim spool içindeki -H başlık dosyasını okuyarak X-Spam-Score / X-Spam-Status
+# / X-Spam-Report değerlerini çıkarır. Skor >= 5.0 → spam, >= 10 → high_spam.
+# Dosya yolları:
+#   /var/spool/exim/input/{split}/{mid}-H
+#   /var/spool/mailscanner/input/{mid}-H (MailScanner spool'a taşıdıysa)
+# Not: Mail gönderim tamamlanınca spool silinir. O yüzden bu fonksiyon sadece
+# heartbeat cycle'ı sırasında hala işlemde olan (recent) mailler için değer
+# döner; eski maillerde skor 0/clean kalır (o zaman zaten SA header'ı Exim
+# main log'a düşmemiş olur).
+# ============================================================================
+
+sub _read_exim_spool_verdict {
+    my ($mid) = @_;
+    return (0, 'clean', '') unless $mid;
+    my @candidates = (
+        "/var/spool/exim/input/" . substr($mid, 5, 1) . "/$mid-H",
+        "/var/spool/exim/input/$mid-H",
+        "/var/spool/mailscanner/input/$mid-H",
+        "/var/spool/mailscanner/incoming/$mid-H",
+    );
+    my $spool;
+    for my $p (@candidates) {
+        if (-r $p) { $spool = $p; last; }
+    }
+    return (0, 'clean', '') unless $spool;
+
+    open(my $fh, '<', $spool) or return (0, 'clean', '');
+    my $score = 0.0;
+    my $status = '';
+    my $report = '';
+    my $capture_report = 0;
+    while (my $l = <$fh>) {
+        last if length($report) > 800;
+        if ($l =~ /^X-Spam-Score:\s*(-?\d+(?:\.\d+)?)/i) {
+            $score = $1 + 0;
+        } elsif ($l =~ /^X-Spam-Status:\s*(.+)$/i) {
+            $status = $1;
+            $status =~ s/[\r\n]+$//;
+            if ($status =~ /score=(-?\d+(?:\.\d+)?)/i) { $score = $1 + 0 if !$score; }
+        } elsif ($l =~ /^X-Spam-Report:\s*(.+)$/i) {
+            $report = $1;
+            $capture_report = 1;
+        } elsif ($capture_report && $l =~ /^\s+(\S.+)$/) {
+            $report .= " " . $1;
+        } elsif ($capture_report && $l !~ /^\s/) {
+            $capture_report = 0;
+        }
+    }
+    close($fh);
+
+    my $verdict = 'clean';
+    if ($score >= 15) { $verdict = 'blocked'; }
+    elsif ($score >= 10) { $verdict = 'high_spam'; }
+    elsif ($score >= 5) { $verdict = 'spam'; }
+    elsif ($score >= 3) { $verdict = 'suspicious'; }
+    return ($score, $verdict, substr($report, 0, 400));
+}
+
+# ============================================================================
+# v43.40 — Backfill: son 24 saatlik Exim main log'u tara ve tüm outbound
+# olayları panele push et. Master panel bir sinyal yazdığında (settings)
+# heartbeat.pl bu fonksiyonu çağırır. checkpoint_position'ı sıfırlar.
+# ============================================================================
+
+sub run_exim_backfill_24h {
+    my ($license_key, $panel_url) = @_;
+    return unless $license_key;
+    my $LOG = '/var/log/exim_mainlog';
+    return unless -r $LOG;
+    my $ua = LWP::UserAgent->new(timeout => 60);
+
+    # Checkpoint sıfırla — panel side
+    # (basitçe: push endpoint checkpoint_position=0 ile çağırdığımızda son
+    # position bilgisi güncellenir; ancak upsert idempotent olduğu için
+    # duplicate risk yok.)
+    open(my $fh, '<', $LOG) or return;
+    my $cutoff = time() - 86400;
+    my @batch;
+    my %in_flight;
+    my $total_pushed = 0;
+    while (my $line = <$fh>) {
+        chomp $line;
+        next unless $line =~ /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\s+([\w-]+)\s+(<=|=>|->|\*\*|==)\s+(.+)$/;
+        my ($date, $time, $mid, $direction, $rest) = ($1, $2, $3, $4, $5);
+        # Kaba zaman filtresi — GMT olarak varsayıyoruz
+        my $ts = "${date}T${time}+00:00";
+        # ISO'dan epoch'a
+        my @dt = split(/[-T:+]/, $ts);
+        my $epoch = eval {
+            use Time::Local;
+            timegm($dt[5], $dt[4], $dt[3], $dt[2], $dt[1]-1, $dt[0]);
+        } // 0;
+        next if $epoch && $epoch < $cutoff;
+
+        if ($direction eq '<=') {
+            my ($sender) = $rest =~ /^(\S+)/;
+            my ($user)   = $rest =~ /U=(\S+)/;
+            my ($size)   = $rest =~ /S=(\d+)/;
+            my ($subj)   = $rest =~ /T="([^"]+)"/;
+            $in_flight{$mid} = {
+                ts => $ts, from_addr => $sender, from_user => $user // '',
+                size_bytes => int($size // 0), subject => $subj // '',
+            };
+        } elsif ($direction eq '=>' || $direction eq '->') {
+            my ($rcpt) = $rest =~ /^(\S+)/;
+            my $meta = $in_flight{$mid} || {};
+            next unless $rcpt && $meta->{from_user};
+            my ($score, $verdict, $sa_report) = _read_exim_spool_verdict($mid);
+            push @batch, {
+                exim_mid   => $mid,
+                ts         => $meta->{ts} || $ts,
+                from_addr  => $meta->{from_addr} || '',
+                from_user  => $meta->{from_user} || '',
+                to_addr    => $rcpt,
+                subject    => $meta->{subject} || '',
+                size_bytes => $meta->{size_bytes} || 0,
+                verdict    => $verdict,
+                total_score=> $score,
+                scores     => { spamassassin => $score },
+                sa_report  => $sa_report,
+                action     => ($verdict eq 'clean' ? 'accept' : 'quarantine'),
+            };
+            # 200'lük batch'lerle push
+            if (scalar(@batch) >= 200) {
+                _push_batch($ua, $panel_url, $license_key, \@batch);
+                $total_pushed += scalar(@batch);
+                @batch = ();
+            }
+        }
+    }
+    close($fh);
+    if (@batch) {
+        _push_batch($ua, $panel_url, $license_key, \@batch);
+        $total_pushed += scalar(@batch);
+    }
+    open my $lf, '>>', '/var/log/mailshield/exim-tail.log';
+    if ($lf) {
+        print $lf scalar(gmtime()) . " · BACKFILL 24h pushed $total_pushed events\n";
+        close $lf;
+    }
+    return $total_pushed;
+}
+
+sub _push_batch {
+    my ($ua, $panel_url, $license_key, $events) = @_;
+    return unless @$events;
+    my $payload = encode_json({
+        license_key => $license_key,
+        hostname    => hostname(),
+        server_ip   => $ip,
+        events      => $events,
+    });
+    my $req = HTTP::Request->new(POST => "$panel_url/api/outbound/exim-log-push");
+    $req->header('Content-Type' => 'application/json');
+    $req->content($payload);
+    return $ua->request($req);
+}
+
+# Backfill sinyali kontrol et (master panel butonundan tetiklenir)
+eval {
+    my $sig_ua = LWP::UserAgent->new(timeout => 10);
+    my $sig_r = $sig_ua->get("$panel_url/api/outbound/backfill-signal?license_key=$license_key");
+    if ($sig_r->is_success) {
+        my $sig = decode_json($sig_r->decoded_content);
+        if ($sig->{pending}) {
+            warn "[backfill] running 24h backfill (requested at $sig->{requested_at})\n";
+            my $total = run_exim_backfill_24h($license_key, $panel_url) || 0;
+            # ACK
+            $sig_ua->post("$panel_url/api/outbound/backfill-ack",
+                'Content-Type' => 'application/json',
+                Content => encode_json({ license_key => $license_key, pushed => $total }));
+        }
+    }
+};

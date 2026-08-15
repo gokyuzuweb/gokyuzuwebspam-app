@@ -13,6 +13,14 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 15, v43.40) — Verdict Enrichment + Auto Backfill + Geo Heatmap
+- ✅ **X-Spam-Score Verdict Enrichment**: `heartbeat.pl::_read_exim_spool_verdict()` — Exim spool `-H` başlık dosyasından `X-Spam-Score` / `X-Spam-Status` / `X-Spam-Report` okur ve verdict hesaplar (>=5 spam, >=10 high_spam, >=15 blocked). Push edilen event artık `total_score` + `scores.spamassassin` + `sa_report` içerir.
+- ✅ **24s Backfill**: 3 yeni endpoint (`POST /outbound/exim-backfill/trigger` master, `GET /outbound/backfill-signal` daemon poll, `POST /outbound/backfill-ack` daemon complete). heartbeat.pl `run_exim_backfill_24h()` implementasyonu — son 24 saatlik Exim mainlog'u tarayıp 200'lük batch'lerle push eder. Frontend butonu: `⚡ Son 24s Exim Backfill` (Outbound sağ üst).
+- ✅ **Geo/Threat Heatmap** (`GET /api/outbound/geo-stats`): Alıcı domain'lere göre TLD → ülke kırılımı, spam oranı ısı gradyanı, en çok mail giden 10 domain tablosu, yüksek riskli TLD uyarı kartı (.tk .xyz .click .top .cn .ru .ir). Widget: `OutboundGeoHeatmap.js`.
+- ✅ Backend testing agent: **10/10 test geçti** (iteration_40.json). Perl syntax check `PERL5LIB=/tmp/perlstubs` ile OK.
+- ✅ Screenshot doğrulandı: 61 mail · 13 alıcı domain · 2 ülke, Uluslararası %24 spam · Türkiye %20 spam.
+
+
 ## Feb 15, 2026 (Session 15, v43.39) — Outbound Fix: Exim Log Tailer (No Milter Needed)
 Kullanıcı şikayeti: ConfigServer MailScanner 203k giden mail görüyor, GökyüzüWebSpam paneli 0 gösteriyor. Kalıcı 3 katmanlı çözüm:
 - ✅ **Yeni backend**: `POST /api/outbound/exim-log-push` + `GET /api/outbound/exim-log-checkpoint` — bayi heartbeat cycle'ında `/var/log/exim_mainlog` son okunan pozisyondan itibaren yeni satırları parse edip idempotent upsert eder.

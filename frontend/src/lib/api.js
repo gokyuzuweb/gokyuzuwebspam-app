@@ -604,6 +604,9 @@ export const api = {
   // v43.28 — cPanel kullanıcılarını çağır
   usersRefreshFromCpanel: () => client.post("/users/refresh-from-cpanel").then(r => r.data),
   usersSyncStatus: () => client.get("/users/sync-status").then(r => r.data),
+  // v43.40 — Outbound backfill + geo heatmap
+  outboundEximBackfill: () => client.post("/outbound/exim-backfill/trigger").then(r => r.data),
+  outboundGeoStats: (hours = 24) => client.get("/outbound/geo-stats", { params: { hours } }).then(r => r.data),
   // v43.38 — Signature Marketplace
   mpSignatures: (opts = {}) => client.get("/marketplace/signatures", { params: opts }).then(r => r.data),
   mpSignature: (id) => client.get(`/marketplace/signature/${id}`).then(r => r.data),

@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import SavedFiltersBar from "@/components/SavedFiltersBar";
+import OutboundGeoHeatmap from "@/components/OutboundGeoHeatmap";
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const fmtTime = (iso) => {
@@ -204,6 +205,23 @@ export default function Outbound() {
 
   return (
     <div className="p-6 space-y-4" data-testid="outbound-page">
+      {/* v43.40 — Master action bar (backfill etc.) always visible */}
+      <div className="flex items-center justify-end gap-2 -mb-2">
+        <button
+          data-testid="ob-backfill-top-btn"
+          onClick={async () => {
+            if (!window.confirm("Son 24 saatlik Exim mainlog verilerini panele çekmek üzere bayi sunuculara sinyal gönderilecek. Devam edilsin mi?")) return;
+            try {
+              const d = await api.outboundEximBackfill();
+              toast.success(`✓ ${d.signaled_licenses} sunucuya sinyal yazıldı`, { description: d.note, duration: 8000 });
+            } catch (e) { toast.error(e?.response?.data?.detail || e.message); }
+          }}
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
+          title="Bayi WHM plugin daemon: /var/log/exim_mainlog son 24 saati anında panele çek"
+        >
+          <span>⚡</span> Son 24s Exim Backfill
+        </button>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <StatCard label="Bugün Giden" value={nfmt(s.today_total)} icon={ArrowUpRight} tone="brand" testid="ob-today-total" />
         <StatCard label="Tüm Zamanlar" value={nfmt(s.all_time_total ?? 0)} icon={ArrowUpRight} tone="info" testid="ob-alltime-total" />
@@ -260,6 +278,22 @@ export default function Outbound() {
                     className="text-xs px-3 py-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
                   >
                     🧪 Demo Outbound Ekle
+                  </button>
+                  <button
+                    data-testid="ob-backfill-btn"
+                    onClick={async () => {
+                      if (!window.confirm("Son 24 saatlik Exim mainlog verilerini panele çekmek üzere bayi sunuculara sinyal gönderilecek. Devam edilsin mi?")) return;
+                      try {
+                        const d = await api.outboundEximBackfill();
+                        toast.success(`✓ ${d.signaled_licenses} sunucuya sinyal yazıldı`, {
+                          description: d.note, duration: 8000,
+                        });
+                      } catch (e) { toast.error(e?.response?.data?.detail || e.message); }
+                    }}
+                    className="text-xs px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
+                    title="Bayi WHM plugin daemon'a: /var/log/exim_mainlog son 24 saatlik veriyi hemen çek"
+                  >
+                    ⚡ Son 24s Backfill
                   </button>
                   <button
                     data-testid="ob-install-guide-btn"
@@ -505,11 +539,14 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
         </div>
       </Card>
 
+
+      {/* v43.40 — Outbound Geo/Threat Heatmap */}
+      <OutboundGeoHeatmap />
+
       <Card>
         <CardHeader
           title={<span className="flex items-center gap-2"><ShieldOff className="w-4 h-4 text-amber-400" /> Sınırlandırılmış Kullanıcılar</span>}
-          subtitle={`${throttles.length} kullanıcı aktif olarak throttle ediliyor`}
-        />
+          subtitle={`${throttles.length} kullanıcı aktif olarak throttle ediliyor`}        />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

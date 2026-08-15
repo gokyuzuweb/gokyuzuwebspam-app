@@ -911,3 +911,170 @@ async def exim_log_checkpoint(license_key: str = Query(..., min_length=8)):
         "last_push_at": doc.get("last_push_at"),
         "last_inserted": doc.get("last_inserted", 0),
     }
+
+
+# ============================================================================
+# v43.40 — 24h Backfill (kullanıcı butondan tetikler; heartbeat.pl işler)
+# ============================================================================
+@router.post("/exim-backfill/trigger")
+async def exim_backfill_trigger(request: Request):
+    """Master UI 'Son 24s Exim log çek' butonu → bayi lisanslara sinyal yaz.
+    heartbeat.pl bir sonraki cycle'da (max 15dk) sinyali görüp 24s backfill çalıştırır."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli")
+    now = datetime.now(timezone.utc).isoformat()
+    signaled = 0
+    async for lic in db.licenses.find(
+        {"active": True, "$or": [
+            {"license_key": master_key},
+            {"master_license_key": master_key},
+        ]},
+        {"license_key": 1, "hostname": 1},
+    ):
+        await db.settings.update_one(
+            {"_key": f"exim_backfill_signal:{lic['license_key']}"},
+            {"$set": {
+                "_key": f"exim_backfill_signal:{lic['license_key']}",
+                "license_key": lic["license_key"],
+                "hostname": lic.get("hostname"),
+                "requested_at": now,
+                "handled": False,
+            }},
+            upsert=True,
+        )
+        signaled += 1
+    return {
+        "ok": True, "signaled_licenses": signaled,
+        "note": f"{signaled} bayi WHM sunucusuna 24s Exim log backfill sinyali yazıldı. "
+                f"Bayi plugin daemon 15dk cycle'ında Exim mainlog'un son 24 saatini panele push edecek.",
+    }
+
+
+@router.get("/backfill-signal")
+async def backfill_signal(license_key: str = Query(..., min_length=8)):
+    """heartbeat.pl her cycle'da bunu kontrol eder — pending backfill varsa çalıştırır."""
+    doc = await db.settings.find_one(
+        {"_key": f"exim_backfill_signal:{license_key}"}, {"_id": 0}) or {}
+    if not doc or doc.get("handled"):
+        return {"pending": False}
+    return {
+        "pending": True,
+        "requested_at": doc.get("requested_at"),
+        "hostname": doc.get("hostname"),
+    }
+
+
+class BackfillAck(BaseModel):
+    license_key: str = Field(..., min_length=8)
+    pushed: int = 0
+
+
+@router.post("/backfill-ack")
+async def backfill_ack(ack: BackfillAck):
+    """heartbeat.pl backfill'i tamamladıktan sonra çağırır."""
+    await db.settings.update_one(
+        {"_key": f"exim_backfill_signal:{ack.license_key}"},
+        {"$set": {
+            "handled": True,
+            "handled_at": datetime.now(timezone.utc).isoformat(),
+            "pushed": ack.pushed,
+        }},
+    )
+    return {"ok": True}
+
+
+# ============================================================================
+# v43.40 — Outbound Geo/Threat Heatmap
+# ============================================================================
+_TLD_COUNTRY = {
+    "com": "Uluslararası", "org": "Uluslararası", "net": "Uluslararası",
+    "tr": "Türkiye", "com.tr": "Türkiye", "gov.tr": "Türkiye", "edu.tr": "Türkiye",
+    "de": "Almanya", "fr": "Fransa", "uk": "Birleşik Krallık", "co.uk": "Birleşik Krallık",
+    "ru": "Rusya", "cn": "Çin", "jp": "Japonya", "kr": "Güney Kore",
+    "us": "ABD", "ca": "Kanada", "mx": "Meksika", "br": "Brezilya",
+    "ir": "İran", "sa": "Suudi Arabistan", "ae": "BAE", "eg": "Mısır",
+    "it": "İtalya", "es": "İspanya", "nl": "Hollanda", "pl": "Polonya",
+    "ua": "Ukrayna", "gr": "Yunanistan", "bg": "Bulgaristan", "ro": "Romanya",
+    "au": "Avustralya", "nz": "Yeni Zelanda", "in": "Hindistan", "pk": "Pakistan",
+    "tk": "Yüksek Risk (Tokelau)", "xyz": "Yüksek Risk (Generic)",
+    "click": "Yüksek Risk (Generic)", "top": "Yüksek Risk (Generic)",
+}
+_TLD_RISK = {"tk", "xyz", "click", "top", "cn", "ru", "ir"}
+
+
+def _tld_of(email: str) -> str:
+    if not email or "@" not in email:
+        return ""
+    host = email.split("@", 1)[1].lower().rstrip(".")
+    parts = host.split(".")
+    if len(parts) >= 3 and parts[-2] in ("com", "gov", "edu", "org", "co", "net", "ac"):
+        return ".".join(parts[-2:])
+    return parts[-1] if parts else ""
+
+
+@router.get("/geo-stats")
+async def outbound_geo_stats(request: Request, hours: int = 24, license_key: Optional[str] = None):
+    """Outbound geo heatmap için son N saatteki alıcı domain kırılımı.
+    Dönüş: [{tld, country, domain_count, mail_count, spam_count, risk}]"""
+    scope = await resolve_tenant_scope(request, license_key, db)
+    lic_key = scope.get("owner_license_key") or ""
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    match: dict = {"direction": "out", "ts": {"$gte": since}}
+    if lic_key:
+        match["license_key"] = lic_key
+
+    # Aggregate by TLD (regex-derived on server side)
+    per_domain: dict[str, dict] = {}
+    async for e in db.mail_events.find(
+        match, {"_id": 0, "to_addr": 1, "verdict": 1, "total_score": 1},
+    ).limit(10000):
+        rcpt = e.get("to_addr") or ""
+        if "@" not in rcpt:
+            continue
+        domain = rcpt.split("@", 1)[1].lower().rstrip(".")
+        tld = _tld_of(rcpt)
+        d = per_domain.setdefault(domain, {
+            "domain": domain, "tld": tld,
+            "country": _TLD_COUNTRY.get(tld, tld.upper() or "Bilinmeyen"),
+            "mail_count": 0, "spam_count": 0, "blocked_count": 0,
+            "risk": tld in _TLD_RISK,
+            "sample_recipients": set(),
+        })
+        d["mail_count"] += 1
+        if e.get("verdict") in ("spam", "high_spam", "virus"):
+            d["spam_count"] += 1
+        if e.get("verdict") in ("blocked", "block"):
+            d["blocked_count"] += 1
+        if len(d["sample_recipients"]) < 3:
+            d["sample_recipients"].add(rcpt)
+
+    domains = [
+        {**d, "sample_recipients": list(d["sample_recipients"])}
+        for d in per_domain.values()
+    ]
+    domains.sort(key=lambda x: x["mail_count"], reverse=True)
+
+    # Country roll-up
+    per_country: dict[str, dict] = {}
+    for d in domains:
+        c = per_country.setdefault(d["country"], {
+            "country": d["country"], "domains": 0, "mail_count": 0,
+            "spam_count": 0, "risky": False,
+        })
+        c["domains"] += 1
+        c["mail_count"] += d["mail_count"]
+        c["spam_count"] += d["spam_count"]
+        if d["risk"]:
+            c["risky"] = True
+    countries = sorted(per_country.values(), key=lambda x: x["mail_count"], reverse=True)
+
+    return {
+        "hours": hours,
+        "total_domains": len(domains),
+        "total_mail": sum(d["mail_count"] for d in domains),
+        "top_domains": domains[:20],
+        "countries": countries[:20],
+        "risky_tlds": sorted({d["tld"] for d in domains if d["risk"]}),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }

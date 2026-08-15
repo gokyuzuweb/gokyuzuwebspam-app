@@ -8803,6 +8803,7 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/events/admin/migrate-ts-tz", # master timezone migration
     "/api/mail/ingest",        # alternatif mail ingest
     "/api/outbound/exim-log-push",  # v43.38 heartbeat.pl Exim log tailer
+    "/api/outbound/backfill-ack",   # v43.40 heartbeat.pl backfill completion callback
     "/api/heartbeat",          # plugin heartbeat (license_key ile doğrulanır)
     "/api/threat/report",      # threat feed report
     "/api/blacklist/",         # RBL/blacklist sorgu + delisting (lisanslı panellerin
