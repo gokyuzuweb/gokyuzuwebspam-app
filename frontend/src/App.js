@@ -130,26 +130,44 @@ function Sidebar() {
     staleTime: 10000,
   });
   const pendingCount = pendingPayments.data?.notified_count || 0;
-  // v43.26 — Akordiyon modu: `collapsed` yerine "açık olan tek grup" (accordion).
-  // Kullanıcı bir grubu açınca diğerleri otomatik kapanır.
-  // "gws.sidebar.openGroup" localStorage'da tutulur; boş = hepsi kapalı.
-  const [openGroup, setOpenGroup] = React.useState(() => {
+  // v43.27 — Multi-open akordiyon: state artık Set of open group keys.
+  // - Click on group → toggle (birden fazla açık olabilir)
+  // - "Hepsini Aç" → tüm gruplar
+  // - "Hepsini Kapat" → boş set
+  const [openGroups, setOpenGroups] = React.useState(() => {
     try {
-      const raw = localStorage.getItem("gws.sidebar.openGroup");
-      // Default: aktif rotanın grubunu aç (ilk render'da URL'e göre karar veriyoruz)
-      if (raw !== null) return raw;
+      const raw = localStorage.getItem("gws.sidebar.openGroups");
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return new Set(parsed);
+      }
+      // Backwards compat: eski `openGroup` string tercihi varsa import et
+      const legacy = localStorage.getItem("gws.sidebar.openGroup");
+      if (legacy) return new Set([legacy]);
     } catch {}
-    return "izleme";
+    return new Set(["izleme"]);
   });
+  const persistOpenGroups = (next) => {
+    try { localStorage.setItem("gws.sidebar.openGroups", JSON.stringify([...next])); } catch {}
+  };
   const toggleGroup = (key) => {
-    const next = openGroup === key ? "" : key;
-    setOpenGroup(next);
-    try { localStorage.setItem("gws.sidebar.openGroup", next); } catch {}
+    const next = new Set(openGroups);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setOpenGroups(next);
+    persistOpenGroups(next);
   };
   const collapseAll = () => {
-    setOpenGroup("");
-    try { localStorage.setItem("gws.sidebar.openGroup", ""); } catch {}
+    const next = new Set();
+    setOpenGroups(next);
+    persistOpenGroups(next);
   };
+  const expandAll = () => {
+    const next = new Set(NAV_GROUPS.map((g) => g.key));
+    setOpenGroups(next);
+    persistOpenGroups(next);
+  };
+  const anyOpen = openGroups.size > 0;
+  const allOpen = openGroups.size >= NAV_GROUPS.length;
   const items = NAV.filter((n) => {
     if (n.sellerOnly && !isSeller) return false;
     if (n.masterOnly && !isMaster) return false;
@@ -182,7 +200,31 @@ function Sidebar() {
           <Home className="w-4 h-4" strokeWidth={1.75} />
           <span>Home</span>
         </NavLink>
-        {openGroup && (
+        {openGroups.size > 0 && !allOpen && (
+          <button
+            type="button"
+            onClick={expandAll}
+            data-testid="nav-expand-all"
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/5 border border-transparent hover:border-indigo-500/20 transition-colors"
+            title="Tüm menü gruplarını aç"
+          >
+            <span className="text-xs">▼</span>
+            <span>Hepsini Aç</span>
+          </button>
+        )}
+        {openGroups.size === 0 && (
+          <button
+            type="button"
+            onClick={expandAll}
+            data-testid="nav-expand-all"
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] text-indigo-400 hover:text-indigo-200 bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/20 hover:border-indigo-500/40 transition-colors font-semibold"
+            title="Tüm menü gruplarını aç"
+          >
+            <span className="text-xs">▼</span>
+            <span>Hepsini Aç</span>
+          </button>
+        )}
+        {anyOpen && (
           <button
             type="button"
             onClick={collapseAll}
@@ -196,7 +238,7 @@ function Sidebar() {
         )}
         <div className="h-px bg-slate-800/60 my-2" />
         {grouped.map((g, gi) => {
-          const isCollapsed = openGroup !== g.key;
+          const isCollapsed = !openGroups.has(g.key);
           return (
             <div key={g.key} className={gi > 0 ? "pt-3" : ""} data-testid={`nav-group-${g.key}`}>
               <button
