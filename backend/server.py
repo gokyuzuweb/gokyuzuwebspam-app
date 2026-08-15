@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.51"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v43.53"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()
@@ -6560,8 +6560,12 @@ async def download_exim_push_script():
 _EXIM_PUSH_SH_SOURCE = r"""#!/bin/bash
 # gws-exim-push — GökyüzüWebSpam Exim log tailer (host cron için)
 # Perl gerektirmez — bash + awk + curl kullanır.
-# v43.46 — cPanel Exim uyumlu: A=dovecot_login veya U= veya userdomains eşleşmesi
+# v43.53 — In-flight state persistence (arrival/delivery cross-cron matching)
+GWS_EXIM_PUSH_VERSION="v43.53"
 set -euo pipefail
+
+# --version flag (kolay doğrulama için)
+if [ "${1:-}" = "--version" ]; then echo "$GWS_EXIM_PUSH_VERSION"; exit 0; fi
 
 CONF="/etc/gws-exim-push.conf"
 if [ -f "$CONF" ]; then . "$CONF"; fi
