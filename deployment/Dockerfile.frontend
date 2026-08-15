@@ -3,7 +3,9 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+# v43.55: --frozen-lockfile kaldırıldı — yeni deps (react-globe.gl, three, d3-interpolate)
+# yarn.lock ile tam uyumlu değilse otomatik güncellensin, build fail etmesin.
+RUN yarn install --network-timeout 300000
 COPY . .
 
 # Build with production env

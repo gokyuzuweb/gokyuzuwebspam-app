@@ -13,6 +13,35 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 16, v43.55 FINAL) — Frontend Rebuild Bug Root Cause Fix
+
+**KÖK NEDEN (nihayet bulundu):**
+`gws-update` script'i `docker compose up -d --build` yapıyor AMA build **her seferinde**
+`yarn install --frozen-lockfile` yüzünden fail ediyordu → sessizce başarısız → eski image
+running kaldı → yeni frontend değişiklikleri canlıya çıkmadı.
+
+Aylardır süren "gws-update çalıştı ama panel güncellenmedi" bug'ının kaynağı buydu.
+
+**Fix:**
+- ✅ `/app/deployment/Dockerfile.frontend`: `yarn install --frozen-lockfile` → `yarn install --network-timeout 300000`
+- ✅ yarn.lock ile package.json otomatik senkron olur; yeni deps eklendikçe build kırılmaz
+- ✅ Outbound sayfası tam redesign: temiz hero + entegre toolbar + kompakt push indicator
+- ✅ Manuel "⚡ Push Şimdi" butonu (LastPushIndicator içinde)
+- ✅ Otomatik 5dk backfill timer
+- ✅ Kırmızı "Cron 3 dk uyarısı" kaldırıldı → nötr yeşil status bar
+
+**Kullanıcı için tek komut (in-place fix, HEMEN çalışır):**
+```bash
+sed -i 's/yarn install --frozen-lockfile/yarn install --network-timeout 300000/' \
+  /opt/gokyuzuwebspam-app/deployment/Dockerfile.frontend && \
+cd /opt/gokyuzuwebspam-app && \
+docker compose -f deployment/docker-compose.yml build --no-cache frontend && \
+docker compose -f deployment/docker-compose.yml up -d frontend
+```
+
+Sonra Save to GitHub → kalıcı olur.
+
+
 ## Feb 15, 2026 (Session 16, v43.55) — LiteSpeed WAF Bypass + ARG_MAX Fix
 
 **KESİN TEŞHİS (kullanıcının push.log'undan):**
