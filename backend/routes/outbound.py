@@ -169,7 +169,8 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
             ],
             "top_users": [
                 {"$group": {
-                    "_id": {"$ifNull": ["$from_user", ""]},
+                    "_id": {"$ifNull": ["$from_addr", ""]},
+                    "user": {"$first": {"$ifNull": ["$from_user", ""]}},
                     "sent": {"$sum": 1},
                     "spam": {"$sum": {"$cond": [
                         {"$in": ["$verdict", ["spam", "high_spam", "virus"]]}, 1, 0,
@@ -180,7 +181,7 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
                 }},
                 {"$match": {"_id": {"$ne": ""}}},
                 {"$sort": {"sent": -1}},
-                {"$limit": 20},
+                {"$limit": 50},
             ],
         }},
     ]
@@ -195,7 +196,8 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
     blocked = (r.get("blocked") or [{}])[0].get("n", 0) if r.get("blocked") else 0
     top_users = [
         {
-            "user": row.get("_id") or "(bilinmeyen)",
+            "from_addr": row.get("_id") or "(bilinmeyen)",
+            "user": row.get("user") or (row.get("_id", "").split("@", 1)[0] if row.get("_id") else "(bilinmeyen)"),
             "sent": row.get("sent", 0),
             "spam": row.get("spam", 0),
             "blocked": row.get("blocked", 0),

@@ -9,7 +9,8 @@ import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-pri
 import { api } from "@/lib/api";
 import SavedFiltersBar from "@/components/SavedFiltersBar";
 import OutboundGeoHeatmap from "@/components/OutboundGeoHeatmap";
-import OutboundGlobe3D from "@/components/OutboundGlobe3D";
+// v43.59 — OutboundGlobe3D kaldırıldı (duplicate map + rotating globe yerine
+// OutboundGeoHeatmap içindeki yatay SVG dünya haritası tek başına kullanılıyor).
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const fmtTime = (iso) => {
@@ -59,6 +60,9 @@ export default function Outbound() {
   const [advOpen, setAdvOpen] = useState(false);
   const [throttleModalOpen, setThrottleModalOpen] = useState(false);
   const [throttleUser, setThrottleUser] = useState("");
+  // v43.59 — Tab layout + top user search
+  const [tab, setTab] = useState("live");           // live | geo | users | alerts
+  const [topUserSearch, setTopUserSearch] = useState("");
   // v43.4 Mail içeriği okuma modal state
   const [contentEventId, setContentEventId] = useState(null);
   const contentQuery = useQuery({
@@ -318,6 +322,37 @@ export default function Outbound() {
         <StatCard label="Saatlik Limit" value={nfmt(s.limit_per_hour)} icon={ClipboardList} tone="info" testid="ob-limit" />
       </div>
 
+      {/* v43.59 — Tab bar (sadece uzun kaydırma yerine sekmelerle organize) */}
+      <div className="flex flex-wrap gap-1 border-b border-slate-800" data-testid="ob-tabs">
+        {[
+          { id: "live",   label: "Canlı Trafik", icon: "📊", count: events.length },
+          { id: "geo",    label: "Coğrafi Harita", icon: "🌍" },
+          { id: "users",  label: "Kullanıcılar", icon: "👥", count: (s.top_users || []).length },
+          { id: "alerts", label: "Uyarılar", icon: "⚠", count: bulk.length + throttles.length },
+        ].map((t) => (
+          <button
+            key={t.id}
+            data-testid={`ob-tab-${t.id}`}
+            onClick={() => setTab(t.id)}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              tab === t.id
+                ? "border-indigo-500 text-indigo-300 bg-indigo-500/5"
+                : "border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40"
+            }`}
+          >
+            <span className="mr-1.5">{t.icon}</span>
+            {t.label}
+            {typeof t.count === "number" && t.count > 0 && (
+              <span className={`ml-2 text-[10px] mono px-1.5 py-0.5 rounded ${
+                tab === t.id ? "bg-indigo-500/20 text-indigo-200" : "bg-slate-800 text-slate-400"
+              }`}>{t.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* v43.59 — TAB: CANLI TRAFİK (varsayılan) */}
+      {tab === "live" && <>
       {/* v43.24 — Boş durum rehberi: hiç kayıt yoksa neden ve nasıl açıklaması */}
       {events.length === 0 && !eventsQuery.isLoading && (
         <Card data-testid="ob-empty-hint">
@@ -460,6 +495,12 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
                     <span className="text-rose-300 mono">{a.sent_count}/{a.limit}</span>
                   </span>
                 ))}
+                {bulk.length > 6 && (
+                  <button onClick={() => setTab("alerts")}
+                          className="text-[11px] text-amber-300 hover:text-amber-200 underline">
+                    +{bulk.length - 6} daha → Uyarılar sekmesi
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -625,18 +666,109 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
           </table>
         </div>
       </Card>
+      </>}
+      {/* /TAB: CANLI TRAFİK */}
 
+      {/* v43.59 — TAB: COĞRAFİ HARITA */}
+      {tab === "geo" && (
+        <OutboundGeoHeatmap />
+      )}
 
-      {/* v43.40 — Outbound Geo/Threat Heatmap */}
-      <OutboundGeoHeatmap />
-
-      {/* v43.55 — Dünya Üzerinde 3D Outbound Trafik */}
-      <OutboundGlobe3D />
+      {/* v43.59 — TAB: KULLANICILAR (Bugün en çok + throttled) */}
+      {tab === "users" && <>
+      <Card>
+        <CardHeader
+          title="Bugün En Çok Mail Atan Kullanıcılar"
+          subtitle="Tam email adresleri + arama — rate limit'e yakın user'ları izleyin"
+          right={
+            <div className="flex items-center gap-2">
+              <Search className="w-3.5 h-3.5 text-slate-500" />
+              <input
+                data-testid="ob-topuser-search"
+                value={topUserSearch}
+                onChange={(e) => setTopUserSearch(e.target.value)}
+                placeholder="Email veya kullanıcı adı ara..."
+                className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-xs text-slate-100 w-64 focus:outline-none focus:border-indigo-500"
+              />
+              {topUserSearch && (
+                <button onClick={() => setTopUserSearch("")}
+                        className="text-xs text-slate-400 hover:text-slate-200">×</button>
+              )}
+            </div>
+          }
+        />
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
+                <th className="text-left px-3 py-2 font-semibold">Email Adresi</th>
+                <th className="text-left px-3 py-2 font-semibold">Kullanıcı</th>
+                <th className="text-right px-3 py-2 font-semibold">Gönderilen</th>
+                <th className="text-right px-3 py-2 font-semibold">Spam</th>
+                <th className="text-right px-3 py-2 font-semibold">Bloklu</th>
+                <th className="text-right px-3 py-2 font-semibold">Kullanım %</th>
+                <th className="text-center px-3 py-2 font-semibold">İşlem</th>
+              </tr>
+            </thead>
+            <tbody data-testid="ob-topusers-tbody">
+              {(s.top_users || [])
+                .filter((u) => {
+                  if (!topUserSearch) return true;
+                  const q = topUserSearch.toLowerCase();
+                  return (u.from_addr || "").toLowerCase().includes(q)
+                      || (u.user || "").toLowerCase().includes(q);
+                })
+                .map((u) => {
+                  const usagePct = Math.round((u.sent / Math.max(1, s.limit_per_hour * 8)) * 100);
+                  const key = u.from_addr || u.user;
+                  return (
+                    <tr key={key} data-testid={`ob-topuser-${key}`} className="border-b border-slate-800/60 hover:bg-slate-900/40">
+                      <td className="px-3 py-2 mono text-slate-100 break-all" title={u.from_addr}>
+                        {u.from_addr || "(email yok)"}
+                      </td>
+                      <td className="px-3 py-2 mono text-slate-400 text-xs">{u.user || "—"}</td>
+                      <td className="px-3 py-2 text-right mono text-slate-200">{nfmt(u.sent)}</td>
+                      <td className="px-3 py-2 text-right mono text-amber-300">{nfmt(u.spam)}</td>
+                      <td className="px-3 py-2 text-right mono text-rose-400">{nfmt(u.blocked)}</td>
+                      <td className={`px-3 py-2 text-right mono ${usagePct > 80 ? "text-rose-400 font-semibold" : usagePct > 50 ? "text-amber-300" : "text-slate-300"}`}>%{usagePct}</td>
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
+                        <button
+                          data-testid={`ob-filter-by-${key}`}
+                          onClick={() => { setSearch(u.user || ""); setTab("live"); }}
+                          title="Bu kullanıcının maillerini göster"
+                          className="text-xs text-indigo-300 hover:text-indigo-200 px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/5 mr-1"
+                        >Mailler</button>
+                        <button
+                          data-testid={`ob-throt-user-${key}`}
+                          onClick={() => { setThrottleUser(u.user || ""); setThrottleModalOpen(true); }}
+                          title="Kullanıcıyı throttle et"
+                          className="text-xs text-amber-300 hover:text-amber-200 px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/5"
+                        >Sınırla</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              {(!s.top_users || s.top_users.length === 0) && (
+                <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-500 text-sm">Bugün için user verisi yok</td></tr>
+              )}
+              {s.top_users && s.top_users.length > 0 && topUserSearch &&
+                s.top_users.filter((u) => {
+                  const q = topUserSearch.toLowerCase();
+                  return (u.from_addr || "").toLowerCase().includes(q)
+                      || (u.user || "").toLowerCase().includes(q);
+                }).length === 0 && (
+                  <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-500 text-sm">"{topUserSearch}" ile eşleşen kullanıcı yok</td></tr>
+                )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
       <Card>
         <CardHeader
           title={<span className="flex items-center gap-2"><ShieldOff className="w-4 h-4 text-amber-400" /> Sınırlandırılmış Kullanıcılar</span>}
-          subtitle={`${throttles.length} kullanıcı aktif olarak throttle ediliyor`}        />
+          subtitle={`${throttles.length} kullanıcı aktif olarak throttle ediliyor`}
+        />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -671,40 +803,46 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
           </table>
         </div>
       </Card>
+      </>}
+      {/* /TAB: KULLANICILAR */}
 
-      <Card>
-        <CardHeader title="Bugün En Çok Mail Atan Kullanıcılar" subtitle="Rate limit'e yakın user'ları izleyin" />
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[11px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
-                <th className="text-left px-3 py-2 font-semibold">Kullanıcı</th>
-                <th className="text-right px-3 py-2 font-semibold">Gönderilen</th>
-                <th className="text-right px-3 py-2 font-semibold">Spam</th>
-                <th className="text-right px-3 py-2 font-semibold">Bloklu</th>
-                <th className="text-right px-3 py-2 font-semibold">Kullanım %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(s.top_users || []).map((u) => {
-                const usagePct = Math.round((u.sent / Math.max(1, s.limit_per_hour * 8)) * 100);
-                return (
-                  <tr key={u.user} data-testid={`ob-topuser-${u.user}`} className="border-b border-slate-800/60">
-                    <td className="px-3 py-2 mono text-slate-100">{u.user}</td>
-                    <td className="px-3 py-2 text-right mono text-slate-200">{nfmt(u.sent)}</td>
-                    <td className="px-3 py-2 text-right mono text-amber-300">{nfmt(u.spam)}</td>
-                    <td className="px-3 py-2 text-right mono text-rose-400">{nfmt(u.blocked)}</td>
-                    <td className={`px-3 py-2 text-right mono ${usagePct > 80 ? "text-rose-400 font-semibold" : usagePct > 50 ? "text-amber-300" : "text-slate-300"}`}>%{usagePct}</td>
+      {/* v43.59 — TAB: UYARILAR (bulk alerts detayı) */}
+      {tab === "alerts" && (
+        <Card data-testid="ob-alerts-full">
+          <CardHeader
+            title={<span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-400"/> Toplu Mail Uyarıları — Son 24 Saat</span>}
+            subtitle={`${bulk.length} otomatik tetiklenmiş uyarı`}
+          />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
+                  <th className="text-left px-3 py-2 font-semibold">Kullanıcı</th>
+                  <th className="text-right px-3 py-2 font-semibold">Sayım</th>
+                  <th className="text-right px-3 py-2 font-semibold">Limit</th>
+                  <th className="text-left px-3 py-2 font-semibold">Sebep</th>
+                  <th className="text-left px-3 py-2 font-semibold">Zaman</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulk.map((a) => (
+                  <tr key={a.id} data-testid={`ob-alert-row-${a.id}`} className="border-b border-slate-800/60">
+                    <td className="px-3 py-2 mono text-amber-200">{a.from_user}</td>
+                    <td className="px-3 py-2 text-right mono text-rose-300">{a.sent_count}</td>
+                    <td className="px-3 py-2 text-right mono text-slate-400">{a.limit}</td>
+                    <td className="px-3 py-2 text-xs text-slate-400">{a.reason || "auto_bulk_detect"}</td>
+                    <td className="px-3 py-2 mono text-[11px] text-slate-500">{fmtTime(a.created_at)}</td>
                   </tr>
-                );
-              })}
-              {(!s.top_users || s.top_users.length === 0) && (
-                <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500 text-sm">Bugün için user verisi yok</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+                ))}
+                {bulk.length === 0 && (
+                  <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-500 text-sm">Son 24 saatte toplu mail uyarısı yok — sistem sağlıklı ✓</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+      {/* /TAB: UYARILAR */}
 
       {/* v43.20 — Webmail-style Mail Reader ------------------------------ */}
       {contentEventId && (

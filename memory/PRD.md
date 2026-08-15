@@ -13,6 +13,36 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.59) — Outbound UI Cleanup: Tek Yatay Harita + Tab Layout + Full Email
+
+**KULLANICI ŞİKAYETLERİ:**
+1. "Dünya Üzerinde Outbound Trafik" iki yerde gösteriliyor (`OutboundGlobe3D` rotating globe + `OutboundGeoHeatmap` iç SVG map) — biri kaldır
+2. Rotating 3D globe yerine **yatay** 3D harita istiyor
+3. "Bugün En Çok Mail Atan Kullanıcılar" tablosunda sadece isim gösteriliyor (`kemal.ozturk`), **tam email adresi** gösterilsin + arama filtresi
+4. Sayfa aşağıya çok uzayan bir yığın — **tab yapısına** çevir
+
+**FIX v43.59:**
+- ✅ `OutboundGlobe3D` component çağrısı Outbound.js'ten kaldırıldı (import da çıkarıldı). Tek yatay dünya haritası olarak `OutboundGeoHeatmap` içindeki SVG map kaldı.
+- ✅ Backend `routes/outbound.py::outbound_stats` — `top_users` aggregation artık `from_addr` üzerinden gruplandı; her satırda `from_addr` (tam email) + `user` (kısa isim) alanları. Limit 20 → 50.
+- ✅ Frontend `Outbound.js` yeniden yapılandırıldı: **4 tab bar** eklendi
+  * `Canlı Trafik` (default) — events table + filters
+  * `Coğrafi Harita` — OutboundGeoHeatmap tek başına
+  * `Kullanıcılar` — Top Users (full email + arama filtresi + Mailler/Sınırla aksiyon butonları) + Throttled Users
+  * `Uyarılar` — Toplu mail uyarıları detay tablosu
+  * Her tab'ta canlı count badge (200 / 50 / 2 vb.)
+- ✅ Top Users tablosu genişletildi: Email Adresi (mono, break-all) + Kullanıcı + Gönderilen + Spam + Bloklu + Kullanım % + Aksiyon (Mailler filter jump + Sınırla throttle)
+- ✅ Bulk banner (Canlı Trafik tab'ında) fazla varsa "+N daha → Uyarılar sekmesi" quick-link ile Uyarılar sekmesine yönlendiriyor
+
+**Test Sonucu:**
+- Screenshot doğrulandı: tab bar 4 sekmeli render, canlı sekme events + top user (backend) `from_addr` full email dönüyor (test_spammer_ab0162@ornek.com, ece.karahan@corporate.com, vs.)
+- Backend `outbound_stats` response: `top_users[].from_addr` + `top_users[].user` alanları eklendi
+
+**KULLANICI DEPLOYMENT:**
+1. "Save to GitHub" (chat üst)
+2. SSH: `cd /opt/gokyuzuwebspam-app && gws-update && docker restart gws-backend`
+3. Panel'de Ctrl+F5 (hard refresh) — WHM plugin badge kaldığı görülüyorsa: `curl -sSL https://panel.gokyuzuhosting.com/api/plugin/download -o /tmp/g.tgz && tar -xzf /tmp/g.tgz -C /tmp && install -m 0755 /tmp/gokyuzuwebspam/whm/mailshield.cgi /usr/local/cpanel/whostmgr/docroot/cgi/mailshield/index.cgi && rm -rf /tmp/g.tgz /tmp/gokyuzuwebspam`
+
+
 ## Feb 15, 2026 (Session 17, v43.58) — SIMPLE PUSH + 10sn Systemd Timer
 
 **KULLANICI KANITLADI:**
