@@ -224,81 +224,97 @@ export default function Outbound() {
   };
 
   return (
-    <div className="p-6 space-y-4" data-testid="outbound-page">
-      {/* v43.50 — Son push zamanı göstergesi (cron çalışıyor mu?) */}
-      <LastPushIndicator lastPushAt={statsQuery.data?.last_push_at} />
-      {/* v43.41 — Plugin version banner (eğer eski sürümdeyse) */}
-      <PluginVersionBanner />
-      {/* v43.40 — Master action bar (backfill etc.) always visible */}
-      <div className="flex items-center justify-end gap-2 -mb-2">
-        <button
-          data-testid="ob-backfill-top-btn"
-          onClick={async () => {
-            if (!window.confirm("Bu buton bash cron script'ine 'son 24 saati yeniden gönder' sinyali yazar.\n\n• Cron her dakika çalışıyorsa: 60 saniye içinde veri akmaya başlar\n• Cron push'u WAF/silent-fail ile durmuşsa: SSH ile v43.55 push script'i kurmanız gerekir (chat mesajlarında hazır)\n\nDevam edilsin mi?")) return;
-            const t = toast.loading("Backfill sinyali yazılıyor…");
-            try {
-              const d = await api.outboundEximBackfill();
-              toast.dismiss(t);
-              toast.success(`✓ ${d.signaled_licenses} sunucuya sinyal yazıldı`, {
-                description: `${d.note || ""}\n\nBash cron sağlıklıysa 60 sn içinde 24 saatlik veri akmaya başlar. Panel'i 1-2 dk sonra Yenile (🔄) ile kontrol edin.`,
-                duration: 12000,
-              });
-              // 90 sn sonra otomatik yenile
-              setTimeout(() => {
+    <div className="p-6 space-y-5" data-testid="outbound-page">
+      {/* v43.55 — Yenilenmiş Hero: başlık + canlı durum + entegre aksiyonlar */}
+      <div className="rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 p-5 space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="w-10 h-10 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                <ArrowUpRight className="w-5 h-5 text-emerald-300" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Giden Posta</h1>
+                <div className="text-xs text-slate-500">
+                  Sunucudan gönderilen tüm outbound mail trafiği · gerçek zamanlı
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              data-testid="ob-backfill-top-btn"
+              onClick={async () => {
+                if (!window.confirm("Son 24 saatlik veriyi sunucudan yeniden çekmek için sinyal gönderilecek. Devam?")) return;
+                const t = toast.loading("Sinyal gönderiliyor…");
+                try {
+                  const d = await api.outboundEximBackfill();
+                  toast.dismiss(t);
+                  toast.success(`✓ ${d.signaled_licenses} sunucu için backfill başlatıldı`, {
+                    description: "Cron sağlıklıysa 60sn içinde veri akmaya başlar. Panel 90sn sonra otomatik yenilenecek.",
+                    duration: 10000,
+                  });
+                  setTimeout(() => {
+                    qc.invalidateQueries({ queryKey: ["outbound-events"] });
+                    qc.invalidateQueries({ queryKey: ["outbound-stats"] });
+                  }, 90_000);
+                } catch (e) { toast.dismiss(t); toast.error(e?.response?.data?.detail || e.message); }
+              }}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+              title="Bash cron'a 'son 24 saati yeniden gönder' sinyali"
+            >
+              <span>⚡</span> Backfill 24s
+            </button>
+            <button
+              data-testid="ob-refresh-btn"
+              onClick={() => {
                 qc.invalidateQueries({ queryKey: ["outbound-events"] });
                 qc.invalidateQueries({ queryKey: ["outbound-stats"] });
-                toast.info("⏱ 90 saniye geçti — panel yenilendi. Cron sağlıklıysa yeni veriler burada olmalı.", { duration: 6000 });
-              }, 90_000);
-            } catch (e) { toast.dismiss(t); toast.error(e?.response?.data?.detail || e.message); }
-          }}
-          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
-          title="Bash cron'a 'son 24 saati yeniden gönder' sinyali. Cron çalışıyorsa 60sn içinde veri akar."
-        >
-          <span>⚡</span> Son 24s Exim Backfill
-        </button>
-        <button
-          data-testid="ob-refresh-btn"
-          onClick={() => {
-            qc.invalidateQueries({ queryKey: ["outbound-events"] });
-            qc.invalidateQueries({ queryKey: ["outbound-stats"] });
-            toast.success("Veriler yenileniyor…");
-          }}
-          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-          title="DB'den en güncel outbound verilerini tekrar çek"
-        >
-          <span>🔄</span> Yenile
-        </button>
-        <button
-          data-testid="ob-repair-ts-btn"
-          onClick={async () => {
-            try {
-              const dry = await api.outboundRepairTimestamps(true);
-              const groups = dry.duplicate_groups || [];
-              if (groups.length === 0) {
-                toast.success("Aynı ts'ye sıkışmış kayıt bulunamadı", { duration: 6000 });
-                return;
-              }
-              const summary = groups.slice(0, 5).map(g => `• ${g.count} kayıt @ ${g.ts}`).join("\n");
-              if (!window.confirm(`${groups.length} zaman damgası grubu tespit edildi (toplam ${dry.scanned} kayıt).\n\n${summary}\n\nExim mid'lerinden gerçek zaman damgalarını türetip onarım yapılsın mı?`)) return;
-              const res = await api.outboundRepairTimestamps(false);
-              toast.success(`✓ ${res.repaired} kayıt onarıldı`, { description: `${res.unresolved} kayıt mid'siz olduğu için atlandı`, duration: 10000 });
-              qc.invalidateQueries({ queryKey: ["outbound-events"] });
-            } catch (e) {
-              toast.error(e?.response?.data?.detail || e.message);
-            }
-          }}
-          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
-          title="Aynı zaman damgasına sıkışmış outbound kayıtları için mid'den gerçek zamanı türetir"
-        >
-          <span>🛠</span> Zaman Damgası Onar
-        </button>
+                toast.success("Yenilendi");
+              }}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+              title="DB'den güncel verileri tekrar çek"
+            >
+              <span>🔄</span> Yenile
+            </button>
+            <button
+              data-testid="ob-repair-ts-btn"
+              onClick={async () => {
+                try {
+                  const dry = await api.outboundRepairTimestamps(true);
+                  const groups = dry.duplicate_groups || [];
+                  if (groups.length === 0) {
+                    toast.success("Aynı ts'ye sıkışmış kayıt bulunamadı", { duration: 5000 });
+                    return;
+                  }
+                  const summary = groups.slice(0, 5).map(g => `• ${g.count} kayıt @ ${g.ts}`).join("\n");
+                  if (!window.confirm(`${groups.length} grup tespit edildi (${dry.scanned} kayıt).\n\n${summary}\n\nOnarılsın mı?`)) return;
+                  const res = await api.outboundRepairTimestamps(false);
+                  toast.success(`✓ ${res.repaired} kayıt onarıldı`, { description: `${res.unresolved} atlandı`, duration: 8000 });
+                  qc.invalidateQueries({ queryKey: ["outbound-events"] });
+                } catch (e) { toast.error(e?.response?.data?.detail || e.message); }
+              }}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors"
+              title="Duplicate ts'leri mid'den yeniden türetir"
+            >
+              <span>🛠</span> TS Onar
+            </button>
+          </div>
+        </div>
+        {/* Son push durumu (kompakt tek satır) */}
+        <LastPushIndicator lastPushAt={statsQuery.data?.last_push_at} />
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+
+      {/* v43.41 — Plugin version banner (eski sürümdeyse) */}
+      <PluginVersionBanner />
+
+      {/* Stat cards — 6 kolon, temiz grid */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard label="Bugün Giden" value={nfmt(s.today_total)} icon={ArrowUpRight} tone="brand" testid="ob-today-total" />
         <StatCard label="Tüm Zamanlar" value={nfmt(s.all_time_total ?? 0)} icon={ArrowUpRight} tone="info" testid="ob-alltime-total" />
         <StatCard label="Spam Giden" value={nfmt(s.today_spam)} icon={MailWarning} tone="warning" testid="ob-today-spam" />
         <StatCard label="Bloklanan" value={nfmt(s.today_blocked)} icon={Ban} tone="danger" testid="ob-today-blocked" />
-        <StatCard label="Throttled User" value={nfmt(s.throttled_users)} icon={Users} tone="danger" testid="ob-throttled-users" />
+        <StatCard label="Throttled" value={nfmt(s.throttled_users)} icon={Users} tone="danger" testid="ob-throttled-users" />
         <StatCard label="Saatlik Limit" value={nfmt(s.limit_per_hour)} icon={ClipboardList} tone="info" testid="ob-limit" />
       </div>
 
