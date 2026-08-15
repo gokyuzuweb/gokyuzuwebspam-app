@@ -13,6 +13,34 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 16, v43.55) — LiteSpeed WAF Bypass + ARG_MAX Fix
+
+**KESİN TEŞHİS (kullanıcının push.log'undan):**
+```
+403 Forbidden - LiteSpeed Web Server
+```
+Kullanıcının canlı sunucusundaki LiteSpeed WAF Exim log içeriğindeki `<=`, `=>`, `**`
+karakterlerini XSS/SQL injection sanıp POST'u panel Docker'a ULAŞMADAN blokluyor.
+Ayrıca büyük payload command line'a sığmıyor: `Argument list too long` (ARG_MAX).
+
+**Fix v43.55:**
+- ✅ `/api/outbound/exim-log-push-raw` endpoint'i `log_text_b64` field'ini kabul ediyor
+  (Content-Type: application/json). Base64-encoded payload → WAF sadece temiz alphanumeric
+  string görür, blok yemez.
+- ✅ Detaylı error mesajları: b64 decode fail veya boş sonuç için kullanıcı-anlaşılır uyarılar.
+- ✅ Backward compat: text/plain + X-License-Key header yolu hala açık.
+- ✅ Bash script `--data-binary @file` kullanıyor → ARG_MAX bypass (temp JSON dosyası).
+- ✅ Backend testing agent: 6/6 pass (iteration_45.json).
+- ✅ 3D Dünya Haritası component'i yazıldı (`OutboundGlobe3D.js` react-globe.gl).
+
+**Kullanıcı deploy adımları:**
+1. Save to GitHub (chat üst)
+2. `gws-update` (kod indir)
+3. `docker restart gws-backend` (v43.55 yükle)
+4. Yeni bash script kur (base64 + --data-binary @file)
+5. `sudo /usr/local/bin/gws-simple-push && tail -3 /var/log/gws-simple-push.log`
+
+
 ## Feb 15, 2026 (Session 16, v43.53) — Bash State Persistence + Bounce Digest Fix
 **Kullanıcı sunucu log analizi (SSH tail):**
 ```

@@ -3353,7 +3353,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.54"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v43.55"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     try:
         with open(_VERSION_FILE, "r", encoding="utf-8") as f:
             v = f.read().strip()

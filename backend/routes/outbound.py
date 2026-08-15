@@ -1139,11 +1139,26 @@ async def exim_log_push_raw(request: Request):
     if "application/json" in ct and body:
         try:
             import json as _json
+            import base64 as _b64
             data = _json.loads(body.decode("utf-8", errors="ignore"))
             lic_key = str(data.get("license_key") or "").strip()
-            log_text = data.get("log_text") or ""
+            # v43.55 — Base64 encoded body desteği (LiteSpeed/WAF bypass için)
+            b64_val = data.get("log_text_b64") or ""
+            if b64_val:
+                try:
+                    log_text = _b64.b64decode(b64_val).decode("utf-8", errors="ignore")
+                except Exception as e:
+                    raise HTTPException(400, f"log_text_b64 decode hatası: {e} (b64 uzunluk={len(b64_val)})")
+                if not log_text.strip():
+                    raise HTTPException(400,
+                        f"log_text_b64 decode edildi ama sonuç boş. b64 uzunluk={len(b64_val)}, decoded uzunluk={len(log_text)}. "
+                        f"Muhtemelen tail 0 byte döndü — script sudo ile mi çalışıyor?")
+            else:
+                log_text = data.get("log_text") or ""
             userdomains_set = set(data.get("userdomains") or [])
             hostname = data.get("hostname") or ""
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(400, f"JSON parse hatası: {e}")
     else:
