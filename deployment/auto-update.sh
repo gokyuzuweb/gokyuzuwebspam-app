@@ -75,6 +75,16 @@ if ! git pull origin main --quiet; then
 fi
 log "✓ Kod indirildi"
 
+# v43.61 — VERSION file'ı backend'e senkronize et (Docker volume mount için).
+# Backend Docker container /app/backend/ mount eder ama /app/VERSION mount edilmez.
+# Bu yüzden VERSION dosyası backend/ içinde de bulunmalı ki /api/version/panel doğru döndürsün.
+if [ -f "$APP_DIR/VERSION" ]; then
+    if [ ! -f "$APP_DIR/backend/VERSION" ] || ! cmp -s "$APP_DIR/VERSION" "$APP_DIR/backend/VERSION"; then
+        cp -f "$APP_DIR/VERSION" "$APP_DIR/backend/VERSION" 2>/dev/null && \
+            log "✓ VERSION → backend/VERSION senkronize edildi ($LATEST_VER)"
+    fi
+fi
+
 # 3b. Perl logtail script'ini /usr/local/mailshield/bin/'e kopyala + systemd restart
 # (Docker dışı, host üzerinde çalışan Perl daemon — auto-update sırasında elle atlanmaması için)
 PERL_SRC="$APP_DIR/whm-plugin/scripts/mailshield-logtail.pl"

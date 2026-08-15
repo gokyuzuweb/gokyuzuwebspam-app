@@ -282,6 +282,7 @@ async def outbound_events(
     license_key: Optional[str] = None,
     limit: int = Query(200, ge=1, le=5000),
     search: Optional[str] = None,          # from_user regex
+    from_search: Optional[str] = None,     # v43.61: from_addr (full email) regex
     to_search: Optional[str] = None,       # to_addr regex
     subject_search: Optional[str] = None,
     ip_search: Optional[str] = None,
@@ -317,6 +318,11 @@ async def outbound_events(
         match["verdict"] = verdict
     if search:
         match["from_user"] = {"$regex": search, "$options": "i"}
+    if from_search:
+        # v43.61: Full email address filter (from_addr). Regex-escape ile
+        # kesin eşleşme sağlar (info@domain.com sadece o adresi getirir).
+        import re as _re
+        match["from_addr"] = {"$regex": _re.escape(from_search), "$options": "i"}
     if to_search:
         match["to_addr"] = {"$regex": to_search, "$options": "i"}
     if subject_search:

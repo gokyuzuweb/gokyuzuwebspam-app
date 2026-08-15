@@ -48,6 +48,7 @@ export default function Outbound() {
   const qc = useQueryClient();
 
   const [search, setSearch] = useState("");
+  const [fromSearch, setFromSearch] = useState("");   // v43.61: full email address filter
   const [toSearch, setToSearch] = useState("");
   const [subjectSearch, setSubjectSearch] = useState("");
   const [ipSearch, setIpSearch] = useState("");
@@ -136,6 +137,7 @@ export default function Outbound() {
   }, []);
 
   const dSearch = useDebounced(search);
+  const dFrom = useDebounced(fromSearch);
   const dTo = useDebounced(toSearch);
   const dSubj = useDebounced(subjectSearch);
   const dIp = useDebounced(ipSearch);
@@ -145,10 +147,11 @@ export default function Outbound() {
   const dHours = useDebounced(hoursFilter);
 
   const eventsQuery = useQuery({
-    queryKey: ["outbound-events", { dSearch, dTo, dSubj, dIp, dBody, dMinS, dMaxS, dHours, verdict, limit }],
+    queryKey: ["outbound-events", { dSearch, dFrom, dTo, dSubj, dIp, dBody, dMinS, dMaxS, dHours, verdict, limit }],
     queryFn: () => api.outboundEvents({
       limit,
       search: dSearch || undefined,
+      from_search: dFrom || undefined,
       to_search: dTo || undefined,
       subject_search: dSubj || undefined,
       ip_search: dIp || undefined,
@@ -211,7 +214,7 @@ export default function Outbound() {
   });
 
   const resetFilters = () => {
-    setSearch(""); setToSearch(""); setSubjectSearch(""); setIpSearch("");
+    setSearch(""); setFromSearch(""); setToSearch(""); setSubjectSearch(""); setIpSearch("");
     setMinScore(""); setMaxScore(""); setHoursFilter(""); setVerdict("all");
   };
 
@@ -774,8 +777,14 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
                       <td className="px-3 py-2 text-center whitespace-nowrap">
                         <button
                           data-testid={`ob-filter-by-${key}`}
-                          onClick={() => { setSearch(u.user || ""); setTab("live"); }}
-                          title="Bu kullanıcının maillerini göster"
+                          onClick={() => {
+                            // v43.61 — Email adresine göre filtrele (kullanıcı adına değil).
+                            // "info" ile arama tüm 'info@*' adresleri getirirdi; artık tam email match.
+                            setSearch("");
+                            setFromSearch(u.from_addr || "");
+                            setTab("live");
+                          }}
+                          title={`Bu email adresinden gönderilenler: ${u.from_addr}`}
                           className="text-xs text-indigo-300 hover:text-indigo-200 px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/5 mr-1"
                         >Mailler</button>
                         <button

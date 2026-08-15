@@ -13,6 +13,64 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.61) — KÖK NEDEN FIX: VERSION Docker Mount + Tam Onarım Script
+
+**KULLANICI ŞİKAYETİ (defalarca):**
+1. "WHM plugin halen 43,56 yazıyor" — gws-update çalıştığı halde badge güncellenmiyor
+2. "Giden postalar halen güncel gelmiyor"
+3. "Mailler butonu kullanıcı adına göre değil email adresine göre olsun"
+
+**KÖK NEDEN BULUNDU (kritik):**
+- `_PACKAGE_VERSION = "v43.56"` server.py:3356'da hardcoded fallback
+- `/app/VERSION` dosyası Docker container'a MOUNT EDİLMİYOR (docker-compose.yml sadece `/app/backend` mount ediyor)
+- Container içinde `/app/VERSION` yok → fallback `v43.56` dönüyor
+- Kullanıcı v43.58/v43.59/v43.60'a upgrade etse bile badge v43.56 kalıyor çünkü backend v43.56 string'i sabit döndürüyor
+
+**FIX v43.61:**
+
+### 1. Multi-Location VERSION Reader (server.py)
+- ✅ `_read_panel_version()` artık 4 lokasyonu sırayla dener:
+  1. `GWS_VERSION_FILE` env var
+  2. `/app/VERSION` (preview env)
+  3. `/app/backend/VERSION` ✨ **YENİ — Docker mount içinde**
+  4. Git describe fallback
+- ✅ `_PACKAGE_VERSION` v43.56 → v43.61 (fallback modernize)
+- ✅ `/app/backend/VERSION` dosyası oluşturuldu
+
+### 2. auto-update.sh VERSION Sync
+- ✅ `git pull`'dan sonra `cp /app/VERSION /app/backend/VERSION` otomatik yapılır
+- ✅ Backend Docker container her zaman doğru sürümü döndürür
+
+### 3. TEK-KOMUT TAM ONARIM SCRIPT'İ
+- ✅ Yeni endpoint: `GET /api/tools/fix-all.sh?license_key=MS-...`
+- ✅ 7 adımlı script:
+  1. Repo pull + VERSION sync (backend/'e kopyala)
+  2. Docker rebuild + backend health check + /api/version/panel doğrulama
+  3. WHM plugin CGI güncelleme (`/usr/local/cpanel/whostmgr/docroot/cgi/mailshield/index.cgi`)
+  4. Simple-push script + systemd timer kurulumu (eski cron/daemon temizle)
+  5. İlk manuel push testi
+  6. Timer status kontrolü
+  7. Özet rapor + doğrulama adımları
+- ✅ Renkli terminal çıktısı (yeşil ✓, sarı ⚠, kırmızı ✗)
+
+### 4. from_search Filter (v43.61 önceki değişiklikten)
+- ✅ Backend `/api/outbound/events?from_search=email@x.com` regex-escape ile TAM email match
+- ✅ Frontend "Mailler" butonu artık `fromSearch` state'ini set eder → sadece o email adresi görünür
+- ✅ "info" username'i ile arama artık yanlış match yapmıyor
+
+**KULLANICI KURULUM (TEK KOMUT):**
+```bash
+bash <(curl -sSf "https://panel.gokyuzuhosting.com/api/tools/fix-all.sh?license_key=MS-C02AB012652A4FE692D69676")
+```
+Bu tek komut her şeyi düzeltir: git pull + Docker rebuild + CGI refresh + simple-push kurulumu + version sync. Manuel adım yok.
+
+**Test Sonucu (preview env):**
+- Backend `/api/version/panel` → `{"version":"v43.61","source":"VERSION"}` ✓
+- fix-all.sh syntax OK, 201 satır
+- `from_search=simple1@testdomain.com` filter → 1 tam eşleşme (regex-escape çalışıyor)
+- Backend restart sonrası hala v43.61 (env fallback zinciri doğru)
+
+
 ## Feb 15, 2026 (Session 17, v43.60) — Kullanıcı Sıralama + AI Kural Fix + WHM Plugin CGI Auto-Refresh
 
 **KULLANICI ŞİKAYETLERİ:**

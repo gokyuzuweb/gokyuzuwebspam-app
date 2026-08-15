@@ -3343,6 +3343,14 @@ async def reports_weekly_send(payload: ReportSendPayload):
 # ----- Version & Update Manifest -----
 # v43.23 — /app/VERSION dosyası → panel & bayi bildirimleri için tek doğruluk kaynağı
 _VERSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")
+# v43.61 — Docker'da /app/VERSION mount edilmiyor (sadece backend/ ve whm-plugin/).
+# Bu yüzden backend içinde de bir kopyasını arayalım. Fallback zinciri:
+#   1. /app/VERSION (preview env)
+#   2. /app/backend/VERSION (docker volume içinde)
+#   3. Git describe
+#   4. _PACKAGE_VERSION constant
+_VERSION_FILE_BACKEND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
+_VERSION_FILE_ENV = os.environ.get("GWS_VERSION_FILE", "")
 
 def _read_panel_version() -> str:
     """Read /app/VERSION content (fallback: package default). Called by /version/panel
@@ -3353,14 +3361,18 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.56"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
-    try:
-        with open(_VERSION_FILE, "r", encoding="utf-8") as f:
-            v = f.read().strip()
-            if v:
-                return v
-    except Exception:
-        pass
+    _PACKAGE_VERSION = "v43.61"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
+    for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
+        if not candidate:
+            continue
+        try:
+            with open(candidate, "r", encoding="utf-8") as f:
+                v = f.read().strip()
+                if v:
+                    return v
+        except Exception:
+            pass
     # Git fallback (opsiyonel)
     try:
         import subprocess as _sp
@@ -7546,6 +7558,231 @@ echo "  · Timer durum:   systemctl status gws-simple-push.timer"
 echo "  · Timer durdur:  systemctl stop gws-simple-push.timer"
 echo "  · Timer başlat:  systemctl start gws-simple-push.timer"
 echo ""
+"""
+    return _PT(script, media_type="text/x-shellscript")
+
+
+# ============================================================================
+# v43.61 — TEK-KOMUT TAM ONARIM SCRIPT'İ (gws-fix-all)
+# ---------------------------------------------------------------------------
+# Kullanıcı stuck durumdaysa (WHM plugin badge eski, simple-push yok,
+# VERSION sync yok) bu tek komut her şeyi düzeltir:
+#   bash <(curl -sSf https://panel.gokyuzuhosting.com/api/tools/fix-all.sh?license_key=MS-...)
+# ============================================================================
+@api.get("/tools/fix-all.sh")
+async def one_shot_fix_all(license_key: str = "", panel_url: str = ""):
+    """v43.61 — Tek komutta:
+      1. Repo pull + VERSION sync (backend/ içine kopyala)
+      2. Docker rebuild + restart
+      3. WHM plugin CGI refresh
+      4. Simple-push script + systemd timer kurulumu
+      5. İlk push testi
+      6. Status raporu (JSON)
+    """
+    from fastapi.responses import PlainTextResponse as _PT
+    if not panel_url:
+        panel_url = "https://panel.gokyuzuhosting.com"
+    script = f"""#!/bin/bash
+# ============================================================================
+# GökyüzüWebSpam TEK-KOMUT ONARIM (v43.61) — Her şeyi düzeltir
+# ============================================================================
+set -uo pipefail
+
+LICENSE_KEY="{license_key}"
+PANEL_URL="{panel_url}"
+APP_DIR="${{APP_DIR:-/opt/gokyuzuwebspam-app}}"
+
+if [ -z "$LICENSE_KEY" ] && [ -n "${{1:-}}" ]; then
+    LICENSE_KEY="$1"
+fi
+
+if [ -z "$LICENSE_KEY" ]; then
+    echo "HATA: License key gerekli"
+    echo "Kullanım: bash <(curl -sSf $PANEL_URL/api/tools/fix-all.sh?license_key=MS-...)"
+    exit 1
+fi
+
+# Renkli terminal helper'ları
+if [ -t 1 ]; then
+    G='\\033[0;32m'; Y='\\033[0;33m'; R='\\033[0;31m'; B='\\033[0;34m'; N='\\033[0m'
+else
+    G=''; Y=''; R=''; B=''; N=''
+fi
+_ok()   {{ echo -e "${{G}}✓${{N}} $*"; }}
+_warn() {{ echo -e "${{Y}}⚠${{N}} $*"; }}
+_err()  {{ echo -e "${{R}}✗${{N}} $*"; }}
+_step() {{ echo -e "\\n${{B}}==>${{N}} $*"; }}
+
+echo "════════════════════════════════════════════════════════════"
+echo "   GökyüzüWebSpam Tam Onarım Aracı v43.61"
+echo "   Bu komut şu sorunları düzeltir:"
+echo "     • WHM plugin badge eski sürüm gösteriyor"
+echo "     • Giden posta panelde güncel değil"
+echo "     • VERSION dosyası backend'e sync değil"
+echo "     • Simple-push timer aktif değil"
+echo "════════════════════════════════════════════════════════════"
+
+# ---------------------------------------------------------------------
+_step "[1/7] Repo pull + VERSION sync"
+if [ -d "$APP_DIR/.git" ]; then
+    cd "$APP_DIR"
+    git fetch origin main --quiet 2>&1 || true
+    if ! git diff --quiet HEAD 2>/dev/null; then
+        git stash push -m "fix-all-stash-$(date +%s)" --quiet 2>/dev/null || true
+        _warn "Yerel değişiklikler stash edildi (git stash list)"
+    fi
+    git reset --hard origin/main --quiet 2>&1 && _ok "Repo güncellendi (origin/main)"
+    NEW_VER=$(cat "$APP_DIR/VERSION" 2>/dev/null || echo "unknown")
+    _ok "Yeni sürüm: $NEW_VER"
+    # KRİTİK: VERSION → backend/VERSION senkronize et
+    if [ -f "$APP_DIR/VERSION" ]; then
+        cp -f "$APP_DIR/VERSION" "$APP_DIR/backend/VERSION" 2>/dev/null && \\
+            _ok "VERSION → backend/VERSION senkronize edildi (Docker mount için)"
+    fi
+else
+    _warn "Git repo bulunamadı ($APP_DIR/.git) — repo adımı atlandı"
+    NEW_VER="unknown"
+fi
+
+# ---------------------------------------------------------------------
+_step "[2/7] Docker rebuild + restart"
+if [ -f "$APP_DIR/deployment/docker-compose.yml" ]; then
+    cd "$APP_DIR/deployment"
+    if docker compose up -d --build > /tmp/gws-compose.log 2>&1; then
+        _ok "Docker container'lar rebuild edildi"
+    else
+        _err "Docker build hatası — tail /tmp/gws-compose.log:"
+        tail -20 /tmp/gws-compose.log
+        exit 1
+    fi
+    # Backend health check
+    sleep 4
+    for i in 1 2 3 4 5 6 7 8; do
+        HTTP=$(curl -s -o /dev/null -w '%{{http_code}}' --max-time 4 http://127.0.0.1:8001/api/stats/overview 2>/dev/null || echo "000")
+        if [ "$HTTP" = "200" ]; then
+            _ok "Backend API canlı (HTTP 200 · deneme $i/8)"
+            break
+        fi
+        sleep 2
+    done
+    # /api/version/panel doğru sürümü döndürüyor mu?
+    PANEL_VER=$(curl -sS --max-time 5 http://127.0.0.1:8001/api/version/panel 2>/dev/null | grep -oE '"version":"[^"]+"' | cut -d'"' -f4)
+    if [ -n "$PANEL_VER" ]; then
+        _ok "Backend /api/version/panel → $PANEL_VER"
+        if [ "$PANEL_VER" != "$NEW_VER" ] && [ "$NEW_VER" != "unknown" ]; then
+            _warn "Beklenen: $NEW_VER · Backend'de: $PANEL_VER · Docker container image bayat olabilir"
+        fi
+    fi
+else
+    _warn "docker-compose.yml bulunamadı — Docker adımı atlandı"
+fi
+
+# ---------------------------------------------------------------------
+_step "[3/7] WHM plugin CGI güncelleme"
+CGI_DIR="/usr/local/cpanel/whostmgr/docroot/cgi/mailshield"
+CGI_DST="$CGI_DIR/index.cgi"
+if [ ! -d "$CGI_DIR" ]; then
+    _warn "$CGI_DIR yok — bu sunucu WHM değil? Adım atlandı."
+else
+    TARBALL=$(mktemp --suffix=.tgz)
+    if curl -sSL --max-time 30 "$PANEL_URL/api/plugin/download" -o "$TARBALL" 2>/dev/null; then
+        EXTRACT=$(mktemp -d)
+        if tar -xzf "$TARBALL" -C "$EXTRACT" 2>/dev/null; then
+            NEW_CGI=$(find "$EXTRACT" -name "mailshield.cgi" -type f 2>/dev/null | head -1)
+            if [ -n "$NEW_CGI" ]; then
+                if ! cmp -s "$NEW_CGI" "$CGI_DST" 2>/dev/null; then
+                    install -m 0755 "$NEW_CGI" "$CGI_DST" && \\
+                        _ok "WHM CGI güncellendi → $CGI_DST" || \\
+                        _err "CGI kopyalanamadı (izin?)"
+                else
+                    _ok "WHM CGI zaten güncel"
+                fi
+            else
+                _warn "Tarball'da mailshield.cgi yok"
+            fi
+        fi
+        rm -rf "$EXTRACT"
+    else
+        _err "Plugin tarball indirilemedi ($PANEL_URL/api/plugin/download)"
+    fi
+    rm -f "$TARBALL"
+fi
+
+# ---------------------------------------------------------------------
+_step "[4/7] Simple-push script + systemd timer kurulumu"
+# License config
+cat > /etc/gws-exim-push.conf <<CONFEOF
+PANEL_URL=$PANEL_URL
+LICENSE_KEY=$LICENSE_KEY
+EXIM_LOG=/var/log/exim_mainlog
+FLUSH_INTERVAL=10
+CONFEOF
+chmod 600 /etc/gws-exim-push.conf
+# /root/.gws-license de yaz — auto-update için de gerekli
+echo "$LICENSE_KEY" > /root/.gws-license
+chmod 600 /root/.gws-license
+_ok "Config yazıldı: /etc/gws-exim-push.conf + /root/.gws-license"
+
+# Eski daemon/cron temizle
+(crontab -l 2>/dev/null | grep -v gws-exim-push | grep -v gws-simple-push) | crontab - 2>/dev/null || true
+for U in gws-exim-daemon.service gws-exim-push.timer gws-exim-push.service gws-exim-inotify.service; do
+    if systemctl list-unit-files 2>/dev/null | grep -q "^$U"; then
+        systemctl disable --now "$U" 2>/dev/null || true
+        rm -f "/etc/systemd/system/$U" 2>/dev/null || true
+    fi
+done
+systemctl daemon-reload 2>/dev/null || true
+
+# install-simple-push endpoint'ini çalıştır
+if bash <(curl -sSf "$PANEL_URL/api/tools/install-simple-push.sh?license_key=$LICENSE_KEY") 2>&1 | tail -20; then
+    _ok "Simple-push kurulumu tamamlandı"
+else
+    _err "Simple-push kurulumu başarısız — $PANEL_URL/api/tools/install-simple-push.sh"
+fi
+
+# ---------------------------------------------------------------------
+_step "[5/7] İlk manuel push testi"
+if [ -x /usr/local/bin/gws-simple-push ]; then
+    /usr/local/bin/gws-simple-push
+    sleep 1
+    LAST=$(tail -1 /var/log/gws-simple-push.log 2>/dev/null || echo "(log yok)")
+    _ok "Push sonucu: $LAST"
+else
+    _err "/usr/local/bin/gws-simple-push bulunamadı"
+fi
+
+# ---------------------------------------------------------------------
+_step "[6/7] Systemd timer durumu"
+if systemctl is-active --quiet gws-simple-push.timer 2>/dev/null; then
+    _ok "gws-simple-push.timer AKTIF (her 10sn push)"
+    NEXT_RUN=$(systemctl list-timers gws-simple-push.timer 2>/dev/null | grep gws-simple-push | awk '{{print $1, $2}}')
+    [ -n "$NEXT_RUN" ] && echo "   Sonraki push: $NEXT_RUN"
+else
+    _err "Timer aktif değil — systemctl status gws-simple-push.timer"
+fi
+
+# ---------------------------------------------------------------------
+_step "[7/7] Özet Rapor"
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo "   ONARIM RAPORU"
+echo "════════════════════════════════════════════════════════════"
+echo "   Repo sürümü:         $NEW_VER"
+echo "   Backend /api/version: $PANEL_VER"
+echo "   WHM CGI:             $([ -f "$CGI_DST" ] && stat -c '%y (%s bytes)' "$CGI_DST" 2>/dev/null || echo 'YOK')"
+echo "   Simple-push script:  $([ -x /usr/local/bin/gws-simple-push ] && echo 'KURULU' || echo 'YOK')"
+echo "   Timer aktif:         $(systemctl is-active gws-simple-push.timer 2>/dev/null || echo 'HAYIR')"
+echo ""
+echo "   Doğrulama:"
+echo "   1. WHM Home → GökyüzüWebSpam → Header'da $NEW_VER görmelisin"
+echo "   2. Ctrl+F5 ile tarayıcı cache'ini temizle (badge güncellenmiyorsa)"
+echo "   3. Panel /panel/outbound → 10sn sonra yeni mailler görünmeli"
+echo ""
+echo "   Sorun devam ederse:"
+echo "   • tail -f /var/log/gws-simple-push.log"
+echo "   • journalctl -u gws-simple-push.timer -f"
+echo "   • docker logs --tail=50 gws-backend"
+echo "════════════════════════════════════════════════════════════"
 """
     return _PT(script, media_type="text/x-shellscript")
 
