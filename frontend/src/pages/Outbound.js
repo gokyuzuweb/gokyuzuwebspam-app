@@ -112,6 +112,22 @@ export default function Outbound() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // v43.55 — Otomatik 5 dk'da bir backfill sinyali + otomatik yenileme
+  useEffect(() => {
+    let mounted = true;
+    const trigger = async () => {
+      if (!mounted) return;
+      try {
+        await api.outboundEximBackfill();
+        qc.invalidateQueries({ queryKey: ["outbound-events"] });
+        qc.invalidateQueries({ queryKey: ["outbound-stats"] });
+      } catch (_) { /* sessiz — otomatik arka plan görevi */ }
+    };
+    const id = setInterval(trigger, 300_000); // 5 dakika
+    return () => { mounted = false; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const dSearch = useDebounced(search);
   const dTo = useDebounced(toSearch);
   const dSubj = useDebounced(subjectSearch);
@@ -218,14 +234,25 @@ export default function Outbound() {
         <button
           data-testid="ob-backfill-top-btn"
           onClick={async () => {
-            if (!window.confirm("Son 24 saatlik Exim mainlog verilerini panele çekmek üzere bayi sunuculara sinyal gönderilecek. Devam edilsin mi?")) return;
+            if (!window.confirm("Bu buton bash cron script'ine 'son 24 saati yeniden gönder' sinyali yazar.\n\n• Cron her dakika çalışıyorsa: 60 saniye içinde veri akmaya başlar\n• Cron push'u WAF/silent-fail ile durmuşsa: SSH ile v43.55 push script'i kurmanız gerekir (chat mesajlarında hazır)\n\nDevam edilsin mi?")) return;
+            const t = toast.loading("Backfill sinyali yazılıyor…");
             try {
               const d = await api.outboundEximBackfill();
-              toast.success(`✓ ${d.signaled_licenses} sunucuya sinyal yazıldı`, { description: d.note, duration: 8000 });
-            } catch (e) { toast.error(e?.response?.data?.detail || e.message); }
+              toast.dismiss(t);
+              toast.success(`✓ ${d.signaled_licenses} sunucuya sinyal yazıldı`, {
+                description: `${d.note || ""}\n\nBash cron sağlıklıysa 60 sn içinde 24 saatlik veri akmaya başlar. Panel'i 1-2 dk sonra Yenile (🔄) ile kontrol edin.`,
+                duration: 12000,
+              });
+              // 90 sn sonra otomatik yenile
+              setTimeout(() => {
+                qc.invalidateQueries({ queryKey: ["outbound-events"] });
+                qc.invalidateQueries({ queryKey: ["outbound-stats"] });
+                toast.info("⏱ 90 saniye geçti — panel yenilendi. Cron sağlıklıysa yeni veriler burada olmalı.", { duration: 6000 });
+              }, 90_000);
+            } catch (e) { toast.dismiss(t); toast.error(e?.response?.data?.detail || e.message); }
           }}
           className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
-          title="Bayi WHM plugin daemon: /var/log/exim_mainlog son 24 saati anında panele çek"
+          title="Bash cron'a 'son 24 saati yeniden gönder' sinyali. Cron çalışıyorsa 60sn içinde veri akar."
         >
           <span>⚡</span> Son 24s Exim Backfill
         </button>
@@ -939,8 +966,29 @@ function PluginVersionBanner() {
   );
 }
 
-// v43.55 — Son bash push zaman göstergesi (sadece bilgi amaçlı, artık kırmızı uyarı YOK)
+// v43.55 — Son bash push zaman göstergesi + entegre "Push Şimdi" butonu
 function LastPushIndicator({ lastPushAt }) {
+  const qc = useQueryClient();
+  const [pushing, setPushing] = useState(false);
+  const doPush = async () => {
+    setPushing(true);
+    try {
+      const d = await api.outboundEximBackfill();
+      toast.success(`✓ Push tetiklendi (${d.signaled_licenses} sunucu)`, {
+        description: "Bash cron sağlıklıysa 60sn içinde veriler akmaya başlar. Panel 90sn sonra otomatik yenilenecek.",
+        duration: 8000,
+      });
+      setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ["outbound-events"] });
+        qc.invalidateQueries({ queryKey: ["outbound-stats"] });
+      }, 90_000);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e.message);
+    } finally {
+      setPushing(false);
+    }
+  };
+
   if (!lastPushAt) {
     return (
       <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3 flex items-start gap-3" data-testid="ob-last-push">
@@ -948,9 +996,17 @@ function LastPushIndicator({ lastPushAt }) {
         <div className="flex-1">
           <div className="text-sm font-semibold text-slate-300">Sunucudan henüz push yok</div>
           <div className="text-xs text-slate-500 mt-0.5">
-            Panelin sağ üstündeki "Sunucumu Güncelle" ile veya SSH cron ile push başlatın.
+            Aşağıdaki "Push Şimdi" ile manuel tetikleyebilir veya panel otomatik 5 dk'da bir sinyal gönderir.
           </div>
         </div>
+        <button
+          onClick={doPush}
+          disabled={pushing}
+          data-testid="ob-manual-push-btn"
+          className="text-xs px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30 disabled:opacity-50"
+        >
+          {pushing ? "..." : "⚡ Push Şimdi"}
+        </button>
       </div>
     );
   }
@@ -965,9 +1021,18 @@ function LastPushIndicator({ lastPushAt }) {
       <div className="flex-1">
         <div className="text-xs text-slate-400">
           Son sunucu push: <span className="mono text-slate-200" data-testid="ob-last-push-time">{label}</span>
+          <span className="text-[10px] text-slate-600 ml-2">· panel her 5 dk'da otomatik sinyal gönderir</span>
         </div>
       </div>
       <div className="text-[10px] mono text-slate-600">{dt.toLocaleString("tr-TR")}</div>
+      <button
+        onClick={doPush}
+        disabled={pushing}
+        data-testid="ob-manual-push-btn"
+        className="text-[11px] px-2.5 py-1 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50 whitespace-nowrap"
+      >
+        {pushing ? "..." : "⚡ Push Şimdi"}
+      </button>
     </div>
   );
 }
