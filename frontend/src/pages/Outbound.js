@@ -939,16 +939,16 @@ function PluginVersionBanner() {
   );
 }
 
-// v43.50 — Son bash push zaman göstergesi (cron sağlığı)
+// v43.55 — Son bash push zaman göstergesi (sadece bilgi amaçlı, artık kırmızı uyarı YOK)
 function LastPushIndicator({ lastPushAt }) {
   if (!lastPushAt) {
     return (
-      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 flex items-start gap-3" data-testid="ob-last-push">
-        <span className="text-amber-400 text-xl">⏳</span>
+      <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3 flex items-start gap-3" data-testid="ob-last-push">
+        <span className="text-slate-400 text-xl">◔</span>
         <div className="flex-1">
-          <div className="text-sm font-bold text-amber-200">Sunucudan henüz push yok</div>
-          <div className="text-xs text-slate-300 mt-0.5">
-            /usr/local/bin/gws-exim-push script'i sunucuda kurulu mu ve çalışıyor mu? SSH: <code className="mono text-emerald-300">tail /var/log/gws-exim-push/push.log</code>
+          <div className="text-sm font-semibold text-slate-300">Sunucudan henüz push yok</div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            Panelin sağ üstündeki "Sunucumu Güncelle" ile veya SSH cron ile push başlatın.
           </div>
         </div>
       </div>
@@ -956,28 +956,18 @@ function LastPushIndicator({ lastPushAt }) {
   }
   const dt = new Date(lastPushAt);
   const seconds = Math.floor((Date.now() - dt.getTime()) / 1000);
-  const stale = seconds > 180;  // 3dk üstü uyarı
   const label = seconds < 60 ? `${seconds} saniye önce`
     : seconds < 3600 ? `${Math.floor(seconds / 60)} dakika önce`
     : `${Math.floor(seconds / 3600)} saat önce`;
   return (
-    <div className={`rounded-lg border p-3 flex items-center gap-3 ${
-      stale ? "border-rose-500/40 bg-rose-500/10" : "border-emerald-500/30 bg-emerald-500/5"
-    }`} data-testid="ob-last-push">
-      <span className={`text-xl ${stale ? "text-rose-400" : "text-emerald-400"}`}>
-        {stale ? "⚠" : "✓"}
-      </span>
+    <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5 flex items-center gap-3" data-testid="ob-last-push">
+      <span className="text-emerald-400 text-lg">◉</span>
       <div className="flex-1">
-        <div className={`text-sm font-semibold ${stale ? "text-rose-200" : "text-emerald-200"}`}>
-          Son sunucu push: <span className="mono" data-testid="ob-last-push-time">{label}</span>
-        </div>
-        <div className="text-[11px] text-slate-400 mt-0.5">
-          {stale
-            ? "Cron 3 dakikadan uzun süredir push yapmadı — SSH: crontab -l | grep gws && systemctl status crond"
-            : "Cron her dakika çalışıyor · yeni mailler 60sn içinde burada görünür"}
+        <div className="text-xs text-slate-400">
+          Son sunucu push: <span className="mono text-slate-200" data-testid="ob-last-push-time">{label}</span>
         </div>
       </div>
-      <div className="text-[10px] mono text-slate-500">{dt.toLocaleString("tr-TR")}</div>
+      <div className="text-[10px] mono text-slate-600">{dt.toLocaleString("tr-TR")}</div>
     </div>
   );
 }
