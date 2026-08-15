@@ -1045,7 +1045,9 @@ def _parse_exim_log_raw(text: str, userdomains: set[str] | None = None) -> list[
         m_arr = _ARRIVAL_RE.match(line)
         if m_arr:
             date, time_, mid, sender, rest = m_arr.groups()
-            ts = f"{date}T{time_}+00:00"
+            # v43.56 — Exim log timestamp'i **server local time** yazar (UTC değil).
+            # Timezone bilgisi eklemiyoruz — browser as-is gösterir (double conversion önlenir).
+            ts = f"{date}T{time_}"
             user = ""
             auth_user = ""
             size = 0
