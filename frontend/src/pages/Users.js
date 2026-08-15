@@ -43,7 +43,15 @@ export default function UsersPage() {
   });
 
   const rows = users.data || [];
-  const demoCount = rows.filter((u) => ["example","sirket","tekno","deneme","kobi"].includes(u.username)).length;
+  // v43.31 — Demo tespit: username set + source flag
+  const DEMO_USERNAMES = new Set(["example","sirket","tekno","deneme","kobi",
+    "ahmetkaya","mehmet-ozdemir","bayianadolu","info-hasan","selin","bariskaraca",
+    "kutlu","ozer","mertkaya","ayses","kerimyilmaz"]);
+  const isDemoUser = (u) => DEMO_USERNAMES.has(u.username)
+    || u.source === "sample_cpanel"
+    || u.source === "csv_import"
+    || u.source === "seed";
+  const demoCount = rows.filter(isDemoUser).length;
   const realCount = rows.length - demoCount;
   const hasDemo = demoCount > 0;
 

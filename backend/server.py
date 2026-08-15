@@ -1450,11 +1450,16 @@ async def quarantine_purge_demo(request: Request):
     q = await db.quarantine.delete_many(filt)
     e = await db.mail_events.delete_many(filt)
     # v43.25 — Demo user'ları da `users` collection'ından temizle
-    demo_usernames = ["example", "sirket", "tekno", "deneme", "kobi"]
+    # v43.31 — sample_cpanel source'lu tüm kullanıcıları da temizle
+    demo_usernames = ["example", "sirket", "tekno", "deneme", "kobi",
+                      "ahmetkaya", "mehmet-ozdemir", "bayianadolu", "info-hasan",
+                      "selin", "bariskaraca", "kutlu", "ozer",
+                      "mertkaya", "ayses", "kerimyilmaz"]
     u = await db.users.delete_many({
         "$or": [
             {"username": {"$in": demo_usernames}},
             {"domain": {"$in": list(_DEMO_DOMAINS)}},
+            {"source": {"$in": ["sample_cpanel", "csv_import", "seed"]}},
         ]
     })
     await db.logs.insert_one(ActivityLog(
