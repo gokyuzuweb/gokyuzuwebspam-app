@@ -24,13 +24,18 @@ const FEATURE_GROUPS = [
     ],
   },
   {
-    title: "Temel Modüller",
+    title: "Temel Modüller (Sayfa/Route)",
     icon: Check,
     features: [
-      { key: "dashboard", label: "Dashboard", type: "bool", hint: "Ana panel görünümü" },
+      { key: "dashboard", label: "Dashboard (Ana Sayfa)", type: "bool", hint: "Ana panel görünümü" },
       { key: "live_traffic", label: "Canlı Mail Trafiği", type: "bool", hint: "Real-time trafik akışı" },
-      { key: "attack_map", label: "Attack Map", type: "bool", hint: "Coğrafi saldırı görselleştirme" },
-      { key: "logs_view", label: "Log Görüntüleme", type: "bool", hint: "Sistem logları" },
+      { key: "attack_map", label: "3D Saldırı Haritası", type: "bool", hint: "Coğrafi saldırı görselleştirme" },
+      { key: "logs_view", label: "Sistem Logları", type: "bool", hint: "Log görüntüleme" },
+      { key: "mailscanner", label: "MailScanner", type: "bool", hint: "MailScanner konfig sayfası" },
+      { key: "mail_health", label: "Mail Sağlık", type: "bool", hint: "Mail sağlık kontrolleri" },
+      { key: "live_diagnostic", label: "Canlı Sunucu Tanı", type: "bool", hint: "Kurulum tanı sihirbazı" },
+      { key: "my_server", label: "Sunucumu Bağla", type: "bool", hint: "Bayi kendi WHM sunucusunu bağlar" },
+      { key: "docs_view", label: "Dokümantasyon", type: "bool", hint: "Yardım dokümanları" },
     ],
   },
   {
@@ -40,6 +45,7 @@ const FEATURE_GROUPS = [
       { key: "blacklist_check", label: "Blacklist / RBL Sorgu", type: "bool", hint: "15+ RBL sağlayıcı sorgusu" },
       { key: "blacklist_manage", label: "Kara Liste Ekle/Sil", type: "bool", hint: "IP/domain blackliste ekleme" },
       { key: "whitelist_manage", label: "Beyaz Liste Ekle/Sil", type: "bool", hint: "IP/domain whiteliste ekleme" },
+      { key: "whitelist_history", label: "Whitelist Geçmişi", type: "bool", hint: "Whitelist audit sayfası" },
       { key: "quarantine_view", label: "Karantina Görüntüleme", type: "bool", hint: "Karantinaya düşen mailler" },
       { key: "quarantine_release", label: "Karantinadan Serbest Bırak", type: "bool", hint: "Karantinadan mail çıkarma" },
       { key: "quarantine_delete", label: "Karantinadan Silme", type: "bool", hint: "Toplu karantina silme yetkisi" },
@@ -77,9 +83,18 @@ const FEATURE_GROUPS = [
     ],
   },
   {
+    title: "Ekosistem",
+    icon: Package,
+    features: [
+      { key: "marketplace", label: "İmza Marketplace", type: "bool", hint: "Kural paylaşımı & topluluk marketi" },
+      { key: "bounce_digest", label: "Bounce Digest", type: "bool", hint: "Günlük bounce özet raporu" },
+    ],
+  },
+  {
     title: "Bildirim & Raporlama",
     icon: Info,
     features: [
+      { key: "notifications_view", label: "Bildirim Kutusu", type: "bool", hint: "Panel içi bildirim merkezi" },
       { key: "alerts_rules", label: "Custom Alert Kuralları", type: "bool", hint: "Özel uyarı tetikleyicileri" },
       { key: "reports_view", label: "Rapor Sayfası Görüntüleme", type: "bool", hint: "Rapor tablarına erişim" },
       { key: "reports_weekly", label: "Haftalık AI Raporu", type: "bool", hint: "Otomatik weekly summary" },
@@ -92,6 +107,7 @@ const FEATURE_GROUPS = [
     title: "Yönetim & Ekosistem",
     icon: SlidersHorizontal,
     features: [
+      { key: "users_view", label: "Kullanıcı Görüntüleme", type: "bool", hint: "WHM kullanıcı listesi" },
       { key: "bulk_actions", label: "Toplu İşlemler", type: "bool", hint: "Toplu sil / whitelist / import" },
       { key: "sub_users", label: "Alt Kullanıcı Yönetimi", type: "bool", hint: "Panel içi sub-account" },
       { key: "reseller_mode", label: "Bayi Modu (Alt Bayi)", type: "bool", hint: "Kendi altına bayi açabilme" },

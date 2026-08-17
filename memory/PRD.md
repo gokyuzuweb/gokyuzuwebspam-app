@@ -13,6 +13,56 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+
+## Feb 15, 2026 (Session 17, v43.71) — Plan Modül Yapılandırma Genişletme + Bayi Kilit Guard'ı
+
+**KULLANICI İSTEĞİ:**
+"Plan Modül Yapılandırma tüm modülleri ekle, ben oradan aktif ettiklerimde bayiler kendisine bağımsız şekilde olacak şekilde ilerlersin, her bayi kendisine özgü olmalı asla hiç bir bayi birbirine birşey görememeli."
+
+**FIX v43.71 — Tam Plan Feature Matrix + Multi-Layer Guard:**
+
+### 1. Yeni Modül Anahtarları (backend PLAN_FEATURES_DEFAULT)
+`/app/backend/server.py` — 10 yeni feature key eklendi:
+- `mailscanner`, `mail_health`, `live_diagnostic`, `my_server`, `docs_view` (temel sayfalar)
+- `whitelist_history` (koruma)
+- `marketplace`, `bounce_digest` (ekosistem)
+- `notifications_view`, `users_view` (bildirim/yönetim)
+
+Toplam: **50+ modül** starter/pro/enterprise için tam matrix.
+
+### 2. `/api/plan/effective` Refactor (per-bayi izole)
+- `_tenant_scope` kullanır — master vs bayi ayrımını tek doğruluk kaynağından alır
+- Bayi'nin X-Master-Key header'ından MS- prefix'li lisansı otomatik lookup eder
+- Response'a `is_master` + `license_key` alanı eklendi → frontend guard doğru bypass yapar
+- Master → enterprise, Impersonation → hedef bayi planı, Bayi header → kendi planı, hiçbiri → starter
+
+### 3. Frontend `PlanFeatureGuard` Wire-Up
+`/app/frontend/src/App.js`:
+- Yeni `PG(Component, feature, label)` helper — tüm bayi rotaları wrap edildi (20+ route)
+- `PlanFeatureGuard`: master ise geç (is_master=true), feature aktif ise geç, aksi halde **"Bir Üst Versiyona Geçiş Yapmanız Gerekiyor"** ekranı + karşılaştırma tablosu + "Planı Yükselt →" butonu
+
+### 4. Sidebar Plan-Based Filtreleme
+- NAV item'larına `feature` field'ı eklendi (dashboard, custom_rules, marketplace, my_server, ...)
+- Master her zaman her şeyi görür (impersonation aktif değilse)
+- Bayi için: `planFeatures[n.feature] === false` ise sidebar'dan gizlenir (kapalı modül URL'ye direkt gitse bile PlanFeatureGuard karşılar — defense-in-depth)
+
+### 5. PlanConfig UI Genişletme
+`/app/frontend/src/pages/PlanConfig.js` — FEATURE_GROUPS 8 gruba genişletildi (Kapasite, Temel Modüller/Sayfa, Liste Yönetimi, Güvenlik & Motorlar, Giden Mail, İleri Güvenlik, Ekosistem, Bildirim & Raporlama, Yönetim). Master her modülü starter/pro/enterprise için tek tıkla toggle edebilir.
+
+### 6. Test Bayi Lisansları
+- **MS-TESTBAYI-STARTER-V4371** (plan=starter, min feature set)
+- **MS-TESTBAYI-PRO-V4371** (plan=pro, çoğu feature aktif)
+
+**Test Sonucu (iteration_46.json — 11/11 pass, %100):**
+- `/api/plan/effective` visitor→starter, master→enterprise, bayi→kendi planı ✓
+- Plan matrix write→ /api/plan/effective anında yansır ✓
+- Tenant isolation: 1 starter bayi + 1 pro bayi → cross-bayi data leak = 0 ✓
+- Screenshot doğrulaması: Starter bayi `/panel/rules` → "Bir Üst Versiyona Geçiş" ekranı ✓; Pro bayi `/panel/rules` → tam rules editor ✓
+
+**Tenant İzolasyon Notu:**
+Her bayi kendi WHM sunucusunda docker container'ında ÇALIŞIR, kendi MongoDB'sinde kendi verisi vardır — cross-bayi data leakage mimari düzeyde imkânsız. Bu değişiklik plan matrix + UI kilit üzerine yoğunlaşır; v43.37 tenant scope (owner_license_key) filtresi zaten mevcut ve doğrulandı.
+
+
 ## Feb 15, 2026 (Session 17, v43.70) — Bayi SMTP Ayarları + Audit Log
 
 **KULLANICI İSTEĞİ:**

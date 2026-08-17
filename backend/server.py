@@ -8221,28 +8221,35 @@ async def subscription_renew(payload: SubscriptionRenewIn, request: Request):
 # backend de yazma endpoint'lerinde bu limitleri zorlar.
 PLAN_FEATURES_DEFAULT = {
     "starter": {
-        # Kapasite
+        # === Kapasite ===
         "max_domains": 1,
         "max_mails_per_day": 5000,
-        # Temel modüller
-        "attack_map": True,
-        "dashboard": True,
-        "live_traffic": True,
+        # === Temel Modüller (Sayfa/Route bazlı) ===
+        "dashboard": True,           # Ana panel görünümü
+        "live_traffic": True,        # Canlı mail trafiği
+        "attack_map": True,          # 3D saldırı haritası
+        "logs_view": True,           # Sistem log görüntüleme
+        "mailscanner": True,         # MailScanner konfig sayfası
+        "mail_health": True,         # Mail sağlık kontrolleri
+        "live_diagnostic": True,     # Canlı sunucu tanı sihirbazı
+        "my_server": True,           # Sunucu bağlama sayfası
+        "docs_view": True,           # Dokümantasyon sayfası
+        # === Liste Yönetimi ===
         "blacklist_check": True,     # RBL sorgu / delist
-        "whitelist_manage": False,   # Whitelist ekleme (kapalı = üst plan)
-        "blacklist_manage": False,   # Blacklist ekleme (kapalı = üst plan)
+        "whitelist_manage": False,   # Whitelist ekleme
+        "blacklist_manage": False,   # Blacklist ekleme
+        "whitelist_history": False,  # Whitelist geçmiş sayfası
         "quarantine_view": True,     # Karantina görüntüleme
         "quarantine_release": False, # Karantinadan çıkarma
         "quarantine_delete": False,  # Karantinadan silme
-        "logs_view": True,
-        # Güvenlik ekranı
+        # === Güvenlik & Motorlar ===
         "security_view": True,       # Güvenlik sayfası görüntüleme
         "security_config": False,    # Güvenlik ayarları değiştirme
         "engine_toggle": False,      # Motor aç/kapa
-        # Giden mail
+        # === Giden Mail ===
         "outbound_view": True,       # Giden mail görüntüleme
         "outbound_control": False,   # Giden mail askıya alma/silme
-        # İleri modüller
+        # === İleri Güvenlik ===
         "custom_rules": False,       # Kural editörü (Rules sayfası)
         "exploit_editor": False,     # Exploit/Webshell tarayıcı
         "ai_explanations": False,    # AI destekli açıklama
@@ -8251,14 +8258,19 @@ PLAN_FEATURES_DEFAULT = {
         "sandbox": False,            # Ek/URL sandbox
         "attachment_scan": True,     # Ek tarama
         "url_scan": True,            # URL taraması
-        # Bildirim & Raporlama
+        # === Ekosistem ===
+        "marketplace": False,        # İmza Marketplace sayfası
+        "bounce_digest": False,      # Günlük bounce özet raporu
+        # === Bildirim & Raporlama ===
+        "notifications_view": True,  # Bildirim kutusu
         "alerts_rules": False,       # Custom alert kuralları
         "reports_view": True,        # Rapor sayfası görüntüleme
         "reports_weekly": False,     # Haftalık AI raporu
         "reports_export": False,     # CSV/PDF export
         "email_notifications": True, # Basit e-posta bildirim
         "smtp_settings": False,      # SMTP relay yapılandırma
-        # Yönetim
+        # === Yönetim ===
+        "users_view": True,          # WHM kullanıcıları görüntüleme
         "bulk_actions": False,       # Toplu işlem
         "sub_users": False,          # Alt kullanıcı
         "reseller_mode": False,      # Alt bayi
@@ -8272,36 +8284,52 @@ PLAN_FEATURES_DEFAULT = {
     },
     "pro": {
         "max_domains": 10, "max_mails_per_day": 50000,
-        "attack_map": True, "dashboard": True, "live_traffic": True,
+        # Sayfalar
+        "dashboard": True, "live_traffic": True, "attack_map": True, "logs_view": True,
+        "mailscanner": True, "mail_health": True, "live_diagnostic": True,
+        "my_server": True, "docs_view": True,
+        # Liste
         "blacklist_check": True, "whitelist_manage": True, "blacklist_manage": True,
+        "whitelist_history": True,
         "quarantine_view": True, "quarantine_release": True, "quarantine_delete": True,
-        "logs_view": True,
+        # Güvenlik
         "security_view": True, "security_config": True, "engine_toggle": True,
+        # Giden
         "outbound_view": True, "outbound_control": True,
+        # İleri
         "custom_rules": True, "exploit_editor": True, "ai_explanations": True,
         "threat_intel": True, "bec_detection": True, "sandbox": True,
         "attachment_scan": True, "url_scan": True,
-        "alerts_rules": True, "reports_view": True, "reports_weekly": True,
-        "reports_export": True, "email_notifications": True, "smtp_settings": True,
-        "bulk_actions": True, "sub_users": True, "reseller_mode": False,
+        # Ekosistem
+        "marketplace": True, "bounce_digest": True,
+        # Bildirim
+        "notifications_view": True, "alerts_rules": True, "reports_view": True,
+        "reports_weekly": True, "reports_export": True,
+        "email_notifications": True, "smtp_settings": True,
+        # Yönetim
+        "users_view": True, "bulk_actions": True, "sub_users": True, "reseller_mode": False,
         "api_access": True, "webhooks": True, "two_factor_auth": True,
         "priority_support": True, "custom_branding": False, "settings_customize": True,
         "label": "Pro",
     },
     "enterprise": {
         "max_domains": 999999, "max_mails_per_day": 999999999,
-        "attack_map": True, "dashboard": True, "live_traffic": True,
+        "dashboard": True, "live_traffic": True, "attack_map": True, "logs_view": True,
+        "mailscanner": True, "mail_health": True, "live_diagnostic": True,
+        "my_server": True, "docs_view": True,
         "blacklist_check": True, "whitelist_manage": True, "blacklist_manage": True,
+        "whitelist_history": True,
         "quarantine_view": True, "quarantine_release": True, "quarantine_delete": True,
-        "logs_view": True,
         "security_view": True, "security_config": True, "engine_toggle": True,
         "outbound_view": True, "outbound_control": True,
         "custom_rules": True, "exploit_editor": True, "ai_explanations": True,
         "threat_intel": True, "bec_detection": True, "sandbox": True,
         "attachment_scan": True, "url_scan": True,
-        "alerts_rules": True, "reports_view": True, "reports_weekly": True,
-        "reports_export": True, "email_notifications": True, "smtp_settings": True,
-        "bulk_actions": True, "sub_users": True, "reseller_mode": True,
+        "marketplace": True, "bounce_digest": True,
+        "notifications_view": True, "alerts_rules": True, "reports_view": True,
+        "reports_weekly": True, "reports_export": True,
+        "email_notifications": True, "smtp_settings": True,
+        "users_view": True, "bulk_actions": True, "sub_users": True, "reseller_mode": True,
         "api_access": True, "webhooks": True, "two_factor_auth": True,
         "priority_support": True, "custom_branding": True, "settings_customize": True,
         "label": "Enterprise",
@@ -8417,6 +8445,68 @@ async def admin_plan_matrix_set(payload: PlanMatrixIn, request: Request,
     except Exception:
         pass
     return {"ok": True, "matrix": now_matrix, "changes": len(changes)}
+
+
+# v43.71 — Ziyaretçinin (bayı) mevcut planındaki aktif özellikler
+@api.get("/plan/effective")
+async def plan_effective_features(request: Request, license_key: Optional[str] = None):
+    """Ziyaretçinin lisans planına göre efektif özellik matrisi (per-bayi izole).
+
+    Plan tespiti sırası:
+      1. Master (MASTER_LICENSE_KEY) VE impersonation yoksa → enterprise
+      2. Impersonation aktifse → hedef bayi lisansının planı
+      3. `X-Master-Key` header'ında bayi anahtarı (MS-...) VEYA query `license_key` VEYA
+         `X-License-Key` header'ı → o lisansın planı
+      4. Yoksa → starter (kapalı özellikler)
+    """
+    matrix = await _load_plan_matrix()
+    scope = await _tenant_scope(request, license_key)
+
+    plan = "starter"
+    resolved_license = None
+    if scope.get("is_master") and not scope.get("impersonated"):
+        plan = "enterprise"
+        resolved_license = "__master__"
+    elif scope.get("owner_license_key") and scope["owner_license_key"] not in ("__none__", "__master__"):
+        lic = await db.licenses.find_one(
+            {"license_key": scope["owner_license_key"], "active": True},
+            {"_id": 0, "plan": 1},
+        )
+        if lic:
+            plan = (lic.get("plan") or "starter").lower()
+            resolved_license = scope["owner_license_key"]
+    else:
+        # scope __none__ VEYA boş → header'daki MS- key'ini bayi olarak dene
+        master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+        candidate = (
+            request.headers.get("x-license-key")
+            or request.headers.get("x-master-key")
+            or license_key
+            or ""
+        ).strip()
+        if candidate and candidate.startswith("MS-") and candidate != master_env:
+            lic = await db.licenses.find_one(
+                {"license_key": candidate, "active": True},
+                {"_id": 0, "plan": 1},
+            )
+            if lic:
+                plan = (lic.get("plan") or "starter").lower()
+                resolved_license = candidate
+
+    features = matrix.get(plan, matrix.get("starter", {}))
+    hierarchy = ["starter", "pro", "enterprise"]
+    idx = hierarchy.index(plan) if plan in hierarchy else 0
+    next_plan = hierarchy[idx + 1] if idx + 1 < len(hierarchy) else None
+    return {
+        "plan": plan,
+        "plan_label": features.get("label", plan.title()),
+        "features": features,
+        "next_plan": next_plan,
+        "next_plan_features": matrix.get(next_plan, {}) if next_plan else None,
+        "license_key": resolved_license,   # her bayi kendine özgü — audit için
+        "impersonated": bool(scope.get("impersonated")),
+        "is_master": bool(scope.get("is_master") and not scope.get("impersonated")),
+    }
 
 
 @api.post("/admin/plan-matrix/reset")

@@ -64,34 +64,41 @@ import CustomDomainGuide from "@/pages/CustomDomainGuide";
 import AuditLog from "@/pages/AuditLog";
 import SmtpSettings from "@/pages/SmtpSettings";
 import MasterOnlyGuard from "@/components/MasterOnlyGuard";
+import PlanFeatureGuard, { usePlanFeatures } from "@/components/PlanFeatureGuard";
 
 // v43.67 — Master-only sayfa wrapper'ları (URL'ye direkt yazan bayilere karşı defense-in-depth)
 const MO = (Component, title) => <MasterOnlyGuard pageTitle={title}><Component /></MasterOnlyGuard>;
+// v43.71 — Plan Feature Guard wrapper (bayi planında pasif ise "Üst versiyona geçin" ekranı)
+const PG = (Component, feature, label) => (
+  <PlanFeatureGuard feature={feature} featureLabel={label}>
+    <Component />
+  </PlanFeatureGuard>
+);
 import CommandPalette from "@/components/CommandPalette";
 import Header from "@/components/Header";
 
 const NAV = [
   // 📊 İZLEME
-  { to: "/panel", key: "dashboard", icon: Activity, testid: "nav-dashboard", end: true, group: "izleme" },
-  { to: "/panel/mailscanner", key: "mailscanner", icon: Filter, testid: "nav-mailscanner", label: "MailScanner", group: "izleme" },
-  { to: "/panel/mail-health", key: "mail_health", icon: HeartPulse, testid: "nav-mail-health", label: "Mail Sağlık", group: "izleme" },
-  { to: "/panel/threat-intel", key: "threat_intel", icon: Globe, testid: "nav-threat-intel", label: "Tehdit Zekası", group: "izleme" },
-  { to: "/panel/marketplace", key: "marketplace", icon: Store, testid: "nav-marketplace", label: "İmza Marketplace", group: "koruma" },
-  { to: "/panel/bounce-digest", key: "bounce_digest", icon: MailX, testid: "nav-bounce-digest", label: "Bounce Digest", group: "izleme" },
-  { to: "/panel/live-diagnostic", key: "live_diagnostic", icon: Stethoscope, testid: "nav-live-diagnostic", label: "Canlı Sunucu Tanı", group: "sistem" },
+  { to: "/panel", key: "dashboard", icon: Activity, testid: "nav-dashboard", end: true, group: "izleme", feature: "dashboard" },
+  { to: "/panel/mailscanner", key: "mailscanner", icon: Filter, testid: "nav-mailscanner", label: "MailScanner", group: "izleme", feature: "mailscanner" },
+  { to: "/panel/mail-health", key: "mail_health", icon: HeartPulse, testid: "nav-mail-health", label: "Mail Sağlık", group: "izleme", feature: "mail_health" },
+  { to: "/panel/threat-intel", key: "threat_intel", icon: Globe, testid: "nav-threat-intel", label: "Tehdit Zekası", group: "izleme", feature: "threat_intel" },
+  { to: "/panel/marketplace", key: "marketplace", icon: Store, testid: "nav-marketplace", label: "İmza Marketplace", group: "koruma", feature: "marketplace" },
+  { to: "/panel/bounce-digest", key: "bounce_digest", icon: MailX, testid: "nav-bounce-digest", label: "Bounce Digest", group: "izleme", feature: "bounce_digest" },
+  { to: "/panel/live-diagnostic", key: "live_diagnostic", icon: Stethoscope, testid: "nav-live-diagnostic", label: "Canlı Sunucu Tanı", group: "sistem", feature: "live_diagnostic" },
   { to: "/panel/master-live", key: "master_live", icon: Activity, testid: "nav-master-live", label: "Canlı Bayi Trafiği", masterOnly: true, sellerOnly: true, group: "izleme" },
   // 🛡️ KORUMA
-  { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine", group: "koruma" },
-  { to: "/panel/lists", key: "lists", icon: ListChecks, testid: "nav-lists", label: "Kara/Beyaz Liste", group: "koruma" },
-  { to: "/panel/blacklist", key: "blacklist", icon: Radar, testid: "nav-blacklist", label: "IP Blacklist Çıkışı", group: "koruma" },
-  { to: "/panel/rules", key: "rules", icon: Wrench, testid: "nav-rules", label: "Kurallar", group: "koruma" },
-  { to: "/panel/engines", key: "engines", icon: Cpu, testid: "nav-engines", label: "Motorlar", group: "koruma" },
-  { to: "/panel/security", key: "security", icon: Bug, testid: "nav-security", label: "Güvenlik", group: "koruma" },
+  { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine", group: "koruma", feature: "quarantine_view" },
+  { to: "/panel/lists", key: "lists", icon: ListChecks, testid: "nav-lists", label: "Kara/Beyaz Liste", group: "koruma", feature: "blacklist_check" },
+  { to: "/panel/blacklist", key: "blacklist", icon: Radar, testid: "nav-blacklist", label: "IP Blacklist Çıkışı", group: "koruma", feature: "blacklist_check" },
+  { to: "/panel/rules", key: "rules", icon: Wrench, testid: "nav-rules", label: "Kurallar", group: "koruma", feature: "custom_rules" },
+  { to: "/panel/engines", key: "engines", icon: Cpu, testid: "nav-engines", label: "Motorlar", group: "koruma", feature: "engine_toggle" },
+  { to: "/panel/security", key: "security", icon: Bug, testid: "nav-security", label: "Güvenlik", group: "koruma", feature: "security_view" },
   // 📨 POSTA
-  { to: "/panel/outbound", key: "outbound", icon: ArrowUpRight, testid: "nav-outbound", label: "Giden Posta", group: "posta" },
-  { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist Geçmişi", group: "posta" },
+  { to: "/panel/outbound", key: "outbound", icon: ArrowUpRight, testid: "nav-outbound", label: "Giden Posta", group: "posta", feature: "outbound_view" },
+  { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist Geçmişi", group: "posta", feature: "whitelist_history" },
   // 👥 KULLANICILAR & BAYİ
-  { to: "/panel/users", key: "users", icon: Users, testid: "nav-users", label: "Kullanıcılar", group: "user" },
+  { to: "/panel/users", key: "users", icon: Users, testid: "nav-users", label: "Kullanıcılar", group: "user", feature: "users_view" },
   { to: "/panel/resellers-admin", key: "resellers_admin", icon: Users, testid: "nav-resellers-admin", label: "Bayi Yönetimi", masterOnly: true, sellerOnly: true, group: "user" },
   { to: "/panel/licenses", key: "licenses", icon: Key, testid: "nav-licenses", label: "Lisanslar", sellerOnly: true, masterOnly: true, group: "user" },
   { to: "/panel/subscription", key: "subscription", icon: Sparkles, testid: "nav-subscription", label: "Aboneliğim", group: "user" },
@@ -100,9 +107,9 @@ const NAV = [
   { to: "/panel/payments-admin", key: "payments_admin", icon: DollarSign, testid: "nav-payments-admin", label: "Ödeme Panosu", masterOnly: true, sellerOnly: true, group: "sales" },
   { to: "/panel/plan-analytics", key: "plan_analytics", icon: DollarSign, testid: "nav-plan-analytics", label: "Plan Analitiği", masterOnly: true, sellerOnly: true, group: "sales" },
   // 🔔 BİLDİRİM & RAPOR
-  { to: "/panel/notifications", key: "notifications", icon: Bell, testid: "nav-notifications", label: "Bildirim Kutusu", group: "bildirim" },
-  { to: "/panel/alerts", key: "alerts", icon: BellRing, testid: "nav-alerts", label: "Alarm Kuralları", group: "bildirim" },
-  { to: "/panel/reports", key: "reports", icon: FileText, testid: "nav-reports", label: "Raporlar", group: "bildirim" },
+  { to: "/panel/notifications", key: "notifications", icon: Bell, testid: "nav-notifications", label: "Bildirim Kutusu", group: "bildirim", feature: "notifications_view" },
+  { to: "/panel/alerts", key: "alerts", icon: BellRing, testid: "nav-alerts", label: "Alarm Kuralları", group: "bildirim", feature: "alerts_rules" },
+  { to: "/panel/reports", key: "reports", icon: FileText, testid: "nav-reports", label: "Raporlar", group: "bildirim", feature: "reports_view" },
   { to: "/panel/email-templates", key: "email_templates", icon: Mail, testid: "nav-email-templates", label: "Mail Şablonları", masterOnly: true, sellerOnly: true, group: "bildirim" },
   // 🎨 MASTER YÖNETİM
   { to: "/panel/landing-cms", key: "landing_cms", icon: Palette, testid: "nav-landing-cms", label: "Landing CMS", masterOnly: true, sellerOnly: true, group: "master" },
@@ -112,13 +119,13 @@ const NAV = [
   { to: "/panel/wake-history", key: "wake_history", icon: History, testid: "nav-wake-history", label: "Ping Geçmişi", masterOnly: true, sellerOnly: true, group: "master" },
   { to: "/panel/audit-log", key: "audit_log", icon: ShieldAlert, testid: "nav-audit-log", label: "Audit Log", masterOnly: true, sellerOnly: true, group: "master" },
   // 🔧 SİSTEM
-  { to: "/panel/my-server", key: "my_server", icon: Server, testid: "nav-my-server", label: "Sunucumu Bağla", group: "sistem" },
-  { to: "/panel/smtp-settings", key: "smtp_settings", icon: Mail, testid: "nav-smtp", label: "Mail (SMTP)", group: "sistem" },
+  { to: "/panel/my-server", key: "my_server", icon: Server, testid: "nav-my-server", label: "Sunucumu Bağla", group: "sistem", feature: "my_server" },
+  { to: "/panel/smtp-settings", key: "smtp_settings", icon: Mail, testid: "nav-smtp", label: "Mail (SMTP)", group: "sistem", feature: "smtp_settings" },
   { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs", label: "Loglar", masterOnly: true, sellerOnly: true, group: "sistem" },
   { to: "/panel/maintenance", key: "maintenance", icon: HardDrive, testid: "nav-maintenance", label: "DB Bakım", masterOnly: true, sellerOnly: true, group: "sistem" },
   { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings", label: "Ayarlar", masterOnly: true, sellerOnly: true, group: "sistem" },
   { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install", label: "Kurulum", masterOnly: true, sellerOnly: true, group: "sistem" },
-  { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Dokümantasyon", group: "sistem" },
+  { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Dokümantasyon", group: "sistem", feature: "docs_view" },
   { to: "/panel/custom-domain", key: "custom_domain", icon: Globe, testid: "nav-custom-domain", label: "Kendi Domain'im", masterOnly: true, sellerOnly: true, group: "sistem" },
 ];
 
@@ -184,9 +191,18 @@ function Sidebar() {
   };
   const anyOpen = openGroups.size > 0;
   const allOpen = openGroups.size >= NAV_GROUPS.length;
+  // v43.71 — Plan features (bayı planında pasif olan modüller sidebar'da da gizlenir)
+  const planQ = usePlanFeatures();
+  const planFeatures = planQ.data?.features || {};
+  const planReady = !planQ.isLoading;
   const items = NAV.filter((n) => {
     if (n.sellerOnly && !isSeller) return false;
     if (n.masterOnly && !isMaster) return false;
+    // Master her zaman her şeyi görür (planFeatures.enterprise varsayılan olarak açık, ama impersonation aktifse alttaki de doğru)
+    if (isMaster) return true;
+    // Plan-based hide: feature key varsa ve plan matriste false ise sidebar'dan gizle.
+    // planReady değilse geçici olarak göster (ilk render gecikmesi yaşanmasın).
+    if (n.feature && planReady && planFeatures[n.feature] === false) return false;
     return true;
   });
   // v43.21 — grup bazlı bölütleme (NAV_GROUPS sırasına uygun)
@@ -383,11 +399,11 @@ function Shell() {
         <Header title={active ? (active.label || t(`nav.${active.key}`)) : "GökyüzüWebSpam"} />
         <main className={mainCls} data-testid="panel-main-scroll">
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/security" element={<Security />} />
-            <Route path="/mailscanner" element={<MailScanner />} />
-            <Route path="/threat-intel" element={<ThreatIntel />} />
-            <Route path="/mail-health" element={<MailHealth />} />
+            <Route path="/" element={PG(Dashboard, "dashboard", "Dashboard")} />
+            <Route path="/security" element={PG(Security, "security_view", "Güvenlik Sayfası")} />
+            <Route path="/mailscanner" element={PG(MailScanner, "mailscanner", "MailScanner")} />
+            <Route path="/threat-intel" element={PG(ThreatIntel, "threat_intel", "Tehdit Zekası")} />
+            <Route path="/mail-health" element={PG(MailHealth, "mail_health", "Mail Sağlık")} />
             <Route path="/maintenance" element={MO(Maintenance, "DB Bakım")} />
             <Route path="/payments-admin" element={MO(PaymentsAdmin, "Ödeme Yönetim Panosu")} />
             <Route path="/resellers-admin" element={MO(ResellersAdmin, "Bayi Yönetimi")} />
@@ -402,26 +418,26 @@ function Shell() {
             <Route path="/email-templates" element={MO(EmailTemplates, "Mail Şablonları")} />
             <Route path="/plugin-health" element={MO(PluginHealth, "Plugin Sağlığı")} />
             <Route path="/landing-cms" element={MO(LandingCMS, "Landing CMS")} />
-            <Route path="/my-server" element={<BayiServer />} />
-            <Route path="/smtp-settings" element={<SmtpSettings />} />
-            <Route path="/whitelist-history" element={<WhitelistHistory />} />
-            <Route path="/docs" element={<Docs />} />
+            <Route path="/my-server" element={PG(BayiServer, "my_server", "Sunucumu Bağla")} />
+            <Route path="/smtp-settings" element={PG(SmtpSettings, "smtp_settings", "SMTP Ayarları")} />
+            <Route path="/whitelist-history" element={PG(WhitelistHistory, "whitelist_history", "Whitelist Geçmişi")} />
+            <Route path="/docs" element={PG(Docs, "docs_view", "Dokümantasyon")} />
             <Route path="/custom-domain" element={MO(CustomDomainGuide, "Kendi Domain'im")} />
-            <Route path="/marketplace" element={<Marketplace />} />
-            <Route path="/bounce-digest" element={<BounceDigest />} />
-            <Route path="/live-diagnostic" element={<LiveDiagnostic />} />
-            <Route path="/quarantine" element={<Quarantine />} />
-            <Route path="/lists" element={<Lists />} />
-            <Route path="/rules" element={<Rules />} />
-            <Route path="/engines" element={<Engines />} />
-            <Route path="/outbound" element={<Outbound />} />
-            <Route path="/notifications" element={<Notifications />} />
-            <Route path="/alerts" element={<AlertsRules />} />
-            <Route path="/reports" element={<Reports />} />
+            <Route path="/marketplace" element={PG(Marketplace, "marketplace", "İmza Marketplace")} />
+            <Route path="/bounce-digest" element={PG(BounceDigest, "bounce_digest", "Bounce Digest")} />
+            <Route path="/live-diagnostic" element={PG(LiveDiagnostic, "live_diagnostic", "Canlı Sunucu Tanı")} />
+            <Route path="/quarantine" element={PG(Quarantine, "quarantine_view", "Karantina")} />
+            <Route path="/lists" element={PG(Lists, "blacklist_check", "Kara/Beyaz Liste")} />
+            <Route path="/rules" element={PG(Rules, "custom_rules", "Kural Editörü")} />
+            <Route path="/engines" element={PG(Engines, "engine_toggle", "Motorlar")} />
+            <Route path="/outbound" element={PG(Outbound, "outbound_view", "Giden Posta")} />
+            <Route path="/notifications" element={PG(Notifications, "notifications_view", "Bildirim Kutusu")} />
+            <Route path="/alerts" element={PG(AlertsRules, "alerts_rules", "Alarm Kuralları")} />
+            <Route path="/reports" element={PG(Reports, "reports_view", "Raporlar")} />
             <Route path="/licenses" element={MO(Licenses, "Lisans Yönetimi")} />
             <Route path="/pricing" element={MO(Pricing, "Fiyatlandırma Yönetimi")} />
-            <Route path="/blacklist" element={<Blacklist />} />
-            <Route path="/users" element={<UsersPage />} />
+            <Route path="/blacklist" element={PG(Blacklist, "blacklist_check", "IP Blacklist Çıkışı")} />
+            <Route path="/users" element={PG(UsersPage, "users_view", "Kullanıcılar")} />
             <Route path="/logs" element={MO(LogsPage, "Sistem Logları")} />
             <Route path="/settings" element={MO(SettingsPage, "Global Ayarlar")} />
             <Route path="/install" element={MO(Install, "Kurulum")} />

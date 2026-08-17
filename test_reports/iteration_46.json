@@ -1,0 +1,25 @@
+{
+  "summary": "v43.71 Plan Feature Guard + Tenant Isolation backend testing. Created pytest suite (11 tests) covering /api/plan/effective for visitor/master/bayi (starter/pro), verified all new v43.71 module keys present in features (mailscanner, mail_health, live_diagnostic, my_server, docs_view, whitelist_history, marketplace, bounce_digest, notifications_view, users_view), GET/POST/reset on /api/admin/plan-matrix with immediate bayi reflection, and tenant isolation via /api/events (per-bayi scope, no leak to master or other bayi). All 11 tests PASSED.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v43_71_plan_matrix.py",
+    "/app/test_reports/pytest/v43_71_plan_matrix.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 10532 lines — should be split into feature modules (plan_matrix, licensing, events, admin, etc). Well over the 700-line guideline.",
+    "PLAN_FEATURES_DEFAULT/matrix logic and admin endpoints duplicate schemas (starter/pro/enterprise); extract shared feature registry to prevent drift when adding new keys.",
+    "In parallel test runs (pytest-xdist loadscope) the plan-matrix toggle/reset test races other bayi tests — production API is fine but consider serializing writes in admin_plan_matrix_set or documenting that clients should refresh after write. Not a blocker."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v43_71_plan_matrix.py"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "N/A (backend-only run)"},
+  "test_credentials": "Master: MS-C02AB012652A4FE692D69676; Bayi starter: MS-TESTBAYI-STARTER-V4371; Bayi pro: MS-TESTBAYI-PRO-V4371 (all pre-seeded in db.licenses)",
+  "seed_data_creation": "None new — fixture ensure_bayi_licenses only creates via /api/admin/licenses if missing; both bayi licenses already existed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run with `pytest backend/tests/test_v43_71_plan_matrix.py -o addopts=''` to disable xdist and avoid the marketplace-toggle race between TestPlanMatrixAdmin (which mutates matrix) and TestPlanEffective::test_bayi_starter_key (which reads matrix). Test file is idempotent and calls /admin/plan-matrix/reset in session teardown.",
+  "rca of the issue": "N/A — no bugs found. v43.71 plan endpoint correctly resolves visitor→starter, master→enterprise, and bayi MS- keys → their own plan with is_master=false and license_key echoed for audit. Plan matrix writes are immediately reflected in /plan/effective via _load_plan_matrix reading db.settings. Events endpoint enforces per-license scoping via required license_key query param + _validate_license."
+}
