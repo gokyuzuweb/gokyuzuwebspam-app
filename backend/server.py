@@ -5944,13 +5944,27 @@ async def _resolve_language(explicit: Optional[str]) -> str:
 async def rules_generate(payload: AIRuleGenIn):
     settings = await db.settings.find_one({"_key": "policy"}, {"_id": 0, "_key": 0}) or PolicySettings().model_dump()
     key = os.environ.get("EMERGENT_LLM_KEY")
+    lang = await _resolve_language(payload.language)
+
+    # v43.65 — EMERGENT_LLM_KEY yoksa yerel (ücretsiz) kural üretici devreye girer.
+    # Prompt'taki anahtar kelimeleri regex pattern'lerine dönüştürür + Türkçe
+    # spam sözlüğü + score heuristikleri kullanır. LLM yok → 0 maliyet.
     if not key:
-        raise HTTPException(500, "EMERGENT_LLM_KEY yapılandırılmamış")
+        proposals = _local_rule_generator(payload.prompt, lang)
+        if not proposals:
+            raise HTTPException(502, "Yerel üretici kural çıkaramadı — prompt'a somut kelime/ifade ekleyin (örn: 'viagra, cialis, casino')")
+        await db.logs.insert_one(ActivityLog(
+            source="ai", level="info",
+            message=f"Yerel kural üretici (LLM-siz, {lang}) · '{payload.prompt[:60]}' → {len(proposals)} kural",
+        ).model_dump())
+        return {"model": "local-heuristic", "language": lang, "provider": "local",
+                "count": len(proposals), "proposals": proposals,
+                "note": "EMERGENT_LLM_KEY yok — yerel heuristic üretici kullanıldı (ücretsiz)."}
+
     model = payload.model or settings.get("ai_model", "claude-sonnet-4-5")
     if model not in AI_PROVIDER:
         raise HTTPException(400, f"Bilinmeyen model: {model}")
     provider, model_name = AI_PROVIDER[model]
-    lang = await _resolve_language(payload.language)
     system_prompt = AI_RULE_SYSTEM_TEMPLATES.get(lang, AI_RULE_SYSTEM_TEMPLATES["tr"])
     from emergentintegrations.llm.chat import LlmChat, UserMessage
     chat = (
@@ -5963,6 +5977,17 @@ async def rules_generate(payload: AIRuleGenIn):
     try:
         text = await chat.send_message(UserMessage(text=payload.prompt))
     except Exception as e:
+        # v43.65 — LLM hata verirse local fallback'e düş (kesintisiz servis)
+        log.warning("AI çağrısı başarısız, yerel fallback devreye giriyor: %s", e)
+        proposals = _local_rule_generator(payload.prompt, lang)
+        if proposals:
+            await db.logs.insert_one(ActivityLog(
+                source="ai", level="warning",
+                message=f"LLM başarısız → yerel fallback ({lang}) · '{payload.prompt[:60]}' → {len(proposals)} kural",
+            ).model_dump())
+            return {"model": "local-heuristic-fallback", "language": lang, "provider": "local",
+                    "count": len(proposals), "proposals": proposals,
+                    "note": f"LLM erişilemedi → yerel yedek kullanıldı: {str(e)[:100]}"}
         raise HTTPException(502, f"AI çağrısı başarısız: {e}")
     import json, re
     m = re.search(r'\[.*\]', text or "", re.DOTALL)
@@ -5982,12 +6007,166 @@ async def rules_generate(payload: AIRuleGenIn):
         except Exception as e:
             log.warning("rule parse err: %s", e)
     if not proposals:
-        raise HTTPException(502, "AI kural üretemedi, farklı ifadelerle tekrar deneyin")
+        # v43.65 — Parse başarısızsa local fallback
+        proposals = _local_rule_generator(payload.prompt, lang)
+        if not proposals:
+            raise HTTPException(502, "AI kural üretemedi, farklı ifadelerle tekrar deneyin")
     await db.logs.insert_one(ActivityLog(
         source="ai", level="info",
         message=f"AI kural önerisi ({model}/{lang}) · '{payload.prompt[:60]}' → {len(proposals)} kural",
     ).model_dump())
     return {"model": model, "language": lang, "provider": provider, "count": len(proposals), "proposals": proposals}
+
+
+# ============================================================================
+# v43.65 — Yerel (LLM-siz) Kural Üretici
+# ---------------------------------------------------------------------------
+# EMERGENT_LLM_KEY yok VEYA LLM erişimi başarısızsa devreye girer.
+# Prompt analizi:
+#   1. Kategori tespiti (viagra/kripto/eczane/casino/kredi/ithalat/toplu-mail)
+#   2. İlgili keyword'ler + varyasyonları (Türkçe + İngilizce)
+#   3. Regex pattern build (\b + alternation + case-insensitive)
+#   4. Score heuristic (yüksek riskli kategoriler → 8-9, orta → 5-6)
+# ============================================================================
+_RULE_CATEGORIES = {
+    "pharma": {
+        "triggers": ["viagra", "cialis", "sildenafil", "eczane", "ilaç", "hap",
+                     "pharmacy", "levitra", "kamagra", "erectile", "penis"],
+        "keywords": ["viagra", "cialis", "sildenafil", "kamagra", "levitra",
+                     "eczane", "ilaç", "hap", "pharmacy", "meds", "prescription"],
+        "score": 8.0, "name": "PHARMA_SPAM",
+        "desc_tr": "Eczane/ilaç spam kampanyalarını yakalar",
+        "desc_en": "Catches pharmacy/medication spam campaigns",
+    },
+    "crypto": {
+        "triggers": ["kripto", "crypto", "bitcoin", "btc", "ethereum", "eth",
+                     "pump", "dump", "airdrop", "nft", "web3", "cüzdan", "wallet",
+                     "investment", "yatirim", "yatırım"],
+        "keywords": ["bitcoin", "btc", "ethereum", "eth", "crypto", "kripto",
+                     "airdrop", "pump\\s*and\\s*dump", "nft", "web3", "wallet",
+                     "cüzdan", "yatırım", "investment", "trade\\s*signal"],
+        "score": 7.5, "name": "CRYPTO_INVESTMENT_SCAM",
+        "desc_tr": "Sahte kripto yatırım/pump davetlerini yakalar",
+        "desc_en": "Catches fake crypto investment / pump invitations",
+    },
+    "casino": {
+        "triggers": ["casino", "bahis", "kumar", "bet", "poker", "slot",
+                     "roulette", "gambling", "iddaa"],
+        "keywords": ["casino", "bahis", "kumar", "poker", "slot", "roulette",
+                     "gambling", "iddaa", "bet365", "sportsbook"],
+        "score": 7.0, "name": "GAMBLING_SPAM",
+        "desc_tr": "Bahis/kumar/casino tanıtım maillerini yakalar",
+        "desc_en": "Catches gambling / casino promotion emails",
+    },
+    "loan": {
+        "triggers": ["kredi", "loan", "borç", "faiz", "hızlı para",
+                     "quick cash", "instant loan", "kefil", "senetsiz"],
+        "keywords": ["kredi", "loan", "borç", "faiz", "hızlı\\s*para",
+                     "quick\\s*cash", "kefil", "senetsiz", "peşin\\s*ödeme"],
+        "score": 6.5, "name": "LOAN_SCAM",
+        "desc_tr": "Hızlı kredi/borç spam maillerini yakalar",
+        "desc_en": "Catches quick loan / debt spam emails",
+    },
+    "realestate": {
+        "triggers": ["emlak", "gayrimenkul", "real estate", "property",
+                     "kiralık", "satılık", "villa", "daire"],
+        "keywords": ["emlak", "gayrimenkul", "kiralık", "satılık", "villa",
+                     "daire", "property", "real\\s*estate", "for\\s*sale"],
+        "score": 5.5, "name": "REAL_ESTATE_SPAM",
+        "desc_tr": "Emlak ve gayrimenkul toplu ilan spam'ini yakalar",
+        "desc_en": "Catches real estate bulk listing spam",
+    },
+    "phishing": {
+        "triggers": ["phishing", "banka", "bank", "hesap", "account",
+                     "verify", "doğrulama", "şifre", "password", "otp"],
+        "keywords": ["verify\\s*your\\s*account", "hesap\\s*doğrulama",
+                     "şifre\\s*sıfırla", "reset\\s*password",
+                     "click\\s*here\\s*to\\s*verify", "confirm\\s*identity",
+                     "kimlik\\s*doğrulama", "bank(a)?\\s*bilgileri"],
+        "score": 9.0, "name": "PHISHING_ATTEMPT",
+        "desc_tr": "Kimlik avı / phishing girişimlerini yakalar",
+        "desc_en": "Catches phishing / credential theft attempts",
+    },
+    "bulk": {
+        "triggers": ["toplu", "bulk", "newsletter", "abone", "subscribe",
+                     "kampanya", "campaign", "promo", "duyuru"],
+        "keywords": ["\\btoplu\\s*mail", "bulk\\s*mail", "mass\\s*mailing",
+                     "campaign\\s*sent", "newsletter", "abonelik",
+                     "unsubscribe\\s*here"],
+        "score": 5.0, "name": "BULK_CAMPAIGN",
+        "desc_tr": "Toplu kampanya/newsletter mail örüntüsünü yakalar",
+        "desc_en": "Catches bulk campaign / newsletter patterns",
+    },
+    "adult": {
+        "triggers": ["adult", "porn", "seks", "escort", "webcam",
+                     "yetişkin", "18+"],
+        "keywords": ["adult\\s*content", "webcam", "escort", "seks",
+                     "porn", "xxx", "18\\+", "yetişkin\\s*içerik"],
+        "score": 8.5, "name": "ADULT_CONTENT",
+        "desc_tr": "Yetişkin içerik spam maillerini yakalar",
+        "desc_en": "Catches adult content spam",
+    },
+}
+
+
+def _local_rule_generator(prompt: str, lang: str) -> list:
+    """LLM-siz yerel kural üretici. Prompt'taki anahtar kelimelerden regex türetir."""
+    import re
+    p = (prompt or "").lower()
+    if not p.strip():
+        return []
+    matched_cats = []
+    for cat_id, cat in _RULE_CATEGORIES.items():
+        if any(t in p for t in cat["triggers"]):
+            matched_cats.append((cat_id, cat))
+
+    # Hiçbir kategori match etmediyse: prompt'taki kelimeleri direkt regex yap
+    proposals = []
+    if matched_cats:
+        for cat_id, cat in matched_cats[:3]:
+            kw_regex = "|".join(f"\\b{k}\\b" for k in cat["keywords"][:8])
+            pattern = f"(?i)({kw_regex})"
+            proposals.append({
+                "name": cat["name"],
+                "pattern": pattern,
+                "score": cat["score"],
+                "target": "any",
+                "description": cat["desc_en"] if lang == "en" else cat["desc_tr"],
+            })
+    else:
+        # Fallback: prompt'taki 3-5 harften uzun kelimeleri regex'e çevir
+        words = re.findall(r"[a-zA-ZğüşıöçĞÜŞİÖÇ]{3,}", p)
+        # Stop-words'ü at
+        stop = {"ile", "için", "olan", "veya", "and", "the", "for", "with",
+                "yakala", "yakalar", "spam", "mail", "email"}
+        words = [w for w in words if w not in stop][:6]
+        if not words:
+            return []
+        kw_regex = "|".join(f"\\b{re.escape(w)}\\b" for w in words)
+        pattern = f"(?i)({kw_regex})"
+        name = "CUSTOM_" + "_".join(w.upper() for w in words[:2])
+        proposals.append({
+            "name": name[:60],
+            "pattern": pattern,
+            "score": 5.5,
+            "target": "any",
+            "description": (f"Prompt anahtar kelimelerinden türetildi: {', '.join(words[:4])}"
+                           if lang != "en" else f"Derived from prompt keywords: {', '.join(words[:4])}"),
+        })
+        # Ek varyant: konu bazlı
+        proposals.append({
+            "name": name[:55] + "_SUBJ",
+            "pattern": pattern,
+            "score": 6.0,
+            "target": "subject",
+            "description": ("Yukarıdaki pattern'i sadece Konu (Subject) alanında arar (daha yüksek skor)"
+                           if lang != "en" else "Same pattern but scoped to Subject header (higher score)"),
+        })
+
+    return proposals
+
+
+
 
 
 # ----- Public i18n helper: expose supported languages + user selection -----
@@ -6193,6 +6372,43 @@ async def plugin_status(request: Request):
             "is_master": True,
         })
         return payload
+
+    # v43.65 — X-Master-Key (veya header_key) master ile eşleşmediyse,
+    # normal lisans olarak da lookup yap. Fake MS- key gönderen bir istemci
+    # authorized_ips path'inde de bulunmuyorsa demo görecek — bu doğru davranış.
+    # Ama GERÇEK bir lisans anahtarı ile gelen kullanıcı licensed görünmeli.
+    if header_key and header_key != master_key_env:
+        lic_by_key = await db.licenses.find_one(
+            {"license_key": header_key, "active": True}, {"_id": 0}
+        )
+        if lic_by_key:
+            # Revoke kontrolü
+            rev = await db.revoked_licenses.find_one(
+                {"license_key": header_key}, {"_id": 1}
+            )
+            if not rev:
+                valid_until = lic_by_key.get("valid_until") or ""
+                now_iso = datetime.now(timezone.utc).isoformat()
+                expired = valid_until and valid_until < now_iso
+                if not expired:
+                    return {
+                        "mode": PLUGIN_MODE,
+                        "installed_at": lic_by_key.get("created_at"),
+                        "is_demo": False,
+                        "demo_expires": "",
+                        "demo_days_remaining": 0,
+                        "demo_over": False,
+                        "licensed": True,
+                        "license_key": header_key,
+                        "license_expires": valid_until,
+                        "license_customer_name": lic_by_key.get("customer_name", ""),
+                        "license_plan": lic_by_key.get("plan", "starter"),
+                        "license_active": True,
+                        "license_version": int(lic_by_key.get("license_version") or 0),
+                        "gated": False,
+                        "gate_reason": "ok",
+                        "auth_method": "header_key",
+                    }
 
     # (3) Ziyaretçi IP'sini kontrol et — authorized_ips içinde mi?
     client_ip = _client_ip(request)
@@ -9060,6 +9276,32 @@ async def system_mode():
         "master_ip": os.environ.get("MASTER_IP", ""),
         "master_hostname": os.environ.get("MASTER_HOSTNAME", "gokyuzuhosting.com"),
     }
+
+
+# v43.65 — Master anahtar doğrulama endpoint'i (yazma YAPMAZ, sadece verify)
+# Kritik güvenlik fix: Frontend "Master Aktif Et" butonu artık server'a sorup
+# gerçek master olup olmadığını doğrular. Sahte MS- prefix'li anahtar artık
+# sahte master chip'i tetikleyemez.
+@api.get("/system/verify-master")
+async def verify_master(request: Request, key: str = ""):
+    """Girilen anahtarın gerçek master olup olmadığını doğrular.
+    Dönüş: {ok: bool, reason: str, client_ip?: str, expected_ip?: str}"""
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    if not master_env:
+        return {"ok": False, "reason": "no_master_configured"}
+    if not key:
+        return {"ok": False, "reason": "no_key_provided"}
+    if key != master_env:
+        return {"ok": False, "reason": "key_mismatch"}
+    # Opsiyonel: MASTER_IP set ise client_ip eşleşmeli
+    master_ip = os.environ.get("MASTER_IP", "")
+    client_ip = _client_ip(request)
+    if master_ip and client_ip and master_ip != client_ip:
+        return {
+            "ok": False, "reason": "ip_mismatch",
+            "client_ip": client_ip, "expected_ip": master_ip,
+        }
+    return {"ok": True, "reason": "verified", "client_ip": client_ip}
 
 
 class UpgradeResult(BaseModel):

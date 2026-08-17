@@ -91,7 +91,7 @@ const NAV = [
   { to: "/panel/subscription", key: "subscription", icon: Sparkles, testid: "nav-subscription", label: "Aboneliğim", group: "user" },
   // 💰 SATIŞ & ÖDEME
   { to: "/panel/pricing", key: "pricing", icon: DollarSign, testid: "nav-pricing", label: "Fiyatlandırma", sellerOnly: true, masterOnly: true, group: "sales" },
-  { to: "/panel/payments-admin", key: "payments_admin", icon: DollarSign, testid: "nav-payments-admin", label: "Ödeme Panosu", group: "sales" },
+  { to: "/panel/payments-admin", key: "payments_admin", icon: DollarSign, testid: "nav-payments-admin", label: "Ödeme Panosu", masterOnly: true, sellerOnly: true, group: "sales" },
   { to: "/panel/plan-analytics", key: "plan_analytics", icon: DollarSign, testid: "nav-plan-analytics", label: "Plan Analitiği", masterOnly: true, sellerOnly: true, group: "sales" },
   // 🔔 BİLDİRİM & RAPOR
   { to: "/panel/notifications", key: "notifications", icon: Bell, testid: "nav-notifications", label: "Bildirim Kutusu", group: "bildirim" },

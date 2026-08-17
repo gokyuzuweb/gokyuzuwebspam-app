@@ -30,6 +30,46 @@ BANK_NAME           = os.environ.get("BANK_NAME", "Ziraat Bankası")
 BANK_BENEFICIARY    = os.environ.get("BANK_BENEFICIARY", "Gökyüzü Bilgisayar Ltd. Şti.")
 
 
+# v43.66 — Master-only guard (KRİTİK GÜVENLİK FİX).
+# Ödeme admin endpoint'leri (havale onayı, inbox, sipariş listesi) SADECE
+# master IP + master key ile erişilebilmeli. Öncesinde herhangi bir ziyaretçi
+# tüm ödemeleri (isim/IBAN/tutar) görebiliyordu.
+def _client_ip(request: Request) -> str:
+    xf = request.headers.get("x-forwarded-for", "")
+    if xf:
+        return xf.split(",")[0].strip()
+    return request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+
+
+async def _require_master_payments(request: Request) -> None:
+    """Sadece MASTER_LICENSE_KEY sahibi + (opsiyonel) MASTER_IP erişebilir."""
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    master_ip = os.environ.get("MASTER_IP", "")
+    header_key = request.headers.get("x-master-key") or ""
+    cookie_key = request.cookies.get("gws_master_session") or ""
+
+    # 1) Master session cookie (valid_until içinde)?
+    if cookie_key:
+        row = await db.settings.find_one({"_key": f"master_session:{cookie_key}"}, {"_id": 0})
+        if row and row.get("valid_until", "") > datetime.now(timezone.utc).isoformat():
+            return
+
+    # 2) X-Master-Key header master_env ile eşleşiyor mu?
+    if master_env and header_key and header_key == master_env:
+        # Opsiyonel IP check
+        if master_ip:
+            cip = _client_ip(request)
+            if cip and cip != master_ip:
+                raise HTTPException(403, f"Bu işlem sadece ana yönetici sunucusundan yapılabilir (IP eşleşmedi: {cip})")
+        return
+
+    raise HTTPException(
+        403,
+        "Bu işlem sadece ana yönetici tarafından yapılabilir. "
+        "Master anahtarınızı Header'daki 'Master Aktif Et' butonuyla girin.",
+    )
+
+
 class CartItem(BaseModel):
     name: str
     price: float
@@ -222,8 +262,9 @@ async def havale_create(payload: HavaleRequest):
 
 
 @router.post("/havale/approve")
-async def havale_approve(payload: HavaleApprove):
-    """Admin havaleyi doğrulayıp aktive eder."""
+async def havale_approve(payload: HavaleApprove, request: Request):
+    """Admin havaleyi doğrulayıp aktive eder. SADECE MASTER."""
+    await _require_master_payments(request)
     r = await db.payments.find_one({"merchant_oid": payload.merchant_oid}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Sipariş bulunamadı")
@@ -241,8 +282,9 @@ async def havale_approve(payload: HavaleApprove):
 
 
 @router.post("/havale/reject")
-async def havale_reject(payload: HavaleReject):
-    """Admin havaleyi reddeder."""
+async def havale_reject(payload: HavaleReject, request: Request):
+    """Admin havaleyi reddeder. SADECE MASTER."""
+    await _require_master_payments(request)
     r = await db.payments.find_one({"merchant_oid": payload.merchant_oid}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Sipariş bulunamadı")
@@ -288,8 +330,9 @@ async def havale_notify(payload: HavaleNotify):
 
 
 @router.get("/admin/pending")
-async def admin_pending():
+async def admin_pending(request: Request):
     """Admin: onay bekleyen havaleler (notified_by_user + awaiting_transfer)."""
+    await _require_master_payments(request)
     rows = await db.payments.find(
         {"provider": "havale", "status": {"$in": ["notified_by_user", "awaiting_transfer"]}},
         {"_id": 0},
@@ -299,7 +342,8 @@ async def admin_pending():
 
 
 @router.get("/admin/inbox")
-async def admin_inbox(limit: int = 50, only_unread: bool = False):
+async def admin_inbox(request: Request, limit: int = 50, only_unread: bool = False):
+    await _require_master_payments(request)
     q: dict = {}
     if only_unread: q["read"] = False
     rows = await db.notifications_inbox.find(q, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
@@ -308,14 +352,16 @@ async def admin_inbox(limit: int = 50, only_unread: bool = False):
 
 
 @router.post("/admin/inbox/{nid}/read")
-async def admin_inbox_read(nid: str):
+async def admin_inbox_read(request: Request, nid: str):
+    await _require_master_payments(request)
     await db.notifications_inbox.update_one({"id": nid}, {"$set": {"read": True, "read_at": _iso()}})
     return {"ok": True}
 
 
 @router.get("/orders")
-async def list_orders(limit: int = 50, status: Optional[str] = None):
+async def list_orders(request: Request, limit: int = 50, status: Optional[str] = None):
     """Admin sipariş listesi."""
+    await _require_master_payments(request)
     q: dict = {}
     if status: q["status"] = status
     rows = await db.payments.find(q, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
@@ -323,7 +369,8 @@ async def list_orders(limit: int = 50, status: Optional[str] = None):
 
 
 @router.get("/order/{merchant_oid}")
-async def get_order(merchant_oid: str):
+async def get_order(request: Request, merchant_oid: str):
+    await _require_master_payments(request)
     r = await db.payments.find_one({"merchant_oid": merchant_oid}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Sipariş bulunamadı")

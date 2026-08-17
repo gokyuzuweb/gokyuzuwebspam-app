@@ -13,6 +13,43 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.66) — KRİTİK GÜVENLİK FIX: Ödeme Panosu Master-Only
+
+**KULLANICI ŞİKAYETİ (KRİTİK):**
+"Ödeme Yönetim Panosu master sunucu dışında farklı IP girince de gözüküyor — bunlar ana yöneticiye özel değil midir?"
+
+**KÖK NEDEN:**
+1. Sidebar nav'da `masterOnly: true, sellerOnly: true` flag'leri EKSİKTİ → herkese görünüyordu
+2. Backend `/api/payments/admin/*` endpoint'leri **HİÇ AUTH kontrolü** yapmıyordu — herhangi bir ziyaretçi tüm havale ödemeleri, müşteri isimleri, IBAN'lar, tutarları görüyordu
+3. PaymentsAdmin sayfası da client-side guard'sızdı — URL'ye direkt yazan görüyordu
+
+**FIX v43.66 — Defense in Depth (3 katman):**
+
+### 1. Backend Master-Only Guard (KRİTİK)
+`_require_master_payments(request)` helper eklendi routes/payments.py'ye. Guard eklenmiş endpoint'ler:
+- `GET /payments/admin/pending` · `GET /payments/admin/inbox` · `POST /payments/admin/inbox/{nid}/read`
+- `GET /payments/orders` · `GET /payments/order/{merchant_oid}`
+- `POST /payments/havale/approve` ⚠ (fake user havale onaylayabiliyordu) · `POST /payments/havale/reject`
+
+### 2. Sidebar Nav Filter (App.js:94)
+`masterOnly: true, sellerOnly: true` eklendi — payments-admin artık sidebar'da sadece master'a görünür.
+
+### 3. Client-Side Component Guard (PaymentsAdmin.js)
+useQuery ile is_master kontrolü + Master değilse "Erişim Reddedildi" ekranı + Ana sayfaya dön link.
+
+**Preview Test:**
+- NO auth → 403 ✓ · Fake key → 403 ✓ · Pro license (master değil) → 403 ✓
+- Real master + yanlış IP → 403 "IP eşleşmedi" ✓ (production'da user'ın 89.19.15.58 IP'sinden çalışır)
+
+
+## Feb 15, 2026 (Session 17, v43.65) — Local (LLM-siz) Kural Üretici + plugin/status header fallback + master verify
+
+**FIX v43.65:**
+- ✅ Yerel (ücretsiz) kural üretici: EMERGENT_LLM_KEY yoksa VEYA LLM başarısızsa devreye giren `_local_rule_generator`. 8 kategori (pharma/crypto/casino/loan/realestate/phishing/bulk/adult) + fallback keyword regex builder
+- ✅ `/api/plugin/status` X-Master-Key fallback: master değilse normal license lookup yapar → Pro/Enterprise kullanıcılar artık licensed=true görür (DEMO banner kalkar)
+- ✅ Yeni endpoint `/api/system/verify-master`: master anahtarı server-side doğrular (fake MS- key sahte master chip'i tetikleyemez)
+
+
 ## Feb 15, 2026 (Session 17, v43.64) — Ülke Tıklama Filtresi + Origin IP Reputasyon Analizi
 
 **KULLANICI İSTEĞİ:**
