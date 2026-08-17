@@ -51,8 +51,53 @@ def _slack_text_for_digest(digest: dict) -> str:
     return "\n".join(lines)
 
 
+def _discord_embed_for_digest(digest: dict) -> dict:
+    """Digest → Discord webhook payload (embed rich card)."""
+    lk = digest.get("license_key", "")[:12]
+    tb = int(digest.get("total_bounces") or 0)
+    hours = digest.get("hours", 24)
+    top_users = digest.get("top_users") or []
+    top_domains = digest.get("top_domains") or []
+    top_reasons = digest.get("top_reasons") or []
+
+    # Color: green if 0, orange if <20, red if >=20
+    color = 0x22C55E if tb == 0 else (0xF59E0B if tb < 20 else 0xEF4444)
+    fields: list = []
+    if top_users:
+        fields.append({
+            "name": "En Çok Etkilenen Kullanıcılar",
+            "value": "\n".join(f"`{u[:40]}` — **{n}**" for u, n in top_users[:5]) or "-",
+            "inline": True,
+        })
+    if top_domains:
+        fields.append({
+            "name": "Alıcı Domainler",
+            "value": "\n".join(f"`{d[:40]}` — **{n}**" for d, n in top_domains[:5]) or "-",
+            "inline": True,
+        })
+    if top_reasons:
+        fields.append({
+            "name": "En Sık Sebepler",
+            "value": "\n".join(f"• {r[:80]} — **{n}**" for r, n in top_reasons[:3]) or "-",
+            "inline": False,
+        })
+
+    return {
+        "username": "GökyüzüWebSpam",
+        "embeds": [{
+            "title": "📨 Bounce Özeti — Son {}s".format(hours),
+            "description": f"Lisans: `{lk}…`\n**Toplam Bounce/Defer/Reject:** `{tb}`"
+                           + ("" if tb else "\n:white_check_mark: Bu dönemde bounce yok."),
+            "color": color,
+            "fields": fields,
+            "footer": {"text": "GökyüzüWebSpam · Bounce Digest v43.82"},
+            "timestamp": digest.get("generated_at"),
+        }],
+    }
+
+
 async def _deliver_bounce_digest(cfg: dict, digest: dict) -> dict:
-    """Config'e göre digest'i webhook/slack üzerinden ilet. Panel modu no-op."""
+    """Config'e göre digest'i webhook/slack/discord üzerinden ilet. Panel modu no-op."""
     method = (cfg.get("delivery_method") or "panel").lower()
     result = {"method": method, "delivered": False}
     try:
@@ -76,6 +121,11 @@ async def _deliver_bounce_digest(cfg: dict, digest: dict) -> dict:
                 payload["channel"] = ch if ch.startswith("#") else f"#{ch}"
             async with httpx.AsyncClient(timeout=8) as client:
                 await client.post(cfg["slack_webhook_url"], json=payload)
+            result["delivered"] = True
+        elif method == "discord" and cfg.get("discord_webhook_url"):
+            payload = _discord_embed_for_digest(digest)
+            async with httpx.AsyncClient(timeout=8) as client:
+                await client.post(cfg["discord_webhook_url"], json=payload)
             result["delivered"] = True
     except Exception as ex:
         result["error"] = f"{type(ex).__name__}: {str(ex)[:120]}"
@@ -159,10 +209,11 @@ class DigestConfig(BaseModel):
     enabled: bool = True
     recipient_email: Optional[str] = None
     send_hour_utc: int = Field(9, ge=0, le=23)
-    delivery_method: Literal["panel", "webhook", "slack"] = "panel"
+    delivery_method: Literal["panel", "webhook", "slack", "discord"] = "panel"
     webhook_url: Optional[str] = None
     slack_webhook_url: Optional[str] = None
     slack_channel: Optional[str] = None   # opsiyonel; webhook zaten kanal tanımlı olabilir
+    discord_webhook_url: Optional[str] = None
 
 
 @router.get("/config")
@@ -180,6 +231,7 @@ async def get_config(request: Request):
         "webhook_url": doc.get("webhook_url"),
         "slack_webhook_url": doc.get("slack_webhook_url"),
         "slack_channel": doc.get("slack_channel"),
+        "discord_webhook_url": doc.get("discord_webhook_url"),
         "last_run_at": doc.get("last_run_at"),
         "last_bounces": doc.get("last_bounces", 0),
     }
@@ -278,6 +330,26 @@ async def test_slack(request: Request):
         raise HTTPException(400, "Delivery method 'slack' olarak seçilmemiş")
     if not (cfg.get("slack_webhook_url") or "").startswith("https://hooks.slack.com/"):
         raise HTTPException(400, "Geçerli bir Slack webhook URL'si gerekli (https://hooks.slack.com/services/...)")
+    d = await _generate_digest_for_license(master_key, 24)
+    result = await _deliver_bounce_digest(cfg, d)
+    return {"ok": result.get("delivered"), "test_digest": {"total_bounces": d["total_bounces"]}, **result}
+
+
+@router.post("/test-discord")
+async def test_discord(request: Request):
+    """Yapılandırılmış Discord webhook'una örnek digest embed'ini test amaçlı gönder."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli")
+    cfg = await db.settings.find_one(
+        {"_key": f"bounce_digest_config:{master_key}"}, {"_id": 0}) or {}
+    if (cfg.get("delivery_method") or "panel").lower() != "discord":
+        raise HTTPException(400, "Delivery method 'discord' olarak seçilmemiş")
+    url = (cfg.get("discord_webhook_url") or "").strip()
+    if not (url.startswith("https://discord.com/api/webhooks/")
+            or url.startswith("https://discordapp.com/api/webhooks/")
+            or url.startswith("https://ptb.discord.com/api/webhooks/")):
+        raise HTTPException(400, "Geçerli bir Discord webhook URL'si gerekli (https://discord.com/api/webhooks/...)")
     d = await _generate_digest_for_license(master_key, 24)
     result = await _deliver_bounce_digest(cfg, d)
     return {"ok": result.get("delivered"), "test_digest": {"total_bounces": d["total_bounces"]}, **result}

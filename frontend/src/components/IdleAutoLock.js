@@ -155,6 +155,29 @@ export default function IdleAutoLock() {
     return () => window.removeEventListener("storage", h);
   }, []);
 
+  // v43.82 — PIN pad klavye desteği (rakam basınca ekle, Backspace sil, Enter aç)
+  useEffect(() => {
+    if (!locked || !canUsePin) return;
+    const onKey = (e) => {
+      if (e.key >= "0" && e.key <= "9") {
+        e.preventDefault();
+        setKeyIn((v) => (v.length < 8 ? v + e.key : v));
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        setKeyIn((v) => v.slice(0, -1));
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setKeyIn("");
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (!verifying) doUnlock();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locked, canUsePin, verifying]);
+
   const doUnlock = async () => {
     const provided = keyIn.trim();
     if (!provided) {
@@ -293,10 +316,52 @@ export default function IdleAutoLock() {
             }}
             onKeyDown={(e) => e.key === "Enter" && !verifying && doUnlock()}
             placeholder={canUsePin ? "••••" : "MS-..."}
-            className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500/60 rounded-lg px-3 py-2.5 mono text-lg text-slate-100 outline-none text-center tracking-widest"
+            readOnly={canUsePin}
+            className={`w-full bg-slate-950 border border-slate-700 focus:border-amber-500/60 rounded-lg px-3 py-2.5 mono text-lg text-slate-100 outline-none text-center tracking-widest ${canUsePin ? "cursor-default select-none" : ""}`}
           />
 
-          <button
+          {canUsePin && (
+            <div data-testid="idle-lock-pinpad" className="w-full grid grid-cols-3 gap-2 mt-3">
+              {["1","2","3","4","5","6","7","8","9"].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  data-testid={`idle-lock-pin-${n}`}
+                  onClick={() => setKeyIn((v) => (v.length < 8 ? v + n : v))}
+                  className="py-3 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-100 text-xl font-semibold mono transition-colors border border-slate-700"
+                >
+                  {n}
+                </button>
+              ))}
+              <button
+                type="button"
+                data-testid="idle-lock-pin-clear"
+                onClick={() => setKeyIn("")}
+                title="Temizle"
+                className="py-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-rose-300 text-sm font-semibold transition-colors border border-slate-700"
+              >
+                ⌫ TEM
+              </button>
+              <button
+                key="0"
+                type="button"
+                data-testid="idle-lock-pin-0"
+                onClick={() => setKeyIn((v) => (v.length < 8 ? v + "0" : v))}
+                className="py-3 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-100 text-xl font-semibold mono transition-colors border border-slate-700"
+              >
+                0
+              </button>
+              <button
+                type="button"
+                data-testid="idle-lock-pin-back"
+                onClick={() => setKeyIn((v) => v.slice(0, -1))}
+                title="Sil"
+                className="py-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-300 text-sm font-semibold transition-colors border border-slate-700"
+              >
+                ← SİL
+              </button>
+            </div>
+          )}          <button
             data-testid="idle-lock-unlock-btn"
             onClick={doUnlock}
             disabled={verifying}

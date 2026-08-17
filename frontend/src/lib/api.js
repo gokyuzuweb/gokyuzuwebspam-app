@@ -647,6 +647,8 @@ export const api = {
   bounceDigestRunNow: () => client.post("/bounce-digest/run-now").then(r => r.data),
   bounceDigestHistory: () => client.get("/bounce-digest/history").then(r => r.data),
   bounceDigestTestSlack: () => client.post("/bounce-digest/test-slack").then(r => r.data),
+  bounceDigestTestDiscord: () => client.post("/bounce-digest/test-discord").then(r => r.data),
+  msWeeklyReport: () => client.post("/mailscanner/ai/quarantine-recommend/weekly-report").then(r => r.data),
   // v43.42 — Marketplace leaderboard
   mpLeaderboard: (period = "week") => client.get("/marketplace/leaderboard", { params: { period } }).then(r => r.data),
   // v43.42 — Live diagnostic

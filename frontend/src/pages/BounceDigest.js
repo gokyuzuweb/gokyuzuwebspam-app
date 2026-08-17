@@ -18,6 +18,7 @@ export default function BounceDigest() {
     enabled: true, recipient_email: "", send_hour_utc: 9,
     delivery_method: "panel", webhook_url: "",
     slack_webhook_url: "", slack_channel: "",
+    discord_webhook_url: "",
   });
   // Sync form once config loads (proper useEffect — render sırasında setState olmamalı)
   useEffect(() => {
@@ -31,6 +32,7 @@ export default function BounceDigest() {
         webhook_url: c.webhook_url || "",
         slack_webhook_url: c.slack_webhook_url || "",
         slack_channel: c.slack_channel || "",
+        discord_webhook_url: c.discord_webhook_url || "",
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -71,6 +73,14 @@ export default function BounceDigest() {
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Slack test başarısız"),
   });
+  const testDiscord = useMutation({
+    mutationFn: () => api.bounceDigestTestDiscord(),
+    onSuccess: (d) => {
+      if (d.ok) toast.success(`Discord'a test embed gönderildi (bounce: ${d.test_digest?.total_bounces ?? 0})`);
+      else toast.error(d.error || "Discord teslimi başarısız");
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Discord test başarısız"),
+  });
 
   const p = preview.data;
 
@@ -95,6 +105,14 @@ export default function BounceDigest() {
                 data-testid="bd-test-slack"
                 className="text-xs px-3 py-2 rounded bg-fuchsia-600 hover:bg-fuchsia-500 text-white disabled:opacity-40 inline-flex items-center gap-1.5"
               >🧪 {testSlack.isPending ? "Gönderiliyor…" : "Slack Test"}</button>
+            )}
+            {form.delivery_method === "discord" && (
+              <button
+                onClick={() => testDiscord.mutate()}
+                disabled={testDiscord.isPending || !form.discord_webhook_url}
+                data-testid="bd-test-discord"
+                className="text-xs px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 inline-flex items-center gap-1.5"
+              >🧪 {testDiscord.isPending ? "Gönderiliyor…" : "Discord Test"}</button>
             )}
             <button
               onClick={() => runNow.mutate()}
@@ -143,10 +161,34 @@ export default function BounceDigest() {
               className="w-full text-sm bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200"
             >
               <option value="panel">Sadece Panelde Arşivle</option>
-              <option value="webhook">Webhook (Discord/Genel HTTP)</option>
+              <option value="webhook">Webhook (Genel HTTP JSON)</option>
               <option value="slack">Slack (formatlanmış mesaj) ✨</option>
+              <option value="discord">Discord (embed kart) 💙</option>
             </select>
           </label>
+          {form.delivery_method === "discord" && (
+            <>
+              <label className="block md:col-span-2">
+                <span className="text-[11px] uppercase text-slate-500 mb-1 block flex items-center gap-1"><Webhook className="w-3 h-3"/> Discord Webhook URL</span>
+                <input
+                  type="url"
+                  value={form.discord_webhook_url}
+                  onChange={(e) => setForm({ ...form, discord_webhook_url: e.target.value })}
+                  data-testid="bd-discord-webhook"
+                  placeholder="https://discord.com/api/webhooks/…/…"
+                  className="w-full text-sm mono bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200"
+                />
+              </label>
+              <div className="md:col-span-2 rounded border border-indigo-500/25 bg-indigo-500/5 p-3 text-xs space-y-2" data-testid="bd-discord-guide">
+                <div className="font-semibold text-indigo-300 flex items-center gap-1.5">💙 Discord Embed Şablonu (v43.82)</div>
+                <ol className="text-slate-400 space-y-1 list-decimal pl-5">
+                  <li>Discord sunucusu → Kanal Ayarları → <b>Integrations</b> → <span className="mono text-emerald-300">Webhooks</span> → <b>New Webhook</b>.</li>
+                  <li>Webhook için ad + kanal seçin → <b>Copy Webhook URL</b> → yukarıya yapıştırın.</li>
+                  <li>Sağdaki <b>🧪 Discord Test</b> butonuna bas — renkli embed kart Discord kanalına düşer (0 bounce → yeşil, &lt;20 → turuncu, &gt;=20 → kırmızı).</li>
+                </ol>
+              </div>
+            </>
+          )}
           {form.delivery_method === "slack" && (
             <>
               <label className="block">

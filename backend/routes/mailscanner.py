@@ -15,6 +15,7 @@ Endpoints:
 """
 from __future__ import annotations
 import asyncio
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -1100,6 +1101,128 @@ async def _quarantine_scan_daily_loop() -> None:
             _log.exception("Quarantine daily loop crashed: %s", ex)
         # 24 saat sonra tekrar
         await asyncio.sleep(24 * 3600)
+
+
+# ============================================================================
+#  v43.82 — KARANTINA HAFTALIK RAPOR (Master email digest)
+#  Her Pazartesi 08:00 UTC master'a tüm bayilerin son 7g'deki karantina
+#  öneri sayılarını özet tablo olarak email atar.
+# ============================================================================
+async def run_quarantine_weekly_report_once() -> dict:
+    """Son 7 günde her lisans için üretilen öneri sayılarını topla + master'a mail at."""
+    from datetime import datetime, timezone, timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    # Per-license new suggestion counts (last 7 days) + top domains
+    pipeline = [
+        {"$match": {"source": "quarantine_pattern", "created_at": {"$gte": since}}},
+        {"$group": {
+            "_id": "$license_key",
+            "new_count": {"$sum": 1},
+            "top_hit": {"$max": {"$ifNull": ["$hit_count", 0]}},
+        }},
+        {"$sort": {"new_count": -1}},
+        {"$limit": 100},
+    ]
+    rows = await db.mailscanner_rule_suggestions.aggregate(pipeline).to_list(100)
+    # License -> email lookup for readable report
+    lic_emails: dict = {}
+    if rows:
+        keys = [r["_id"] for r in rows if r.get("_id")]
+        async for lic in db.licenses.find({"license_key": {"$in": keys}},
+                                           {"license_key": 1, "customer_email": 1, "email": 1}):
+            lic_emails[lic["license_key"]] = lic.get("customer_email") or lic.get("email") or "-"
+    total_new = sum(int(r.get("new_count") or 0) for r in rows)
+    active_lics = len(rows)
+
+    # Compose email
+    tbl_rows = "\n".join(
+        f"  {i+1:>2}. {r['_id'][:16]}… · {lic_emails.get(r['_id'], '-'):<40} · yeni öneri: {r['new_count']:>3} · max hit: {r.get('top_hit', 0)}"
+        for i, r in enumerate(rows[:20])
+    ) or "  (Bu hafta hiç öneri üretilmedi)"
+
+    subj = f"GökyüzüWebSpam · Karantina Haftalık Rapor · {total_new} yeni öneri"
+    body = (
+        f"Merhaba,\n\n"
+        f"Son 7 gün karantina taraması özeti:\n"
+        f"────────────────────────────────────────\n"
+        f"  Toplam yeni öneri  : {total_new}\n"
+        f"  Aktif lisans sayısı: {active_lics}\n"
+        f"  Rapor zamanı       : {_iso()[:19]} UTC\n"
+        f"────────────────────────────────────────\n\n"
+        f"BAYİ BAZLI ÖZET (top 20):\n{tbl_rows}\n\n"
+        f"────────────────────────────────────────\n"
+        f"Panelde: /panel/mailscanner → AI Öğrenme sekmesi\n"
+        f"— GökyüzüWebSpam · Otomatik Haftalık Rapor\n"
+    )
+    # Save report to audit + attempt email
+    report_id = str(uuid.uuid4())
+    saved = {
+        "id": report_id, "kind": "quarantine_weekly_report",
+        "generated_at": _iso(),
+        "total_new_suggestions": total_new,
+        "active_licenses": active_lics,
+        "top_rows": rows[:20],
+    }
+    await db.ai_training_log.insert_one(dict(saved))
+
+    email_sent = False
+    email_error = None
+    try:
+        from server import _send_email, _notify_settings
+        ns = await _notify_settings()
+        recipient = (ns.get("admin_email") or os.environ.get("ADMIN_EMAIL")
+                     or "").strip()
+        if recipient:
+            ok, _via = await _send_email(recipient, subj, body)
+            email_sent = bool(ok)
+        else:
+            email_error = "admin_email yapılandırılmamış (Notifications ayarı)"
+    except Exception as ex:
+        email_error = f"{type(ex).__name__}: {str(ex)[:120]}"
+
+    return {
+        "ok": True,
+        "report_id": report_id,
+        "total_new_suggestions": total_new,
+        "active_licenses": active_lics,
+        "email_sent": email_sent,
+        "email_error": email_error,
+        "top_rows": rows[:20],
+    }
+
+
+async def _quarantine_weekly_report_loop() -> None:
+    """Her saat başı çalışır — Pazartesi 08:00 UTC ise rapor üret+email at.
+    O gün zaten üretildiyse skip (idempotent)."""
+    import logging
+    _log = logging.getLogger("mailscanner.weeklyreport")
+    from datetime import datetime, timezone
+    # Startup delay
+    await asyncio.sleep(600)
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.weekday() == 0 and now.hour == 8:  # Pazartesi 08:00 UTC
+                today = now.strftime("%Y-%m-%d")
+                already = await db.ai_training_log.find_one({
+                    "kind": "quarantine_weekly_report",
+                    "generated_at": {"$regex": f"^{today}"},
+                })
+                if not already:
+                    r = await run_quarantine_weekly_report_once()
+                    _log.info("Weekly quarantine report generated: %s new suggestions, email=%s",
+                             r.get("total_new_suggestions"), r.get("email_sent"))
+        except Exception as ex:
+            _log.exception("Weekly report loop error: %s", ex)
+        await asyncio.sleep(3600)
+
+
+@router.post("/ai/quarantine-recommend/weekly-report")
+async def trigger_weekly_report():
+    """Master manuel tetiklemesi — rapor üret + master admin_email'e at."""
+    result = await run_quarantine_weekly_report_once()
+    return result
 
 
 # ============================================================================

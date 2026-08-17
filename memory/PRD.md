@@ -14,6 +14,68 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 18, v43.82) — PIN Pad + Discord Embed + Karantina Haftalık Rapor + Öneri Filtreleri
+
+**KULLANICI İSTEKLERİ (4 Next Action Item):**
+1. PIN Kısayolu — kilit ekranında rakam tuşları PIN pad'e dönüşsün (dokunmatik dostu)
+2. Bounce Digest Discord — Slack yanına Discord embed formatı ekle
+3. Karantina Tarama Raporu — Master için haftalık email raporu (per-bayi öneri sayısı)
+4. Öneri Filtreleri — Karantina/Öz-eğitim source + skor slider ile filtreleme
+
+**IMPLEMENTATION:**
+
+### 1. PIN Pad (IdleAutoLock.js)
+- 3x3 rakam grid (1-9) + ⌫ TEM (temizle) + 0 + ← SİL (backspace)
+- Input readonly + cursor-default (sadece PIN pad üzerinden veya klavye ile giriş)
+- Klavye desteği: rakam tuşları (0-9) auto-add, Backspace sil, Escape temizle, Enter aç
+- Amber-orange gradient "Kilidi Aç" butonu · alt yardım metni
+
+### 2. Discord Embed (bounce_digest.py + BounceDigest.js)
+- `DigestConfig.delivery_method` genişletildi: `["panel","webhook","slack","discord"]`
+- Yeni field `discord_webhook_url`
+- `_discord_embed_for_digest(digest)` — rich embed payload:
+  - Renk kodlu (yeşil 0 bounce, turuncu <20, kırmızı ≥20)
+  - Fields: Top Users (inline) + Domains (inline) + Reasons (block)
+  - Footer + timestamp
+- `_deliver_bounce_digest` discord case handling
+- Yeni endpoint `POST /bounce-digest/test-discord` (400 if method != discord, 400 if URL invalid)
+- Frontend `BounceDigest.js`: 4. dropdown option "Discord (embed kart) 💙" + discord_webhook_url input + 🧪 Discord Test butonu + kurulum şablonu
+
+### 3. Karantina Haftalık Rapor (mailscanner.py)
+- Yeni fonksiyon `run_quarantine_weekly_report_once()`:
+  - Son 7 gün `mailscanner_rule_suggestions` (source=quarantine_pattern) aggregate
+  - Per-license `new_count` + `top_hit` + email lookup
+  - Text email body: tablo formatı (top 20 bayi · license_key · email · yeni öneri · max hit)
+  - Master `admin_email`'e `_send_email` ile gönderilir (Notifications config)
+  - Rapor `ai_training_log`'a `kind: quarantine_weekly_report` olarak saklanır
+- Yeni background loop `_quarantine_weekly_report_loop()`:
+  - Pazartesi 08:00 UTC'de tetiklenir (idempotent — bugün üretildiyse skip)
+  - `server.py` startup'ta `asyncio.create_task(_quarantine_weekly_report_loop())`
+- Manuel endpoint `POST /mailscanner/ai/quarantine-recommend/weekly-report`
+
+### 4. Öneri Filtreleri (MailScanner.js LearnTab)
+- 3 filter chip: `Tümü (N)` (slate) · `🔎 Karantina (N)` (cyan) · `✨ Öz-eğitim (N)` (fuchsia)
+- Aktif chip source'a göre renklendirilir
+- **Min Skor slider** (0-6, step 0.5, amber accent) — puan değeri chip'te gösterilir
+- Bulk toolbar + "Tümünü seç" filteredItems üzerinden çalışır
+- Boş state 2 senaryo: hiç öneri yok VS filtreye uyan yok
+
+**Test edildi (tests/test_v43_82_discord_weekly.py — 5/5 pytest PASS %100):**
+- Bounce digest config `delivery_method=discord` + `discord_webhook_url` yazılabilir/okunabilir ✓
+- test-discord method != discord → 400 ✓
+- test-discord invalid URL → 400 (whitelist: discord.com/discordapp.com/ptb.discord.com) ✓
+- weekly-report seed 3 öneri → total_new_suggestions ≥ 3, top_rows'da lisans görünür ✓
+- Rapor `ai_training_log`'a `kind: quarantine_weekly_report` olarak saklanır ✓
+- Regression 40/40 hala PASS (v43.78+79+80+81) ✓
+
+**Preview smoke:**
+- Weekly report manual trigger → `{total_new_suggestions: 7, active_licenses: 2, email_sent: true, top_rows: [...]}` ✓
+- Frontend: PIN pad overlay (3x3 grid + TEM/SİL + Kilidi Aç), MailScanner filter chips + slider render + count badges ✓
+
+
+
+
+
 ## Feb 17, 2026 (Session 18, v43.81) — PIN Kilit + Bulk Ops + Otomatik Karantina Taraması + Bounce Digest Slack
 
 **KULLANICI İSTEKLERİ (4 Next Action Item birlikte):**

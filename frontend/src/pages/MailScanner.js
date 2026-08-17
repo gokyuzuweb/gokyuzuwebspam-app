@@ -732,14 +732,23 @@ function LearnTab() {
     onError: (e) => toast.error(e?.response?.data?.detail || e.message),
   });
   const items = suggs.data?.items || [];
-  const allIds = items.map((s) => s.id);
+  // v43.82 — Öneri filtreleri: source + min_score
+  const [sourceFilter, setSourceFilter] = useState("all"); // all | quarantine | selftrain
+  const [minScore, setMinScore] = useState(0);
+  const filteredItems = items.filter((s) => {
+    if (sourceFilter === "quarantine" && s.source !== "quarantine_pattern") return false;
+    if (sourceFilter === "selftrain" && s.source !== "ai_self_training") return false;
+    if ((s.score || 0) < minScore) return false;
+    return true;
+  });
+  const allIds = filteredItems.map((s) => s.id);
   const toggleSel = (id) => setSelected((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
   const toggleAll = () => setSelected((prev) => {
-    if (prev.size === items.length && items.length > 0) return new Set();
+    if (prev.size === filteredItems.length && filteredItems.length > 0) return new Set();
     return new Set(allIds);
   });
   return (
@@ -791,15 +800,53 @@ function LearnTab() {
             }
           />
           <CardBody>
-            {items.length > 0 && (
+            {/* v43.82 — Öneri filtreleri */}
+            <div data-testid="learn-filters" className="flex flex-wrap items-center gap-3 mb-3 pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-1">
+                {[
+                  { k: "all", lbl: `Tümü (${items.length})`, tone: "slate" },
+                  { k: "quarantine", lbl: `🔎 Karantina (${items.filter(i => i.source === "quarantine_pattern").length})`, tone: "cyan" },
+                  { k: "selftrain", lbl: `✨ Öz-eğitim (${items.filter(i => i.source === "ai_self_training").length})`, tone: "fuchsia" },
+                ].map((f) => {
+                  const active = sourceFilter === f.k;
+                  const activeCls = active
+                    ? (f.tone === "cyan" ? "bg-cyan-500/25 text-cyan-200 border-cyan-500/60"
+                       : f.tone === "fuchsia" ? "bg-fuchsia-500/25 text-fuchsia-200 border-fuchsia-500/60"
+                       : "bg-slate-700 text-slate-100 border-slate-500")
+                    : "bg-slate-900 text-slate-400 border-slate-700 hover:bg-slate-800";
+                  return (
+                    <button
+                      key={f.k}
+                      data-testid={`learn-filter-${f.k}`}
+                      onClick={() => setSourceFilter(f.k)}
+                      className={`text-[11px] px-2.5 py-1 rounded-md border transition-colors ${activeCls}`}
+                    >
+                      {f.lbl}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-2 ml-auto">
+                <label className="text-[10px] uppercase tracking-widest text-slate-500">Min skor</label>
+                <input
+                  type="range" min={0} max={6} step={0.5}
+                  data-testid="learn-min-score"
+                  value={minScore}
+                  onChange={(e) => setMinScore(parseFloat(e.target.value))}
+                  className="w-32 accent-amber-500"
+                />
+                <span className="text-xs mono text-amber-300 min-w-[2ch]">{minScore.toFixed(1)}</span>
+              </div>
+            </div>
+            {filteredItems.length > 0 && (
               <div data-testid="bulk-toolbar" className="flex items-center gap-2 mb-3 pb-3 border-b border-slate-800">
                 <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
                   <input type="checkbox"
                     data-testid="bulk-select-all"
-                    checked={selected.size === items.length && items.length > 0}
+                    checked={selected.size === filteredItems.length && filteredItems.length > 0}
                     onChange={toggleAll}
                     className="rounded border-slate-600 bg-slate-950" />
-                  Tümünü seç ({items.length})
+                  Tümünü seç ({filteredItems.length})
                 </label>
                 <div className="ml-auto flex items-center gap-2">
                   <button
@@ -820,7 +867,7 @@ function LearnTab() {
               </div>
             )}
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {items.map(s => {
+              {filteredItems.map(s => {
                 const isQua = s.source === "quarantine_pattern";
                 const borderCls = isQua ? "border-cyan-500/30 bg-cyan-500/5" : "border-fuchsia-500/30 bg-fuchsia-500/5";
                 const sourceLabel = isQua
@@ -873,9 +920,11 @@ function LearnTab() {
                   </div>
                 );
               })}
-              {items.length === 0 && (
+              {filteredItems.length === 0 && (
                 <div className="text-slate-500 text-center py-8 text-sm">
-                  AI önerisi yok — <span className="text-fuchsia-300">Öz-eğitim</span> veya <span className="text-cyan-300">Karantinayı Tara</span> çalıştır
+                  {items.length === 0
+                    ? <>AI önerisi yok — <span className="text-fuchsia-300">Öz-eğitim</span> veya <span className="text-cyan-300">Karantinayı Tara</span> çalıştır</>
+                    : <>Bu filtreye uyan öneri yok — filtreleri temizleyin (Tümü / min skor 0)</>}
                 </div>
               )}
             </div>
