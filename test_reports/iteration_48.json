@@ -1,0 +1,40 @@
+{
+  "summary": "v43.74 backend tests: 14/15 passed (93%). Publisher stats tiers, public reseller-branding, /r SPA route, remote-admin dispatch + history all verified. IdleLock endpoint accepts new IP fields in payload (no 422) but silently drops them — details dict never persists ip_changed/previous_ip/current_ip.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/audit/idle-lock-event",
+        "issue": "IdleLockEventIn model + handler do NOT persist ip_changed/previous_ip/current_ip fields. Client sends them, Pydantic silently ignores extra fields, and audit_logs.details still only contains {event, idle_seconds, license_key_preview}. Task spec explicitly requires these fields saved.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/marketplace/publisher/stats?license_key=MS-INVALID",
+        "issue": "Spec expected 400, but 'MS-INVALID' starts with 'MS-' so endpoint returns 200 with 0 signatures. Prefix check is not a real validation — either accept spec as ambiguous or tighten to require licenses collection existence."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v43_74_features.py",
+    "/app/test_reports/pytest/v43_74.xml"
+  ],
+  "action_items": [
+    "Fix /api/audit/idle-lock-event to accept and persist ip_changed/previous_ip/current_ip. Add fields to IdleLockEventIn (Optional[bool]/Optional[str]) and include them in audit_logs.details insert. Example: details = {'event': payload.event, 'idle_seconds': payload.idle_seconds, 'license_key_preview': lk[:16] if lk else None, 'ip_changed': payload.ip_changed, 'previous_ip': payload.previous_ip, 'current_ip': payload.current_ip}"
+  ],
+  "critical_code_review_comments": [
+    "server.py is 10621 lines — should be split into feature modules. Way above 700 line guideline.",
+    "reseller_branding.py and remote_admin.py both instantiate their own AsyncIOMotorClient instead of importing from deps.db. Marketplace.py uses deps.db. Inconsistent DB access pattern across routes.",
+    "publisher/stats tier prefix check `startswith('MS-')` is not a real license validation (unlike _validate_license used elsewhere in marketplace). MS-INVALID passes and returns bogus stats. Consider calling _validate_license or looking up licenses collection.",
+    "IdleLockEventIn missing model_config for extra='forbid' or 'allow'. Silent-drop of extra fields is a footgun (default Pydantic v2 behavior)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "93%", "frontend": "not tested"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676, MS-TESTBAYI-STARTER-V4371, MS-TESTBAYI-PRO-V4371",
+  "seed_data_creation": "Tests seed/cleanup marketplace_signatures for MS-TESTBAYI-STARTER-V4371 (6/15/30 counts), cleaned up in final test_cleanup step. No residual seed data.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_v43_74_features.py is idempotent for tier tests (deletes bayı sigs first). Only failing test is idle-lock IP fields — needs backend model + handler update in server.py around line 2221-2248.",
+  "rca of the issue": "IdleLockEventIn Pydantic model at server.py:2221-2224 only declares event/idle_seconds/license_key. When frontend POSTs {ip_changed, previous_ip, current_ip}, Pydantic v2 default drops unknown fields. Handler at line 2235-2247 also only writes fixed keys to details. Fix requires (1) adding Optional fields to model and (2) including them in details dict."
+}

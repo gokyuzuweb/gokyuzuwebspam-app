@@ -14,6 +14,67 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 17, v43.74) — Public Landing + Trusted Publisher + IP Fingerprint + Slash Command
+
+**KULLANICI İSTEKLERİ (birleşik):**
+1. Landing Public Sayfa (`/reseller/<subdomain>`) — bayı domain'i tıklayınca satın alma sayfası
+2. Marketplace Signature Publish Reward — 5+ imza → Trusted Publisher rozeti
+3. İdle Lock IP Fingerprint — kilit sonrası IP değişirse re-auth koruma
+4. Uzak Yönetim Slash Komutları — Master Threat Bell tarzı `/run health-check @bayı1`
+
+**FIX v43.74:**
+
+### 1. Public Reseller Landing
+- Yeni frontend page `pages/PublicResellerLanding.js`
+- Routes: `/r/:hostSlug` ve `/r` (query `host`)
+- Backend `/api/public/reseller-branding?host=X` public lookup (auth yok)
+- 3-tier plan showcase (Starter/Pro-Popüler/Enterprise) + primary_color themed
+- Support email + WhatsApp CTA'ları + pricing_note gösterimi
+- 404 branded fallback
+
+### 2. Trusted Publisher Sistem (Marketplace Reward)
+- Backend: `GET /api/marketplace/publisher/stats?license_key=X` — validated license → tier hesabı
+- 3 tier: `Trusted` (5+ imza, emerald), `Expert` (15+, violet), `Elite` (30+, amber)
+- Response: `{signatures_published, total_installs, total_upvotes, tier, next_tier: {label, min_signatures, remaining}, is_trusted}`
+- Frontend `components/TrustedPublisherBadge.js` — Dashboard'da 3 mod:
+  - Aktif tier → renkli banner + next tier progress bar
+  - Henüz tier yok → "X imza daha yayınla, Trusted olacaksın" progress bar
+  - Master → gizli (publisher değil)
+
+### 3. IdleLock IP Fingerprint
+- Frontend `IdleAutoLock.js` kilit anında `/api/admin/whoami`'den `client_ip` alır → `lockedFromIp`
+- Kilitliyken 10sn'de bir `whoami` çağrısı → `currentIp` değişmişse `ipChanged=true`
+- Overlay'de rose renkli warning: "IP değişti — Kilit: X → Şu an: Y"
+- Unlock'ta ip_changed=true ise ilk tıkta uyarı, ikinci tıkta onay (2-step confirm)
+- Backend `IdleLockEventIn` model'e `ip_changed/previous_ip/current_ip` field'ları eklendi
+- Unlock + ip_changed → audit_logs.severity='warning' (query kolay olsun)
+
+### 4. Slash Command Bar (Master)
+- Yeni component `components/SlashCommandBar.js` — Header'da master-only trigger button
+- Kısayol: `Ctrl+Shift+K` (Cmd+Shift+K) — mevcut command palette (Ctrl+K) ile çakışma yok
+- Grameri: `/run <command> [args] @<bayı-email-or-key>`
+  - `/run health-check @bayı1` — tek bayı
+  - `/run log exim_main 100 @bayı2` — log_tail params
+  - `/run service exim @bayı3` — service_status params
+  - `@all` → tüm bayilere (3+ hedef için confirm dialog)
+- Fuzzy matching: bayı email veya license_key prefix ile
+- Real-time preview: komut geçerli mi + hedef sayısı gösterir
+- Backend: mevcut `POST /api/remote-admin/dispatch` (bulk için sequential dispatch)
+
+**Test edildi (iteration_48.json — 14/15, iteration_49.json — 4/4 retest PASS):**
+- Publisher tier calculation (0/6/15/30 imza → doğru tier) ✓
+- Public reseller branding lookup (200 valid + 404 unknown host + 400 missing host) ✓
+- Remote admin dispatch + history ✓
+- IdleLock IP fields persistance + severity='warning' ✓
+- Publisher stats invalid license → 404 (fix'lendi) ✓
+
+**Frontend Screenshot Verified:**
+- `/r/mail.bayihosting.com` → tam markalı landing (Bayı Hosting, emerald tema, WhatsApp CTA) ✓
+- Master Dashboard: 🏆 Weekly Leaderboard banner + 🏅 Trusted Publisher rozet + Slash Command trigger (Ctrl+Shift+K) ✓
+- Slash Command modal: "/run health-check @TESTBAYI-STARTER" → ✓ komut hazır · hedef 1 bayı ✓
+
+
+
 ## Feb 15, 2026 (Session 17, v43.73) — Push Notification + Audit Trail + Custom Domain + Weekly Leaderboard + Doğru Plan Önerisi
 
 **KULLANICI İSTEKLERİ (birleşik):**

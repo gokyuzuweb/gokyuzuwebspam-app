@@ -47,6 +47,12 @@ export default function IdleAutoLock() {
   const lastRef = useRef(Date.now());
   const bumpActivity = () => { lastRef.current = Date.now(); };
 
+  // v43.74 — Kilit anında client IP'yi hatırla; unlock'ta değişmişse re-auth uyarısı
+  const [lockedFromIp, setLockedFromIp] = useState(null);
+  const [currentIp, setCurrentIp] = useState(null);
+  const [ipChanged, setIpChanged] = useState(false);
+  const [ipConfirmed, setIpConfirmed] = useState(false);
+
   // Track activity
   useEffect(() => {
     if (!enabled) return;
@@ -75,9 +81,30 @@ export default function IdleAutoLock() {
           headers: { "Content-Type": "application/json", ...(lk ? { "X-Master-Key": lk } : {}) },
           body: JSON.stringify({ event: "lock", idle_seconds: Math.floor(idle / 1000), license_key: lk || undefined }),
         }).catch(() => {});
+        // v43.74 — Client IP fingerprint (unlock'ta karşılaştırılır)
+        fetch("/api/admin/whoami", { headers: lk ? { "X-Master-Key": lk } : {} })
+          .then((r) => r.json())
+          .then((d) => setLockedFromIp(d.client_ip || null))
+          .catch(() => {});
       } catch (_) {}
     }
   }, [now, enabled, locked, lockMs]);
+
+  // v43.74 — Kilitliyken periyodik IP check (session hijack koruma)
+  useEffect(() => {
+    if (!locked || !lockedFromIp) return;
+    const check = () => {
+      fetch("/api/admin/whoami").then((r) => r.json()).then((d) => {
+        if (d.client_ip && d.client_ip !== lockedFromIp) {
+          setCurrentIp(d.client_ip);
+          setIpChanged(true);
+        }
+      }).catch(() => {});
+    };
+    check();
+    const t = setInterval(check, 10_000);
+    return () => clearInterval(t);
+  }, [locked, lockedFromIp]);
 
   // Storage event: aynı kullanıcı başka tab'da unlock ederse burada da unlock
   useEffect(() => {
@@ -109,7 +136,6 @@ export default function IdleAutoLock() {
     }
     return null;
   }
-
   const doUnlock = () => {
     const master = (typeof window !== "undefined"
       && (localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license") || "")).trim();
@@ -127,9 +153,18 @@ export default function IdleAutoLock() {
       toast.error("Anahtar mevcut oturumla eşleşmiyor");
       return;
     }
+    // v43.74 — IP değiştiyse ek onay iste
+    if (ipChanged && !ipConfirmed) {
+      toast.warning("IP adresiniz değişti — güvenlik için ek onay gerekiyor. Onaylayın ve tekrar deneyin.", { duration: 6000 });
+      setIpConfirmed(true);  // Bir sonraki tıkta geçerli olacak
+      return;
+    }
     setLocked(false);
     lastRef.current = Date.now();
     setKeyIn("");
+    setIpChanged(false);
+    setIpConfirmed(false);
+    setLockedFromIp(null);
     try { localStorage.setItem("gws.idle_unlock_at", String(Date.now())); } catch (_) {}
     toast.success("Panel kilidi açıldı");
     // v43.73 — Audit log event
@@ -137,7 +172,13 @@ export default function IdleAutoLock() {
       fetch("/api/audit/idle-lock-event", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(provided ? { "X-Master-Key": provided } : {}) },
-        body: JSON.stringify({ event: "unlock", license_key: provided }),
+        body: JSON.stringify({
+          event: "unlock",
+          license_key: provided,
+          ip_changed: ipChanged,       // v43.74
+          previous_ip: lockedFromIp,   // v43.74
+          current_ip: currentIp,       // v43.74
+        }),
       }).catch(() => {});
     } catch (_) {}
   };
@@ -157,6 +198,23 @@ export default function IdleAutoLock() {
             <b className="text-slate-200">{minutes}</b> dakika hareketsizlik nedeniyle
             güvenlik için oturumunuz kilitlendi. Devam etmek için lisans anahtarınızı girin.
           </p>
+
+          {ipChanged && (
+            <div data-testid="idle-lock-ip-warn" className="w-full mb-4 p-3 rounded-md border border-rose-500/40 bg-rose-500/10 text-left">
+              <div className="flex items-start gap-2">
+                <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                <div className="text-xs text-rose-100">
+                  <b>IP adresiniz değişti — güvenlik uyarısı</b>
+                  <div className="mono text-[10px] text-rose-300/80 mt-0.5">
+                    Kilit: {lockedFromIp || "-"} → Şu an: {currentIp || "-"}
+                  </div>
+                  {ipConfirmed
+                    ? <div className="mt-1 text-emerald-300">✓ Onaylandı — anahtarı girip tekrar tıklayın</div>
+                    : <div className="mt-1">Session hijack koruması için ek onay gerekiyor. "Kilidi Aç" butonuna 2 kere basın.</div>}
+                </div>
+              </div>
+            </div>
+          )}
 
           <label className="w-full text-left text-[11px] uppercase tracking-widest text-slate-500 mb-1">
             Lisans Anahtarınız

@@ -1,0 +1,19 @@
+{
+  "summary": "v43.74 targeted retest of the 2 fixes from iteration_48. All 4 backend tests PASSED (4/4). Fix #1: POST /api/audit/idle-lock-event with event=unlock + ip_changed=true correctly persists details.ip_changed / previous_ip / current_ip and sets severity='warning'; event=lock without ip_changed correctly yields severity='info'. Fix #2: GET /api/marketplace/publisher/stats now returns 404 with detail 'Lisans bulunamadı veya aktif değil' for MS-BOGUS-KEY-NOT-EXIST and 200 for valid MS-TESTBAYI-STARTER-V4371.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v4374_retest.py",
+    "/app/test_reports/pytest/v4374_retest.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_v4374_retest.py"],
+  "success_rate": {"backend": "100%", "frontend": "N/A"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676 (via X-Master-Key header); valid license MS-TESTBAYI-STARTER-V4371",
+  "seed_data_creation": "None. Idle-lock POST created two audit_logs entries (idle_lock_unlock warning + idle_lock_lock info) as part of test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both iteration_48 issues confirmed fixed. Note: audit logs endpoint uses header X-Master-Key (not X-License-Key) and returns {items:[...], count, summary_by_action, hours}. Use action query param to filter. v43.74 backend now 15/15 green (14 previously passing + these 2 fixes).",
+  "rca of the issue": "N/A — retest of previously fixed items; both fixes verified working."
+}

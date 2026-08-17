@@ -299,6 +299,59 @@ async def remove_signature(sig_id: str, license_key: str = Query(..., min_length
 # ============================================================================
 # 6. STATS — genel marketplace göstergeleri (Dashboard widget'ı için)
 # ============================================================================
+# v43.74 — Trusted Publisher Rozeti
+@router.get("/publisher/stats")
+async def publisher_stats(license_key: str):
+    """Bayı kendi Marketplace istatistiklerini + Trusted Publisher rozetini alır.
+    Trusted eşiği: 5+ aktif imza yayınlamış olmak."""
+    if not license_key or not license_key.startswith("MS-"):
+        raise HTTPException(400, "license_key gerekli")
+    # v43.74 — geçerli aktif lisans doğrulaması (arbitrary MS- prefix'i kabul etmesin)
+    lic = await db.licenses.find_one({"license_key": license_key, "active": True},
+                                      {"_id": 0, "license_key": 1})
+    if not lic:
+        raise HTTPException(404, "Lisans bulunamadı veya aktif değil")
+    match = {"publisher_license": license_key, "status": "active"}
+    total = await db.marketplace_signatures.count_documents(match)
+    agg = await db.marketplace_signatures.aggregate([
+        {"$match": match},
+        {"$group": {
+            "_id": None,
+            "installs": {"$sum": {"$ifNull": ["$stats.installs", 0]}},
+            "upvotes": {"$sum": {"$ifNull": ["$stats.upvotes", 0]}},
+        }},
+    ]).to_list(1)
+    installs = (agg[0].get("installs", 0) if agg else 0)
+    upvotes = (agg[0].get("upvotes", 0) if agg else 0)
+
+    # Trust levels — kademe artışı bayilerin daha çok imza yayınlamasını teşvik eder
+    TRUST_TIERS = [
+        {"tier": "trusted", "min_signatures": 5,  "label": "Trusted Publisher", "badge_color": "emerald"},
+        {"tier": "expert",  "min_signatures": 15, "label": "Expert Publisher",  "badge_color": "violet"},
+        {"tier": "elite",   "min_signatures": 30, "label": "Elite Publisher",   "badge_color": "amber"},
+    ]
+    tier = None
+    for t in TRUST_TIERS:
+        if total >= t["min_signatures"]:
+            tier = t
+    next_tier = None
+    for t in TRUST_TIERS:
+        if total < t["min_signatures"]:
+            next_tier = {**t, "remaining": t["min_signatures"] - total}
+            break
+
+    return {
+        "publisher_license": license_key,
+        "signatures_published": total,
+        "total_installs": installs,
+        "total_upvotes": upvotes,
+        "tier": tier,               # aktif tier (None = henüz Trusted olmadı)
+        "next_tier": next_tier,     # bir üstündeki hedef (kaç imza daha lazım)
+        "is_trusted": total >= 5,   # kolay bool kontrol
+        "generated_at": _iso(),
+    }
+
+
 @router.get("/stats")
 async def marketplace_stats():
     total = await db.marketplace_signatures.count_documents({"status": "active"})

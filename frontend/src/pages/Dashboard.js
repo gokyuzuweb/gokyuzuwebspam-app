@@ -26,6 +26,7 @@ import ThreatIntelTodayWidget from "@/components/ThreatIntelTodayWidget";
 import MasterAlertCenter from "@/components/MasterAlertCenter";
 import BounceDigestWidget from "@/components/BounceDigestWidget";
 import MarketplaceLeaderboardBanner from "@/components/MarketplaceLeaderboardBanner";
+import TrustedPublisherBadge from "@/components/TrustedPublisherBadge";
 import PushHealthWidget from "@/components/PushHealthWidget";
 
 const LICKEY = () => (typeof window !== "undefined"
@@ -96,6 +97,8 @@ export default function Dashboard() {
         <div className="space-y-5">
           {/* v43.73 — Marketplace Haftalık Lider (winner yoksa null) */}
           <MarketplaceLeaderboardBanner />
+          {/* v43.74 — Bayı Trusted Publisher rozeti (progress banner) */}
+          <TrustedPublisherBadge />
           {/* v43.38 — Master Alert Center (Threat Intel sync fails etc.) — null if 0 alerts */}
           <MasterAlertCenter />
           {/* v43.62 — Exim Push Sağlığı canlı göstergesi */}

@@ -2222,6 +2222,10 @@ class IdleLockEventIn(BaseModel):
     event: Literal["lock", "unlock"]
     idle_seconds: Optional[int] = None
     license_key: Optional[str] = None  # aktif oturumun lisansı (label için)
+    # v43.74 — IP fingerprint (session hijack koruma)
+    ip_changed: Optional[bool] = None
+    previous_ip: Optional[str] = None
+    current_ip: Optional[str] = None
 
 
 @api.post("/audit/idle-lock-event")
@@ -2232,15 +2236,22 @@ async def audit_idle_lock_event(payload: IdleLockEventIn, request: Request):
     lk = (payload.license_key or request.headers.get("x-master-key") or "").strip()
     master_env = os.environ.get("MASTER_LICENSE_KEY", "")
     label = "master" if lk == master_env else (lk[:24] if lk else "anonymous")
+    # v43.74 — unlock + ip_changed → warning severity (audit sorgusu kolay olsun)
+    severity = "warning" if (payload.event == "unlock" and payload.ip_changed) else "info"
     await db.audit_logs.insert_one({
         "id": str(uuid.uuid4()),
         "action": f"idle_lock_{payload.event}",
         "actor_ip": _client_ip(request),
         "actor_label": label,
+        "severity": severity,
         "details": {
             "event": payload.event,
             "idle_seconds": payload.idle_seconds,
             "license_key_preview": lk[:16] if lk else None,
+            # v43.74 — IP fingerprint sinyalleri
+            "ip_changed": payload.ip_changed,
+            "previous_ip": payload.previous_ip,
+            "current_ip": payload.current_ip,
         },
         "ts": _iso(),
         "at": _iso(),

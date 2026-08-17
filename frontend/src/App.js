@@ -65,6 +65,7 @@ import AuditLog from "@/pages/AuditLog";
 import SmtpSettings from "@/pages/SmtpSettings";
 import RemoteAdmin from "@/pages/RemoteAdmin";
 import ResellerBranding from "@/pages/ResellerBranding";
+import PublicResellerLanding from "@/pages/PublicResellerLanding";
 import MasterOnlyGuard from "@/components/MasterOnlyGuard";
 import PlanFeatureGuard, { usePlanFeatures } from "@/components/PlanFeatureGuard";
 import IdleAutoLock from "@/components/IdleAutoLock";
@@ -566,6 +567,8 @@ export default function App() {
             <Route path="/shop" element={<Shop />} />
             <Route path="/checkout/success" element={<CheckoutSuccess />} />
             <Route path="/reseller" element={<Reseller />} />
+            <Route path="/r/:hostSlug" element={<PublicResellerLanding />} />
+            <Route path="/r" element={<PublicResellerLanding />} />
             <Route path="/install" element={<PublicInstall />} />
             <Route path="/panel/*" element={<><Shell /><LicenseGate /></>} />
             {/* Legacy redirects — old panel URLs → /panel */}

@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { Clock, RefreshCw, Search, Sparkles, KeyRound, ShieldCheck, DownloadCloud } from "lucide-react";
 import { toast } from "sonner";
 import ThreatAlertBell from "@/components/ThreatAlertBell";
+import SlashCommandBar from "@/components/SlashCommandBar";
 import { ImpersonatePicker } from "@/components/Impersonate";
 
 /**
@@ -191,6 +192,7 @@ function HeaderMain({ title }) {
           <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
         </button>
         <ImpersonatePicker />
+        <SlashCommandBar />
         <ThreatAlertBell />
         <div data-testid="engine-status" className="flex items-center gap-2 text-xs">
           <span className="relative inline-flex w-2 h-2">
