@@ -1152,6 +1152,7 @@ async def run_quarantine_weekly_report_once() -> dict:
         f"────────────────────────────────────────\n\n"
         f"BAYİ BAZLI ÖZET (top 20):\n{tbl_rows}\n\n"
         f"────────────────────────────────────────\n"
+        f"PDF eki: grafikli tam özet raporunu ekte bulabilirsiniz.\n"
         f"Panelde: /panel/mailscanner → AI Öğrenme sekmesi\n"
         f"— GökyüzüWebSpam · Otomatik Haftalık Rapor\n"
     )
@@ -1166,6 +1167,13 @@ async def run_quarantine_weekly_report_once() -> dict:
     }
     await db.ai_training_log.insert_one(dict(saved))
 
+    # v43.83 — PDF eki oluştur
+    pdf_bytes = None
+    try:
+        pdf_bytes = _build_weekly_report_pdf(total_new, active_lics, rows[:20], lic_emails)
+    except Exception:
+        pdf_bytes = None
+
     email_sent = False
     email_error = None
     try:
@@ -1174,7 +1182,18 @@ async def run_quarantine_weekly_report_once() -> dict:
         recipient = (ns.get("admin_email") or os.environ.get("ADMIN_EMAIL")
                      or "").strip()
         if recipient:
-            ok, _via = await _send_email(recipient, subj, body)
+            attachments = None
+            if pdf_bytes:
+                attachments = [{
+                    "filename": f"gokyuzu-quarantine-report-{_iso()[:10]}.pdf",
+                    "content": pdf_bytes,
+                    "mime": "application/pdf",
+                }]
+            try:
+                ok, _via = await _send_email(recipient, subj, body, attachments=attachments)
+            except TypeError:
+                # Backward compat: _send_email attachments param'ını desteklemiyorsa
+                ok, _via = await _send_email(recipient, subj, body)
             email_sent = bool(ok)
         else:
             email_error = "admin_email yapılandırılmamış (Notifications ayarı)"
@@ -1188,8 +1207,113 @@ async def run_quarantine_weekly_report_once() -> dict:
         "active_licenses": active_lics,
         "email_sent": email_sent,
         "email_error": email_error,
+        "pdf_attached": bool(pdf_bytes),
+        "pdf_size_bytes": len(pdf_bytes) if pdf_bytes else 0,
         "top_rows": rows[:20],
     }
+
+
+def _build_weekly_report_pdf(total_new: int, active_lics: int,
+                              top_rows: list, lic_emails: dict) -> bytes:
+    """ReportLab ile 1-sayfa PDF özet — başlık + KPI + top bayilerin bar grafiği + tablo."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib.colors import HexColor
+    from reportlab.pdfgen import canvas
+    from reportlab.platypus import Table, TableStyle
+    from reportlab.lib import colors as _rc
+
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    W, H = A4
+
+    # Header band
+    c.setFillColor(HexColor("#0f172a"))
+    c.rect(0, H - 3.5 * cm, W, 3.5 * cm, fill=True, stroke=False)
+    c.setFillColor(HexColor("#a5b4fc"))
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(2 * cm, H - 1.7 * cm, "GökyüzüWebSpam · Karantina Haftalık Rapor")
+    c.setFillColor(HexColor("#94a3b8"))
+    c.setFont("Helvetica", 9)
+    c.drawString(2 * cm, H - 2.4 * cm, f"Rapor tarihi: {_iso()[:19]} UTC · Son 7 gün · GökyüzüWebSpam v43.83")
+
+    # KPI cards
+    c.setFillColor(HexColor("#1e293b"))
+    for i, (label, value, col) in enumerate([
+        ("YENİ ÖNERİ", str(total_new), "#f43f5e"),
+        ("AKTİF BAYİ", str(active_lics), "#10b981"),
+        ("KAPSAM", "7 gün", "#8b5cf6"),
+    ]):
+        x = 2 * cm + i * 5.7 * cm
+        y = H - 6 * cm
+        c.setFillColor(HexColor("#1e293b"))
+        c.roundRect(x, y, 5.3 * cm, 1.9 * cm, 6, fill=True, stroke=False)
+        c.setFillColor(HexColor("#94a3b8"))
+        c.setFont("Helvetica", 7)
+        c.drawString(x + 0.4 * cm, y + 1.4 * cm, label)
+        c.setFillColor(HexColor(col))
+        c.setFont("Helvetica-Bold", 20)
+        c.drawString(x + 0.4 * cm, y + 0.5 * cm, value)
+
+    # Bar chart — top 8 licenses
+    top_chart = top_rows[:8]
+    if top_chart:
+        chart_x = 2 * cm
+        chart_y = H - 13.5 * cm
+        chart_w = W - 4 * cm
+        chart_h = 5.5 * cm
+        max_v = max(int(r.get("new_count") or 0) for r in top_chart) or 1
+        bar_w = chart_w / (len(top_chart) * 1.6)
+        c.setFillColor(HexColor("#94a3b8"))
+        c.setFont("Helvetica", 8)
+        c.drawString(chart_x, chart_y + chart_h + 0.4 * cm, "TOP LİSANS — YENİ ÖNERİ")
+        c.setStrokeColor(HexColor("#334155"))
+        c.line(chart_x, chart_y, chart_x + chart_w, chart_y)
+        for i, r in enumerate(top_chart):
+            v = int(r.get("new_count") or 0)
+            bh = (v / max_v) * (chart_h - 0.6 * cm)
+            bx = chart_x + i * (bar_w * 1.6) + 0.2 * cm
+            c.setFillColor(HexColor("#6366f1"))
+            c.roundRect(bx, chart_y, bar_w, bh, 3, fill=True, stroke=False)
+            c.setFillColor(HexColor("#e2e8f0"))
+            c.setFont("Helvetica-Bold", 8)
+            c.drawCentredString(bx + bar_w / 2, chart_y + bh + 0.1 * cm, str(v))
+            c.setFillColor(HexColor("#94a3b8"))
+            c.setFont("Helvetica", 6)
+            lk = (r.get("_id") or "")[:10] + "…"
+            c.drawCentredString(bx + bar_w / 2, chart_y - 0.4 * cm, lk)
+
+    # Table — top 15 rows
+    data = [["#", "Lisans", "Email", "Yeni", "Max Hit"]]
+    for i, r in enumerate(top_rows[:15]):
+        lk = (r.get("_id") or "")[:20]
+        em = (lic_emails.get(r.get("_id", ""), "-") or "-")[:34]
+        data.append([str(i + 1), lk, em, str(r.get("new_count", 0)), str(r.get("top_hit", 0))])
+    tbl = Table(data, colWidths=[0.9 * cm, 4.7 * cm, 6.5 * cm, 1.8 * cm, 2.1 * cm])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), HexColor("#1e293b")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), HexColor("#a5b4fc")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (3, 0), (4, -1), "RIGHT"),
+        ("GRID", (0, 0), (-1, -1), 0.25, HexColor("#334155")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [HexColor("#0f172a"), HexColor("#111827")]),
+        ("TEXTCOLOR", (0, 1), (-1, -1), _rc.white),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    tbl_h = tbl.wrap(W - 4 * cm, 15 * cm)[1]
+    tbl.drawOn(c, 2 * cm, 2 * cm)
+
+    c.setFillColor(HexColor("#64748b"))
+    c.setFont("Helvetica-Oblique", 7)
+    c.drawString(2 * cm, 1 * cm, "GökyüzüWebSpam · Otomatik haftalık rapor · gizli, sadece master için")
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
 
 
 async def _quarantine_weekly_report_loop() -> None:
@@ -1223,6 +1347,36 @@ async def trigger_weekly_report():
     """Master manuel tetiklemesi — rapor üret + master admin_email'e at."""
     result = await run_quarantine_weekly_report_once()
     return result
+
+
+@router.get("/ai/quarantine-recommend/weekly-report.pdf")
+async def download_weekly_report_pdf():
+    """Son 7 gün karantina raporunu PDF olarak indir."""
+    from fastapi.responses import Response
+    from datetime import datetime, timezone, timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    pipeline = [
+        {"$match": {"source": "quarantine_pattern", "created_at": {"$gte": since}}},
+        {"$group": {"_id": "$license_key",
+                     "new_count": {"$sum": 1},
+                     "top_hit": {"$max": {"$ifNull": ["$hit_count", 0]}}}},
+        {"$sort": {"new_count": -1}}, {"$limit": 100},
+    ]
+    rows = await db.mailscanner_rule_suggestions.aggregate(pipeline).to_list(100)
+    lic_emails: dict = {}
+    if rows:
+        keys = [r["_id"] for r in rows if r.get("_id")]
+        async for lic in db.licenses.find({"license_key": {"$in": keys}},
+                                           {"license_key": 1, "customer_email": 1, "email": 1}):
+            lic_emails[lic["license_key"]] = lic.get("customer_email") or lic.get("email") or "-"
+    total_new = sum(int(r.get("new_count") or 0) for r in rows)
+    pdf_bytes = _build_weekly_report_pdf(total_new, len(rows), rows[:20], lic_emails)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition":
+                 f'attachment; filename="gokyuzu-quarantine-weekly-{_iso()[:10]}.pdf"'},
+    )
 
 
 # ============================================================================

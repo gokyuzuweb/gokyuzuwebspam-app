@@ -735,10 +735,23 @@ function LearnTab() {
   // v43.82 — Öneri filtreleri: source + min_score
   const [sourceFilter, setSourceFilter] = useState("all"); // all | quarantine | selftrain
   const [minScore, setMinScore] = useState(0);
+  // v43.83 — Öneri arama
+  const [searchQ, setSearchQ] = useState("");
   const filteredItems = items.filter((s) => {
     if (sourceFilter === "quarantine" && s.source !== "quarantine_pattern") return false;
     if (sourceFilter === "selftrain" && s.source !== "ai_self_training") return false;
     if ((s.score || 0) < minScore) return false;
+    const q = searchQ.trim().toLowerCase();
+    if (q) {
+      const hay = [
+        s.name || "",
+        s.pattern || "",
+        s.description || "",
+        s.target || "",
+        ...(Array.isArray(s.sample_subjects) ? s.sample_subjects : []),
+      ].join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
   const allIds = filteredItems.map((s) => s.id);
@@ -827,6 +840,14 @@ function LearnTab() {
                 })}
               </div>
               <div className="flex items-center gap-2 ml-auto">
+                <input
+                  type="search"
+                  placeholder="🔍 Ara (pattern/konu/açıklama)…"
+                  data-testid="learn-search"
+                  value={searchQ}
+                  onChange={(e) => setSearchQ(e.target.value)}
+                  className="text-[11px] bg-slate-950 border border-slate-800 focus:border-indigo-500/60 rounded-md px-2.5 py-1 w-52 mono text-slate-200 outline-none"
+                />
                 <label className="text-[10px] uppercase tracking-widest text-slate-500">Min skor</label>
                 <input
                   type="range" min={0} max={6} step={0.5}

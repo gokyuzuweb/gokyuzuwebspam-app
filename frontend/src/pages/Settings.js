@@ -85,18 +85,20 @@ function IdleLockPersonalCard() {
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [currentPin, setCurrentPin] = useState("");
+  const [theme, setTheme] = useState("dark");  // v43.83
   useEffect(() => {
     if (q.data) {
       setEnabled(!!q.data.enabled);
       setMinutes(Number(q.data.minutes || 15));
       setWarnSec(Number(q.data.warn_seconds || 30));
+      setTheme(q.data.theme || "dark");
     }
   }, [q.data]);
   const hasPin = q.data?.has_pin;
   const owner = q.data?.owner || "";
 
   const saveSettings = useMutation({
-    mutationFn: () => api.idleLockMeSet({ enabled, minutes, warn_seconds: warnSec }),
+    mutationFn: () => api.idleLockMeSet({ enabled, minutes, warn_seconds: warnSec, theme }),
     onSuccess: () => {
       toast.success("Kişisel kilit ayarı kaydedildi");
       qc.invalidateQueries({ queryKey: ["idle-lock-me"] });
@@ -161,6 +163,16 @@ function IdleLockPersonalCard() {
             data-testid="idle-lock-me-warn"
             onChange={(e) => setWarnSec(Math.max(0, Math.min(300, parseInt(e.target.value || "30", 10))))}
             className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right" />
+        </Row>
+        <Row title="Kilit ekranı teması" hint="Karanlık / Aydınlık / Kırmızı-Alarm (yüksek dikkat)" testid="row-me-theme">
+          <select value={theme}
+            data-testid="idle-lock-me-theme"
+            onChange={(e) => setTheme(e.target.value)}
+            className="w-40 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm text-slate-200">
+            <option value="dark">🌙 Karanlık (varsayılan)</option>
+            <option value="light">☀️ Aydınlık</option>
+            <option value="alarm">🚨 Kırmızı-Alarm</option>
+          </select>
         </Row>
         <button
           data-testid="idle-lock-me-save"

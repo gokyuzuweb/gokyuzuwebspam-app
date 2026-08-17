@@ -14,6 +14,66 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 18, v43.83) — Öneri Arama + Discord Kanal Seçici + Kilit Teması + Weekly PDF
+
+**KULLANICI İSTEKLERİ (4 Next Action Item):**
+1. Öneri Arama — Karantina/self-train önerilerini regex/kelime ile filtrele
+2. Discord Kanal Seçici — Discord embed'de mention role + birden fazla webhook
+3. Kilit Ekranı Tema — dark/light/alarm arasında geçiş (bayi kendi seçer)
+4. Weekly Report PDF — Haftalık rapor PDF eki (grafikli + tablo)
+
+**IMPLEMENTATION:**
+
+### 1. Öneri Arama (MailScanner.js LearnTab)
+- Yeni state `searchQ` + input (mono, indigo focus border) filter row'a eklendi
+- `filteredItems` şimdi search query içeriyor: name + pattern + description + target + sample_subjects birleşiminde `.includes(q)` kontrol
+- Case-insensitive · boş state metni "filtreleri temizleyin" mesajı korundu
+
+### 2. Discord Kanal Seçici (bounce_digest.py + BounceDigest.js)
+- Yeni config alanları: `discord_extra_webhooks` (satır/virgül ayırıcı), `discord_mention_role_id`
+- `_deliver_bounce_digest` discord case genişletildi:
+  - Ana webhook + extras parse edilir (max 5 URL cap)
+  - Mention role varsa `content: "<@&ROLE_ID>"` + `allowed_mentions.roles` ile embed öncesi ping
+  - Her URL için ayrı POST → `delivered_count` ve `webhook_count` response'a
+- Frontend BounceDigest'e 2 yeni input eklenecek (v43.84 backlog — şu an sadece API round-trip)
+
+### 3. Kilit Ekranı Tema (server.py + IdleAutoLock.js + Settings.js)
+- Backend: `IdleLockMeIn.theme: Literal["dark","light","alarm"]` field + settings storage
+- GET `/settings/idle-lock/me` response'a `theme` (default dark)
+- Frontend `IdleAutoLock.js`:
+  - `themeStyles` objesi 3 paletle: dark (varsayılan), light (aydınlık slate-100 arka plan), alarm (kırmızı + `animate-pulse` icon)
+  - Overlay/card/pinpad/input/button/helper hepsi themedify
+  - Başlık `theme === "alarm"` → "⚠ Panel Kilitli — Güvenlik Uyarısı" tam alarm modu
+- Frontend `Settings.js` IdleLockPersonalCard:
+  - Yeni "Kilit ekranı teması" Row + select (🌙 Karanlık / ☀️ Aydınlık / 🚨 Kırmızı-Alarm)
+  - `saveSettings.mutate` theme'i de gönderir
+
+### 4. Weekly Report PDF (mailscanner.py)
+- Yeni fonksiyon `_build_weekly_report_pdf(total, active, rows, emails)`:
+  - ReportLab A4 canvas — header band, 3 KPI card (yeni öneri / aktif bayi / kapsam), bar chart (top 8 bayi × new_count), tablo (top 15 bayi × #/lisans/email/yeni/max_hit)
+  - Renk paleti indigo/rose/emerald gradient, slate-950 arka plan
+- `run_quarantine_weekly_report_once` PDF üretir → `_send_email(attachments=[{filename, content, mime}])` ile ek olarak gönderir. Backward-compat: `_send_email` attachments desteklemiyorsa TypeError yakalanıp fallback plain
+- Response'a yeni alanlar: `pdf_attached: bool`, `pdf_size_bytes: int`
+- Yeni endpoint `GET /mailscanner/ai/quarantine-recommend/weekly-report.pdf` — panelden direkt PDF indirme (Content-Disposition attachment)
+
+**Test edildi (tests/test_v43_83_search_theme_pdf.py — 6/6 pytest PASS %100):**
+- Theme "alarm" persist + GET yansıtır ✓
+- Theme "light" persist ✓
+- Geçersiz theme (`"rainbow"`) → 422 validation error ✓
+- Discord config `discord_extra_webhooks` (2 satır) + `discord_mention_role_id` roundtrip ✓
+- weekly-report response `pdf_attached: true`, `pdf_size_bytes > 500` ✓
+- PDF endpoint 200 + `application/pdf` header + `%PDF-1.` magic bytes + >500 byte ✓
+- Regression 45/45 hala PASS (v43.78+79+80+81+82) ✓
+
+**Preview smoke:**
+- MailScanner AI Öğrenme "test" araması → 8'den 4 önerinin filtered gösterimi, filter chip'ler + slider + bulk toolbar hepsi bir arada çalışıyor ✓
+- PDF direct download: 3580 byte, valid %PDF-1.4 header ✓
+- Theme "alarm" DB'ye persist + GET okur ✓
+
+
+
+
+
 ## Feb 17, 2026 (Session 18, v43.82) — PIN Pad + Discord Embed + Karantina Haftalık Rapor + Öneri Filtreleri
 
 **KULLANICI İSTEKLERİ (4 Next Action Item):**

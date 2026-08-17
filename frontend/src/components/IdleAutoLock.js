@@ -47,6 +47,7 @@ export default function IdleAutoLock() {
   const minutes = Math.max(1, Math.min(1440, cfg.data?.minutes ?? 15));
   const warnSec = Math.max(0, Math.min(300, cfg.data?.warn_seconds ?? 30));
   const hasPin = Boolean(cfg.data?.has_pin);
+  const theme = cfg.data?.theme || "dark";   // v43.83 — dark|light|alarm
   const lockMs = minutes * 60_000;
 
   const [now, setNow] = useState(Date.now());
@@ -266,19 +267,69 @@ export default function IdleAutoLock() {
 
   if (!enabled || !locked) return warningChip;
 
+  // v43.83 — Tema paletleri
+  const themeStyles = {
+    dark: {
+      backdrop: "backdrop-blur-md bg-slate-950/85",
+      card: "border-slate-700/60 bg-gradient-to-br from-slate-900 to-slate-950",
+      iconWrap: "bg-amber-500/15 border-amber-500/40",
+      icon: "text-amber-400",
+      title: "text-slate-100",
+      subtitle: "text-slate-400",
+      pinBtn: "bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-100 border-slate-700",
+      pinAux: "bg-slate-900 hover:bg-slate-800 text-amber-300 border-slate-700",
+      pinClear: "bg-slate-900 hover:bg-slate-800 text-rose-300 border-slate-700",
+      input: "bg-slate-950 border-slate-700 focus:border-amber-500/60 text-slate-100",
+      unlockBtn: "from-amber-500 to-orange-500 hover:shadow-amber-500/30 text-white",
+      helper: "text-slate-500",
+    },
+    light: {
+      backdrop: "backdrop-blur-md bg-slate-100/85",
+      card: "border-slate-300 bg-gradient-to-br from-white to-slate-100",
+      iconWrap: "bg-amber-100 border-amber-300",
+      icon: "text-amber-600",
+      title: "text-slate-900",
+      subtitle: "text-slate-600",
+      pinBtn: "bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-900 border-slate-300",
+      pinAux: "bg-slate-50 hover:bg-slate-100 text-amber-700 border-slate-300",
+      pinClear: "bg-slate-50 hover:bg-slate-100 text-rose-600 border-slate-300",
+      input: "bg-white border-slate-300 focus:border-amber-500 text-slate-900",
+      unlockBtn: "from-amber-500 to-orange-500 hover:shadow-amber-500/30 text-white",
+      helper: "text-slate-500",
+    },
+    alarm: {
+      backdrop: "backdrop-blur-md bg-rose-950/90",
+      card: "border-rose-500/60 bg-gradient-to-br from-rose-950 to-slate-950 shadow-rose-500/20",
+      iconWrap: "bg-rose-500/20 border-rose-500/60 animate-pulse",
+      icon: "text-rose-300",
+      title: "text-rose-100",
+      subtitle: "text-rose-200/80",
+      pinBtn: "bg-rose-900/40 hover:bg-rose-800/40 active:bg-rose-700/40 text-rose-100 border-rose-700/40",
+      pinAux: "bg-rose-950 hover:bg-rose-900 text-amber-300 border-rose-700/40",
+      pinClear: "bg-rose-950 hover:bg-rose-900 text-rose-300 border-rose-700/40",
+      input: "bg-rose-950 border-rose-700/60 focus:border-rose-400 text-rose-100",
+      unlockBtn: "from-rose-500 to-orange-500 hover:shadow-rose-500/50 text-white",
+      helper: "text-rose-300/70",
+    },
+  };
+  const ts = themeStyles[theme] || themeStyles.dark;
+
   return (
     <div
       data-testid="idle-lock-overlay"
-      className="fixed inset-0 z-[9999] flex items-center justify-center backdrop-blur-md bg-slate-950/85"
+      data-theme={theme}
+      className={`fixed inset-0 z-[9999] flex items-center justify-center ${ts.backdrop}`}
     >
-      <div className="w-full max-w-md mx-6 rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-900 to-slate-950 shadow-2xl shadow-slate-950/60 p-8">
+      <div className={`w-full max-w-md mx-6 rounded-2xl border shadow-2xl shadow-slate-950/60 p-8 ${ts.card}`}>
         <div className="flex flex-col items-center text-center">
-          <div className="w-16 h-16 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center mb-4">
-            <Lock className="w-8 h-8 text-amber-400" />
+          <div className={`w-16 h-16 rounded-full border flex items-center justify-center mb-4 ${ts.iconWrap}`}>
+            <Lock className={`w-8 h-8 ${ts.icon}`} />
           </div>
-          <h1 className="text-slate-100 text-xl font-semibold mb-1">Panel Kilitlendi</h1>
-          <p className="text-slate-400 text-sm mb-6">
-            <b className="text-slate-200">{minutes}</b> dakika hareketsizlik nedeniyle
+          <h1 className={`text-xl font-semibold mb-1 ${ts.title}`}>
+            {theme === "alarm" ? "⚠ Panel Kilitli — Güvenlik Uyarısı" : "Panel Kilitlendi"}
+          </h1>
+          <p className={`text-sm mb-6 ${ts.subtitle}`}>
+            <b className={ts.title}>{minutes}</b> dakika hareketsizlik nedeniyle
             güvenlik için oturumunuz kilitlendi. Devam etmek için {canUsePin ? "PIN kodunuzu" : "lisans anahtarınızı"} girin.
           </p>
 
@@ -299,7 +350,7 @@ export default function IdleAutoLock() {
             </div>
           )}
 
-          <label className="w-full text-left text-[11px] uppercase tracking-widest text-slate-500 mb-1">
+          <label className={`w-full text-left text-[11px] uppercase tracking-widest mb-1 ${ts.helper}`}>
             {canUsePin ? "PIN Kodunuz" : "Lisans Anahtarınız"}
           </label>
           <input
@@ -317,7 +368,7 @@ export default function IdleAutoLock() {
             onKeyDown={(e) => e.key === "Enter" && !verifying && doUnlock()}
             placeholder={canUsePin ? "••••" : "MS-..."}
             readOnly={canUsePin}
-            className={`w-full bg-slate-950 border border-slate-700 focus:border-amber-500/60 rounded-lg px-3 py-2.5 mono text-lg text-slate-100 outline-none text-center tracking-widest ${canUsePin ? "cursor-default select-none" : ""}`}
+            className={`w-full border rounded-lg px-3 py-2.5 mono text-lg outline-none text-center tracking-widest ${ts.input} ${canUsePin ? "cursor-default select-none" : ""}`}
           />
 
           {canUsePin && (
@@ -328,7 +379,7 @@ export default function IdleAutoLock() {
                   type="button"
                   data-testid={`idle-lock-pin-${n}`}
                   onClick={() => setKeyIn((v) => (v.length < 8 ? v + n : v))}
-                  className="py-3 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-100 text-xl font-semibold mono transition-colors border border-slate-700"
+                  className={`py-3 rounded-lg text-xl font-semibold mono transition-colors border ${ts.pinBtn}`}
                 >
                   {n}
                 </button>
@@ -338,7 +389,7 @@ export default function IdleAutoLock() {
                 data-testid="idle-lock-pin-clear"
                 onClick={() => setKeyIn("")}
                 title="Temizle"
-                className="py-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-rose-300 text-sm font-semibold transition-colors border border-slate-700"
+                className={`py-3 rounded-lg text-sm font-semibold transition-colors border ${ts.pinClear}`}
               >
                 ⌫ TEM
               </button>
@@ -356,22 +407,23 @@ export default function IdleAutoLock() {
                 data-testid="idle-lock-pin-back"
                 onClick={() => setKeyIn((v) => v.slice(0, -1))}
                 title="Sil"
-                className="py-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-300 text-sm font-semibold transition-colors border border-slate-700"
+                className={`py-3 rounded-lg text-sm font-semibold transition-colors border ${ts.pinAux}`}
               >
                 ← SİL
               </button>
             </div>
-          )}          <button
+          )}
+          <button
             data-testid="idle-lock-unlock-btn"
             onClick={doUnlock}
             disabled={verifying}
-            className="mt-4 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white font-semibold text-sm hover:shadow-lg hover:shadow-amber-500/30 transition-all disabled:opacity-60"
+            className={`mt-4 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r font-semibold text-sm hover:shadow-lg transition-all disabled:opacity-60 ${ts.unlockBtn}`}
           >
             <Unlock className="w-4 h-4" /> {verifying ? "Doğrulanıyor…" : "Kilidi Aç"}
           </button>
 
-          <div className="mt-5 flex items-start gap-2 text-[11px] text-slate-500">
-            <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
+          <div className={`mt-5 flex items-start gap-2 text-[11px] ${ts.helper}`}>
+            <ShieldAlert className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${ts.icon}`} />
             <span>
               {canUsePin
                 ? <>PIN'inizi <b>Ayarlar → Otomatik Kilit</b>'ten değiştirebilirsiniz. 5 yanlış denemede 5dk kilit uygulanır.</>

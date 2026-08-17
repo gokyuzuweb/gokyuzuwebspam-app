@@ -2263,6 +2263,8 @@ class IdleLockMeIn(BaseModel):
     enabled: Optional[bool] = None
     minutes: Optional[int] = Field(None, ge=1, le=1440)
     warn_seconds: Optional[int] = Field(None, ge=0, le=300)
+    # v43.83 — Kilit ekranı teması
+    theme: Optional[Literal["dark", "light", "alarm"]] = None
     # PIN yönetimi
     new_pin: Optional[str] = Field(None, pattern=r"^\d{4,8}$")   # 4-8 haneli sayı
     current_pin: Optional[str] = Field(None, pattern=r"^\d{4,8}$")  # PIN değişiminde mevcut PIN
@@ -2293,6 +2295,7 @@ async def settings_idle_lock_me_get(request: Request,
         "minutes": int(minutes),
         "warn_seconds": int(warn_seconds),
         "has_pin": bool(user_doc.get("pin_hash")),
+        "theme": user_doc.get("theme") or "dark",   # v43.83
         "source": "user" if user_doc else "global",
         "owner": owner if owner != "__master__" else "master",
     }
@@ -2314,6 +2317,8 @@ async def settings_idle_lock_me_set(payload: IdleLockMeIn, request: Request,
         update["minutes"] = int(payload.minutes)
     if payload.warn_seconds is not None:
         update["warn_seconds"] = int(payload.warn_seconds)
+    if payload.theme is not None:
+        update["theme"] = payload.theme   # v43.83
     # PIN yönetimi
     if payload.clear_pin:
         # Mevcut PIN varsa current_pin gerekli

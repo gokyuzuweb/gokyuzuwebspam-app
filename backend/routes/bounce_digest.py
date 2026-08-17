@@ -124,9 +124,30 @@ async def _deliver_bounce_digest(cfg: dict, digest: dict) -> dict:
             result["delivered"] = True
         elif method == "discord" and cfg.get("discord_webhook_url"):
             payload = _discord_embed_for_digest(digest)
+            # v43.83 — Mention role: <@&ROLE_ID> as content prefix
+            mention_role = (cfg.get("discord_mention_role_id") or "").strip()
+            if mention_role and mention_role.isdigit():
+                payload["content"] = f"<@&{mention_role}>"
+                payload["allowed_mentions"] = {"roles": [mention_role]}
+            # Ana webhook + ekstra webhooks (satır/virgül ayraç)
+            urls = [cfg["discord_webhook_url"].strip()]
+            extras = (cfg.get("discord_extra_webhooks") or "").strip()
+            if extras:
+                for u in extras.replace(",", "\n").split("\n"):
+                    u = u.strip()
+                    if u and u not in urls:
+                        urls.append(u)
+            delivered_count = 0
             async with httpx.AsyncClient(timeout=8) as client:
-                await client.post(cfg["discord_webhook_url"], json=payload)
-            result["delivered"] = True
+                for u in urls[:5]:  # cap 5 webhook
+                    try:
+                        await client.post(u, json=payload)
+                        delivered_count += 1
+                    except Exception:
+                        pass
+            result["delivered"] = delivered_count > 0
+            result["delivered_count"] = delivered_count
+            result["webhook_count"] = len(urls)
     except Exception as ex:
         result["error"] = f"{type(ex).__name__}: {str(ex)[:120]}"
     return result
@@ -214,6 +235,9 @@ class DigestConfig(BaseModel):
     slack_webhook_url: Optional[str] = None
     slack_channel: Optional[str] = None   # opsiyonel; webhook zaten kanal tanımlı olabilir
     discord_webhook_url: Optional[str] = None
+    # v43.83 — Discord: birden fazla webhook (satır/virgül) + mention role
+    discord_extra_webhooks: Optional[str] = None
+    discord_mention_role_id: Optional[str] = None   # örn: 12345 → @Rol pinglenir
 
 
 @router.get("/config")
@@ -232,6 +256,8 @@ async def get_config(request: Request):
         "slack_webhook_url": doc.get("slack_webhook_url"),
         "slack_channel": doc.get("slack_channel"),
         "discord_webhook_url": doc.get("discord_webhook_url"),
+        "discord_extra_webhooks": doc.get("discord_extra_webhooks"),
+        "discord_mention_role_id": doc.get("discord_mention_role_id"),
         "last_run_at": doc.get("last_run_at"),
         "last_bounces": doc.get("last_bounces", 0),
     }
