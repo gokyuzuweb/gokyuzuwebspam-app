@@ -100,6 +100,7 @@ async def list_signatures(
     q: Optional[str] = None,
     category: Optional[str] = None,
     sort: Literal["hot", "new", "top", "installed"] = "hot",
+    trusted_only: bool = False,  # v43.77 — sadece Trusted+ yayıncılar
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
@@ -108,6 +109,7 @@ async def list_signatures(
     - new: published_at DESC
     - top: installs DESC
     - installed: sadece install edilmiş olanlar
+    - trusted_only: 5+ aktif imza yayınlamış yayıncıların imzaları (kalite güvence)
     """
     match: dict = {"status": "active"}
     if q:
@@ -118,6 +120,20 @@ async def list_signatures(
         ]
     if category:
         match["category"] = category
+
+    # v43.77 — Trusted-only filter: önce 5+ imza yayınlamış license listesini bul
+    if trusted_only:
+        trusted_pipeline = [
+            {"$match": {"status": "active"}},
+            {"$group": {"_id": "$publisher_license", "n": {"$sum": 1}}},
+            {"$match": {"n": {"$gte": 5}}},
+            {"$project": {"_id": 1}},
+        ]
+        trusted_licenses = [r["_id"] async for r in db.marketplace_signatures.aggregate(trusted_pipeline)]
+        if not trusted_licenses:
+            return {"items": [], "total": 0, "offset": offset, "limit": limit,
+                    "trusted_only": True, "trusted_publishers": 0}
+        match["publisher_license"] = {"$in": trusted_licenses}
 
     # Sort key
     if sort == "new":

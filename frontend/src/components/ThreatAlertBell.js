@@ -70,6 +70,15 @@ function alertMeta(a) {
       linkTitle: "Ödeme Panosuna git",
     };
   }
+  // v43.77 — Plan yükseltme tamamlandı
+  if (type === "plan_upgraded") {
+    return {
+      Icon: CheckCircle2,
+      iconCls: "text-emerald-400",
+      linkHref: "/panel/payments-admin",
+      linkTitle: "Ödemeye git",
+    };
+  }
   // Reseller-based threat (default)
   const rid = a?.reseller_id ? `?rid=${encodeURIComponent(a.reseller_id)}` : "";
   return {
@@ -113,6 +122,15 @@ export default function ThreatAlertBell() {
 
   const items = q.data?.items || [];
   const unseen = q.data?.unseen_count || 0;
+
+  // v43.77 — Yeni pending_approval alert gelirse Dashboard widget'ını anında yenile
+  useEffect(() => {
+    if (!items.length) return;
+    const hasFreshApproval = items.slice(0, 3).some((a) => a.type === "pending_approval" && !a.seen);
+    if (hasFreshApproval) {
+      qc.invalidateQueries({ queryKey: ["pending-approvals-summary"] });
+    }
+  }, [items, qc]);
 
   // Yeni unseen geldiğinde toast
   useEffect(() => {

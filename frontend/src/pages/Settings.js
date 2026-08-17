@@ -4,6 +4,7 @@ import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Language
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import StripeConfigCard from "@/components/StripeConfigCard";
+import SlashAliasesConfigCard from "@/components/SlashAliasesConfigCard";
 import { api } from "@/lib/api";
 import { useI18n, useT } from "@/i18n";
 
@@ -371,6 +372,9 @@ export default function SettingsPage() {
 
         {/* v43.72 — İdle Auto-Lock master ayarı */}
         <IdleLockConfigCard />
+
+        {/* v43.77 — Slash Command Aliases */}
+        <SlashAliasesConfigCard />
       </div>
 
       <div className="col-span-12 lg:col-span-4 space-y-4">

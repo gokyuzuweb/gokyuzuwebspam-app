@@ -567,6 +567,12 @@ export const api = {
   msSuggestionReject: (licenseKey, id) =>
     client.post(`/mailscanner/ai/self-train/reject/${id}`, null, { params: { license_key: licenseKey } }).then(r => r.data),
 
+  // Karantina Kalıp Taraması (v43.79) — lokal, LLM-siz kural önerisi üretici
+  msQuarantineRecommend: (licenseKey, days = 7, minHits = 3) =>
+    client.post("/mailscanner/ai/quarantine-recommend/run", null, {
+      params: { license_key: licenseKey, days, min_hits: minHits },
+    }).then(r => r.data),
+
   // Docs Media upload
   docsMediaList: (moduleKey = null) =>
     client.get("/mailscanner/docs/media", { params: moduleKey ? { module_key: moduleKey } : {} }).then(r => r.data),

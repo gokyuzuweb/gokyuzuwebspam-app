@@ -114,11 +114,35 @@ export default function SlashCommandBar() {
   });
   const bayilervMap = (bayilervQ.data?.items || []).reduce((acc, b) => ({ ...acc, [b.license_key]: b }), {});
 
+  // v43.77 — Slash aliases (macro) — master özel kısayollar
+  const aliasesQ = useQuery({
+    queryKey: ["slash-aliases"],
+    queryFn: () => client.get("/slash-aliases").then(r => r.data),
+    enabled: isMaster && open,
+    staleTime: 60_000,
+  });
+  const aliases = aliasesQ.data?.items || [];
+
   // v43.75 — Autocomplete listesi: /run <partial>  → command önerileri
   // "@" başlarsa bayı isim önerileri gösterir
+  // v43.77 — /aliasname yazınca alias önerileri (macro)
   const suggestions = (() => {
     const s = input.trim();
-    if (!s || !s.toLowerCase().startsWith("/run")) return [];
+    if (!s) return [];
+    // ALIAS mode: /xxx (non-/run)
+    if (s.startsWith("/") && !s.toLowerCase().startsWith("/run")) {
+      const needle = s.slice(1).toLowerCase().split(/\s/)[0];
+      const matches = aliases.filter((a) => !needle || a.name.startsWith(needle)).slice(0, 6);
+      if (matches.length === 0) return [];
+      return matches.map((a) => ({
+        type: "alias",
+        key: a.name,
+        label: `/${a.name}`,
+        hint: a.description || a.expansion,
+        insert: a.expansion + " ",
+      }));
+    }
+    if (!s.toLowerCase().startsWith("/run")) return [];
     const rest = s.slice(4).trim().toLowerCase();
     // Bayı suggestions (@ ile başlıyorsa)
     const atMatch = rest.match(/@(\S*)$/);
@@ -328,8 +352,10 @@ export default function SlashCommandBar() {
                     }`}
                   >
                     <span className={`text-[10px] mono px-1.5 py-0.5 rounded ${
-                      s.type === "cmd" ? "bg-indigo-500/20 text-indigo-300" : "bg-emerald-500/20 text-emerald-300"
-                    }`}>{s.type === "cmd" ? "CMD" : "BAYI"}</span>
+                      s.type === "cmd" ? "bg-indigo-500/20 text-indigo-300" :
+                      s.type === "alias" ? "bg-fuchsia-500/20 text-fuchsia-300" :
+                      "bg-emerald-500/20 text-emerald-300"
+                    }`}>{s.type === "cmd" ? "CMD" : s.type === "alias" ? "MACRO" : "BAYI"}</span>
                     <div className="flex-1 min-w-0">
                       <div className="mono text-sm truncate">{s.label}</div>
                       <div className="text-[11px] text-slate-500 truncate">{s.hint}</div>

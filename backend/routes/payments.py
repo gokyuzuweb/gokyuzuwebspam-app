@@ -5,7 +5,7 @@ Türkiye ödeme geçidi entegrasyonu.
 - Havale: IBAN göster + admin manuel onay
 """
 from __future__ import annotations
-import os, uuid, base64, hmac, hashlib, json
+import os, uuid, base64, hmac, hashlib, json, re
 from datetime import datetime, timezone
 from typing import Optional
 from decimal import Decimal
@@ -283,7 +283,11 @@ async def havale_create(payload: HavaleRequest):
 
 @router.post("/havale/approve")
 async def havale_approve(payload: HavaleApprove, request: Request):
-    """Admin havaleyi doğrulayıp aktive eder. SADECE MASTER."""
+    """Admin havaleyi doğrulayıp aktive eder + bayı planını otomatik yükseltir. SADECE MASTER.
+
+    v43.77 — Payment.plan alanına göre license.plan otomatik update edilir.
+    subscription_expires_at → yıllık ise +365g, aksi +30g eklenir (cycle order'da varsa).
+    """
     await _require_master_payments(request)
     # v43.69 — Audit log
     try:
@@ -295,9 +299,10 @@ async def havale_approve(payload: HavaleApprove, request: Request):
     r = await db.payments.find_one({"merchant_oid": payload.merchant_oid}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Sipariş bulunamadı")
+    now = _iso()
     await db.payments.update_one(
         {"merchant_oid": payload.merchant_oid},
-        {"$set": {"status": "paid", "paid_at": _iso(),
+        {"$set": {"status": "paid", "paid_at": now,
                   "admin_note": payload.admin_note, "approved_by": "master"}},
     )
     # Bildirimi kapat
@@ -305,7 +310,86 @@ async def havale_approve(payload: HavaleApprove, request: Request):
         {"kind": "havale_notified", "merchant_oid": payload.merchant_oid, "read": False},
         {"$set": {"read": True, "read_at": _iso()}},
     )
-    return {"ok": True, "merchant_oid": payload.merchant_oid, "status": "paid"}
+
+    # v43.77 — Bayı lisansını istenen plana otomatik yükselt
+    upgrade_result: dict = {"upgraded": False}
+    plan_wanted = (r.get("plan") or "").lower().strip()
+    email = (r.get("email") or "").strip().lower()
+    cycle = (r.get("cycle") or r.get("billing_cycle") or "monthly").lower()
+    if plan_wanted in {"starter", "pro", "enterprise"} and email:
+        # Yeni expiration date: yıllık +365g, aksi +30g
+        from datetime import datetime, timezone, timedelta
+        days = 365 if cycle in {"yearly", "annual", "12m"} else 30
+        # Case-insensitive email match
+        lic = await db.licenses.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}, "active": True},
+                                          {"_id": 0, "license_key": 1, "plan": 1, "subscription_expires_at": 1})
+        if lic:
+            old_plan = lic.get("plan") or "starter"
+            # v43.78 — Mid-cycle upgrade: max(now, current_expires) + N days (kalan gün kaybolmasın)
+            base_dt = datetime.now(timezone.utc)
+            cur_exp = lic.get("subscription_expires_at")
+            if cur_exp:
+                try:
+                    cur_dt = datetime.fromisoformat(cur_exp.replace("Z", "+00:00"))
+                    if cur_dt.tzinfo is None:
+                        cur_dt = cur_dt.replace(tzinfo=timezone.utc)
+                    if cur_dt > base_dt:
+                        base_dt = cur_dt  # kalan süreyi koru
+                except Exception:
+                    pass
+            new_expires = (base_dt + timedelta(days=days)).isoformat()
+            upd = await db.licenses.update_one(
+                {"license_key": lic["license_key"]},
+                {"$set": {
+                    "plan": plan_wanted,
+                    "subscription_expires_at": new_expires,
+                    "last_upgrade_at": now,
+                    "last_upgrade_from": old_plan,
+                    "last_upgrade_merchant_oid": payload.merchant_oid,
+                }},
+            )
+            upgrade_result = {
+                "upgraded": upd.modified_count > 0,
+                "license_key": lic["license_key"],
+                "from_plan": old_plan,
+                "to_plan": plan_wanted,
+                "expires_at": new_expires,
+                "cycle": cycle,
+            }
+            # Master alert: upgrade completed
+            await db.master_alerts.insert_one({
+                "id": str(uuid.uuid4()),
+                "type": "plan_upgraded",
+                "severity": "info",
+                "license_key": lic["license_key"],
+                "message": f"✅ {email} · {old_plan} → {plan_wanted} · {payload.merchant_oid}",
+                "details": {**upgrade_result, "email": email, "amount": r.get("amount")},
+                "seen": False, "read": False,
+                "created_at": now,
+            })
+            # Bayı inbox: sürpriz onay bildirimi
+            await db.notifications_inbox.insert_one({
+                "id": str(uuid.uuid4()), "kind": "upgrade_completed",
+                "license_key": lic["license_key"],
+                "email": email,
+                "merchant_oid": payload.merchant_oid,
+                "old_plan": old_plan, "new_plan": plan_wanted,
+                "expires_at": new_expires,
+                "message": f"🎉 Ödemeniz onaylandı. Planınız {plan_wanted.upper()} olarak yükseltildi.",
+                "read": False,
+                "created_at": now,
+            })
+        else:
+            upgrade_result = {
+                "upgraded": False,
+                "reason": f"Aktif lisans bulunamadı (email={email})",
+            }
+    return {
+        "ok": True,
+        "merchant_oid": payload.merchant_oid,
+        "status": "paid",
+        "upgrade": upgrade_result,   # frontend'e detay
+    }
 
 
 @router.post("/havale/reject")

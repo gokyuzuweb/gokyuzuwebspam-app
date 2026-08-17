@@ -14,6 +14,107 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 17, v43.79) — Karantina Kalıp Taraması (AI Kural Önerileri from Quarantine)
+
+**P2 GÖREV TAMAMLANDI:** MailScanner should actively suggest rules based on quarantine patterns.
+
+**IMPLEMENTATION:**
+
+### Backend
+- Yeni fonksiyon `routes/mailscanner.py::run_quarantine_pattern_scan(license_key, days, min_hits)`:
+  - Son N gün `db.quarantine` (owner_license_key izole) kayıtlarını çeker (max 2000)
+  - 3 boyutta pattern extraction:
+    1. **Sender domain** (from-addr'ın domain kısmı) — `@domain\.tld$` regex
+    2. **Sender TLD** (yaygın legit TLD'ler skip: com/net/org/tr/edu/gov) — `@[^ ]+\.tld$` regex
+    3. **Subject keyword** (Turkish/English stopwords filter, min 4 char, non-digit) — `\bkeyword\b` regex
+  - Filtre kriterleri: hits >= min_hits (default 3), TLD/keyword için spam ratio >= %15/%20
+  - Score formula: `min(6.0, 3.5 + (hits/10) * weight)` — cap 6.0
+  - Duplicate önleme: mevcut `mailscanner_rules` ve `mailscanner_rule_suggestions.applied=false` pattern set kontrolü
+  - Her öneriye `source: "quarantine_pattern"`, `sub_source: sender_domain|sender_tld|subject_keyword`, `hit_count`, `days`, `sample_subjects: [max 3]` alanları eklenir
+  - Audit: `ai_training_log` içine `kind: quarantine_pattern_scan`
+- Yeni endpoint `POST /api/mailscanner/ai/quarantine-recommend/run?license_key=X&days=7&min_hits=3`
+- Turkish + English stopwords listesi (`_TR_STOPWORDS`)
+
+### Frontend
+- `pages/MailScanner.js` `LearnTab` genişletildi:
+  - AI Kural Önerileri kartına yeni cyan buton `🔎 Karantinayı Tara` (data-testid `quarantine-scan-run`)
+  - Öneri kartları source'a göre renklendirildi: `quarantine_pattern` → cyan border, `ai_self_training` → fuchsia border
+  - Yeni "Karantina · Gönderen Domain / TLD / Konu Kelimesi" source label chip
+  - Hit count badge (`170 HIT`) score badge yanında
+  - `sample_subjects` italik olarak alt kısımda gösterilir
+  - Boş state metni güncellendi: "Öz-eğitim veya Karantinayı Tara çalıştır"
+- `lib/api.js` yeni method: `msQuarantineRecommend(licenseKey, days, minHits)`
+
+**Test edildi (tests/test_v43_79_quarantine_pattern.py — 6/6 pytest PASS %100):**
+- Boş quarantine → scanned=0 graceful ✓
+- 20 doc seed → domain suggestion (hit_count=20, sender target, sample_subjects list) ✓
+- Idempotency: re-run → suggested=0, skipped_existing≥1 ✓
+- Tenant isolation: LIC_B'nin taraması LIC_A verisi görmüyor ✓
+- Onayla → mailscanner_rules'a taşınır, applied=true ✓
+- min_hits=50 filter → 5 doc için 0 öneri ✓
+- v43.78 regression: 19/19 hala geçiyor ✓
+
+**Frontend Screenshot Verified:**
+- MailScanner AI Öğrenme tab: 🔎 Karantinayı Tara butonu görünür, mevcut 4 karantina önerisi (170 HIT test kw, 106 HIT example.com, 60 HIT evil.example, 3 HIT a.com) doğru render + sample subjects görünür ✓
+
+
+
+## Feb 15, 2026 (Session 17, v43.78) — Security Center Tenant İzolasyon + Auto-Upgrade + Slash Aliases + Marketplace Filter
+
+**KULLANICI İSTEKLERİ (birleşik):**
+1. Onay Bekleyen WebSocket Push (yakın-realtime yaklaşımla)
+2. Havale Onay Tek Tık (Dashboard widget'ta ✓ Onayla butonu)
+3. Slash Command Aliases (macro)
+4. Marketplace Tier Filter (sadece Trusted+)
+5. **KRİTİK**: Yükseltme onaylanınca bayi'nin planı otomatik yükselsin
+6. **KRİTİK**: Güvenlik Merkezi master ile bayi bağımsız çalışsın (country_rules tenant izole)
+
+**FIX v43.78:**
+
+### 1. Yakın-Realtime Pending Approvals
+- `PendingApprovalsWidget.js` — refetchInterval 30s → 10s + `refetchOnWindowFocus: true`
+- `ThreatAlertBell.js` — yeni `pending_approval` alert geldiğinde `pending-approvals-summary` query'sini invalidate eder (anında refresh)
+
+### 2. Havale Onay Tek Tık + Auto-Upgrade
+- Widget her havale satırında `✓ Onayla` butonu (havale+awaiting statülerinde)
+- `POST /api/payments/havale/approve` **ARTIK**:
+  - Payment.plan alanına göre bayi lisansının `plan` field'ını otomatik günceller (starter→pro, pro→enterprise, vs.)
+  - `subscription_expires_at`: mid-cycle upgrade'de kalan gün korunur (`max(now, current_expires) + days`); yıllık ödemede +365g, aylık +30g
+  - `master_alerts` type=`plan_upgraded` (ThreatBell'de emerald CheckCircle icon)
+  - `notifications_inbox` bayi'ye "🎉 Ödemeniz onaylandı. Planınız PRO oldu" bildirimi
+  - Response'ta `upgrade:{upgraded, from_plan, to_plan, license_key, expires_at, cycle}` döner (widget toast bunu gösterir)
+
+### 3. Slash Command Aliases (Macro)
+- Backend `/api/slash-aliases` GET/POST/DELETE (master-only, name regex `^[a-z0-9_-]{2,32}$`)
+- Frontend `SlashCommandBar.js` — `/xxx` (non-/run) yazılınca fuchsia MACRO chip'li öneriler; seçilince expansion input'a yerleşir
+- Settings sayfasına `SlashAliasesConfigCard` — master aliaslarını CRUD
+
+### 4. Marketplace Trusted+ Filter
+- Backend `/api/marketplace/signatures?trusted_only=true` — önce 5+ imzalı publisher licenselarını bulur, sonra sadece onların imzalarını döner
+- Frontend Marketplace sayfasına `🏅 Sadece Trusted+` toggle butonu (emerald)
+
+### 5. Security Center Tenant İzolasyon (KRİTİK)
+- `country_rules` koleksiyonuna `owner_license_key` field'ı eklendi
+- Master → `__master__` sentinel scope; Bayi → kendi license_key'i
+- GET/POST/POST-bulk/DELETE endpoint'leri `_tenant_scope` kullanır
+- Master'ın kuralları bayilerv'e görünmez; bayi kuralları master'a görünmez
+- Bayi security_config plan feature'ı yoksa → 403
+- Unique constraint `(country_code, owner_license_key)` (case yeni pattern)
+- `tenant.py::resolve_tenant_scope` step 3 X-Master-Key header'ından da bayi lookup yapabiliyor (query license_key değil sadece)
+
+**Test edildi (iteration_52.json — 19/19 pytest PASS %100):**
+- Country rules tenant isolation (master/pro/starter arası veri sızıntısı YOK) ✓
+- Starter security_config 403 gate ✓
+- DELETE cross-tenant safe (pro bayı master'ın kuralını silemez) ✓
+- Havale approve auto-upgrade starter→pro + expires + master_alert ✓
+- Slash aliases master-only CRUD ✓
+- Marketplace trusted_only filter ✓
+
+**Mid-Cycle Upgrade Fix (testing agent önerisi)**:
+- Kalan süreyi kaybetmemek için `max(now, current_expires) + days` uygulandı
+
+
+
 ## Feb 15, 2026 (Session 17, v43.76) — Pending Approvals + Flood Grouping + Slash History + Marketplace Tiers
 
 **KULLANICI İSTEKLERİ (birleşik):**

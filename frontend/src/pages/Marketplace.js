@@ -26,12 +26,13 @@ export default function Marketplace() {
   const [sort, setSort] = useState("hot");
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("");
+  const [trustedOnly, setTrustedOnly] = useState(false);   // v43.77 — Trusted+ filter
   const [selected, setSelected] = useState(null);
 
   const stats = useQuery({ queryKey: ["mp-stats"], queryFn: api.mpStats, refetchInterval: 30_000 });
   const list = useQuery({
-    queryKey: ["mp-list", { q, category, sort }],
-    queryFn: () => api.mpSignatures({ q, category, sort, limit: 30 }),
+    queryKey: ["mp-list", { q, category, sort, trustedOnly }],
+    queryFn: () => api.mpSignatures({ q, category, sort, trusted_only: trustedOnly || undefined, limit: 30 }),
   });
 
   const seed = useMutation({
@@ -131,6 +132,18 @@ export default function Marketplace() {
               {Object.entries(CAT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
             <div className="flex items-center gap-1 ml-auto">
+              {/* v43.77 — Trusted+ yayıncı filtresi */}
+              <button
+                data-testid="mp-filter-trusted"
+                onClick={() => setTrustedOnly((v) => !v)}
+                title="Sadece 5+ aktif imzalı Trusted+ yayıncılar (kalite güvence)"
+                className={`text-[11px] px-2 py-1 rounded border transition-colors ${
+                  trustedOnly ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
+                  : "border-slate-800 text-slate-500 hover:text-emerald-300 hover:border-emerald-500/30"
+                }`}
+              >
+                🏅 Sadece Trusted+
+              </button>
               {["hot", "new", "top"].map((s) => (
                 <button
                   key={s}

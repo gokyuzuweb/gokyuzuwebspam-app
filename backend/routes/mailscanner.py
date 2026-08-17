@@ -715,6 +715,270 @@ async def reject_suggestion(suggestion_id: str, license_key: str = Query(..., mi
 
 
 # ============================================================================
+#  KARANTİNA KALIP TARAMA — Gerçek quarantine kayıtlarından pattern öğrenmek
+#  ve regex kural önerisi çıkarmak. (LLM'siz — yerel istatistik + heuristik)
+# ============================================================================
+_TR_STOPWORDS = {
+    "için","ile","olan","olarak","daha","çok","gibi","kadar","sonra","önce",
+    "bir","bu","şu","ne","var","yok","evet","hayır","tamam","the","and","for",
+    "you","your","our","this","that","from","with","have","are","was","will",
+    "com","www","http","https","mail","email","posta","hakkında","merhaba",
+    "sayın","değerli","müşteri","kullanıcı","fatura","siparişiniz","bilgi",
+    "please","dear","hello","hi","re","fw","fwd","tr","tur","türkiye",
+}
+
+
+def _extract_domain(addr: str) -> str:
+    """From: 'ali@bad.tld' → 'bad.tld' (lowercase). None/boş → ''."""
+    if not addr:
+        return ""
+    s = str(addr).strip().lower()
+    if "@" in s:
+        s = s.rsplit("@", 1)[-1]
+    # Strip trailing punct
+    s = s.strip("<>., \t\n\r")
+    return s
+
+
+def _extract_tld(domain: str) -> str:
+    """'foo.co.uk' → 'co.uk' fallback 'uk'. Basit son 1-2 label."""
+    if not domain or "." not in domain:
+        return ""
+    parts = domain.split(".")
+    # 2ci-seviye çift TLD'ler
+    if len(parts) >= 3 and parts[-2] in {"co", "com", "org", "net", "gov", "edu"} and len(parts[-1]) == 2:
+        return ".".join(parts[-2:])
+    return parts[-1]
+
+
+def _re_escape_domain(d: str) -> str:
+    import re
+    return re.escape(d)
+
+
+async def run_quarantine_pattern_scan(
+    license_key: str,
+    days: int = 7,
+    min_hits: int = 3,
+    max_suggestions: int = 10,
+) -> dict:
+    """Son N gündeki quarantine kayıtlarını analiz eder.
+    Üç boyutta pattern çıkarır: (1) sender domain, (2) sender TLD, (3) subject keyword.
+    Yeterli tekrar (>=min_hits) eden ve halihazırda kural yazılmamış patternler için
+    mailscanner_rule_suggestions'a öneri ekler.
+    Response: {scanned, patterns_found, suggested, skipped_existing, top_domains, top_tlds, top_keywords}
+    """
+    import re
+    from collections import Counter
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    # Sadece bu license'ın quarantine kayıtları — tenant scope
+    q_filter = {
+        "owner_license_key": license_key,
+        "received_at": {"$gte": since},
+    }
+    docs = await db.quarantine.find(
+        q_filter, {"_id": 0, "sender": 1, "subject": 1, "sender_ip": 1, "verdict": 1}
+    ).limit(2000).to_list(2000)
+
+    scanned = len(docs)
+    if scanned == 0:
+        return {
+            "scanned": 0, "patterns_found": 0, "suggested": 0,
+            "skipped_existing": 0, "top_domains": [], "top_tlds": [], "top_keywords": [],
+            "days": days, "min_hits": min_hits,
+        }
+
+    # Aggregate patterns
+    domain_ctr: Counter = Counter()
+    tld_ctr: Counter = Counter()
+    kw_ctr: Counter = Counter()
+    domain_samples: dict = {}  # domain → [sample subjects]
+    kw_samples: dict = {}
+
+    for d in docs:
+        sender = d.get("sender") or ""
+        subj = d.get("subject") or ""
+        dom = _extract_domain(sender)
+        if dom:
+            domain_ctr[dom] += 1
+            domain_samples.setdefault(dom, [])
+            if len(domain_samples[dom]) < 3 and subj:
+                domain_samples[dom].append(subj)
+            tld = _extract_tld(dom)
+            if tld and len(tld) >= 2 and len(tld) <= 6:
+                tld_ctr[tld] += 1
+        # Subject keyword frequency (Turkish + English)
+        if subj:
+            for tok in _tokenize(subj):
+                if tok in _TR_STOPWORDS or len(tok) < 4 or tok.isdigit():
+                    continue
+                kw_ctr[tok] += 1
+                kw_samples.setdefault(tok, [])
+                if len(kw_samples[tok]) < 3:
+                    kw_samples[tok].append(subj)
+
+    # Halihazırda kayıtlı kural/pattern'leri çek → duplicate önle
+    existing_patterns = set()
+    async for r in db.mailscanner_rules.find({"license_key": license_key}, {"pattern": 1}):
+        p = (r.get("pattern") or "").strip()
+        if p:
+            existing_patterns.add(p)
+    async for r in db.mailscanner_rule_suggestions.find(
+        {"license_key": license_key, "applied": False}, {"pattern": 1},
+    ):
+        p = (r.get("pattern") or "").strip()
+        if p:
+            existing_patterns.add(p)
+
+    suggested = 0
+    skipped_existing = 0
+    patterns_found = 0
+
+    def _score_for(hits: int, weight: float = 1.0) -> float:
+        # Base 3.5, +0.3 her hit'te, cap 6.0
+        return round(min(6.0, 3.5 + (hits / 10.0) * weight), 2)
+
+    # 1) Top sender domains (spam kaynağı — güçlü sinyal)
+    for dom, hits in domain_ctr.most_common(20):
+        if hits < min_hits:
+            break
+        patterns_found += 1
+        pattern = rf"@{_re_escape_domain(dom)}$"
+        if pattern in existing_patterns:
+            skipped_existing += 1
+            continue
+        if suggested >= max_suggestions:
+            continue
+        doc = {
+            "id": str(uuid.uuid4()),
+            "license_key": license_key,
+            "name": f"qua_domain_{dom[:40]}"[:80],
+            "pattern": pattern,
+            "target": "sender",
+            "score": _score_for(hits, weight=1.2),
+            "description": f"Karantina taraması: {hits} kez {dom} kaynaklı spam yakalandı (son {days}g)",
+            "source": "quarantine_pattern",
+            "sub_source": "sender_domain",
+            "hit_count": hits,
+            "days": days,
+            "sample_subjects": domain_samples.get(dom, [])[:3],
+            "applied": False,
+            "created_at": _iso(),
+        }
+        await db.mailscanner_rule_suggestions.insert_one(dict(doc))
+        existing_patterns.add(pattern)
+        suggested += 1
+
+    # 2) TLD kalıpları (bir TLD üzerinden çok spam varsa)
+    total_docs = max(scanned, 1)
+    for tld, hits in tld_ctr.most_common(10):
+        if hits < max(min_hits + 2, 5):  # TLD için biraz daha sıkı
+            break
+        # Yaygın legit TLD'lere kural yazma (com/net/org/tr çok geniş)
+        if tld in {"com", "net", "org", "tr", "edu", "gov"}:
+            continue
+        ratio = hits / total_docs
+        if ratio < 0.15:  # TLD spam'lerin en az %15'ini oluşturmalı
+            continue
+        patterns_found += 1
+        pattern = rf"@[^ ]+\.{_re_escape_domain(tld)}$"
+        if pattern in existing_patterns:
+            skipped_existing += 1
+            continue
+        if suggested >= max_suggestions:
+            continue
+        doc = {
+            "id": str(uuid.uuid4()),
+            "license_key": license_key,
+            "name": f"qua_tld_{tld}"[:80],
+            "pattern": pattern,
+            "target": "sender",
+            "score": _score_for(hits, weight=0.8),
+            "description": f"Karantina taraması: .{tld} TLD'sinden {hits} spam (spamların %{int(ratio*100)}'i)",
+            "source": "quarantine_pattern",
+            "sub_source": "sender_tld",
+            "hit_count": hits,
+            "days": days,
+            "sample_subjects": [],
+            "applied": False,
+            "created_at": _iso(),
+        }
+        await db.mailscanner_rule_suggestions.insert_one(dict(doc))
+        existing_patterns.add(pattern)
+        suggested += 1
+
+    # 3) Subject keyword kalıpları (spam konularının ortak kelimesi)
+    for kw, hits in kw_ctr.most_common(30):
+        if hits < max(min_hits + 1, 4):
+            break
+        # Çok sık geçen kelime → sinyal az (spam'lerin %30+'sında geçmeli)
+        ratio = hits / total_docs
+        if ratio < 0.20:
+            continue
+        patterns_found += 1
+        pattern = rf"\b{re.escape(kw)}\b"
+        if pattern in existing_patterns:
+            skipped_existing += 1
+            continue
+        if suggested >= max_suggestions:
+            continue
+        doc = {
+            "id": str(uuid.uuid4()),
+            "license_key": license_key,
+            "name": f"qua_kw_{kw[:30]}"[:80],
+            "pattern": pattern,
+            "target": "subject",
+            "score": _score_for(hits, weight=0.9),
+            "description": f"Karantina taraması: '{kw}' kelimesi {hits} spam konusunda geçti (%{int(ratio*100)})",
+            "source": "quarantine_pattern",
+            "sub_source": "subject_keyword",
+            "hit_count": hits,
+            "days": days,
+            "sample_subjects": kw_samples.get(kw, [])[:3],
+            "applied": False,
+            "created_at": _iso(),
+        }
+        await db.mailscanner_rule_suggestions.insert_one(dict(doc))
+        existing_patterns.add(pattern)
+        suggested += 1
+
+    # Audit
+    entry = {
+        "id": str(uuid.uuid4()), "run_at": _iso(), "kind": "quarantine_pattern_scan",
+        "license_key": license_key, "scanned": scanned, "days": days,
+        "patterns_found": patterns_found, "suggested": suggested,
+        "skipped_existing": skipped_existing,
+    }
+    await db.ai_training_log.insert_one(entry)
+
+    return {
+        "scanned": scanned,
+        "patterns_found": patterns_found,
+        "suggested": suggested,
+        "skipped_existing": skipped_existing,
+        "top_domains": [{"domain": d, "hits": h} for d, h in domain_ctr.most_common(5)],
+        "top_tlds": [{"tld": t, "hits": h} for t, h in tld_ctr.most_common(5)],
+        "top_keywords": [{"keyword": k, "hits": h} for k, h in kw_ctr.most_common(10)],
+        "days": days,
+        "min_hits": min_hits,
+    }
+
+
+@router.post("/ai/quarantine-recommend/run")
+async def trigger_quarantine_recommend(
+    license_key: str = Query(..., min_length=8),
+    days: int = Query(7, ge=1, le=30),
+    min_hits: int = Query(3, ge=2, le=50),
+):
+    """Karantinadaki (son N gün) kayıtları tarayıp otomatik regex kural
+    önerileri çıkarır. Öneriler self-train ile aynı `mailscanner_rule_suggestions`
+    koleksiyonuna düşer — kullanıcı 'Onayla'yı tıklarsa aktif kural olur."""
+    result = await run_quarantine_pattern_scan(license_key, days=days, min_hits=min_hits)
+    return {"ok": True, **result}
+
+
+# ============================================================================
 #  AI PREDICT SCORE — ingest anında hızlı LLM spam skor tahmini
 #  AI DOCS NARRATION — modül drawer'ında sesli/metin kılavuz
 # ============================================================================

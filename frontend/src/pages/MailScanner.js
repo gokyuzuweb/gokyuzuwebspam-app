@@ -688,6 +688,21 @@ function LearnTab() {
     },
     onError: (e) => toast.error(e?.response?.data?.detail || e.message),
   });
+  const quaScan = useMutation({
+    mutationFn: () => api.msQuarantineRecommend(LICKEY(), 7, 3),
+    onSuccess: (d) => {
+      if (d.scanned === 0) {
+        toast.info("Son 7 günde karantinada kayıt yok — önce spam yakalamak gerekiyor.");
+      } else if (d.suggested === 0) {
+        toast(`Tarandı: ${d.scanned} kayıt · Yeni öneri yok (${d.skipped_existing} kural halihazırda mevcut)`, { icon: "🔎" });
+      } else {
+        toast.success(`Karantina taraması: ${d.scanned} kayıt → ${d.suggested} yeni kural önerisi`);
+      }
+      qc.invalidateQueries({ queryKey: ["ms-suggestions"] });
+      qc.invalidateQueries({ queryKey: ["ms-selftrain-log"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
   const apply = useMutation({
     mutationFn: (id) => api.msSuggestionApply(LICKEY(), id),
     onSuccess: () => { toast.success("Kural onaylandı ve aktif edildi"); qc.invalidateQueries({ queryKey: ["ms-suggestions"] }); },
@@ -734,34 +749,66 @@ function LearnTab() {
       </div>
       <div className="col-span-12 lg:col-span-6">
         <Card>
-          <CardHeader title="AI Kural Önerileri" subtitle="Onayla → kurallar listesine eklenir · Reddet → sil"/>
+          <CardHeader title="AI Kural Önerileri" subtitle="Onayla → kurallar listesine eklenir · Reddet → sil"
+            right={
+              <button data-testid="quarantine-scan-run" onClick={() => quaScan.mutate()} disabled={quaScan.isPending}
+                      title="Son 7 gün karantina kayıtlarını tarayıp regex önerisi üret"
+                      className="text-[11px] px-2.5 py-1 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-40 whitespace-nowrap">
+                {quaScan.isPending ? "Taranıyor…" : "🔎 Karantinayı Tara"}
+              </button>
+            }
+          />
           <CardBody>
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {(suggs.data?.items || []).map(s => (
-                <div key={s.id} data-testid={`suggestion-${s.id}`}
-                     className="border border-fuchsia-500/30 bg-fuchsia-500/5 rounded p-3">
-                  <div className="flex justify-between items-start gap-3 mb-1">
-                    <span className="text-sm text-slate-100 truncate">{s.name}</span>
-                    <Badge tone="warning">{s.score.toFixed(1)}</Badge>
+              {(suggs.data?.items || []).map(s => {
+                const isQua = s.source === "quarantine_pattern";
+                const borderCls = isQua ? "border-cyan-500/30 bg-cyan-500/5" : "border-fuchsia-500/30 bg-fuchsia-500/5";
+                const sourceLabel = isQua
+                  ? (s.sub_source === "sender_domain" ? "Karantina · Gönderen Domain"
+                     : s.sub_source === "sender_tld" ? "Karantina · TLD"
+                     : "Karantina · Konu Kelimesi")
+                  : "Öz-eğitim · Konu";
+                return (
+                  <div key={s.id} data-testid={`suggestion-${s.id}`}
+                       className={`border ${borderCls} rounded p-3`}>
+                    <div className="flex justify-between items-start gap-3 mb-1">
+                      <span className="text-sm text-slate-100 truncate">{s.name}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {s.hit_count ? (
+                          <Badge tone="info">{s.hit_count} hit</Badge>
+                        ) : null}
+                        <Badge tone="warning">{(s.score || 0).toFixed(1)}</Badge>
+                      </div>
+                    </div>
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">{sourceLabel}</div>
+                    <div className="text-[11px] mono text-slate-400 truncate mb-1">
+                      <span className="text-slate-500">{s.target}:</span> /{s.pattern}/
+                    </div>
+                    <div className="text-[11px] text-slate-400 mb-2">{s.description}</div>
+                    {Array.isArray(s.sample_subjects) && s.sample_subjects.length > 0 && (
+                      <div className="text-[10px] text-slate-500 mb-2 border-l-2 border-slate-700 pl-2 space-y-0.5">
+                        {s.sample_subjects.slice(0, 3).map((ss, i) => (
+                          <div key={i} className="truncate italic">"{ss}"</div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <button data-testid={`suggestion-apply-${s.id}`} onClick={() => apply.mutate(s.id)}
+                              className="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30">
+                        Onayla
+                      </button>
+                      <button data-testid={`suggestion-reject-${s.id}`} onClick={() => reject.mutate(s.id)}
+                              className="text-[11px] px-2 py-1 rounded bg-rose-500/10 text-rose-300 border border-rose-500/40 hover:bg-rose-500/20">
+                        Reddet
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-[11px] mono text-slate-400 truncate mb-1">
-                    <span className="text-slate-500">{s.target}:</span> /{s.pattern}/
-                  </div>
-                  <div className="text-[11px] text-slate-400 mb-2">{s.description}</div>
-                  <div className="flex gap-2">
-                    <button data-testid={`suggestion-apply-${s.id}`} onClick={() => apply.mutate(s.id)}
-                            className="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30">
-                      Onayla
-                    </button>
-                    <button data-testid={`suggestion-reject-${s.id}`} onClick={() => reject.mutate(s.id)}
-                            className="text-[11px] px-2 py-1 rounded bg-rose-500/10 text-rose-300 border border-rose-500/40 hover:bg-rose-500/20">
-                      Reddet
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {(suggs.data?.items || []).length === 0 && (
-                <div className="text-slate-500 text-center py-8 text-sm">AI önerisi yok — self-train çalıştır</div>
+                <div className="text-slate-500 text-center py-8 text-sm">
+                  AI önerisi yok — <span className="text-fuchsia-300">Öz-eğitim</span> veya <span className="text-cyan-300">Karantinayı Tara</span> çalıştır
+                </div>
               )}
             </div>
           </CardBody>
@@ -773,6 +820,7 @@ function LearnTab() {
           <ul className="list-disc list-inside space-y-0.5 text-slate-400">
             <li>Her saat başı background job: son 1 saatteki high_spam/clean mailleri Bayes'e besler</li>
             <li>5+ spam örnek biriktiğinde Claude LLM yeni SA regex kuralı önerir (subject pattern)</li>
+            <li><span className="text-cyan-300">🔎 Karantinayı Tara</span>: son 7 gün karantina kayıtlarından gönderen domain, TLD ve konu kelime kalıplarını yerel istatistikle çıkarır (LLM'siz, ücretsiz)</li>
             <li>Öneriler bu tab'da görünür — otomatik apply değil, sen onaylarsın (güvenlik)</li>
             <li>AI Batch Prewarm: yüksek riskli mailler için "Neden spam?" açıklaması ingest sırasında üretilip cache'lenir</li>
           </ul>

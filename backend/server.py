@@ -2217,7 +2217,49 @@ async def settings_idle_lock_set(payload: IdleLockIn, request: Request,
     return {"ok": True, **payload.model_dump()}
 
 
-# v43.73 — Idle Lock event kaydı (frontend panel kilitleyince/açınca çağırır)
+# v43.77 — Slash Command Aliases (macro)
+class SlashAliasIn(BaseModel):
+    name: str = Field(..., pattern=r"^[a-z0-9_-]{2,32}$")   # /mystatus, /allhealth
+    expansion: str = Field(..., min_length=3, max_length=500)  # "/run health-check @all"
+    description: Optional[str] = Field(None, max_length=180)
+
+
+@api.get("/slash-aliases")
+async def slash_aliases_list(request: Request, license_key: Optional[str] = None):
+    """Master'ın tanımladığı tüm slash aliaslarını döner (frontend autocomplete için)."""
+    await _require_master(request, license_key)
+    cursor = db.slash_aliases.find({}, {"_id": 0}).sort("name", 1)
+    items = await cursor.to_list(200)
+    return {"items": items, "count": len(items)}
+
+
+@api.post("/slash-aliases")
+async def slash_aliases_set(payload: SlashAliasIn, request: Request,
+                             license_key: Optional[str] = None):
+    """Master alias oluşturur/günceller. name unique."""
+    await _require_master(request, license_key)
+    now = _iso()
+    await db.slash_aliases.update_one(
+        {"name": payload.name},
+        {"$set": {"name": payload.name, "expansion": payload.expansion,
+                  "description": payload.description or "", "updated_at": now},
+         "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": now}},
+        upsert=True,
+    )
+    doc = await db.slash_aliases.find_one({"name": payload.name}, {"_id": 0})
+    return {"ok": True, **doc}
+
+
+@api.delete("/slash-aliases/{name}")
+async def slash_aliases_delete(name: str, request: Request,
+                                license_key: Optional[str] = None):
+    """Alias'ı sil."""
+    await _require_master(request, license_key)
+    r = await db.slash_aliases.delete_one({"name": name})
+    return {"ok": True, "deleted": r.deleted_count}
+
+
+
 class IdleLockEventIn(BaseModel):
     event: Literal["lock", "unlock"]
     idle_seconds: Optional[int] = None
@@ -4669,11 +4711,20 @@ class CountryRule(BaseModel):
 
 
 @api.get("/security/country-rules")
-async def get_country_rules():
+async def get_country_rules(request: Request, license_key: Optional[str] = None):
+    # v43.78 — Tenant scope: her bayi kendi ülke kurallarını görür
+    scope = await _tenant_scope(request, license_key)
+    # Master's own scope uses __master__ sentinel; bayi uses their license_key
+    if scope.get("is_master") and not scope.get("impersonated"):
+        owner = scope.get("owner_license_key") or "__master__"
+    else:
+        owner = scope.get("owner_license_key") or "__none__"
     # Auto-expire pasüre olanları temizle
     now_iso = _iso()
     await db.country_rules.delete_many({"auto_expire_at": {"$lt": now_iso, "$ne": None}})
-    rows = await db.country_rules.find({}, {"_id": 0}).sort("country_code", 1).to_list(500)
+    rows = await db.country_rules.find(
+        {"owner_license_key": owner}, {"_id": 0}
+    ).sort("country_code", 1).to_list(500)
     now = datetime.now(timezone.utc)
     hour = now.hour
     day = now.weekday()
@@ -4681,7 +4732,7 @@ async def get_country_rules():
         ah = r.get("active_hours")
         ad = r.get("active_days")
         r["currently_active"] = (not ah or hour in ah) and (not ad or day in ad)
-    return {"items": rows}
+    return {"items": rows, "owner": owner, "is_master": bool(scope.get("is_master"))}
 
 
 class BulkCountryRule(BaseModel):
@@ -4696,8 +4747,17 @@ class BulkCountryRule(BaseModel):
 
 @api.post("/security/country-rules/bulk")
 async def bulk_country_rules(payload: BulkCountryRule, request: Request, license_key: Optional[str] = None):
-    """Birden çok ülkeyi tek işlemde ekle. TTL varsa auto_expire_at set eder."""
-    await _require_master(request, license_key)
+    """Birden çok ülkeyi tek işlemde ekle. TTL varsa auto_expire_at set eder.
+    v43.78 — Master ve bayi kendi scope'unda çalışır (tenant izole)."""
+    scope = await _tenant_scope(request, license_key)
+    if scope.get("is_master") and not scope.get("impersonated"):
+        owner = scope.get("owner_license_key") or "__master__"
+    else:
+        owner = scope.get("owner_license_key") or "__none__"
+    if owner == "__none__":
+        raise HTTPException(401, "Bu işlem için geçerli lisans anahtarı gerekli")
+    if not scope.get("is_master"):
+        await _require_feature(scope, "security_config")
     now = datetime.now(timezone.utc)
     expire = None
     if payload.ttl_minutes and payload.ttl_minutes > 0:
@@ -4712,21 +4772,35 @@ async def bulk_country_rules(payload: BulkCountryRule, request: Request, license
             "active_hours": payload.active_hours, "active_days": payload.active_days,
             "auto_expire_at": expire, "reason": payload.reason or "manual",
             "id": str(uuid.uuid4()), "created_at": _iso(),
+            "owner_license_key": owner,  # v43.78 — tenant scope
         }
-        await db.country_rules.update_one({"country_code": code}, {"$set": doc}, upsert=True)
+        await db.country_rules.update_one(
+            {"country_code": code, "owner_license_key": owner},
+            {"$set": doc}, upsert=True,
+        )
         inserted += 1
-    return {"ok": True, "inserted": inserted, "expire_at": expire}
+    return {"ok": True, "inserted": inserted, "expire_at": expire, "owner": owner}
 
 
 @api.post("/security/country-rules")
 async def add_country_rule(payload: CountryRule, request: Request, license_key: Optional[str] = None):
-    await _require_master(request, license_key)
+    """v43.78 — tenant scope: her bayi kendi kuralını ekler."""
+    scope = await _tenant_scope(request, license_key)
+    if scope.get("is_master") and not scope.get("impersonated"):
+        owner = scope.get("owner_license_key") or "__master__"
+    else:
+        owner = scope.get("owner_license_key") or "__none__"
+    if owner == "__none__":
+        raise HTTPException(401, "Geçerli lisans anahtarı gerekli")
+    if not scope.get("is_master"):
+        await _require_feature(scope, "security_config")
     doc = payload.model_dump()
     doc["country_code"] = doc["country_code"].upper()
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = _iso()
+    doc["owner_license_key"] = owner
     await db.country_rules.update_one(
-        {"country_code": doc["country_code"]},
+        {"country_code": doc["country_code"], "owner_license_key": owner},
         {"$set": doc}, upsert=True,
     )
     return {"ok": True, **doc}
@@ -4734,8 +4808,17 @@ async def add_country_rule(payload: CountryRule, request: Request, license_key: 
 
 @api.delete("/security/country-rules/{code}")
 async def del_country_rule(code: str, request: Request, license_key: Optional[str] = None):
-    await _require_master(request, license_key)
-    r = await db.country_rules.delete_one({"country_code": code.upper()})
+    """v43.78 — bayi sadece kendi ekledikleri kuralı silebilir."""
+    scope = await _tenant_scope(request, license_key)
+    if scope.get("is_master") and not scope.get("impersonated"):
+        owner = scope.get("owner_license_key") or "__master__"
+    else:
+        owner = scope.get("owner_license_key") or "__none__"
+    if owner == "__none__":
+        raise HTTPException(401, "Geçerli lisans anahtarı gerekli")
+    if not scope.get("is_master"):
+        await _require_feature(scope, "security_config")
+    r = await db.country_rules.delete_one({"country_code": code.upper(), "owner_license_key": owner})
     return {"ok": True, "deleted": r.deleted_count}
 
 
@@ -10584,6 +10667,7 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/analytics/plan-event", # PlanGate funnel tracking (ziyaretçi de yazabilir)
     "/api/audit/idle-lock-event", # v43.73 idle auto-lock lock/unlock event
     "/api/reseller-branding/",     # v43.73 bayi kendi marka/domain — endpoint per-bayi guard'lı
+    "/api/security/country-rules", # v43.78 bayi kendi security ülke kuralları (tenant-scoped)
     "/api/landing/ab-impression", # v43.12 anonim A/B variant sayaç
     "/api/landing/ab-conversion", # v43.13 anonim A/B conversion tracker
     "/api/notifications/badge",   # v43.12 client achievement unlock notification

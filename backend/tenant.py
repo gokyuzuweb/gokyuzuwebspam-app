@@ -65,14 +65,15 @@ async def resolve_tenant_scope(
         if master_ip_env and client_ip == master_ip_env:
             return {"is_master": True, "owner_license_key": ""}
 
-    # 3) Bayi: license_key_arg'ı licenses'ta doğrula
-    if license_key_arg and license_key_arg != master_env:
+    # 3) Bayi: license_key_arg VEYA X-Master-Key header (bayi kendi anahtarını header'da yollar)
+    candidate = (license_key_arg or hdr or "").strip()
+    if candidate and candidate != master_env and candidate.startswith("MS-"):
         lic_doc = await db.licenses.find_one(
-            {"license_key": license_key_arg},
+            {"license_key": candidate},
             {"_id": 0, "license_key": 1, "status": 1, "license_type": 1},
         )
         if lic_doc:
-            return {"is_master": False, "owner_license_key": license_key_arg}
+            return {"is_master": False, "owner_license_key": candidate}
 
     # 4) Fallback: WHM plugin_state (kendi sunucusundaki bayi plugin için)
     st = await db.plugin_state.find_one({"_id": "main"}, {"_id": 0, "license_key": 1}) or {}
