@@ -2217,6 +2217,37 @@ async def settings_idle_lock_set(payload: IdleLockIn, request: Request,
     return {"ok": True, **payload.model_dump()}
 
 
+# v43.73 — Idle Lock event kaydı (frontend panel kilitleyince/açınca çağırır)
+class IdleLockEventIn(BaseModel):
+    event: Literal["lock", "unlock"]
+    idle_seconds: Optional[int] = None
+    license_key: Optional[str] = None  # aktif oturumun lisansı (label için)
+
+
+@api.post("/audit/idle-lock-event")
+async def audit_idle_lock_event(payload: IdleLockEventIn, request: Request):
+    """Herhangi bir kullanıcı (master veya bayi) panel kilitleme/açma olayını
+    Audit Log'a kaydeder. Public erişim var — actor_ip ve license_key üzerinden
+    kim yaptığı takip edilir."""
+    lk = (payload.license_key or request.headers.get("x-master-key") or "").strip()
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    label = "master" if lk == master_env else (lk[:24] if lk else "anonymous")
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": f"idle_lock_{payload.event}",
+        "actor_ip": _client_ip(request),
+        "actor_label": label,
+        "details": {
+            "event": payload.event,
+            "idle_seconds": payload.idle_seconds,
+            "license_key_preview": lk[:16] if lk else None,
+        },
+        "ts": _iso(),
+        "at": _iso(),
+    })
+    return {"ok": True}
+
+
 # ----- Users -----
 @api.get("/users")
 async def users_get():
@@ -8539,12 +8570,22 @@ async def plan_effective_features(request: Request, license_key: Optional[str] =
     hierarchy = ["starter", "pro", "enterprise"]
     idx = hierarchy.index(plan) if plan in hierarchy else 0
     next_plan = hierarchy[idx + 1] if idx + 1 < len(hierarchy) else None
+    # v43.73 — Üst planların özellik tablosu (frontend Guard doğru öneri yapabilsin)
+    upgrade_options = []
+    for p in hierarchy[idx + 1:]:
+        pf = matrix.get(p, {}) or {}
+        upgrade_options.append({
+            "plan": p,
+            "plan_label": pf.get("label", p.title()),
+            "features": pf,
+        })
     return {
         "plan": plan,
         "plan_label": features.get("label", plan.title()),
         "features": features,
         "next_plan": next_plan,
         "next_plan_features": matrix.get(next_plan, {}) if next_plan else None,
+        "upgrade_options": upgrade_options,   # v43.73 — hangi üst planlarda hangi özellik var
         "license_key": resolved_license,   # her bayi kendine özgü — audit için
         "impersonated": bool(scope.get("impersonated")),
         "is_master": bool(scope.get("is_master") and not scope.get("impersonated")),
@@ -10396,6 +10437,7 @@ from routes.rules import router as _rules_router  # noqa: E402
 from routes.bounce_digest import router as _bounce_router, _leaderboard_router  # noqa: E402
 from routes.live_diagnostic import router as _live_diag_router  # noqa: E402
 from routes.remote_admin import router as _remote_admin_router  # noqa: E402
+from routes.reseller_branding import router as _reseller_branding_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -10420,6 +10462,7 @@ app.include_router(_bounce_router, prefix="/api")
 app.include_router(_leaderboard_router, prefix="/api")
 app.include_router(_live_diag_router, prefix="/api")
 app.include_router(_remote_admin_router, prefix="/api")
+app.include_router(_reseller_branding_router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Demo mode write-guard middleware
@@ -10460,6 +10503,8 @@ _DEMO_ALLOW_PREFIXES = (
                                # ve kendi delist takibi; demo yazma kilidi uygulanmaz)
     "/api/plan/features",      # plan matris sorgusu (ziyaretçi de görebilir)
     "/api/analytics/plan-event", # PlanGate funnel tracking (ziyaretçi de yazabilir)
+    "/api/audit/idle-lock-event", # v43.73 idle auto-lock lock/unlock event
+    "/api/reseller-branding/",     # v43.73 bayi kendi marka/domain — endpoint per-bayi guard'lı
     "/api/landing/ab-impression", # v43.12 anonim A/B variant sayaç
     "/api/landing/ab-conversion", # v43.13 anonim A/B conversion tracker
     "/api/notifications/badge",   # v43.12 client achievement unlock notification

@@ -64,6 +64,7 @@ import CustomDomainGuide from "@/pages/CustomDomainGuide";
 import AuditLog from "@/pages/AuditLog";
 import SmtpSettings from "@/pages/SmtpSettings";
 import RemoteAdmin from "@/pages/RemoteAdmin";
+import ResellerBranding from "@/pages/ResellerBranding";
 import MasterOnlyGuard from "@/components/MasterOnlyGuard";
 import PlanFeatureGuard, { usePlanFeatures } from "@/components/PlanFeatureGuard";
 import IdleAutoLock from "@/components/IdleAutoLock";
@@ -124,6 +125,7 @@ const NAV = [
   // 🔧 SİSTEM
   { to: "/panel/my-server", key: "my_server", icon: Server, testid: "nav-my-server", label: "Sunucumu Bağla", group: "sistem", feature: "my_server" },
   { to: "/panel/smtp-settings", key: "smtp_settings", icon: Mail, testid: "nav-smtp", label: "Mail (SMTP)", group: "sistem", feature: "smtp_settings" },
+  { to: "/panel/reseller-branding", key: "reseller_branding", icon: Palette, testid: "nav-reseller-branding", label: "Kendi Marka & Domain", group: "sistem", feature: "custom_branding" },
   { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs", label: "Loglar", masterOnly: true, sellerOnly: true, group: "sistem" },
   { to: "/panel/maintenance", key: "maintenance", icon: HardDrive, testid: "nav-maintenance", label: "DB Bakım", masterOnly: true, sellerOnly: true, group: "sistem" },
   { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings", label: "Ayarlar", masterOnly: true, sellerOnly: true, group: "sistem" },
@@ -451,6 +453,7 @@ function Shell() {
             <Route path="/landing-cms" element={MO(LandingCMS, "Landing CMS")} />
             <Route path="/my-server" element={PG(BayiServer, "my_server", "Sunucumu Bağla")} />
             <Route path="/smtp-settings" element={PG(SmtpSettings, "smtp_settings", "SMTP Ayarları")} />
+            <Route path="/reseller-branding" element={PG(ResellerBranding, "custom_branding", "Kendi Marka & Domain")} />
             <Route path="/whitelist-history" element={PG(WhitelistHistory, "whitelist_history", "Whitelist Geçmişi")} />
             <Route path="/docs" element={PG(Docs, "docs_view", "Dokümantasyon")} />
             <Route path="/custom-domain" element={MO(CustomDomainGuide, "Kendi Domain'im")} />

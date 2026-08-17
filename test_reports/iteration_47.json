@@ -1,0 +1,34 @@
+{
+  "summary": "v43.73 backend features tested via pytest (13 tests, all PASS). Coverage: (1) /api/plan/effective returns upgrade_options list with pro+enterprise entries each containing custom_branding key; toggling plan matrix pro.custom_branding=false + enterprise=true is reflected; /admin/plan-matrix/reset restores defaults. (2) /api/marketplace/leaderboard/weekly returns {winner, top10, week_start, generated_at} — winner=null when top10 empty (expected in preview). (3) /api/audit/idle-lock-event lock/unlock write to db.audit_logs (action=idle_lock_lock / idle_lock_unlock) — retrievable via /api/audit/logs (master) with correct actor_label starting with MS-TESTBAYI. (4) Reseller branding endpoints: unauth 401, bayi GET defaults, POST save + 409 conflict for duplicate custom_domain across bayilere, /api/public/reseller-branding host lookup 200 (license_key stripped) and 404 for unknown host, invalid domain returns 400 'Geçersiz domain formatı'. (5) Remote admin: /remote-admin/dispatch queues action_id, /events/pending-actions/{id}/complete emits master_alerts doc with type=remote_admin_complete, severity=info, message contains 'health_check komutu tamamlandı ✓' — visible via /admin/threat-alerts.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/audit/idle-lock-event", "issue": "Handler originally wrote timestamp as `at` while /api/audit/logs filters by `ts` — new idle_lock entries were not returned by the audit list endpoint. Fixed in-place by writing both `ts` and `at` on the audit_logs doc so filtering + backward compatibility both work."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v43_73_features.py",
+    "/app/test_reports/pytest/v43_73_features.xml"
+  ],
+  "action_items": [
+    "Consider unifying audit_logs timestamp field across the codebase — some inserts use `at`, others `ts`. /api/audit/logs and /api/admin/threat-alerts both sort/filter by `ts`, so `at`-only inserts (e.g. line 2210 idle_lock_updated, 4536 reseller login stats, 8502/8605 plan_matrix history) will not surface in the audit list view. Recommend adding both fields at insert time OR migrating to a single canonical `ts` field."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 10620 lines — still far above the 700-line guideline. Splitting into feature modules (audit, plan_matrix, licenses, etc.) would materially reduce risk of field-name inconsistencies like the one fixed here.",
+    "routes/reseller_branding.py creates its own AsyncIOMotorClient (`_MONGO`) instead of sharing the app-wide db client — creates extra connections. Consider a shared db dependency.",
+    "routes/reseller_branding.py — the default GET response (no doc) returns license_key but the POST reply also returns license_key; the /public/reseller-branding endpoint correctly strips it. Good — kept confidential mapping out of the public payload.",
+    "Marketplace weekly leaderboard aggregate uses string comparison on created_at (ISO string $gte). Works only because dates are stored as ISO strings; if any doc stores a native datetime, ordering will be wrong. Consider normalising storage."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v43_73_features.py",
+    "/app/backend/server.py"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "N/A (backend-only run)"},
+  "test_credentials": "Master MS-C02AB012652A4FE692D69676; Bayi starter MS-TESTBAYI-STARTER-V4371; Bayi pro MS-TESTBAYI-PRO-V4371",
+  "seed_data_creation": "One test reseller_branding doc created under BAYI_STARTER with unique domain mail.test-v4373-<uuid6>.com (idempotent per-run).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run with `pytest backend/tests/test_v43_73_features.py -o addopts=''` to disable xdist (session-scoped autouse fixture resets plan matrix which conflicts with parallel tests). v43.71 suite (test_v43_71_plan_matrix.py) still passes independently. If field-name unification is done for audit_logs (`ts` vs `at`), rerun both suites to confirm no regressions.",
+  "rca of the issue": "Bug: /api/audit/idle-lock-event (added in v43.73 at server.py:2227) wrote the timestamp as `at` while the master audit list endpoint /api/audit/logs (server.py:5177) filters by `ts >= since`. Consequence: newly-inserted idle_lock_lock/unlock records were never returned to the master panel audit view, silently breaking the observability of the new v43.73 idle-lock feature. Reproduction: POST /api/audit/idle-lock-event {event:'lock'} then GET /api/audit/logs?action=idle_lock_lock returned an empty items array. Mitigation applied: added `ts` field alongside `at` in the insert payload so /audit/logs list picks it up while preserving backward-compat for any consumer reading `at`."
+}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, X, Check, AlertTriangle, ExternalLink, CheckCircle2, XCircle, Activity } from "lucide-react";
+import { Bell, X, Check, AlertTriangle, ExternalLink, CheckCircle2, XCircle, Activity, Terminal } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useIsMaster } from "@/hooks/useIsMaster";
@@ -40,6 +40,16 @@ function alertMeta(a) {
       iconCls: "text-amber-400",
       linkHref: "/panel/plugin-health",
       linkTitle: "Plugin Health'e git",
+    };
+  }
+  // v43.72 — Bayı Uzak Yönetim komut tamamlandı
+  if (type === "remote_admin_complete") {
+    const ok = a?.ok !== false && sev !== "warning" && sev !== "error";
+    return {
+      Icon: Terminal,
+      iconCls: ok ? "text-cyan-400" : "text-rose-400",
+      linkHref: "/panel/remote-admin",
+      linkTitle: "Uzak Yönetim'e git",
     };
   }
   // Reseller-based threat (default)

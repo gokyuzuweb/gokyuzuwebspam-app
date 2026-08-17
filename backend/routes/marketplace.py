@@ -331,6 +331,61 @@ async def marketplace_stats():
     }
 
 
+# v43.73 — Haftalık Liderlik Tablosu
+@router.get("/leaderboard/weekly")
+async def marketplace_weekly_leaderboard():
+    """Son 7 gün içinde en çok imza yayınlayan bayıler + toplam install/upvote.
+    Dashboard banner'ı için tek satır kazanan döner."""
+    from datetime import datetime, timezone, timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    # Son 7 günde publish edenler bazında agrega
+    pipeline = [
+        {"$match": {"status": "active", "created_at": {"$gte": since}}},
+        {"$group": {
+            "_id": "$publisher_license",
+            "signatures_published": {"$sum": 1},
+            "total_installs": {"$sum": {"$ifNull": ["$stats.installs", 0]}},
+            "total_upvotes": {"$sum": {"$ifNull": ["$stats.upvotes", 0]}},
+            "sample_names": {"$push": "$name"},
+        }},
+        {"$addFields": {
+            "score": {"$add": [
+                {"$multiply": ["$signatures_published", 5]},
+                "$total_installs",
+                {"$multiply": ["$total_upvotes", 2]},
+            ]},
+        }},
+        {"$sort": {"score": -1}},
+        {"$limit": 10},
+    ]
+    rows: list[dict] = []
+    async for r in db.marketplace_signatures.aggregate(pipeline):
+        rows.append({
+            "publisher_license": r.get("_id"),
+            "signatures_published": r.get("signatures_published", 0),
+            "total_installs": r.get("total_installs", 0),
+            "total_upvotes": r.get("total_upvotes", 0),
+            "score": r.get("score", 0),
+            "sample_names": (r.get("sample_names") or [])[:3],
+        })
+    # Bayı email etiketi
+    keys = [r["publisher_license"] for r in rows if r.get("publisher_license")]
+    lic_map: dict[str, str] = {}
+    if keys:
+        async for l in db.licenses.find({"license_key": {"$in": keys}}, {"_id": 0, "license_key": 1, "email": 1}):
+            lic_map[l["license_key"]] = l.get("email") or l["license_key"][:20]
+    for r in rows:
+        r["publisher_label"] = lic_map.get(r.get("publisher_license", ""), (r.get("publisher_license") or "anonim")[:20])
+    winner = rows[0] if rows else None
+    return {
+        "week_start": since,
+        "generated_at": _iso(),
+        "winner": winner,
+        "top10": rows,
+    }
+
+
 # ============================================================================
 # 7. SEED — DB boşsa örnek imzalar üret (preview/dev)
 # ============================================================================

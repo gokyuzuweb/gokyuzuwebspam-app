@@ -67,6 +67,15 @@ export default function IdleAutoLock() {
     if (idle >= lockMs) {
       setLocked(true);
       try { toast.info("Hareketsizlik nedeniyle panel kilitlendi", { duration: 5000 }); } catch (_) {}
+      // v43.73 — Audit log event
+      try {
+        const lk = (localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license") || "").trim();
+        fetch("/api/audit/idle-lock-event", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(lk ? { "X-Master-Key": lk } : {}) },
+          body: JSON.stringify({ event: "lock", idle_seconds: Math.floor(idle / 1000), license_key: lk || undefined }),
+        }).catch(() => {});
+      } catch (_) {}
     }
   }, [now, enabled, locked, lockMs]);
 
@@ -123,6 +132,14 @@ export default function IdleAutoLock() {
     setKeyIn("");
     try { localStorage.setItem("gws.idle_unlock_at", String(Date.now())); } catch (_) {}
     toast.success("Panel kilidi açıldı");
+    // v43.73 — Audit log event
+    try {
+      fetch("/api/audit/idle-lock-event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(provided ? { "X-Master-Key": provided } : {}) },
+        body: JSON.stringify({ event: "unlock", license_key: provided }),
+      }).catch(() => {});
+    } catch (_) {}
   };
 
   return (

@@ -37,8 +37,14 @@ export default function PlanFeatureGuard({ feature, featureLabel, children }) {
   if (enabled) return children;
 
   const currentPlan = data.plan || "starter";
-  const nextPlan = data.next_plan;
-  const nextEnabled = nextPlan && data.next_plan_features?.[feature] === true;
+  // v43.73 — Özelliğin AÇIK olduğu ilk üst planı bul (Pro'da yoksa Enterprise'a atla)
+  const upgradeOptions = data.upgrade_options || [];
+  const recommended = upgradeOptions.find((o) => o.features?.[feature] === true);
+  const recPlan = recommended?.plan || null;
+  const recLabel = recommended?.plan_label || (recPlan ? PLAN_LABEL[recPlan] : null);
+  // Fallback (legacy): next_plan_features
+  const nextPlan = recPlan || data.next_plan;
+  const nextEnabled = !!recommended || (nextPlan && data.next_plan_features?.[feature] === true);
 
   return (
     <div className="p-6" data-testid="plan-feature-guard">
@@ -51,14 +57,14 @@ export default function PlanFeatureGuard({ feature, featureLabel, children }) {
           <p className="text-sm text-slate-400 mb-2">
             <b className="text-amber-300">{featureLabel || feature}</b> modülü <b>{PLAN_LABEL[currentPlan] || currentPlan}</b> paketinize dahil değil.
           </p>
-          {nextPlan && nextEnabled && (
+          {recPlan && (
             <p className="text-sm text-emerald-300 mb-6">
-              Bu modülü kullanmak için <b>{PLAN_LABEL[nextPlan]}</b> veya <b>Enterprise</b> paketine geçmeniz gerekiyor.
+              Bu modülü kullanmak için <b>{recLabel || PLAN_LABEL[recPlan]}</b> paketine geçmeniz gerekiyor.
             </p>
           )}
-          {(!nextPlan || !nextEnabled) && (
+          {!recPlan && (
             <p className="text-sm text-slate-500 mb-6">
-              Bu modülü kullanmak için <b>Enterprise</b> paketine geçmeniz gerekiyor.
+              Bu modül şu an hiçbir üst planda etkin değil. Lütfen destek ile iletişime geçin.
             </p>
           )}
 
@@ -71,23 +77,23 @@ export default function PlanFeatureGuard({ feature, featureLabel, children }) {
                 <X className="w-4 h-4"/> {featureLabel || feature} yok
               </div>
             </div>
-            {nextPlan && (
+            {recPlan && (
               <div className="p-4 rounded-lg border border-emerald-500/40 bg-emerald-500/5">
                 <div className="text-[10px] uppercase tracking-widest text-emerald-500 mb-1 flex items-center gap-1">
                   <ArrowUpCircle className="w-3 h-3"/> Önerilen Plan
                 </div>
-                <div className="text-lg font-bold text-emerald-300 mb-3">{PLAN_LABEL[nextPlan]}</div>
+                <div className="text-lg font-bold text-emerald-300 mb-3">{recLabel || PLAN_LABEL[recPlan]}</div>
                 <div className="flex items-center gap-2 text-sm text-emerald-300">
-                  {nextEnabled ? <><Check className="w-4 h-4"/> {featureLabel || feature} <b>aktif</b></> : <>+ daha fazla özellik</>}
+                  <Check className="w-4 h-4"/> {featureLabel || feature} <b>aktif</b>
                 </div>
               </div>
             )}
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <a href={`/panel/subscription?upgrade=${nextPlan || "pro"}&gateway=havale`} data-testid="plan-guard-upgrade"
+            <a href={`/panel/subscription?upgrade=${recPlan || nextPlan || "pro"}&gateway=havale`} data-testid="plan-guard-upgrade"
                className="inline-flex items-center gap-2 px-5 py-2.5 rounded bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-bold shadow-lg hover:shadow-xl transition-shadow">
-              <Sparkles className="w-4 h-4"/> Planı Yükselt (Havale) →
+              <Sparkles className="w-4 h-4"/> {recLabel ? `${recLabel}'e Yükselt (Havale)` : "Planı Yükselt (Havale)"} →
             </a>
             <a href="/panel" data-testid="plan-guard-back"
                className="text-xs px-3 py-2.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200">

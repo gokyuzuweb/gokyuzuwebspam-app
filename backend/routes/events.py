@@ -898,17 +898,25 @@ async def complete_pending_action(action_id: str, payload: ActionComplete,
     # Master notifications için toast ekle
     lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0, "email": 1})
     label = (lic or {}).get("email") or license_key[:20]
+    action_type = action.get("action_type") or "plugin_update"
+    is_remote = action_type.startswith("remote_")
+    if is_remote:
+        cmd = action_type.replace("remote_", "", 1)
+        alert_kind = "remote_admin_complete"
+        msg = f"{label} · {cmd} komutu {'tamamlandı ✓' if payload.ok else 'BAŞARISIZ ✗'}"
+    else:
+        alert_kind = "plugin_update_complete"
+        msg = f"{label} plugin güncellemesi {'başarıyla tamamlandı ✓' if payload.ok else 'BAŞARISIZ'}"
     await db.master_alerts.insert_one({
         "id": str(uuid.uuid4()),
-        "type": "plugin_update_complete",
+        "type": alert_kind,
         "severity": "info" if payload.ok else "warning",
         "license_key": license_key,
         "action_id": action_id,
-        "action_type": action.get("action_type"),
-        "message": (
-            f"{label} plugin güncellemesi {'başarıyla tamamlandı ✓' if payload.ok else 'BAŞARISIZ'}"
-        ),
+        "action_type": action_type,
+        "message": msg,
         "seen": False,
+        "read": False,
         "created_at": now,
     })
     return {"ok": True, "completed_at": now}

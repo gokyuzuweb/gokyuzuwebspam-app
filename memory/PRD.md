@@ -14,6 +14,60 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 17, v43.73) — Push Notification + Audit Trail + Custom Domain + Weekly Leaderboard + Doğru Plan Önerisi
+
+**KULLANICI İSTEKLERİ (birleşik):**
+1. Uzak Komut push notification (5sn polling yerine anlık)
+2. İdle Lock kimin kilitlediği/açtığı audit logu
+3. Bayı Kendi Domain'i (mail.bayihosting.com) + landing/branding
+4. Marketplace Haftalık Lider banner (Dashboard tepesi)
+5. **BUG FIX**: Whitelist Geçmişi Enterprise-only olmasına rağmen kilit ekranı "Pro'ya geç" diyor — düzelt
+
+**FIX v43.73:**
+
+### 1. Uzak Komut Push Notification
+- `routes/events.py::complete_pending_action` — action_type "remote_" prefix'liyse master_alerts'a `type=remote_admin_complete` kaydı düşer (severity info/warning)
+- Frontend `ThreatAlertBell.js` — yeni tip için `Terminal` icon + link `/panel/remote-admin`
+
+### 2. İdle Lock Audit Trail
+- Yeni endpoint `POST /api/audit/idle-lock-event {event: "lock"|"unlock", idle_seconds, license_key}` — public (demo write guard allow list'e eklendi), her lock/unlock için audit_logs'a düşer (action, actor_ip, actor_label=master|bayi_key_prefix|anonymous)
+- Frontend `IdleAutoLock.js` — lock ve unlock anında endpoint'i fire-and-forget POST eder
+
+### 3. Bayı Custom Domain + Branding
+- Yeni router `routes/reseller_branding.py`:
+  - `GET/POST /api/reseller-branding/me` — bayi self-service (custom_domain, brand_name, tagline, logo_url, primary_color, support_email/whatsapp, pricing_note, active)
+  - `GET /api/public/reseller-branding?host=X` — public lookup (landing için)
+  - `GET /api/admin/reseller-branding/list` — master overview
+- Validation: hostname regex, cross-bayi domain conflict → 409, aynı domain başkası kullanıyorsa reddet
+- Frontend `pages/ResellerBranding.js` — form + preview kartı + DNS yönergesi + live URL preview
+- Sidebar: "Kendi Marka & Domain" → sistem grubu (feature: custom_branding — Enterprise-only)
+- Demo write guard'a eklendi (per-bayi kilitli endpoint zaten kendi guard'ıyla korunuyor)
+
+### 4. Marketplace Weekly Leaderboard
+- Backend: `GET /api/marketplace/leaderboard/weekly` — son 7 gün pipeline (published*5 + installs + upvotes*2 = score)
+- Response: `{winner, top10, week_start, generated_at}` — winner=null olabilir (yeni instance)
+- Frontend `components/MarketplaceLeaderboardBanner.js` — Dashboard tepesinde amber gradient banner "🏆 Haftanın Marketplace Lideri: <bayı> · N imza · X kurulum · Y oy" (winner yoksa null render)
+- Dashboard.js overview tabına mount edildi
+
+### 5. BUG FIX — Plan Guard Doğru Öneri
+- Backend `/api/plan/effective` — response'a `upgrade_options: [{plan, plan_label, features}]` eklendi (mevcut planın üstündeki tüm planlar + full feature matrix)
+- Frontend `PlanFeatureGuard.js` — artık `recommended = upgrade_options.find(o => o.features[feature] === true)` ile doğru plan bulur (Pro'da yoksa Enterprise'ı önerir)
+- Buton dinamik: "**{recLabel}'e Yükselt (Havale) →**" (Enterprise'a Yükselt gibi)
+- Karşılaştırma kartı: sağdaki plan gerçek recommended plan (Pro değil, Enterprise)
+
+**Test edildi (iteration_47.json — 13/13 pytest PASS, 100%):**
+- upgrade_options struct + toggle behavior ✓
+- Marketplace weekly (winner nullable) ✓
+- Idle lock audit lock/unlock ✓
+- Reseller branding CRUD + cross-bayi 409 + invalid domain 400 + public lookup ✓
+- Remote command complete → master_alerts push ✓
+
+**Frontend Screenshot Verified:**
+- Pro bayı `/panel/reseller-branding` → "Bu Modül Paketinizde Bulunmuyor · Enterprise gerekli · Enterprise'e Yükselt (Havale) →" ✓
+- Sidebar renkli grup başlıkları (cyan/emerald/violet/amber/sky/slate) ✓
+
+
+
 ## Feb 15, 2026 (Session 17, v43.72) — İdle Lock + Uzak Yönetim + Renkli Sidebar + Havale-First Upgrade
 
 **KULLANICI İSTEKLERİ (birleşik):**
