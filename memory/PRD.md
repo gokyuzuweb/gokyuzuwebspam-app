@@ -13,6 +13,53 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.63) — Coğrafi Harita = Kontrol Paneli AttackMap (birebir)
+
+**KULLANICI İSTEĞİ:**
+"giden posta kutusunda cografi haritayi kontrol panelinde çoğrafi harita ile aynı yap onun gibi calıssın"
+
+**ÇÖZÜM v43.63:**
+
+### 1. Yeni Backend Endpoint `/api/outbound/attack-map`
+- ✅ Kontrol Paneli'ndeki `/api/security/attack-map` ile birebir aynı response format
+- ✅ Alıcı TLD → ISO ülke kodu mapping (`_TLD_ISO` dict, 50+ TLD)
+- ✅ ISO → lat/lon coordinates (`_ISO_COORDS` dict, 50+ ülke)
+- ✅ Response: `{items: [{country, lat, lon, count, spam, high_spam, blocked, sample_recipients}], origin: {lat:38.96, lon:35.24, country:"TR"}}`
+- ✅ Türkiye origin marker + hedef ülkelere ok çekilecek
+- ✅ Preview test: 110 event → 2 ülke (US:102, TR:8) ✓
+
+### 2. Yeni Frontend Component `OutboundAttackMap.js`
+- ✅ Kontrol Paneli'ndeki `AttackMap.js` ile birebir aynı stack:
+  * **react-simple-maps** ComposableMap
+  * **d3-geo** geoEqualEarth projection
+  * `/geo/countries-110m.json` real world atlas (kıta silhouette yok, gerçek borders)
+  * Curved arc animations (bezier Q path + animateMotion)
+- ✅ Farkı sadece **veri kaynağı + yön**:
+  * AttackMap: source IPs → Türkiye (inbound attack)
+  * OutboundAttackMap: Türkiye → destination countries (outbound)
+- ✅ Renk paleti:
+  * Origin marker: cyan (giden = güvenli renk)
+  * Temiz arc: cyan gradient
+  * Spam ≥%25 arc: turuncu gradient
+  * Blocked country dot: kırmızı
+- ✅ Hover tooltip: 4 stat mini (Temiz/Spam/High/Blocked) + Örnek Alıcılar
+- ✅ Top-6 leaderboard sağ üstte, legend + son yenileme sol altta
+- ✅ 10 saniyede bir refetch
+
+### 3. Wire-up
+- ✅ Outbound.js "Coğrafi Harita" tab artık:
+  * `<OutboundAttackMap hours={6} />` (üst — Kontrol Paneli tarzı harita)
+  * `<OutboundGeoHeatmap />` (alt — TLD/domain breakdown + AI Insights)
+- ✅ Eski v43.62 "3D meteor perspective map" (CSS transform rotateX) yerine gerçek GeoJSON dünya haritası
+
+**Test Sonucu (preview env):**
+- `/api/version/panel` → v43.63 ✓
+- `/api/outbound/attack-map?hours=48` → 2 ülke (US, TR) ✓
+- Frontend webpack: 0 error, sadece unrelated warnings
+- OutboundAttackMap.js: 190 satır, syntax OK
+- Screenshot: Panel v43.63 badge, master authenticated, 4 tab sağlıklı
+
+
 ## Feb 15, 2026 (Session 17, v43.62) — 3D Meteor Map + User Detail Modal + Push Health Widget
 
 **KULLANICI İSTEĞİ:**

@@ -607,6 +607,7 @@ export const api = {
   // v43.40 — Outbound backfill + geo heatmap
   outboundEximBackfill: () => client.post("/outbound/exim-backfill/trigger").then(r => r.data),
   outboundGeoStats: (hours = 24) => client.get("/outbound/geo-stats", { params: { hours } }).then(r => r.data),
+  outboundAttackMap: (hours = 6) => client.get("/outbound/attack-map", { params: { hours } }).then(r => r.data),
   // v43.52 — Aynı ts'ye sıkışmış outbound kayıtları için timestamp onarımı
   outboundRepairTimestamps: (dry_run = false) => client.post(`/outbound/repair-timestamps?dry_run=${dry_run}`, {}, { timeout: 30000 }).then(r => r.data),
   // v43.41 — AI Insights + Anomaly

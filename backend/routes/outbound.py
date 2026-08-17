@@ -1437,6 +1437,44 @@ _TLD_COUNTRY = {
 }
 _TLD_RISK = {"tk", "xyz", "click", "top", "cn", "ru", "ir"}
 
+# v43.63 — TLD → ISO ülke kodu (react-simple-maps ComposableMap için lat/lon lookup)
+_TLD_ISO = {
+    "tr": "TR", "com.tr": "TR", "gov.tr": "TR", "edu.tr": "TR", "org.tr": "TR",
+    "de": "DE", "fr": "FR", "uk": "GB", "co.uk": "GB", "gb": "GB",
+    "ru": "RU", "cn": "CN", "jp": "JP", "kr": "KR",
+    "us": "US", "ca": "CA", "mx": "MX", "br": "BR", "ar": "AR",
+    "ir": "IR", "sa": "SA", "ae": "AE", "eg": "EG",
+    "it": "IT", "es": "ES", "nl": "NL", "pl": "PL", "be": "BE", "ch": "CH", "at": "AT",
+    "ua": "UA", "gr": "GR", "bg": "BG", "ro": "RO", "hu": "HU", "cz": "CZ", "sk": "SK",
+    "au": "AU", "nz": "NZ", "in": "IN", "pk": "PK", "bd": "BD", "id": "ID",
+    "vn": "VN", "th": "TH", "sg": "SG", "my": "MY", "ph": "PH",
+    "il": "IL", "za": "ZA", "ng": "NG", "ke": "KE",
+    "se": "SE", "no": "NO", "dk": "DK", "fi": "FI", "pt": "PT", "ie": "IE",
+    # Generic → US (mail server çoğunluğu)
+    "com": "US", "org": "US", "net": "US", "io": "US", "info": "US", "biz": "US",
+}
+# ISO ülke kodu → (lat, lon) — react-simple-maps için
+_ISO_COORDS = {
+    "TR": (38.96, 35.24),  "US": (39.83, -98.58), "DE": (51.16, 10.45),
+    "FR": (46.60, 2.20),   "GB": (55.38, -3.44),  "RU": (61.52, 105.32),
+    "CN": (35.86, 104.20), "JP": (36.20, 138.25), "KR": (35.91, 127.77),
+    "CA": (56.13, -106.35),"MX": (23.63, -102.55),"BR": (-14.24, -51.93),
+    "AR": (-38.42, -63.62),"IR": (32.43, 53.69),  "SA": (23.89, 45.08),
+    "AE": (23.42, 53.85),  "EG": (26.82, 30.80),
+    "IT": (41.87, 12.57),  "ES": (40.46, -3.75),  "NL": (52.13, 5.29),
+    "PL": (51.92, 19.15),  "BE": (50.50, 4.47),   "CH": (46.82, 8.23),
+    "AT": (47.52, 14.55),  "UA": (48.38, 31.17),  "GR": (39.07, 21.82),
+    "BG": (42.73, 25.49),  "RO": (45.94, 24.97),  "HU": (47.16, 19.50),
+    "CZ": (49.82, 15.47),  "SK": (48.67, 19.70),  "AU": (-25.27, 133.78),
+    "NZ": (-40.90, 174.89),"IN": (20.59, 78.96),  "PK": (30.38, 69.35),
+    "BD": (23.68, 90.36),  "ID": (-0.79, 113.92), "VN": (14.06, 108.28),
+    "TH": (15.87, 100.99), "SG": (1.35, 103.82),  "MY": (4.21, 101.98),
+    "PH": (12.88, 121.77), "IL": (31.05, 34.85),  "ZA": (-30.56, 22.94),
+    "NG": (9.08, 8.68),    "KE": (-0.02, 37.91),  "SE": (60.13, 18.64),
+    "NO": (60.47, 8.47),   "DK": (56.26, 9.50),   "FI": (61.92, 25.75),
+    "PT": (39.40, -8.22),  "IE": (53.14, -7.69),
+}
+
 
 def _tld_of(email: str) -> str:
     if not email or "@" not in email:
@@ -1511,6 +1549,70 @@ async def outbound_geo_stats(request: Request, hours: int = 24, license_key: Opt
         "top_domains": domains[:20],
         "countries": countries[:20],
         "risky_tlds": sorted({d["tld"] for d in domains if d["risk"]}),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ============================================================================
+# v43.63 — Outbound Attack-Map (Kontrol Paneli'ndeki AttackMap ile aynı format)
+# Dönüş: [{country, lat, lon, count, spam, high_spam, blocked, sample_recipients}]
+# Frontend react-simple-maps ComposableMap ile Türkiye → hedef kavis animasyonu
+# ============================================================================
+@router.get("/attack-map")
+async def outbound_attack_map(request: Request, hours: int = Query(6, ge=1, le=48),
+                                license_key: Optional[str] = None):
+    """Outbound trafiği ülke bazlı, harita için lat/lon içeren format.
+    AttackMap component ile birebir uyumlu — Türkiye origin → hedef country arcs."""
+    scope = await resolve_tenant_scope(request, license_key, db)
+    lic_key = scope.get("owner_license_key") or ""
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    match: dict = {"direction": "out", "ts": {"$gte": since}}
+    if lic_key:
+        match["license_key"] = lic_key
+    match["$and"] = [
+        {"from_addr": {"$nin": ["", "<>", None]}},
+        {"to_addr": {"$exists": True, "$ne": None}},
+    ]
+
+    counter: dict[str, dict] = {}
+    events = 0
+    async for e in db.mail_events.find(
+        match, {"_id": 0, "to_addr": 1, "verdict": 1, "total_score": 1},
+    ).limit(10000):
+        events += 1
+        rcpt = e.get("to_addr") or ""
+        if "@" not in rcpt:
+            continue
+        tld = _tld_of(rcpt)
+        iso = _TLD_ISO.get(tld)
+        if not iso:
+            continue
+        coord = _ISO_COORDS.get(iso)
+        if not coord:
+            continue
+        b = counter.setdefault(iso, {
+            "country": iso, "lat": coord[0], "lon": coord[1],
+            "count": 0, "spam": 0, "high_spam": 0, "virus": 0, "blocked": 0,
+            "sample_ips": [],       # AttackMap component ile compat için "sample_ips" adı korunuyor
+            "sample_recipients": [],
+        })
+        b["count"] += 1
+        v = (e.get("verdict") or "").lower()
+        if v == "high_spam":       b["high_spam"] += 1
+        elif v == "spam":          b["spam"] += 1
+        elif v == "virus":         b["virus"] += 1
+        elif v in ("blocked","block"): b["blocked"] += 1
+        if len(b["sample_recipients"]) < 5 and rcpt not in b["sample_recipients"]:
+            b["sample_recipients"].append(rcpt)
+            b["sample_ips"].append(rcpt)     # AttackMap tooltip için
+
+    items = sorted(counter.values(), key=lambda x: x["count"], reverse=True)
+    return {
+        "hours": hours,
+        "events_total": events,
+        "items": items,
+        "direction": "outbound",
+        "origin": {"lat": 38.96, "lon": 35.24, "country": "TR", "label": "WHM Sunucusu · Türkiye"},
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

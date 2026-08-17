@@ -9,8 +9,9 @@ import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-pri
 import { api } from "@/lib/api";
 import SavedFiltersBar from "@/components/SavedFiltersBar";
 import OutboundGeoHeatmap from "@/components/OutboundGeoHeatmap";
-// v43.59 — OutboundGlobe3D kaldırıldı (duplicate map + rotating globe yerine
-// OutboundGeoHeatmap içindeki yatay SVG dünya haritası tek başına kullanılıyor).
+import OutboundAttackMap from "@/components/OutboundAttackMap";
+// v43.63 — Coğrafi Harita artık Kontrol Paneli'ndeki AttackMap ile aynı stack:
+// ComposableMap + geoEqualEarth + real GeoJSON world atlas + curved arcs from Turkey.
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const fmtTime = (iso) => {
@@ -677,9 +678,12 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
       </>}
       {/* /TAB: CANLI TRAFİK */}
 
-      {/* v43.59 — TAB: COĞRAFİ HARITA */}
+      {/* v43.63 — TAB: COĞRAFİ HARITA (Kontrol Paneli'ndeki AttackMap ile aynı: ComposableMap + real world atlas + arcs) */}
       {tab === "geo" && (
-        <OutboundGeoHeatmap />
+        <div className="space-y-4">
+          <OutboundAttackMap hours={6} />
+          <OutboundGeoHeatmap />
+        </div>
       )}
 
       {/* v43.59 — TAB: KULLANICILAR (Bugün en çok + throttled) */}
