@@ -320,17 +320,27 @@ async def havale_approve(payload: HavaleApprove, request: Request):
         # Yeni expiration date: yıllık +365g, aksi +30g
         from datetime import datetime, timezone, timedelta
         days = 365 if cycle in {"yearly", "annual", "12m"} else 30
-        # Case-insensitive email match
-        lic = await db.licenses.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}, "active": True},
-                                          {"_id": 0, "license_key": 1, "plan": 1, "subscription_expires_at": 1})
+        # v43.80 — Lisans schema: `customer_email` (yeni) VEYA `email` (legacy).
+        # Case-insensitive email match — hem yeni hem eski alan adına bak, `active`
+        # alanı da olmayabilir (legacy kayıtlarda) → filter'ı gevşet.
+        email_re = {"$regex": f"^{re.escape(email)}$", "$options": "i"}
+        lic = await db.licenses.find_one(
+            {"$and": [
+                {"$or": [{"customer_email": email_re}, {"email": email_re}]},
+                {"$or": [{"active": True}, {"active": {"$exists": False}}]},
+            ]},
+            {"_id": 0, "license_key": 1, "plan": 1, "subscription_expires_at": 1,
+             "valid_until": 1},
+        )
         if lic:
             old_plan = lic.get("plan") or "starter"
             # v43.78 — Mid-cycle upgrade: max(now, current_expires) + N days (kalan gün kaybolmasın)
             base_dt = datetime.now(timezone.utc)
-            cur_exp = lic.get("subscription_expires_at")
+            # subscription_expires_at (yeni) VEYA valid_until (legacy) — hangisi ileriyse
+            cur_exp = lic.get("subscription_expires_at") or lic.get("valid_until")
             if cur_exp:
                 try:
-                    cur_dt = datetime.fromisoformat(cur_exp.replace("Z", "+00:00"))
+                    cur_dt = datetime.fromisoformat(str(cur_exp).replace("Z", "+00:00"))
                     if cur_dt.tzinfo is None:
                         cur_dt = cur_dt.replace(tzinfo=timezone.utc)
                     if cur_dt > base_dt:
@@ -343,9 +353,12 @@ async def havale_approve(payload: HavaleApprove, request: Request):
                 {"$set": {
                     "plan": plan_wanted,
                     "subscription_expires_at": new_expires,
+                    "valid_until": new_expires,   # v43.80 — legacy alan da güncellensin
+                    "active": True,               # v43.80 — kesin aktif olsun
                     "last_upgrade_at": now,
                     "last_upgrade_from": old_plan,
                     "last_upgrade_merchant_oid": payload.merchant_oid,
+                    "license_version": int((lic.get("license_version") or 0)) + 1,  # cache invalidate
                 }},
             )
             upgrade_result = {

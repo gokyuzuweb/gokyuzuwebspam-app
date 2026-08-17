@@ -16,6 +16,7 @@ import io
 import logging
 import os
 import random
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2215,6 +2216,206 @@ async def settings_idle_lock_set(payload: IdleLockIn, request: Request,
         "at": _iso(),
     })
     return {"ok": True, **payload.model_dump()}
+
+
+# ================== v43.80 — PER-BAYİ İDLE LOCK + PIN ==================
+# Her bayi kendi kilit ayarını + PIN'ini kendisi belirler. PIN hash'lenerek
+# saklanır (PBKDF2-SHA256, per-user salt). Panel yenilendiğinde kilit LOCALSTORAGE
+# üzerinden persist eder — sadece PIN ile açılabilir. Master global config
+# fallback olarak kalır (kendi PIN'i yoksa global ayarları kullanır).
+import hashlib as _hashlib
+import secrets as _secrets
+
+
+def _pin_hash(pin: str, salt: str) -> str:
+    """PBKDF2-SHA256 · 200k iter · salt ile hex digest."""
+    dk = _hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt.encode("utf-8"), 200_000)
+    return dk.hex()
+
+
+def _resolve_lock_owner(request: Request, license_key_qs: Optional[str] = None) -> str:
+    """Idle lock için tenant owner belirle.
+    - Master IP + master key varsa → '__master__' sentinel
+    - X-Master-Key veya X-License-Key veya query license_key → o key
+    - Hiçbiri yoksa → '__anon__' (kaydedilmez ama okuma boş döner)
+    """
+    hdr = request.headers
+    lk = (license_key_qs or hdr.get("X-Master-Key") or hdr.get("X-License-Key") or "").strip()
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    master_ip = os.environ.get("MASTER_IP", "")
+    ip = _client_ip(request)
+    if master_env and lk == master_env and (not master_ip or ip == master_ip):
+        return "__master__"
+    if lk:
+        return lk
+    return "__anon__"
+
+
+class IdleLockMeIn(BaseModel):
+    enabled: Optional[bool] = None
+    minutes: Optional[int] = Field(None, ge=1, le=1440)
+    warn_seconds: Optional[int] = Field(None, ge=0, le=300)
+    # PIN yönetimi
+    new_pin: Optional[str] = Field(None, pattern=r"^\d{4,8}$")   # 4-8 haneli sayı
+    current_pin: Optional[str] = Field(None, pattern=r"^\d{4,8}$")  # PIN değişiminde mevcut PIN
+    clear_pin: bool = False  # true → PIN'i kaldır (lisans key fallback)
+
+
+@api.get("/settings/idle-lock/me")
+async def settings_idle_lock_me_get(request: Request,
+                                     license_key: Optional[str] = None):
+    """Bayi kendi kilit ayarını çeker. Master global ayar fallback.
+    Response: {enabled, minutes, warn_seconds, has_pin, source: 'user'|'global'}
+    """
+    owner = _resolve_lock_owner(request, license_key)
+    if owner == "__anon__":
+        raise HTTPException(status_code=401, detail="Kilit ayarları için oturum gerekli")
+    user_doc = await db.idle_lock_user_configs.find_one({"owner": owner}, {"_id": 0}) or {}
+    global_doc = await db.settings.find_one({"_key": "idle_lock"}, {"_id": 0, "_key": 0}) or {}
+    # Merge: user override > global > default
+    enabled = user_doc.get("enabled")
+    if enabled is None:
+        enabled = bool(global_doc.get("enabled", True))
+    minutes = user_doc.get("minutes") or int(global_doc.get("minutes", 15))
+    warn_seconds = user_doc.get("warn_seconds")
+    if warn_seconds is None:
+        warn_seconds = int(global_doc.get("warn_seconds", 30))
+    return {
+        "enabled": bool(enabled),
+        "minutes": int(minutes),
+        "warn_seconds": int(warn_seconds),
+        "has_pin": bool(user_doc.get("pin_hash")),
+        "source": "user" if user_doc else "global",
+        "owner": owner if owner != "__master__" else "master",
+    }
+
+
+@api.put("/settings/idle-lock/me")
+async def settings_idle_lock_me_set(payload: IdleLockMeIn, request: Request,
+                                     license_key: Optional[str] = None):
+    """Bayi kendi kilit ayarını + PIN'ini günceller. Master kendi global ayarı
+    dışında burada da kendi kişisel PIN'ini yönetebilir."""
+    owner = _resolve_lock_owner(request, license_key)
+    if owner == "__anon__":
+        raise HTTPException(status_code=401, detail="Kilit ayarları için oturum gerekli")
+    existing = await db.idle_lock_user_configs.find_one({"owner": owner}) or {}
+    update: dict = {}
+    if payload.enabled is not None:
+        update["enabled"] = bool(payload.enabled)
+    if payload.minutes is not None:
+        update["minutes"] = int(payload.minutes)
+    if payload.warn_seconds is not None:
+        update["warn_seconds"] = int(payload.warn_seconds)
+    # PIN yönetimi
+    if payload.clear_pin:
+        # Mevcut PIN varsa current_pin gerekli
+        if existing.get("pin_hash"):
+            if not payload.current_pin:
+                raise HTTPException(status_code=400, detail="PIN'i kaldırmak için mevcut PIN gerekli")
+            if _pin_hash(payload.current_pin, existing.get("salt", "")) != existing.get("pin_hash"):
+                raise HTTPException(status_code=403, detail="Mevcut PIN hatalı")
+        update["pin_hash"] = None
+        update["salt"] = None
+        update["failed_attempts"] = 0
+        update["locked_until"] = None
+    elif payload.new_pin:
+        # PIN değişiminde mevcut PIN doğrula (eğer varsa)
+        if existing.get("pin_hash"):
+            if not payload.current_pin:
+                raise HTTPException(status_code=400, detail="PIN değişimi için mevcut PIN gerekli")
+            if _pin_hash(payload.current_pin, existing.get("salt", "")) != existing.get("pin_hash"):
+                raise HTTPException(status_code=403, detail="Mevcut PIN hatalı")
+        salt = _secrets.token_hex(16)
+        update["salt"] = salt
+        update["pin_hash"] = _pin_hash(payload.new_pin, salt)
+        update["failed_attempts"] = 0
+        update["locked_until"] = None
+    if not update:
+        raise HTTPException(status_code=400, detail="Değiştirilecek alan gönderilmedi")
+    update["owner"] = owner
+    update["updated_at"] = _iso()
+    update["updated_by_ip"] = _client_ip(request)
+    await db.idle_lock_user_configs.update_one(
+        {"owner": owner},
+        {"$set": update, "$setOnInsert": {"created_at": _iso()}},
+        upsert=True,
+    )
+    # audit
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": "idle_lock_user_updated",
+        "actor_ip": _client_ip(request),
+        "owner": owner,
+        "details": {k: v for k, v in update.items() if k not in ("pin_hash", "salt")},
+        "at": _iso(),
+    })
+    return {
+        "ok": True,
+        "enabled": update.get("enabled", existing.get("enabled", True)),
+        "minutes": update.get("minutes", existing.get("minutes", 15)),
+        "warn_seconds": update.get("warn_seconds", existing.get("warn_seconds", 30)),
+        "has_pin": bool(update.get("pin_hash") if "pin_hash" in update else existing.get("pin_hash")),
+    }
+
+
+class IdleLockVerifyPinIn(BaseModel):
+    pin: str = Field(..., pattern=r"^\d{4,8}$")
+
+
+@api.post("/settings/idle-lock/verify-pin")
+async def settings_idle_lock_verify_pin(payload: IdleLockVerifyPinIn, request: Request,
+                                          license_key: Optional[str] = None):
+    """Kilit ekranından PIN doğrulama. Rate-limited: 5 hatalı deneme sonra 5dk cooldown."""
+    owner = _resolve_lock_owner(request, license_key)
+    if owner == "__anon__":
+        raise HTTPException(status_code=401, detail="Oturum yok")
+    doc = await db.idle_lock_user_configs.find_one({"owner": owner}) or {}
+    pin_hash = doc.get("pin_hash")
+    if not pin_hash:
+        raise HTTPException(status_code=404, detail="PIN atanmamış — Ayarlar > Otomatik Kilit'ten PIN oluşturun")
+    # Cooldown kontrolü
+    locked_until = doc.get("locked_until")
+    now = datetime.now(timezone.utc)
+    if locked_until:
+        try:
+            lu = datetime.fromisoformat(locked_until.replace("Z", "+00:00"))
+            if lu > now:
+                remaining = int((lu - now).total_seconds())
+                raise HTTPException(status_code=429,
+                                    detail=f"Çok fazla hatalı deneme — {remaining} saniye sonra tekrar deneyin")
+        except (ValueError, AttributeError):
+            pass
+    # PIN karşılaştır
+    provided_hash = _pin_hash(payload.pin, doc.get("salt", ""))
+    if provided_hash != pin_hash:
+        failed = int(doc.get("failed_attempts") or 0) + 1
+        update = {"failed_attempts": failed, "last_failed_at": _iso(),
+                  "last_failed_ip": _client_ip(request)}
+        if failed >= 5:
+            cooldown_until = (now + timedelta(minutes=5)).isoformat()
+            update["locked_until"] = cooldown_until
+            update["failed_attempts"] = 0
+            await db.idle_lock_user_configs.update_one({"owner": owner}, {"$set": update})
+            # audit + alert
+            await db.audit_logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "action": "idle_lock_pin_bruteforce",
+                "actor_ip": _client_ip(request),
+                "owner": owner,
+                "at": _iso(),
+                "severity": "warning",
+            })
+            raise HTTPException(status_code=429, detail="Çok fazla hatalı deneme — 5 dakika kilitlendi")
+        await db.idle_lock_user_configs.update_one({"owner": owner}, {"$set": update})
+        remaining_tries = 5 - failed
+        raise HTTPException(status_code=403, detail=f"PIN hatalı ({remaining_tries} deneme kaldı)")
+    # Başarılı
+    await db.idle_lock_user_configs.update_one(
+        {"owner": owner},
+        {"$set": {"failed_attempts": 0, "locked_until": None, "last_unlocked_at": _iso(),
+                  "last_unlocked_ip": _client_ip(request)}},
+    )
+    return {"ok": True, "unlocked_at": _iso()}
 
 
 # v43.77 — Slash Command Aliases (macro)
@@ -10436,6 +10637,100 @@ async def _finalize_purchase(session_id: str, metadata: dict) -> Optional[dict]:
         valid_until=(now + timedelta(days=days)).isoformat(),
         notes=f"Auto-created from Stripe session {session_id}",
     )
+    # v43.80 — Aynı email'e sahip aktif lisans varsa yeni kayıt AÇMA, mevcut'u yükselt.
+    # Kart (Stripe) tarafında da havale'deki auto-upgrade davranışını sağla.
+    email_lc = (lic.customer_email or "").strip().lower()
+    existing_lic = None
+    if email_lc:
+        email_re = {"$regex": f"^{re.escape(email_lc)}$", "$options": "i"}
+        existing_lic = await db.licenses.find_one(
+            {"$and": [
+                {"$or": [{"customer_email": email_re}, {"email": email_re}]},
+                {"$or": [{"active": True}, {"active": {"$exists": False}}]},
+            ]},
+            {"_id": 0},
+        )
+    if existing_lic:
+        old_plan = existing_lic.get("plan") or "starter"
+        base = now
+        cur_exp = existing_lic.get("subscription_expires_at") or existing_lic.get("valid_until")
+        if cur_exp:
+            try:
+                cur_dt = datetime.fromisoformat(str(cur_exp).replace("Z", "+00:00"))
+                if cur_dt.tzinfo is None:
+                    cur_dt = cur_dt.replace(tzinfo=timezone.utc)
+                if cur_dt > base:
+                    base = cur_dt
+            except Exception:
+                pass
+        new_exp = (base + timedelta(days=days)).isoformat()
+        new_ver = int(existing_lic.get("license_version") or 0) + 1
+        await db.licenses.update_one(
+            {"license_key": existing_lic["license_key"]},
+            {"$set": {
+                "plan": plan_code,
+                "valid_until": new_exp,
+                "subscription_expires_at": new_exp,
+                "active": True,
+                "license_version": new_ver,
+                "last_upgrade_at": now.isoformat(),
+                "last_upgrade_from": old_plan,
+                "last_upgrade_session_id": session_id,
+                "max_domains": int(metadata.get("max_domains") or plan.get("max_domains", existing_lic.get("max_domains", 100))),
+            }},
+        )
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"status": "paid", "completed_at": now.isoformat(),
+                      "license_key": existing_lic["license_key"], "is_upgrade": True,
+                      "upgrade_from": old_plan, "upgrade_to": plan_code}},
+        )
+        await db.logs.insert_one(ActivityLog(
+            source="checkout", level="info",
+            message=f"KART İLE YÜKSELTME · {lic.customer_email} · {old_plan}→{plan_code}/{billing_period} · {existing_lic['license_key'][:16]}… → {new_exp[:10]}",
+        ).model_dump())
+        # Master alert
+        await db.master_alerts.insert_one({
+            "id": str(uuid.uuid4()),
+            "type": "plan_upgraded",
+            "severity": "info",
+            "license_key": existing_lic["license_key"],
+            "message": f"✅ Kart · {lic.customer_email} · {old_plan} → {plan_code}",
+            "details": {"from_plan": old_plan, "to_plan": plan_code, "session_id": session_id,
+                         "amount": tx.get("amount"), "provider": "stripe"},
+            "seen": False, "read": False,
+            "created_at": now.isoformat(),
+        })
+        # Bayi inbox
+        await db.notifications_inbox.insert_one({
+            "id": str(uuid.uuid4()), "kind": "upgrade_completed",
+            "license_key": existing_lic["license_key"],
+            "email": lic.customer_email,
+            "session_id": session_id,
+            "old_plan": old_plan, "new_plan": plan_code,
+            "expires_at": new_exp,
+            "message": f"🎉 Ödemeniz onaylandı. Planınız {plan_code.upper()} olarak yükseltildi.",
+            "read": False,
+            "created_at": now.isoformat(),
+        })
+        # Onay maili (yükseltme)
+        try:
+            subj = f"GökyüzüWebSpam · Plan Yükseltildi · {plan.get('name', plan_code)}"
+            body = (
+                f"Merhaba,\n\n"
+                f"Planınız başarıyla yükseltildi. 🎉\n\n"
+                f"  Lisans      : {existing_lic['license_key']}\n"
+                f"  Plan        : {old_plan.upper()} → {plan_code.upper()} ({billing_period})\n"
+                f"  Yeni bitiş  : {new_exp[:10]}\n"
+                f"  Tutar       : {tx['amount']} {tx['currency']}\n\n"
+                f"Panelinizde yeni plan birkaç dakika içinde otomatik yansır.\n\n"
+                f"— GökyüzüWebSpam"
+            )
+            await _send_email(lic.customer_email, subj, body)
+        except Exception:
+            pass
+        return await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+
     await db.licenses.insert_one(dict(lic.model_dump()))
     await db.payment_transactions.update_one(
         {"session_id": session_id},

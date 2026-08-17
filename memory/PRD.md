@@ -14,6 +14,53 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 18, v43.80) — 🐛 KRİTİK BUG FIX: Havale + Kart Onayında Auto-Upgrade Çalışmıyor
+
+**KULLANICI ŞİKAYETİ:**
+"lisans yükseltme işlemide havale veya kart onayldığımda bayi hesabı otomatik yükseltmiyor"
+
+**KÖK NEDEN (v43.78'de eklendiği iddia edilen fix aslında hiç çalışmıyordu):**
+`routes/payments.py::havale_approve` lisans lookup query'si:
+```python
+lic = await db.licenses.find_one({"email": {"$regex": ...}, "active": True})
+```
+Ama gerçek license schema alan adı `customer_email` — `email` alanı yok. Filter her zaman None dönüyordu, `upgrade_result = {"upgraded": False, "reason": "Aktif lisans bulunamadı"}` sessizce dönüyor, bayi kendini sonsuz "starter" olarak görüyordu.
+
+Ayrıca Stripe (kart) `_finalize_purchase` mevcut bayi lisansını hiç aramıyordu — her ödemede YENİ lisans oluşturuyordu. Kartla yükseltme yapan bayi eski lisansıyla starter kalıyor, ikinci bir yeni pro lisansı ortaya çıkıyordu.
+
+**FIX v43.80:**
+
+### 1. Havale approve — Schema-tolerant license lookup (`routes/payments.py`)
+- Query artık her iki schema alanına bakıyor: `customer_email` (yeni) VEYA `email` (legacy):
+  ```python
+  {"$or": [{"customer_email": email_re}, {"email": email_re}]}
+  ```
+- `active` alanı olmayan legacy lisanslar da eşleşir: `{"$or": [{"active": True}, {"active": {"$exists": False}}]}`
+- `cur_exp` fallback: `subscription_expires_at` YOKSA `valid_until` da denenir
+- Update SET'ine eklendi: `valid_until` (legacy alan sync), `active: True`, `license_version: +1` (cache invalidate)
+
+### 2. Stripe kart onayında da auto-upgrade (`server.py::_finalize_purchase`)
+- Yeni davranış: aynı email'e sahip aktif lisans varsa **YENİ AÇMA**, mevcut'u yükselt
+- Mid-cycle preservation (max(now, cur_exp) + days)
+- Update: `plan`, `valid_until`, `subscription_expires_at`, `active=True`, `license_version+1`, `last_upgrade_at/from/session_id`
+- Payment_transactions'a `is_upgrade: True`, `upgrade_from`, `upgrade_to` alanları eklenir
+- Master alert (`plan_upgraded` · provider=stripe) + Bayi inbox bildirimi + yükseltme onay maili gönderilir
+- Yeni lisans oluşturma dalı ancak `existing_lic` YOKSA çalışır (ilk defa alan yeni müşteri)
+
+**Test edildi (tests/test_v43_80_upgrade_fix.py — 5/5 pytest PASS %100):**
+- `customer_email` schema ile starter→pro upgrade ✓
+- Legacy `active` alanı olmayan lisans yine yükseltiliyor ✓
+- Eşleşmeyen email → `upgraded=false` + reason döner (sızıntı yok) ✓
+- Mid-cycle: 10g kalan lisans + 30g havale → yeni bitiş ≥39g sonrası ✓
+- Case-insensitive email match (upper/lower karma) ✓
+- v43.78 (19/19) + v43.79 (6/6) regression HALA PASS ✓
+
+**Preview smoke:**
+- `MS-UPGTEST` seeded → havale approve → response `{upgraded:true, from_plan:starter, to_plan:pro, expires_at:+30g, license_version:1}` ✓
+- License DB'de tüm alanlar doğru güncellendi (plan/valid_until/subscription_expires_at/active/license_version) ✓
+
+
+
 ## Feb 15, 2026 (Session 17, v43.79) — Karantina Kalıp Taraması (AI Kural Önerileri from Quarantine)
 
 **P2 GÖREV TAMAMLANDI:** MailScanner should actively suggest rules based on quarantine patterns.
