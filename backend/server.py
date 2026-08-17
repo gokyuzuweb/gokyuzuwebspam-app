@@ -2258,6 +2258,15 @@ async def audit_idle_lock_event(payload: IdleLockEventIn, request: Request):
     })
     # v43.75 — IP değişikliği → master'a anlık uyarı (ThreatBell + email)
     if payload.event == "unlock" and payload.ip_changed:
+        # v43.76 — Slack spam koruma: aynı bayidan son 5dk'da 3+ ip_change varsa
+        # bireysel Slack yerine grouped summary yolla.
+        from datetime import timedelta
+        since_5min = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        recent_same = await db.master_alerts.count_documents({
+            "type": "idle_lock_ip_change",
+            "license_key": lk if lk else None,
+            "created_at": {"$gte": since_5min},
+        })
         alert_msg = f"⚠️ IP değişikliği: {label} · {payload.previous_ip} → {payload.current_ip}"
         await db.master_alerts.insert_one({
             "id": str(uuid.uuid4()),
@@ -2270,6 +2279,7 @@ async def audit_idle_lock_event(payload: IdleLockEventIn, request: Request):
                 "previous_ip": payload.previous_ip,
                 "current_ip": payload.current_ip,
                 "actor_label": label,
+                "grouped_from_5min": recent_same,  # kaç önceki alert vardı
             },
             "seen": False,
             "read": False,
@@ -2277,28 +2287,40 @@ async def audit_idle_lock_event(payload: IdleLockEventIn, request: Request):
         })
         # Email + Slack (mevcut delivery infrastructure — best-effort, hata yakalanır)
         try:
-            # Slack notification via master_alert_channels ayarı
             settings = await db.settings.find_one({"_key": "master_alert_channels"}, {"_id": 0}) or {}
             slack_webhook = (settings.get("slack_webhook") or "").strip()
             admin_email = (settings.get("admin_email") or os.environ.get("ADMIN_EMAIL") or "").strip()
-            slack_text = (
-                f":warning: *IP değişikliği (session hijack ihtimali)*\n"
-                f"• Kullanıcı: `{label}`\n"
-                f"• Önceki: `{payload.previous_ip}` → Şu an: `{payload.current_ip}`\n"
-                f"• Zaman: `{_iso()}`\n"
-                f"Audit Log: /panel/audit-log"
-            )
+            # v43.76 — 3+ alert varsa grouped summary; ilk 2 için normal göndeririz
+            is_grouped = recent_same >= 2  # 3. kez aynı bayı (0,1,2 = zaten 3 alert oluştu)
+            if is_grouped:
+                slack_text = (
+                    f":rotating_light: *IP DEĞİŞİKLİĞİ FLOOD ({label})*\n"
+                    f"• Son 5dk içinde *{recent_same + 1}* IP değişikliği!\n"
+                    f"• Son IP: `{payload.current_ip}` (öncekilerin özeti audit-log'da)\n"
+                    f"• Bayı: `{label}`\n"
+                    f":warning: Bu bayı hesabı ele geçirilmiş olabilir — hemen audit-log kontrolü yapın."
+                )
+            else:
+                slack_text = (
+                    f":warning: *IP değişikliği (session hijack ihtimali)*\n"
+                    f"• Kullanıcı: `{label}`\n"
+                    f"• Önceki: `{payload.previous_ip}` → Şu an: `{payload.current_ip}`\n"
+                    f"• Zaman: `{_iso()}`\n"
+                    f"Audit Log: /panel/audit-log"
+                )
             email_body = (
                 f"Panel kilit sırasında IP değişti — session hijack ihtimali.\n\n"
                 f"Kullanıcı: {label}\n"
                 f"Önceki IP: {payload.previous_ip}\n"
                 f"Şu anki IP: {payload.current_ip}\n"
-                f"Zaman: {_iso()}\n\n"
+                f"Zaman: {_iso()}\n"
+                f"{'⚠️ FLOOD: Son 5dk''da ' + str(recent_same + 1) + ' değişiklik!' if is_grouped else ''}\n\n"
                 f"Audit Log: /panel/audit-log"
             )
-            if slack_webhook:
+            if slack_webhook and (not is_grouped or recent_same == 2):
+                # Grouped modda sadece 3. IP değişikliğinde tek özet mesaj yolla; 4/5. gönderme
                 await _send_slack(slack_webhook, slack_text)
-            if admin_email:
+            if admin_email and (not is_grouped or recent_same == 2):
                 await _send_email(admin_email, f"[GökyüzüWebSpam] IP değişikliği - {label}", email_body)
         except Exception:
             pass  # Sessiz geç — audit + master_alert zaten kaydedildi

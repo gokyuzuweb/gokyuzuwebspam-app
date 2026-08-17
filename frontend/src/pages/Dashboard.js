@@ -27,6 +27,7 @@ import MasterAlertCenter from "@/components/MasterAlertCenter";
 import BounceDigestWidget from "@/components/BounceDigestWidget";
 import MarketplaceLeaderboardBanner from "@/components/MarketplaceLeaderboardBanner";
 import TrustedPublisherBadge from "@/components/TrustedPublisherBadge";
+import PendingApprovalsWidget from "@/components/PendingApprovalsWidget";
 import PushHealthWidget from "@/components/PushHealthWidget";
 
 const LICKEY = () => (typeof window !== "undefined"
@@ -95,6 +96,8 @@ export default function Dashboard() {
       {/* Overview tab: 4 stat cards + threat dist */}
       {show("overview") && (
         <div className="space-y-5">
+          {/* v43.76 — Master Onay Bekleyen İşlemler (havale + PayTR) — 0 pending ise gizlenir */}
+          <PendingApprovalsWidget />
           {/* v43.73 — Marketplace Haftalık Lider (winner yoksa null) */}
           <MarketplaceLeaderboardBanner />
           {/* v43.74 — Bayı Trusted Publisher rozeti (progress banner) */}

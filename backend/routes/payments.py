@@ -248,6 +248,26 @@ async def havale_create(payload: HavaleRequest):
         "created_at": _iso(),
     }
     await db.payments.insert_one(dict(doc))
+    # v43.76 — Master'a "sipariş onay bekliyor" bildirimi ver (ThreatBell + Dashboard widget)
+    try:
+        await db.master_alerts.insert_one({
+            "id": str(uuid.uuid4()),
+            "type": "pending_approval",
+            "sub_type": "havale_new",
+            "severity": "info",
+            "message": f"💰 Yeni sipariş onay bekliyor: {payload.user_name or payload.email} · {payload.plan or '?'} · {payload.amount:.2f} TL",
+            "details": {
+                "merchant_oid": merchant_oid,
+                "plan": payload.plan,
+                "amount": payload.amount,
+                "email": payload.email,
+                "user_name": payload.user_name,
+            },
+            "seen": False, "read": False,
+            "created_at": _iso(),
+        })
+    except Exception:
+        pass
     return {
         "ok": True, "merchant_oid": merchant_oid,
         "iban": BANK_IBAN, "bank": BANK_NAME, "beneficiary": BANK_BENEFICIARY,
@@ -533,4 +553,47 @@ async def havale_statement_upload(file: UploadFile = File(...)):
         "size_bytes": len(data),
         "extracted_text": extracted,
         "hint": "Bu metni /statement-match endpoint'ine yollayarak referansları eşleştirin",
+    }
+
+
+
+# v43.76 — Master Dashboard Onay Bekleyen İşlemler Widget'ı
+@router.get("/pending-approvals")
+async def pending_approvals_summary(request: Request):
+    """Master için pending onay bekleyen tüm işlemleri özet döner.
+    Dashboard widget'ında + master notification stream'de kullanılır."""
+    await _require_master_payments(request)
+    # Havale ödemeleri (awaiting_transfer + awaiting_admin_confirm)
+    havale_pending = await db.payments.count_documents(
+        {"provider": "havale", "status": {"$in": ["awaiting_transfer", "awaiting_admin_confirm"]}}
+    )
+    # PayTR başarısız veya beklemede
+    paytr_pending = await db.payments.count_documents(
+        {"provider": "paytr", "status": {"$in": ["initialized", "processing", "pending"]}}
+    )
+    # Son 20 pending order
+    latest_cursor = db.payments.find(
+        {"status": {"$in": ["awaiting_transfer", "awaiting_admin_confirm", "initialized", "processing", "pending"]}},
+        {"_id": 0, "merchant_oid": 1, "provider": 1, "status": 1, "plan": 1,
+         "amount": 1, "currency": 1, "email": 1, "user_name": 1, "created_at": 1}
+    ).sort("created_at", -1).limit(20)
+    latest = await latest_cursor.to_list(20)
+    total = havale_pending + paytr_pending
+
+    # Bugünkü + son 24h istatistik
+    from datetime import timedelta
+    since_24 = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    last_24_count = await db.payments.count_documents(
+        {"created_at": {"$gte": since_24}, "status": {"$in": ["awaiting_transfer", "awaiting_admin_confirm"]}}
+    )
+
+    return {
+        "total_pending": total,
+        "by_provider": {
+            "havale": havale_pending,
+            "paytr": paytr_pending,
+        },
+        "last_24h": last_24_count,
+        "latest": latest,
+        "generated_at": _iso(),
     }

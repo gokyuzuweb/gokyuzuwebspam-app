@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, X, Check, AlertTriangle, ExternalLink, CheckCircle2, XCircle, Activity, Terminal, ShieldAlert } from "lucide-react";
+import { Bell, X, Check, AlertTriangle, ExternalLink, CheckCircle2, XCircle, Activity, Terminal, ShieldAlert, DollarSign } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useIsMaster } from "@/hooks/useIsMaster";
@@ -59,6 +59,15 @@ function alertMeta(a) {
       iconCls: "text-rose-400",
       linkHref: "/panel/audit-log",
       linkTitle: "Audit Log'a git",
+    };
+  }
+  // v43.76 — Yeni sipariş/upgrade onay bekliyor
+  if (type === "pending_approval") {
+    return {
+      Icon: DollarSign,
+      iconCls: "text-amber-400",
+      linkHref: "/panel/payments-admin",
+      linkTitle: "Ödeme Panosuna git",
     };
   }
   // Reseller-based threat (default)

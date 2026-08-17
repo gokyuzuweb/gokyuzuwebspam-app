@@ -140,8 +140,30 @@ async def list_signatures(
         ]
 
     pipeline += [{"$skip": offset}, {"$limit": limit},
-                 {"$project": {"_id": 0, "publisher_license": 0}}]
+                 {"$project": {"_id": 0}}]  # publisher_license'ı sonra kaldıracağız (tier hesabı için)
     items = await db.marketplace_signatures.aggregate(pipeline).to_list(limit)
+    # v43.76 — Her imzaya publisher tier badge ekle (Trusted/Expert/Elite)
+    publisher_keys = list({s.get("publisher_license") for s in items if s.get("publisher_license")})
+    tier_map: dict[str, dict] = {}
+    if publisher_keys:
+        # Bulk sayı — tek pipeline
+        agg = db.marketplace_signatures.aggregate([
+            {"$match": {"publisher_license": {"$in": publisher_keys}, "status": "active"}},
+            {"$group": {"_id": "$publisher_license", "n": {"$sum": 1}}},
+        ])
+        async for row in agg:
+            n = row.get("n", 0)
+            tier = None
+            if n >= 30:  tier = {"label": "Elite Publisher",   "badge_color": "amber",   "signatures": n}
+            elif n >= 15: tier = {"label": "Expert Publisher",  "badge_color": "violet",  "signatures": n}
+            elif n >= 5:  tier = {"label": "Trusted Publisher", "badge_color": "emerald", "signatures": n}
+            if tier:
+                tier_map[row["_id"]] = tier
+    # publisher_license leak etme — tier ekle, license sil
+    for s in items:
+        lk = s.pop("publisher_license", None)
+        if lk and lk in tier_map:
+            s["publisher_tier"] = tier_map[lk]
     total = await db.marketplace_signatures.count_documents(match)
     return {"items": items, "total": total, "offset": offset, "limit": limit}
 

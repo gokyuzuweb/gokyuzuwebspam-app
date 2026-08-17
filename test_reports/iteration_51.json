@@ -1,0 +1,33 @@
+{
+  "summary": "v43.76 backend test: 3 backend features validated (Pending Approvals widget + auto master_alert on havale/create; IP change flood grouping with grouped_from_5min counter; Marketplace publisher_tier badge & publisher_license removal). All 7 pytest cases PASS.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/audit/idle-lock-event", "issue": "Slack/email gating uses recent_same==2 (only 3rd event triggers grouped notification). 4th+ events in the same 5-min window intentionally suppress delivery — this matches spec but means bursts of >3 events will only ever send ONE grouped Slack; if the flood continues past 5 minutes the window resets. Consider a secondary reminder at N=10 or window-end summary."},
+      {"endpoint": "/api/audit/idle-lock-event", "issue": "email_body string uses Python implicit string concatenation with 'dk''da' — the double apostrophe is a Python literal that becomes a single quote, but the intent 'dk'da' is preserved. Minor cosmetic; keep an eye on it."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v43_76_features.py",
+    "/app/test_reports/pytest/v43_76_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "payments.py havale_create wraps master_alerts insert in bare try/except pass — if the alert insert silently fails, the dashboard widget will lag until next scan. Consider logging the exception (log.warning) rather than swallowing.",
+    "payments.py /pending-approvals correctly excludes _id via projection; verified no ObjectId leak.",
+    "server.py idle-lock-event: recent_same is computed BEFORE insert, so grouped_from_5min values progress 0,1,2,3,... — this matches the spec ('1st has grouped_from_5min=N, each subsequent grew by 1').",
+    "server.py idle-lock-event Slack gating logic (line 2320): condition `(not is_grouped or recent_same == 2)` means: send for recent_same in {0,1,2}, skip for {3,4,...}. Effectively sends first 3 events (not just 3rd). Docstring/comment says 'sadece 3. IP değişikliğinde tek özet mesaj yolla' but the code sends all first three. Minor mismatch between intent and behaviour — either fix the comment or restrict to `recent_same == 2` only.",
+    "marketplace.py list_signatures correctly pops publisher_license before returning and enriches with publisher_tier — verified.",
+    "marketplace.py tier thresholds asc: >=5 Trusted, >=15 Expert, >=30 Elite — hierarchical ordering intact (if/elif/elif)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v43_76_features.py (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "N/A (backend-only)"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676; MASTER_IP=89.19.15.58; bayi MS-TESTBAYI-STARTER-V4371",
+  "seed_data_creation": "Test creates: (a) one havale payment (TRF... status=awaiting_transfer) which remains for the pending-approvals widget seed; (b) one master_alert of type=pending_approval; (c) four master_alerts of type=idle_lock_ip_change for a random license key MS-TEST-FLOOD-XXXXXXXX (test-scoped, does not interfere with production data). Existing 6 marketplace_signatures for MS-TESTBAYI-STARTER-V4371 remain untouched — Trusted Publisher badge verified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Master alerts endpoint is /api/admin/threat-alerts (not /api/master/alerts). /api/payments/pending-approvals requires BOTH X-Master-Key AND X-Forwarded-For=MASTER_IP (strict payments guard via _require_master_payments). Other admin endpoints only need X-Master-Key. Frontend slash-command history localStorage was not tested (backend-only scope)."
+}

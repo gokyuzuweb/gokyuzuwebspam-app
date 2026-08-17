@@ -195,6 +195,21 @@ function SignatureRow({ sig, onOpen }) {
           <span className="text-sm text-slate-200 font-medium">{sig.name}</span>
           <Badge tone={CAT_TONES[sig.category] || "default"}>{CAT_LABELS[sig.category] || sig.category}</Badge>
           <span className="text-[10px] text-slate-500 mono">{sig.publisher_masked}</span>
+          {sig.publisher_tier && (
+            <span
+              data-testid={`mp-sig-tier-${sig.id}`}
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${
+                sig.publisher_tier.badge_color === "emerald" ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300" :
+                sig.publisher_tier.badge_color === "violet"  ? "bg-violet-500/15 border-violet-500/40 text-violet-300" :
+                sig.publisher_tier.badge_color === "amber"   ? "bg-amber-500/15 border-amber-500/40 text-amber-300" :
+                "bg-slate-700/40 border-slate-600 text-slate-300"
+              }`}
+              title={`${sig.publisher_tier.signatures} aktif imza — Marketplace onaylı`}
+            >
+              {sig.publisher_tier.badge_color === "amber" ? "⭐" : sig.publisher_tier.badge_color === "violet" ? "✨" : "🏅"}
+              {sig.publisher_tier.label.replace(" Publisher", "")}
+            </span>
+          )}
         </div>
         <div className="text-[11px] text-slate-500 mono truncate max-w-[720px] mt-0.5" title={sig.pattern}>
           /{sig.pattern}/ · {sig.target}

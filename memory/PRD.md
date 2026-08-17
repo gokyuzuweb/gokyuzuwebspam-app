@@ -14,6 +14,58 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 17, v43.76) — Pending Approvals + Flood Grouping + Slash History + Marketplace Tiers
+
+**KULLANICI İSTEKLERİ (birleşik):**
+1. Slack Alert Group by Bayı (5dk, 3+ → tek özet)
+2. Slash Command History (localStorage, ↑↓ shell)
+3. Trusted Publisher Public Marketplace Sertifikası (imza kartında rozet)
+4. **YENİ**: Sipariş/Yükseltme Onay Bekleme Dashboard + Master bildirim
+
+**FIX v43.76:**
+
+### 1. Pending Approvals Dashboard Widget + Auto master_alert
+- Backend `/api/payments/pending-approvals` (master-only) — returns `{total_pending, by_provider:{havale,paytr}, last_24h, latest:[max20], generated_at}`
+- `havale/create` — otomatik `master_alerts` insert: type='pending_approval', sub_type='havale_new', severity='info', message='💰 Yeni sipariş onay bekliyor: {ad} · {plan} · {tutar} TL'
+- Frontend `components/PendingApprovalsWidget.js` — Dashboard tepesinde amber banner (master-only, 0 pending → null):
+  - Total count + 24s stat
+  - Provider breakdown (Havale/EFT + PayTR)
+  - Son 5 sipariş listesi (bayı adı + plan + tutar + status + zaman)
+  - **[Ödeme Panosu →]** butonu
+- `ThreatAlertBell.js` yeni `pending_approval` type → DollarSign icon + link `/panel/payments-admin`
+
+### 2. IP Change Flood Grouping (Slack Spam Koruma)
+- `POST /api/audit/idle-lock-event` — aynı bayidan son 5dk `master_alerts` sayımı (`grouped_from_5min` field)
+- Slack + email: **sadece 3. event'te** grouped summary olarak gönderilir (0/1/2 sayaç bu manaya gelir)
+- 4+ event'lerde delivery skip (spam koruma)
+- Grouped mesaj formatı: `:rotating_light: *IP DEĞİŞİKLİĞİ FLOOD ({label})* · Son 5dk içinde *N* IP değişikliği!`
+- Test verified: 4 sequential IP change → 3. tetikliyor Slack, 4. sadece master_alerts'a düşer
+
+### 3. Slash Command History (Shell-Style)
+- `SlashCommandBar.js` — `loadHistory()` / `pushHistory()` localStorage `gws.slash_history` (max 20)
+- Başarılı `exec()` → history'e push
+- Input boşken + öneri yok → `↑↓` history cycle (histIdx state)
+- Panel açılışında "Son komutlar" section (max 6) + "Örnek komutlar" section birlikte gösterilir
+
+### 4. Marketplace Publisher Tier Badge
+- Backend `list_signatures` — items'e `publisher_tier` field'ı eklendi (Trusted/Expert/Elite based on active signature count)
+- `publisher_license` KESİN SİLİNDİ output'tan (leak yok)
+- Frontend `Marketplace.js` SigCard — imza adı yanında renkli chip: 🏅 Trusted (emerald), ✨ Expert (violet), ⭐ Elite (amber)
+- Data-testid `mp-sig-tier-{sig_id}` her tier badge'inde
+
+**Test edildi (iteration_51.json — 7/7 PASS %100):**
+- havale/create → master_alert (type=pending_approval, sub_type=havale_new) ✓
+- pending-approvals summary shape + 403 for non-master IP + non-master key ✓
+- IP flood grouped_from_5min counter (0→1→2→3) + delivery only at 3rd ✓
+- publisher_tier included + publisher_license removed from marketplace list ✓
+
+**Frontend Screenshot Verified:**
+- Dashboard: PendingApprovalsWidget amber banner (7 pending, 24s: 1, Havale 5 + PayTR 2, 5 latest orders) ✓
+- Marketplace: 12 tier badges visible in signature list ✓
+- ThreatBell: pending_approval + idle_lock_ip_change (grouped) toast'ları ✓
+
+
+
 ## Feb 15, 2026 (Session 17, v43.75) — Slash Autocomplete + Trusted Cert + IP Alert + SEO OG
 
 **KULLANICI İSTEKLERİ:**

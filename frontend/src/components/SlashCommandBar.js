@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Terminal, Send, X, ArrowUp, Info } from "lucide-react";
+import { Terminal, Send, X, ArrowUp, Info, Clock } from "lucide-react";
 import { client } from "@/lib/api";
 import { useIsMaster } from "@/hooks/useIsMaster";
 
@@ -33,6 +33,20 @@ const CMD_ALIASES = {
 };
 
 // v43.75 — Autocomplete için tam komut listesi (görsel önerilerle)
+const HISTORY_KEY = "gws.slash_history";
+const HISTORY_MAX = 20;
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; }
+}
+function pushHistory(cmd) {
+  try {
+    const cur = loadHistory().filter((c) => c !== cmd);
+    const next = [cmd, ...cur].slice(0, HISTORY_MAX);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  } catch (_) {}
+}
+
 const CMD_SUGGESTIONS = [
   { alias: "health-check",  desc: "Bayı sunucusu docker + servis health kontrol", ex: "/run health-check @bayı" },
   { alias: "version-check", desc: "Uname + docker + plugin sürüm bilgisi",         ex: "/run version-check @bayı" },
@@ -167,8 +181,22 @@ export default function SlashCommandBar() {
   // v43.75 — Reset selected index when input changes
   useEffect(() => { setSelectedIdx(0); }, [input]);
 
+  // v43.76 — Slash command history (shell style)
+  const [histIdx, setHistIdx] = useState(-1);
+  const history = loadHistory();
+
   // v43.75 — Klavye: ↑/↓ ile arasında dolan, Tab/Enter ile seç, Enter ile çalıştır (öneri boşken)
   const handleKeyDown = (e) => {
+    // v43.76 — Öneri yoksa VE input boşsa VEYA history modundaysak, ↑/↓ history cycle
+    const inHistoryMode = suggestions.length === 0 && history.length > 0;
+    if (inHistoryMode && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      let next = e.key === "ArrowUp" ? histIdx + 1 : histIdx - 1;
+      next = Math.max(-1, Math.min(history.length - 1, next));
+      setHistIdx(next);
+      setInput(next === -1 ? "" : history[next]);
+      return;
+    }
     if (suggestions.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
       setSelectedIdx((v) => {
@@ -228,13 +256,16 @@ export default function SlashCommandBar() {
         description: "Sonuçlar ThreatBell + Uzak Yönetim sayfasında görünür",
         duration: 5000,
       });
+      pushHistory(input.trim()); // v43.76 — history'e ekle (başarılı komut)
     } else {
       toast.warning(`${okCount} başarılı, ${failCount} başarısız`, {
         description: results.filter(r => !r.ok).map(r => `${r.target.slice(0, 12)}: ${r.err}`).join(" · "),
         duration: 8000,
       });
+      if (okCount > 0) pushHistory(input.trim()); // en az biri başarılıysa
     }
     setInput("");
+    setHistIdx(-1);
     setOpen(false);
   };
 
@@ -334,17 +365,35 @@ export default function SlashCommandBar() {
                   </div>
                 );
               })() : suggestions.length === 0 ? (
-                <div className="space-y-1">
-                  <div className="text-slate-500 flex items-center gap-1"><Info className="w-3 h-3"/> Örnek komutlar (tıklayın):</div>
-                  {COMMAND_HELP.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setInput(c)}
-                      className="block w-full text-left px-2 py-1 mono text-[11px] text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 rounded"
-                    >
-                      {c}
-                    </button>
-                  ))}
+                <div className="space-y-2">
+                  {history.length > 0 && (
+                    <div>
+                      <div className="text-slate-500 flex items-center gap-1 mb-1">
+                        <Clock className="w-3 h-3"/> Son komutlar (↑↓ ile döneceksiniz):
+                      </div>
+                      {history.slice(0, 6).map((c, i) => (
+                        <button
+                          key={"h" + i}
+                          onClick={() => setInput(c)}
+                          className="block w-full text-left px-2 py-1 mono text-[11px] text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 rounded"
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-slate-500 flex items-center gap-1"><Info className="w-3 h-3"/> Örnek komutlar (tıklayın):</div>
+                    {COMMAND_HELP.map((c) => (
+                      <button
+                        key={c}
+                        onClick={() => setInput(c)}
+                        className="block w-full text-left px-2 py-1 mono text-[11px] text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 rounded"
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </div>
