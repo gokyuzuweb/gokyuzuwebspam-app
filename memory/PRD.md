@@ -14,6 +14,56 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 17, v43.72) — İdle Lock + Uzak Yönetim + Renkli Sidebar + Havale-First Upgrade
+
+**KULLANICI İSTEKLERİ (birleşik):**
+1. "Ekranda işlem yapılmazsa panel kilitlensin"
+2. "Bayi Sunucu Uzak Yönetim: Master'dan bayi sunucusuna güvenli read-only komut"
+3. "Pro yükselt dediğimde Stripe hatası — Havale mantığında yapılsın"
+4. "Plan Modül pasif olunca modül kaldırma yerine 'paketinizde bulunmamaktadır, Pro/Enterprise için orada'"
+5. "Sidebar başlıkları ile modül isimlerini renklendir — çok boğucu"
+
+**FIX v43.72:**
+
+### 1. İdle Auto-Lock
+- Backend `GET/POST /api/settings/idle-lock` — master ayarlar {enabled, minutes 1-1440, warn_seconds 0-300}. Non-master → 403.
+- Frontend `<IdleAutoLock/>` component (Shell'e mount edildi). ACTIVITY_EVENTS listener (mousemove/keydown/scroll/click/wheel/touchstart) idle timer'ını sıfırlar. Süre dolunca fullscreen overlay + lisans anahtarı input + Enter/Kilidi Aç butonu. Uyarı chip'i (`warn_seconds` içinde alt merkez).
+- Settings sayfasına "Otomatik Kilit (İdle Auto-Lock)" master kartı eklendi (dakika + uyarı sn slider'ları + Kaydet). Değişiklik anlık, tüm bayilere ~60sn içinde yansır.
+
+### 2. Bayı Uzak Yönetim (Read-Only)
+- Yeni router `routes/remote_admin.py` — 5 whitelist komut: `log_tail` (7 izinli log path), `health_check`, `version_check`, `disk_usage`, `service_status` (7 izinli servis). Restart/write komutları yok.
+- Endpoint'ler:
+  - `POST /api/remote-admin/dispatch` (master-only) — komutu `pending_quarantine_actions`'a queue'lar; bayi heartbeat çeker
+  - `GET  /api/remote-admin/history` — komut geçmişi (bayi label + zaman + durum + çıktı)
+  - `GET  /api/remote-admin/action/{id}` — polling için tek eylem
+  - `GET  /api/remote-admin/bayilerv` — aktif bayi listesi (target seç dropdown için)
+- Frontend `pages/RemoteAdmin.js` — form (target/komut/log/lines/service) + geçmiş tablosu (5sn refetch) + çıktı modal'i (kopyala butonu). Sidebar'a "Bayı Uzak Yönetim" master-only item.
+- Sanitization: log_path allow-list (`/etc/shadow` deneme → 400), lines cap 1000, service allow-list. Audit log entry her dispatch'te.
+
+### 3. Havale-First Upgrade Flow
+- Subscription.js default gateway `stripe` → `"havale"`. URL param `?gateway=havale` override edilir.
+- Stripe API key eksik hatası yakalanıp otomatik havale'ye geçer + toast: "Kredi kartı devre dışı — Havale'ye geçildi, tekrar tıklayın".
+- PlanFeatureGuard'ın "Planı Yükselt" butonu `?upgrade=<next>&gateway=havale` ile açıyor → doğrudan havale flow.
+
+### 4. Plan Kilit Ekranı Metin İyileştirme
+- Başlık: "Bir Üst Versiyona Geçiş Yapmanız Gerekiyor" → **"Bu Modül Paketinizde Bulunmuyor"**
+- Alt açıklama: "X modülü Y paketinize dahil değil" + net "Pro veya Enterprise'a geçmeniz gerekiyor" cümlesi
+- Buton: "Planı Yükselt →" → **"Planı Yükselt (Havale) →"**
+
+### 5. Sidebar Renk Sistemi (canlandırma)
+- 8 grup için tone atandı: İzleme=cyan, Koruma=emerald, Posta=violet, Kullanıcı=amber, Satış=rose, Bildirim=sky, Master=fuchsia, Sistem=slate.
+- `TONE_STYLES` sabiti — Tailwind JIT için literal class'lar (bg/text/border/hover/grad/dot varyantları).
+- Grup başlığı: açıkken tonun gradient + border + accent icon; kapalıyken slate hover.
+- Nav item: active state tonun `from-{tone}/15` gradient + border + sol accent bar; hover state tonun `hover:bg-{tone}/10`.
+- Kilit ikonu: sağda `<Lock/>` amber renkli; tıklandığında PlanFeatureGuard'ı render eden route'a gidiyor (sidebar'dan gizlenmiyor artık — bayi hangi modülün üst planda olduğunu görüyor).
+
+**Test edildi:**
+- Backend: 11/11 v43.71 pytest hala geçiyor + curl smoke: dispatch/history/allow-list validation ✓
+- Frontend: Master 0 kilit, Starter bayi 8 kilit (Marketplace/BounceDigest/ThreatIntel/Rules/Engines/WhitelistHistory/AlertsRules/EmailNotif) — screenshot doğrulandı ✓
+- IdleLock: config API çalışıyor, non-master 403 döndürüyor ✓
+
+
+
 ## Feb 15, 2026 (Session 17, v43.71) — Plan Modül Yapılandırma Genişletme + Bayi Kilit Guard'ı
 
 **KULLANICI İSTEĞİ:**

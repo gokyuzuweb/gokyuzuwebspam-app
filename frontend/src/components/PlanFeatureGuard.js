@@ -47,10 +47,20 @@ export default function PlanFeatureGuard({ feature, featureLabel, children }) {
           <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto mb-4">
             <Lock className="w-8 h-8 text-amber-400" />
           </div>
-          <h1 className="text-xl font-bold text-slate-100 mb-2">Bir Üst Versiyona Geçiş Yapmanız Gerekiyor</h1>
-          <p className="text-sm text-slate-400 mb-6">
-            <b className="text-amber-300">{featureLabel || feature}</b> özelliği <b>{PLAN_LABEL[currentPlan] || currentPlan}</b> planınıza dahil değil.
+          <h1 className="text-xl font-bold text-slate-100 mb-2">Bu Modül Paketinizde Bulunmuyor</h1>
+          <p className="text-sm text-slate-400 mb-2">
+            <b className="text-amber-300">{featureLabel || feature}</b> modülü <b>{PLAN_LABEL[currentPlan] || currentPlan}</b> paketinize dahil değil.
           </p>
+          {nextPlan && nextEnabled && (
+            <p className="text-sm text-emerald-300 mb-6">
+              Bu modülü kullanmak için <b>{PLAN_LABEL[nextPlan]}</b> veya <b>Enterprise</b> paketine geçmeniz gerekiyor.
+            </p>
+          )}
+          {(!nextPlan || !nextEnabled) && (
+            <p className="text-sm text-slate-500 mb-6">
+              Bu modülü kullanmak için <b>Enterprise</b> paketine geçmeniz gerekiyor.
+            </p>
+          )}
 
           {/* Plan karşılaştırma */}
           <div className="grid grid-cols-2 gap-3 mb-6 text-left">
@@ -75,9 +85,9 @@ export default function PlanFeatureGuard({ feature, featureLabel, children }) {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <a href="/panel/subscription" data-testid="plan-guard-upgrade"
+            <a href={`/panel/subscription?upgrade=${nextPlan || "pro"}&gateway=havale`} data-testid="plan-guard-upgrade"
                className="inline-flex items-center gap-2 px-5 py-2.5 rounded bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-bold shadow-lg hover:shadow-xl transition-shadow">
-              <Sparkles className="w-4 h-4"/> Planı Yükselt →
+              <Sparkles className="w-4 h-4"/> Planı Yükselt (Havale) →
             </a>
             <a href="/panel" data-testid="plan-guard-back"
                className="text-xs px-3 py-2.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200">

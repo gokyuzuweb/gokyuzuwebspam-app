@@ -7,13 +7,85 @@ import StripeConfigCard from "@/components/StripeConfigCard";
 import { api } from "@/lib/api";
 import { useI18n, useT } from "@/i18n";
 
+// v43.72 — İdle Auto-Lock ayar kartı (master-only, GET her ziyaretçiye açık)
+function IdleLockConfigCard() {
+  const t = useT();
+  const q = useQuery({ queryKey: ["idle-lock"], queryFn: () => api.idleLockGet(), staleTime: 30_000 });
+  const [enabled, setEnabled] = useState(true);
+  const [minutes, setMinutes] = useState(15);
+  const [warnSec, setWarnSec] = useState(30);
+  useEffect(() => {
+    if (q.data) {
+      setEnabled(!!q.data.enabled);
+      setMinutes(Number(q.data.minutes || 15));
+      setWarnSec(Number(q.data.warn_seconds || 30));
+    }
+  }, [q.data]);
+  const save = useMutation({
+    mutationFn: () => api.idleLockSet({ enabled, minutes, warn_seconds: warnSec }),
+    onSuccess: () => toast.success("İdle kilit ayarı kaydedildi — anında geçerli"),
+    onError: (e) => toast.error("Kaydedilemedi: " + (e?.response?.data?.detail || e.message)),
+  });
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><Lock className="w-4 h-4 text-amber-400" /> Otomatik Kilit (İdle Auto-Lock)</span>}
+        subtitle="Ekranda belirtilen süre hareket yoksa panel kilitlenir. Master ayarlar, tüm bayilere yansır."
+      />
+      <CardBody className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-slate-200">Aktif</div>
+            <div className="text-xs text-slate-500 mt-0.5">Kapatırsanız kilit devre dışı</div>
+          </div>
+          <button
+            data-testid="idle-lock-enable-toggle"
+            onClick={() => setEnabled((v) => !v)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${enabled ? "bg-emerald-500/70" : "bg-slate-700"}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? "translate-x-6" : "translate-x-1"}`} />
+          </button>
+        </div>
+        <Row title="Kilit süresi (dakika)" hint="Hareketsizlik bu süreyi geçince panel kilitlenir. 1–1440." testid="row-idle-minutes">
+          <input
+            type="number" min="1" max="1440"
+            data-testid="idle-lock-minutes"
+            value={minutes}
+            onChange={(e) => setMinutes(Math.max(1, Math.min(1440, parseInt(e.target.value || "15", 10))))}
+            className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right"
+          />
+        </Row>
+        <Row title="Uyarı süresi (saniye)" hint="Kilit tetiklenmeden önce alt banner uyarısı" testid="row-idle-warn">
+          <input
+            type="number" min="0" max="300"
+            data-testid="idle-lock-warn"
+            value={warnSec}
+            onChange={(e) => setWarnSec(Math.max(0, Math.min(300, parseInt(e.target.value || "30", 10))))}
+            className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right"
+          />
+        </Row>
+        <button
+          data-testid="idle-lock-save"
+          onClick={() => save.mutate()}
+          disabled={save.isPending}
+          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
+        >
+          <Save className="w-4 h-4" /> İdle Kilit Ayarını Kaydet
+        </button>
+        <div className="text-[11px] text-slate-500">
+          Not: Kaydettikten sonra tüm açık paneller ~60sn içinde yeni süreyi kullanmaya başlar.
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 function Row({ title, hint, children, testid }) {
   return (
     <div data-testid={testid} className="flex items-start justify-between gap-6 py-4 border-b border-slate-800 last:border-0">
       <div className="min-w-0 flex-1">
         <div className="text-sm text-slate-200">{title}</div>
-        {hint ? <div className="text-xs text-slate-500 mt-1">{hint}</div> : null}
-      </div>
+        {hint ? <div className="text-xs text-slate-500 mt-1">{hint}</div> : null}      </div>
       <div className="shrink-0">{children}</div>
     </div>
   );
@@ -296,6 +368,9 @@ export default function SettingsPage() {
 
         {/* Stripe API Key - master only */}
         <StripeConfigCard />
+
+        {/* v43.72 — İdle Auto-Lock master ayarı */}
+        <IdleLockConfigCard />
       </div>
 
       <div className="col-span-12 lg:col-span-4 space-y-4">

@@ -612,6 +612,8 @@ export const api = {
   verifyMaster: (key) => client.get("/system/verify-master", { params: { key } }).then(r => r.data),
   auditLogs: (hours = 168, action, limit = 200) => client.get("/audit/logs", { params: { hours, action, limit } }).then(r => r.data),
   planEffective: () => client.get("/plan/effective").then(r => r.data),
+  idleLockGet: () => client.get("/settings/idle-lock").then(r => r.data),
+  idleLockSet: (payload) => client.post("/settings/idle-lock", payload).then(r => r.data),
 
   // v43.52 — Aynı ts'ye sıkışmış outbound kayıtları için timestamp onarımı
   outboundRepairTimestamps: (dry_run = false) => client.post(`/outbound/repair-timestamps?dry_run=${dry_run}`, {}, { timeout: 30000 }).then(r => r.data),

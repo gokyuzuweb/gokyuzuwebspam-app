@@ -6,7 +6,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal, Server, History, Mail,
-  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck, Palette, Store, MailX, Stethoscope,
+  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck, Palette, Store, MailX, Stethoscope, Lock,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -63,8 +63,10 @@ import LiveDiagnostic from "@/pages/LiveDiagnostic";
 import CustomDomainGuide from "@/pages/CustomDomainGuide";
 import AuditLog from "@/pages/AuditLog";
 import SmtpSettings from "@/pages/SmtpSettings";
+import RemoteAdmin from "@/pages/RemoteAdmin";
 import MasterOnlyGuard from "@/components/MasterOnlyGuard";
 import PlanFeatureGuard, { usePlanFeatures } from "@/components/PlanFeatureGuard";
+import IdleAutoLock from "@/components/IdleAutoLock";
 
 // v43.67 — Master-only sayfa wrapper'ları (URL'ye direkt yazan bayilere karşı defense-in-depth)
 const MO = (Component, title) => <MasterOnlyGuard pageTitle={title}><Component /></MasterOnlyGuard>;
@@ -118,6 +120,7 @@ const NAV = [
   { to: "/panel/plugin-health", key: "plugin_health", icon: HeartPulse, testid: "nav-plugin-health", label: "Plugin Sağlığı", masterOnly: true, sellerOnly: true, group: "master" },
   { to: "/panel/wake-history", key: "wake_history", icon: History, testid: "nav-wake-history", label: "Ping Geçmişi", masterOnly: true, sellerOnly: true, group: "master" },
   { to: "/panel/audit-log", key: "audit_log", icon: ShieldAlert, testid: "nav-audit-log", label: "Audit Log", masterOnly: true, sellerOnly: true, group: "master" },
+  { to: "/panel/remote-admin", key: "remote_admin", icon: Terminal, testid: "nav-remote-admin", label: "Bayı Uzak Yönetim", masterOnly: true, sellerOnly: true, group: "master" },
   // 🔧 SİSTEM
   { to: "/panel/my-server", key: "my_server", icon: Server, testid: "nav-my-server", label: "Sunucumu Bağla", group: "sistem", feature: "my_server" },
   { to: "/panel/smtp-settings", key: "smtp_settings", icon: Mail, testid: "nav-smtp", label: "Mail (SMTP)", group: "sistem", feature: "smtp_settings" },
@@ -130,15 +133,27 @@ const NAV = [
 ];
 
 const NAV_GROUPS = [
-  { key: "izleme",   label: "İzleme",           icon: "📊" },
-  { key: "koruma",   label: "Koruma",           icon: "🛡" },
-  { key: "posta",    label: "Posta",            icon: "📨" },
-  { key: "user",     label: "Kullanıcı & Bayi", icon: "👥" },
-  { key: "sales",    label: "Satış & Ödeme",    icon: "💰" },
-  { key: "bildirim", label: "Bildirim & Rapor", icon: "🔔" },
-  { key: "master",   label: "Master Yönetim",   icon: "🎨" },
-  { key: "sistem",   label: "Sistem",           icon: "🔧" },
+  { key: "izleme",   label: "İzleme",           icon: "📊", tone: "cyan"    },
+  { key: "koruma",   label: "Koruma",           icon: "🛡",  tone: "emerald" },
+  { key: "posta",    label: "Posta",            icon: "📨", tone: "violet"  },
+  { key: "user",     label: "Kullanıcı & Bayi", icon: "👥", tone: "amber"   },
+  { key: "sales",    label: "Satış & Ödeme",    icon: "💰", tone: "rose"    },
+  { key: "bildirim", label: "Bildirim & Rapor", icon: "🔔", tone: "sky"     },
+  { key: "master",   label: "Master Yönetim",   icon: "🎨", tone: "fuchsia" },
+  { key: "sistem",   label: "Sistem",           icon: "🔧", tone: "slate"   },
 ];
+
+// Ton → tailwind class'ları (safelist: literal string — Tailwind JIT'in görebilmesi için)
+const TONE_STYLES = {
+  cyan:    { text: "text-cyan-200",    barBg: "bg-cyan-400",    grad: "from-cyan-500/15",    border: "border-cyan-500/30",    dot: "bg-cyan-500/20 text-cyan-300",    icon: "text-cyan-400",    hoverBg: "hover:bg-cyan-500/10",    hoverBorder: "hover:border-cyan-500/20" },
+  emerald: { text: "text-emerald-200", barBg: "bg-emerald-400", grad: "from-emerald-500/15", border: "border-emerald-500/30", dot: "bg-emerald-500/20 text-emerald-300", icon: "text-emerald-400", hoverBg: "hover:bg-emerald-500/10", hoverBorder: "hover:border-emerald-500/20" },
+  violet:  { text: "text-violet-200",  barBg: "bg-violet-400",  grad: "from-violet-500/15",  border: "border-violet-500/30",  dot: "bg-violet-500/20 text-violet-300",  icon: "text-violet-400",  hoverBg: "hover:bg-violet-500/10",  hoverBorder: "hover:border-violet-500/20" },
+  amber:   { text: "text-amber-200",   barBg: "bg-amber-400",   grad: "from-amber-500/15",   border: "border-amber-500/30",   dot: "bg-amber-500/20 text-amber-300",   icon: "text-amber-400",   hoverBg: "hover:bg-amber-500/10",   hoverBorder: "hover:border-amber-500/20" },
+  rose:    { text: "text-rose-200",    barBg: "bg-rose-400",    grad: "from-rose-500/15",    border: "border-rose-500/30",    dot: "bg-rose-500/20 text-rose-300",    icon: "text-rose-400",    hoverBg: "hover:bg-rose-500/10",    hoverBorder: "hover:border-rose-500/20" },
+  sky:     { text: "text-sky-200",     barBg: "bg-sky-400",     grad: "from-sky-500/15",     border: "border-sky-500/30",     dot: "bg-sky-500/20 text-sky-300",     icon: "text-sky-400",     hoverBg: "hover:bg-sky-500/10",     hoverBorder: "hover:border-sky-500/20" },
+  fuchsia: { text: "text-fuchsia-200", barBg: "bg-fuchsia-400", grad: "from-fuchsia-500/15", border: "border-fuchsia-500/30", dot: "bg-fuchsia-500/20 text-fuchsia-300", icon: "text-fuchsia-400", hoverBg: "hover:bg-fuchsia-500/10", hoverBorder: "hover:border-fuchsia-500/20" },
+  slate:   { text: "text-slate-200",   barBg: "bg-slate-400",   grad: "from-slate-500/15",   border: "border-slate-500/30",   dot: "bg-slate-700/60 text-slate-300",   icon: "text-slate-400",   hoverBg: "hover:bg-slate-800/50",   hoverBorder: "hover:border-slate-700/40" },
+};
 
 function Sidebar() {
   const t = useT();
@@ -191,19 +206,20 @@ function Sidebar() {
   };
   const anyOpen = openGroups.size > 0;
   const allOpen = openGroups.size >= NAV_GROUPS.length;
-  // v43.71 — Plan features (bayı planında pasif olan modüller sidebar'da da gizlenir)
+  // v43.72 — Plan features (kapalı modüller GİZLENMİYOR — kilit ikonuyla gösterilip
+  // tıklandığında PlanFeatureGuard "Bu modül paketinizde yok, üst versiyona geçin"
+  // ekranını render ediyor. Böylece bayi hangi modüllerin varlığını biliyor.)
   const planQ = usePlanFeatures();
   const planFeatures = planQ.data?.features || {};
   const planReady = !planQ.isLoading;
   const items = NAV.filter((n) => {
     if (n.sellerOnly && !isSeller) return false;
     if (n.masterOnly && !isMaster) return false;
-    // Master her zaman her şeyi görür (planFeatures.enterprise varsayılan olarak açık, ama impersonation aktifse alttaki de doğru)
-    if (isMaster) return true;
-    // Plan-based hide: feature key varsa ve plan matriste false ise sidebar'dan gizle.
-    // planReady değilse geçici olarak göster (ilk render gecikmesi yaşanmasın).
-    if (n.feature && planReady && planFeatures[n.feature] === false) return false;
     return true;
+  }).map((n) => {
+    // Sidebar item'a "locked" flag'i eklenir; NavItem kilit ikonu gösterir.
+    const locked = !isMaster && n.feature && planReady && planFeatures[n.feature] === false;
+    return { ...n, locked };
   });
   // v43.21 — grup bazlı bölütleme (NAV_GROUPS sırasına uygun)
   const grouped = NAV_GROUPS.map((g) => ({
@@ -271,6 +287,7 @@ function Sidebar() {
         <div className="h-px bg-slate-800/60 my-2" />
         {grouped.map((g, gi) => {
           const isCollapsed = !openGroups.has(g.key);
+          const tone = TONE_STYLES[g.tone] || TONE_STYLES.slate;
           return (
             <div key={g.key} className={gi > 0 ? "pt-3" : ""} data-testid={`nav-group-${g.key}`}>
               <button
@@ -279,22 +296,18 @@ function Sidebar() {
                 data-testid={`nav-group-toggle-${g.key}`}
                 className={`w-full px-2.5 py-2 mb-1 flex items-center gap-2 rounded-md text-[11px] uppercase tracking-[0.14em] font-black select-none transition-all duration-200 group ${
                   isCollapsed
-                    ? "text-slate-400 hover:text-indigo-200 hover:bg-slate-800/40 border border-transparent hover:border-indigo-500/20"
-                    : "text-indigo-200 bg-gradient-to-r from-indigo-500/15 via-slate-900/30 to-transparent border border-indigo-500/30 shadow-sm shadow-indigo-500/10"
+                    ? `text-slate-400 hover:text-slate-100 hover:bg-slate-800/40 border border-transparent ${tone.hoverBorder}`
+                    : `${tone.text} bg-gradient-to-r ${tone.grad} via-slate-900/30 to-transparent border ${tone.border} shadow-sm`
                 }`}
                 title={isCollapsed ? "Aç" : "Kapat"}
               >
                 <span className={`inline-flex items-center justify-center w-4 h-4 rounded transition-all duration-200 ${
-                  isCollapsed
-                    ? "text-slate-600 group-hover:text-indigo-400"
-                    : "text-indigo-300 rotate-90"
+                  isCollapsed ? "text-slate-600" : `${tone.icon} rotate-90`
                 }`}>▶</span>
                 <span className="text-[13px] leading-none">{g.icon}</span>
                 <span className="tracking-[0.14em]">{g.label}</span>
                 <span className={`ml-auto mono text-[9.5px] px-1.5 py-0.5 rounded-full ${
-                  isCollapsed
-                    ? "bg-slate-800/60 text-slate-500"
-                    : "bg-indigo-500/20 text-indigo-300"
+                  isCollapsed ? "bg-slate-800/60 text-slate-500" : tone.dot
                 }`}>{g.items.length}</span>
               </button>
               <div className={`space-y-0.5 overflow-hidden transition-all duration-200 ${isCollapsed ? "max-h-0 opacity-0" : "max-h-[999px] opacity-100"}`}>
@@ -306,19 +319,35 @@ function Sidebar() {
                       to={n.to}
                       end={n.end}
                       data-testid={n.testid}
+                      title={n.locked ? "Bu modül paketinizde bulunmuyor — tıklayınca üst plan seçenekleri açılır" : undefined}
                       className={({ isActive }) =>
                         `group relative flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition-all duration-150 ${
-                          isActive
-                            ? "bg-gradient-to-r from-indigo-500/15 to-transparent text-indigo-200 border border-indigo-500/30 shadow-sm shadow-indigo-500/10"
-                            : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent hover:border-slate-700/40"
+                          n.locked
+                            ? "text-slate-500 hover:text-amber-300 hover:bg-amber-500/5 border border-transparent hover:border-amber-500/20"
+                            : isActive
+                              ? `bg-gradient-to-r ${tone.grad} to-transparent ${tone.text} border ${tone.border} shadow-sm`
+                              : `text-slate-400 hover:text-slate-100 ${tone.hoverBg} border border-transparent ${tone.hoverBorder}`
                         }`
                       }
                     >
                       {({ isActive }) => (
                         <>
-                          {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r bg-indigo-400 shadow-[0_0_6px_rgba(129,140,248,0.6)]" />}
-                          <n.icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-indigo-300" : "text-slate-500 group-hover:text-slate-300"}`} strokeWidth={1.75} />
-                          <span className="flex-1 truncate">{n.label || t(`nav.${n.key}`)}</span>
+                          {isActive && !n.locked && <span className={`absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r ${tone.barBg}`} />}
+                          <n.icon className={`w-3.5 h-3.5 shrink-0 ${
+                            n.locked
+                              ? "text-slate-600 group-hover:text-amber-400"
+                              : isActive
+                                ? tone.icon
+                                : "text-slate-500 group-hover:text-slate-200"
+                          }`} strokeWidth={1.75} />
+                          <span className={`flex-1 truncate ${n.locked ? "opacity-70" : ""}`}>{n.label || t(`nav.${n.key}`)}</span>
+                          {n.locked && (
+                            <Lock
+                              data-testid={`nav-lock-${n.key}`}
+                              className="w-3 h-3 shrink-0 text-amber-500/70 group-hover:text-amber-400"
+                              title="Üst versiyonda açık"
+                            />
+                          )}
                           {showBadge && (
                             <span
                               data-testid={`nav-badge-${n.key}`}
@@ -389,6 +418,7 @@ function Shell() {
     : "flex-1 min-w-0 overflow-x-hidden";
   return (
     <div className={rootCls} data-testid={inFrame ? "shell-embedded" : "shell-standalone"}>
+      <IdleAutoLock />
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <PluginStatusStripe />
@@ -415,6 +445,7 @@ function Shell() {
             <Route path="/version-publish" element={MO(VersionPublish, "Sürüm Yayınla")} />
             <Route path="/wake-history" element={MO(WakeHistory, "Ping Geçmişi")} />
             <Route path="/audit-log" element={MO(AuditLog, "Master Audit Log")} />
+            <Route path="/remote-admin" element={MO(RemoteAdmin, "Bayı Uzak Yönetim")} />
             <Route path="/email-templates" element={MO(EmailTemplates, "Mail Şablonları")} />
             <Route path="/plugin-health" element={MO(PluginHealth, "Plugin Sağlığı")} />
             <Route path="/landing-cms" element={MO(LandingCMS, "Landing CMS")} />

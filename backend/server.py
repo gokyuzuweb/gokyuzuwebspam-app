@@ -2175,6 +2175,48 @@ async def settings_put_post(policy: PolicySettings, request: Request,
     return await settings_put(policy, request, license_key)
 
 
+# ================== v43.72 — İDLE AUTO-LOCK AYARLARI ==================
+# Master tek yerden idle lock süresini ayarlar; tüm bayilerin paneli o süreye göre
+# hareketsiz kalırsa otomatik kilitlenir. Bayi tarafında sadece OKUMA yetkisi var.
+@api.get("/settings/idle-lock")
+async def settings_idle_lock_get(request: Request):
+    """Idle auto-lock config — tüm bayiler + master için tek global ayar."""
+    doc = await db.settings.find_one({"_key": "idle_lock"}, {"_id": 0, "_key": 0}) or {}
+    return {
+        "enabled": bool(doc.get("enabled", True)),
+        "minutes": int(doc.get("minutes", 15)),
+        "warn_seconds": int(doc.get("warn_seconds", 30)),  # kaç sn önce uyarı göstersin
+    }
+
+
+class IdleLockIn(BaseModel):
+    enabled: bool = True
+    minutes: int = Field(15, ge=1, le=1440)     # 1dk – 24s
+    warn_seconds: int = Field(30, ge=0, le=300)  # kilitten kaç sn önce uyarı
+
+
+@api.post("/settings/idle-lock")
+async def settings_idle_lock_set(payload: IdleLockIn, request: Request,
+                                  license_key: Optional[str] = None):
+    """Master-only. Idle lock ayarını günceller."""
+    await _require_master(request, license_key)
+    await db.settings.update_one(
+        {"_key": "idle_lock"},
+        {"$set": {"_key": "idle_lock", **payload.model_dump(), "updated_at": _iso(),
+                  "updated_by_ip": _client_ip(request)}},
+        upsert=True,
+    )
+    # audit
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": "idle_lock_updated",
+        "actor_ip": _client_ip(request),
+        "details": payload.model_dump(),
+        "at": _iso(),
+    })
+    return {"ok": True, **payload.model_dump()}
+
+
 # ----- Users -----
 @api.get("/users")
 async def users_get():
@@ -10353,6 +10395,7 @@ from routes.users_sync import router as _users_sync_router  # noqa: E402
 from routes.rules import router as _rules_router  # noqa: E402
 from routes.bounce_digest import router as _bounce_router, _leaderboard_router  # noqa: E402
 from routes.live_diagnostic import router as _live_diag_router  # noqa: E402
+from routes.remote_admin import router as _remote_admin_router  # noqa: E402
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -10376,6 +10419,7 @@ app.include_router(_rules_router, prefix="/api")
 app.include_router(_bounce_router, prefix="/api")
 app.include_router(_leaderboard_router, prefix="/api")
 app.include_router(_live_diag_router, prefix="/api")
+app.include_router(_remote_admin_router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Demo mode write-guard middleware

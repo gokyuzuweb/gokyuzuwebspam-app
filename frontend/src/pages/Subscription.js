@@ -41,7 +41,8 @@ export default function Subscription() {
   const isRenewal = sp.get("renew") === "1";
   const initialCycle = (sp.get("cycle") || "yearly").toLowerCase();
   const [cycle, setCycle] = useState(initialCycle === "monthly" ? "monthly" : "yearly");
-  const [gateway, setGateway] = useState("stripe"); // müşteri seçimi: 'stripe' | 'havale'
+  const initialGw = (sp.get("gateway") || "havale").toLowerCase();
+  const [gateway, setGateway] = useState(initialGw === "stripe" ? "stripe" : "havale"); // default havale (Stripe opsiyonel)
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [customerFocus, setCustomerFocus] = useState(false);
@@ -104,6 +105,10 @@ export default function Subscription() {
       if (String(msg).toLowerCase().includes("email")) {
         setCustomerFocus(true);
         toast.error("E-posta zorunlu — lütfen faturalandırma bilgilerinizi doldurun");
+      } else if (String(msg).toLowerCase().includes("stripe yapılandır") || String(msg).toLowerCase().includes("stripe not configured")) {
+        // Stripe kurulu değilse otomatik havale'ye geç
+        setGateway("havale");
+        toast.info("Kredi kartı şu an devre dışı — Havale/EFT'ye geçildi. Butona tekrar tıklayın.", { duration: 6000 });
       } else {
         toast.error("Checkout başlatılamadı: " + msg);
       }
