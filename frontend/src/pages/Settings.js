@@ -8,7 +8,7 @@ import SlashAliasesConfigCard from "@/components/SlashAliasesConfigCard";
 import { api } from "@/lib/api";
 import { useI18n, useT } from "@/i18n";
 
-// v43.72 — İdle Auto-Lock ayar kartı (master-only, GET her ziyaretçiye açık)
+// v43.72 — İdle Auto-Lock master global ayar kartı (master-only)
 function IdleLockConfigCard() {
   const t = useT();
   const q = useQuery({ queryKey: ["idle-lock"], queryFn: () => api.idleLockGet(), staleTime: 30_000 });
@@ -24,14 +24,14 @@ function IdleLockConfigCard() {
   }, [q.data]);
   const save = useMutation({
     mutationFn: () => api.idleLockSet({ enabled, minutes, warn_seconds: warnSec }),
-    onSuccess: () => toast.success("İdle kilit ayarı kaydedildi — anında geçerli"),
+    onSuccess: () => toast.success("Master global kilit ayarı kaydedildi"),
     onError: (e) => toast.error("Kaydedilemedi: " + (e?.response?.data?.detail || e.message)),
   });
   return (
     <Card>
       <CardHeader
-        title={<span className="flex items-center gap-2"><Lock className="w-4 h-4 text-amber-400" /> Otomatik Kilit (İdle Auto-Lock)</span>}
-        subtitle="Ekranda belirtilen süre hareket yoksa panel kilitlenir. Master ayarlar, tüm bayilere yansır."
+        title={<span className="flex items-center gap-2"><Lock className="w-4 h-4 text-amber-400" /> Otomatik Kilit (Master Global)</span>}
+        subtitle="Bayiler kendi override etmezse bu ayar kullanılır."
       />
       <CardBody className="space-y-3">
         <div className="flex items-center justify-between">
@@ -47,23 +47,19 @@ function IdleLockConfigCard() {
             <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? "translate-x-6" : "translate-x-1"}`} />
           </button>
         </div>
-        <Row title="Kilit süresi (dakika)" hint="Hareketsizlik bu süreyi geçince panel kilitlenir. 1–1440." testid="row-idle-minutes">
-          <input
-            type="number" min="1" max="1440"
+        <Row title="Kilit süresi (dakika)" hint="1–1440" testid="row-idle-minutes">
+          <input type="number" min="1" max="1440"
             data-testid="idle-lock-minutes"
             value={minutes}
             onChange={(e) => setMinutes(Math.max(1, Math.min(1440, parseInt(e.target.value || "15", 10))))}
-            className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right"
-          />
+            className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right" />
         </Row>
-        <Row title="Uyarı süresi (saniye)" hint="Kilit tetiklenmeden önce alt banner uyarısı" testid="row-idle-warn">
-          <input
-            type="number" min="0" max="300"
+        <Row title="Uyarı süresi (saniye)" hint="Kilit öncesi banner" testid="row-idle-warn">
+          <input type="number" min="0" max="300"
             data-testid="idle-lock-warn"
             value={warnSec}
             onChange={(e) => setWarnSec(Math.max(0, Math.min(300, parseInt(e.target.value || "30", 10))))}
-            className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right"
-          />
+            className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right" />
         </Row>
         <button
           data-testid="idle-lock-save"
@@ -71,10 +67,177 @@ function IdleLockConfigCard() {
           disabled={save.isPending}
           className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
         >
-          <Save className="w-4 h-4" /> İdle Kilit Ayarını Kaydet
+          <Save className="w-4 h-4" /> Master Global Ayarı Kaydet
         </button>
-        <div className="text-[11px] text-slate-500">
-          Not: Kaydettikten sonra tüm açık paneller ~60sn içinde yeni süreyi kullanmaya başlar.
+      </CardBody>
+    </Card>
+  );
+}
+
+
+// v43.81 — Per-user Otomatik Kilit + PIN (her bayi kendisi)
+function IdleLockPersonalCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["idle-lock-me"], queryFn: () => api.idleLockMeGet(), staleTime: 15_000, retry: 1 });
+  const [enabled, setEnabled] = useState(true);
+  const [minutes, setMinutes] = useState(15);
+  const [warnSec, setWarnSec] = useState(30);
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [currentPin, setCurrentPin] = useState("");
+  useEffect(() => {
+    if (q.data) {
+      setEnabled(!!q.data.enabled);
+      setMinutes(Number(q.data.minutes || 15));
+      setWarnSec(Number(q.data.warn_seconds || 30));
+    }
+  }, [q.data]);
+  const hasPin = q.data?.has_pin;
+  const owner = q.data?.owner || "";
+
+  const saveSettings = useMutation({
+    mutationFn: () => api.idleLockMeSet({ enabled, minutes, warn_seconds: warnSec }),
+    onSuccess: () => {
+      toast.success("Kişisel kilit ayarı kaydedildi");
+      qc.invalidateQueries({ queryKey: ["idle-lock-me"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Kaydedilemedi"),
+  });
+  const savePin = useMutation({
+    mutationFn: () => {
+      if (!/^\d{4,8}$/.test(newPin)) throw new Error("PIN 4-8 haneli sayı olmalı");
+      if (newPin !== confirmPin) throw new Error("PIN doğrulama eşleşmiyor");
+      const payload = { new_pin: newPin };
+      if (hasPin && currentPin) payload.current_pin = currentPin;
+      return api.idleLockMeSet(payload);
+    },
+    onSuccess: () => {
+      toast.success(hasPin ? "PIN güncellendi" : "PIN oluşturuldu — kilit ekranı bundan sonra PIN soracak");
+      setNewPin(""); setConfirmPin(""); setCurrentPin("");
+      qc.invalidateQueries({ queryKey: ["idle-lock-me"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message || "PIN kaydedilemedi"),
+  });
+  const clearPin = useMutation({
+    mutationFn: () => api.idleLockMeSet({ clear_pin: true, current_pin: currentPin }),
+    onSuccess: () => {
+      toast.success("PIN kaldırıldı — kilit ekranı lisans key soracak");
+      setCurrentPin("");
+      qc.invalidateQueries({ queryKey: ["idle-lock-me"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Silinemedi"),
+  });
+
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><Lock className="w-4 h-4 text-cyan-400" /> Otomatik Kilit (Kişisel) <Badge tone="info">v43.81</Badge></span>}
+        subtitle={owner === "master"
+          ? "Master hesabınıza özel kilit + PIN. Global ayarı override eder."
+          : "Kendi kilit sürenizi ve PIN'inizi belirleyin. Kilit sayfa yenilendiğinde de kalıcı."}
+      />
+      <CardBody className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-slate-200">Aktif</div>
+            <div className="text-xs text-slate-500 mt-0.5">Kişisel kilit modu</div>
+          </div>
+          <button
+            data-testid="idle-lock-me-enable"
+            onClick={() => setEnabled((v) => !v)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${enabled ? "bg-emerald-500/70" : "bg-slate-700"}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? "translate-x-6" : "translate-x-1"}`} />
+          </button>
+        </div>
+        <Row title="Kilit süresi (dakika)" hint="Hareketsizlik bu süreyi aşarsa kilitlenir" testid="row-me-minutes">
+          <input type="number" min="1" max="1440" value={minutes}
+            data-testid="idle-lock-me-minutes"
+            onChange={(e) => setMinutes(Math.max(1, Math.min(1440, parseInt(e.target.value || "15", 10))))}
+            className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right" />
+        </Row>
+        <Row title="Uyarı süresi (saniye)" hint="Kilit öncesi alt banner" testid="row-me-warn">
+          <input type="number" min="0" max="300" value={warnSec}
+            data-testid="idle-lock-me-warn"
+            onChange={(e) => setWarnSec(Math.max(0, Math.min(300, parseInt(e.target.value || "30", 10))))}
+            className="w-24 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right" />
+        </Row>
+        <button
+          data-testid="idle-lock-me-save"
+          onClick={() => saveSettings.mutate()}
+          disabled={saveSettings.isPending}
+          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50"
+        >
+          <Save className="w-4 h-4" /> Kişisel Ayarları Kaydet
+        </button>
+
+        <div className="border-t border-slate-800 pt-4">
+          <div className="text-sm text-slate-200 mb-1 flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" /> PIN Kodu
+            {hasPin ? <Badge tone="success">Aktif</Badge> : <Badge tone="warning">Atanmamış</Badge>}
+          </div>
+          <div className="text-xs text-slate-500 mb-3">
+            {hasPin
+              ? "Kilit ekranında lisans yerine PIN girin. Değiştirmek için mevcut PIN'i de girin."
+              : "PIN atarsanız kilit ekranı 4-8 haneli PIN sorar. Aksi halde lisans key sorar."}
+          </div>
+          {hasPin && (
+            <div className="mb-3">
+              <label className="text-[11px] uppercase tracking-widest text-slate-500">Mevcut PIN</label>
+              <input type="password" inputMode="numeric" maxLength={8}
+                data-testid="idle-lock-me-current-pin"
+                value={currentPin}
+                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                placeholder="••••"
+                className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm mono mt-1" />
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <div>
+              <label className="text-[11px] uppercase tracking-widest text-slate-500">Yeni PIN (4-8)</label>
+              <input type="password" inputMode="numeric" maxLength={8}
+                data-testid="idle-lock-me-new-pin"
+                value={newPin}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                placeholder="••••"
+                className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm mono mt-1" />
+            </div>
+            <div>
+              <label className="text-[11px] uppercase tracking-widest text-slate-500">Yeni PIN (Tekrar)</label>
+              <input type="password" inputMode="numeric" maxLength={8}
+                data-testid="idle-lock-me-confirm-pin"
+                value={confirmPin}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                placeholder="••••"
+                className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm mono mt-1" />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              data-testid="idle-lock-me-save-pin"
+              onClick={() => savePin.mutate()}
+              disabled={savePin.isPending || !newPin || !confirmPin}
+              className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+            >
+              {hasPin ? "PIN Güncelle" : "PIN Oluştur"}
+            </button>
+            {hasPin && (
+              <button
+                data-testid="idle-lock-me-clear-pin"
+                onClick={() => {
+                  if (!currentPin) { toast.error("PIN'i kaldırmak için mevcut PIN'i girin"); return; }
+                  if (!window.confirm("PIN kaldırılsın mı? Kilit ekranı bundan sonra lisans key soracak.")) return;
+                  clearPin.mutate();
+                }}
+                className="px-3 py-2 rounded-md text-sm border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+              >
+                PIN Kaldır
+              </button>
+            )}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-3">
+            5 yanlış PIN denemesinde 5 dakika PIN doğrulama devre dışı bırakılır.
+          </div>
         </div>
       </CardBody>
     </Card>
@@ -372,6 +535,9 @@ export default function SettingsPage() {
 
         {/* v43.72 — İdle Auto-Lock master ayarı */}
         <IdleLockConfigCard />
+
+        {/* v43.81 — Kişisel Otomatik Kilit + PIN (per-user, tüm bayilere görünür) */}
+        <IdleLockPersonalCard />
 
         {/* v43.77 — Slash Command Aliases */}
         <SlashAliasesConfigCard />

@@ -14,6 +14,79 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 18, v43.81) — PIN Kilit + Bulk Ops + Otomatik Karantina Taraması + Bounce Digest Slack
+
+**KULLANICI İSTEKLERİ (4 Next Action Item birlikte):**
+1. PIN'li İdle Lock — sayfa yenilendiğinde de kalıcı + 4-8 haneli PIN + her bayi kendi paneli
+2. Otomatik Karantina Taraması — 24s cycle + master_alert push
+3. Öneri Toplu İşlem — bulk apply/reject toolbar
+4. Bounce Digest Slack — Slack formatlanmış digest teslim yöntemi
+
+**IMPLEMENTATION:**
+
+### 1. Kişisel İdle Lock + PIN (server.py + IdleAutoLock.js + Settings.js)
+- **Backend** yeni endpoint'ler (`server.py`):
+  - `GET /api/settings/idle-lock/me` — kullanıcı kendi ayarını çeker (user override → global fallback)
+  - `PUT /api/settings/idle-lock/me` — enabled/minutes/warn_seconds VE PIN CRUD (new_pin/current_pin/clear_pin)
+  - `POST /api/settings/idle-lock/verify-pin` — kilit ekranı PIN doğrulama
+- **PIN storage**: PBKDF2-SHA256 · 200k iterations · per-user 16-byte salt (hashlib+secrets, ekstra dep yok)
+- **Owner resolution** (`_resolve_lock_owner`): master IP+key → `__master__` sentinel, aksi bayi kendi key'i
+- **Rate limit**: 5 hatalı denemede 5dk cooldown (`locked_until` field) + `master_alerts` bruteforce audit
+- **Frontend** `IdleAutoLock.js` tam yeniden yazıldı:
+  - Kilit durumu `localStorage` (`gws.idle_locked_at`) — sayfa yenilendiğinde kilit KALICI
+  - PIN varsa PIN input (numeric, 4-8), yoksa lisans key fallback (backward compat)
+  - Verify-pin server-side hash check + IP fingerprint + 2-step confirm on IP change
+- **Frontend** `Settings.js` yeni `IdleLockPersonalCard`:
+  - Her bayi kendi enabled/minutes/warn_seconds ayarını yapabilir
+  - PIN oluştur / değiştir (current_pin doğrulama) / kaldır (current_pin doğrulama)
+  - Master global kartı (`IdleLockConfigCard`) yanında kişisel kart
+
+### 2. Otomatik Karantina Taraması (mailscanner.py)
+- Yeni background loop `_quarantine_scan_daily_loop()`:
+  - Startup'tan 10dk sonra ilk çalışma (storm koruma), sonra her 24s
+  - Tüm aktif lisanslar için `run_quarantine_pattern_scan(days=7, min_hits=3, max_suggestions=10)`
+  - Yeni öneri varsa `master_alerts` insert (type=`quarantine_suggestions_new`, license_key + top domains)
+  - Global audit → `ai_training_log` (`kind: quarantine_scan_scheduled` + top 5 lics)
+- `server.py` startup'ta `asyncio.create_task(_quarantine_scan_daily_loop())`
+
+### 3. Öneri Toplu İşlem (mailscanner.py + MailScanner.js)
+- Yeni endpoint'ler:
+  - `POST /mailscanner/ai/self-train/bulk-apply` body `{ids: [str]}` → mailscanner_rules'a topluca kural yazar, applied=true
+  - `POST /mailscanner/ai/self-train/bulk-reject` body `{ids: [str]}` → delete_many ile toplu reddet
+  - Max 200 id/request
+- Frontend `MailScanner.js` LearnTab yeni bulk toolbar:
+  - Her önerinin başında checkbox (`suggestion-check-{id}`)
+  - Toolbar: `☐ Tümünü seç (N)` + `✓ Toplu Onayla` + `✕ Toplu Reddet`
+  - Seçili count badge + seçili karta indigo ring
+
+### 4. Bounce Digest Slack (bounce_digest.py + BounceDigest.js)
+- `DigestConfig`e yeni alanlar: `delivery_method: "slack"`, `slack_webhook_url`, `slack_channel`
+- Yeni util `_slack_text_for_digest(digest)` — MRKDWN formatı (envelope emoji + total + top users/domains/reasons)
+- Yeni util `_deliver_bounce_digest(cfg, digest)` — webhook / slack / panel unified delivery
+- `run_now` ve `_bounce_digest_daily_loop` her ikisi de `_deliver_bounce_digest` kullanır
+- Yeni endpoint `POST /bounce-digest/test-slack` — configured webhook'a test digest gönderir (400 if method != slack veya webhook geçersiz)
+- Frontend `BounceDigest.js`: 3. dropdown seçeneği "Slack (formatlanmış mesaj) ✨" + slack_webhook_url + slack_channel input + 🧪 Slack Test butonu + Slack şablonu preview
+
+**Test edildi (tests/test_v43_81_pin_bulk_slack.py — 10/10 pytest PASS %100):**
+- Bulk apply 5 öneri → 5 kural yazıldı, 0 kaldı ✓
+- Bulk reject 3 öneri → 3 silindi ✓
+- Kişisel idle-lock/me GET has_pin=false başlangıç ✓
+- PIN set → has_pin=true ✓
+- Verify PIN doğru → 200 ok / yanlış → 403 "PIN hatalı (X deneme kaldı)" ✓
+- PIN değişimi current_pin ile korumalı (400/403/200) ✓
+- Clear PIN current_pin doğrulaması ✓
+- Bounce digest config `delivery_method=slack` + slack_webhook_url + slack_channel yazılabilir ve okunabilir ✓
+- test-slack endpoint delivery_method farklıysa 400 ✓
+- Regression 30/30 hala PASS (v43.78 + v43.79 + v43.80) ✓
+
+**Frontend Screenshot Verified:**
+- Settings sayfası: "Otomatik Kilit (Kişisel) v43.81" kartı render — Aktif toggle + Kilit süresi/uyarı input + PIN Kodu ATANMAMIŞ badge + Yeni PIN + Tekrar + PIN Oluştur butonu + rate limit uyarısı ✓
+- MailScanner AI Öğrenme: "AI Kural Önerileri" bulk toolbar — `☐ Tümünü seç (8)` + Toplu Onayla + Toplu Reddet + her önerinin başında checkbox + Karantinayı Tara butonu (cyan) ✓
+
+
+
+
+
 ## Feb 15, 2026 (Session 18, v43.80) — 🐛 KRİTİK BUG FIX: Havale + Kart Onayında Auto-Upgrade Çalışmıyor
 
 **KULLANICI ŞİKAYETİ:**

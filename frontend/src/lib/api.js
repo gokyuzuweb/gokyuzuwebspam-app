@@ -573,6 +573,19 @@ export const api = {
       params: { license_key: licenseKey, days, min_hits: minHits },
     }).then(r => r.data),
 
+  // Bulk apply/reject (v43.81)
+  msBulkApply: (licenseKey, ids) =>
+    client.post("/mailscanner/ai/self-train/bulk-apply", { ids },
+      { params: { license_key: licenseKey } }).then(r => r.data),
+  msBulkReject: (licenseKey, ids) =>
+    client.post("/mailscanner/ai/self-train/bulk-reject", { ids },
+      { params: { license_key: licenseKey } }).then(r => r.data),
+
+  // Per-user Idle Lock + PIN (v43.80/81)
+  idleLockMeGet: () => client.get("/settings/idle-lock/me").then(r => r.data),
+  idleLockMeSet: (payload) => client.put("/settings/idle-lock/me", payload).then(r => r.data),
+  idleLockVerifyPin: (pin) => client.post("/settings/idle-lock/verify-pin", { pin }).then(r => r.data),
+
   // Docs Media upload
   docsMediaList: (moduleKey = null) =>
     client.get("/mailscanner/docs/media", { params: moduleKey ? { module_key: moduleKey } : {} }).then(r => r.data),
@@ -633,6 +646,7 @@ export const api = {
   bounceDigestSetConfig: (payload) => client.post("/bounce-digest/config", payload).then(r => r.data),
   bounceDigestRunNow: () => client.post("/bounce-digest/run-now").then(r => r.data),
   bounceDigestHistory: () => client.get("/bounce-digest/history").then(r => r.data),
+  bounceDigestTestSlack: () => client.post("/bounce-digest/test-slack").then(r => r.data),
   // v43.42 — Marketplace leaderboard
   mpLeaderboard: (period = "week") => client.get("/marketplace/leaderboard", { params: { period } }).then(r => r.data),
   // v43.42 — Live diagnostic

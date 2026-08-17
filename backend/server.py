@@ -756,6 +756,12 @@ async def _startup() -> None:
     try:
         from routes.bounce_digest import _bounce_digest_daily_loop
         asyncio.create_task(_bounce_digest_daily_loop())
+    except Exception:
+        pass
+    # v43.81 — Otomatik Karantina Taraması (24s)
+    try:
+        from routes.mailscanner import _quarantine_scan_daily_loop
+        asyncio.create_task(_quarantine_scan_daily_loop())
     except Exception as _ex:
         log.warning("bounce digest loop not scheduled: %s", _ex)
 

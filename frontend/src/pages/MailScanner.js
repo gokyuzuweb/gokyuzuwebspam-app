@@ -711,6 +711,37 @@ function LearnTab() {
     mutationFn: (id) => api.msSuggestionReject(LICKEY(), id),
     onSuccess: () => { toast.success("Öneri reddedildi"); qc.invalidateQueries({ queryKey: ["ms-suggestions"] }); },
   });
+  // v43.81 — Bulk apply / reject
+  const [selected, setSelected] = useState(() => new Set());
+  const bulkApply = useMutation({
+    mutationFn: (ids) => api.msBulkApply(LICKEY(), ids),
+    onSuccess: (d) => {
+      toast.success(`${d.applied} öneri onaylandı${d.skipped ? ` · ${d.skipped} atlandı` : ""}`);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["ms-suggestions"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const bulkReject = useMutation({
+    mutationFn: (ids) => api.msBulkReject(LICKEY(), ids),
+    onSuccess: (d) => {
+      toast.success(`${d.rejected} öneri reddedildi`);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["ms-suggestions"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const items = suggs.data?.items || [];
+  const allIds = items.map((s) => s.id);
+  const toggleSel = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected((prev) => {
+    if (prev.size === items.length && items.length > 0) return new Set();
+    return new Set(allIds);
+  });
   return (
     <div className="grid grid-cols-12 gap-4">
       <div className="col-span-12 lg:col-span-6">
@@ -749,7 +780,8 @@ function LearnTab() {
       </div>
       <div className="col-span-12 lg:col-span-6">
         <Card>
-          <CardHeader title="AI Kural Önerileri" subtitle="Onayla → kurallar listesine eklenir · Reddet → sil"
+          <CardHeader title={<span className="flex items-center gap-2">AI Kural Önerileri {selected.size > 0 && <Badge tone="info">{selected.size} seçili</Badge>}</span>}
+            subtitle="Checkbox ile seç · Toplu onayla/reddet veya tek tek işlem yap"
             right={
               <button data-testid="quarantine-scan-run" onClick={() => quaScan.mutate()} disabled={quaScan.isPending}
                       title="Son 7 gün karantina kayıtlarını tarayıp regex önerisi üret"
@@ -759,8 +791,36 @@ function LearnTab() {
             }
           />
           <CardBody>
+            {items.length > 0 && (
+              <div data-testid="bulk-toolbar" className="flex items-center gap-2 mb-3 pb-3 border-b border-slate-800">
+                <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+                  <input type="checkbox"
+                    data-testid="bulk-select-all"
+                    checked={selected.size === items.length && items.length > 0}
+                    onChange={toggleAll}
+                    className="rounded border-slate-600 bg-slate-950" />
+                  Tümünü seç ({items.length})
+                </label>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    data-testid="bulk-apply"
+                    disabled={selected.size === 0 || bulkApply.isPending}
+                    onClick={() => bulkApply.mutate([...selected])}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-40">
+                    ✓ Toplu Onayla
+                  </button>
+                  <button
+                    data-testid="bulk-reject"
+                    disabled={selected.size === 0 || bulkReject.isPending}
+                    onClick={() => bulkReject.mutate([...selected])}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-300 border border-rose-500/40 hover:bg-rose-500/20 disabled:opacity-40">
+                    ✕ Toplu Reddet
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {(suggs.data?.items || []).map(s => {
+              {items.map(s => {
                 const isQua = s.source === "quarantine_pattern";
                 const borderCls = isQua ? "border-cyan-500/30 bg-cyan-500/5" : "border-fuchsia-500/30 bg-fuchsia-500/5";
                 const sourceLabel = isQua
@@ -768,11 +828,19 @@ function LearnTab() {
                      : s.sub_source === "sender_tld" ? "Karantina · TLD"
                      : "Karantina · Konu Kelimesi")
                   : "Öz-eğitim · Konu";
+                const isSel = selected.has(s.id);
                 return (
                   <div key={s.id} data-testid={`suggestion-${s.id}`}
-                       className={`border ${borderCls} rounded p-3`}>
+                       className={`border ${borderCls} rounded p-3 ${isSel ? "ring-1 ring-indigo-400" : ""}`}>
                     <div className="flex justify-between items-start gap-3 mb-1">
-                      <span className="text-sm text-slate-100 truncate">{s.name}</span>
+                      <label className="flex items-start gap-2 flex-1 cursor-pointer">
+                        <input type="checkbox"
+                          data-testid={`suggestion-check-${s.id}`}
+                          checked={isSel}
+                          onChange={() => toggleSel(s.id)}
+                          className="mt-1 rounded border-slate-600 bg-slate-950" />
+                        <span className="text-sm text-slate-100 truncate">{s.name}</span>
+                      </label>
                       <div className="flex items-center gap-1 shrink-0">
                         {s.hit_count ? (
                           <Badge tone="info">{s.hit_count} hit</Badge>
@@ -805,7 +873,7 @@ function LearnTab() {
                   </div>
                 );
               })}
-              {(suggs.data?.items || []).length === 0 && (
+              {items.length === 0 && (
                 <div className="text-slate-500 text-center py-8 text-sm">
                   AI önerisi yok — <span className="text-fuchsia-300">Öz-eğitim</span> veya <span className="text-cyan-300">Karantinayı Tara</span> çalıştır
                 </div>

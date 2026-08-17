@@ -24,6 +24,64 @@ def _iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _slack_text_for_digest(digest: dict) -> str:
+    """Digest → Slack MRKDWN mesaj template."""
+    lk = digest.get("license_key", "")[:12]
+    tb = digest.get("total_bounces", 0)
+    top_users = digest.get("top_users") or []
+    top_domains = digest.get("top_domains") or []
+    top_reasons = digest.get("top_reasons") or []
+    hours = digest.get("hours", 24)
+    lines = [
+        f":envelope_with_arrow: *GökyüzüWebSpam Bounce Özeti* · Son {hours}s · `{lk}…`",
+        f"> Toplam Bounce/Defer/Reject: *{tb}*",
+    ]
+    if not tb:
+        lines.append(":white_check_mark: Bu dönemde bounce yok — mail sağlığı iyi.")
+    else:
+        if top_users:
+            u_lines = "\n".join(f"• `{u[:40]}` — *{n}*" for u, n in top_users[:5])
+            lines.append(f"\n*En Çok Etkilenen Kullanıcılar*\n{u_lines}")
+        if top_domains:
+            d_lines = "\n".join(f"• `{d[:40]}` — *{n}*" for d, n in top_domains[:5])
+            lines.append(f"\n*En Çok Bounce Yiyen Alıcı Domainler*\n{d_lines}")
+        if top_reasons:
+            r_lines = "\n".join(f"• {r[:60]} — *{n}*" for r, n in top_reasons[:3])
+            lines.append(f"\n*En Sık Bounce Sebepleri*\n{r_lines}")
+    return "\n".join(lines)
+
+
+async def _deliver_bounce_digest(cfg: dict, digest: dict) -> dict:
+    """Config'e göre digest'i webhook/slack üzerinden ilet. Panel modu no-op."""
+    method = (cfg.get("delivery_method") or "panel").lower()
+    result = {"method": method, "delivered": False}
+    try:
+        import httpx
+        if method == "webhook" and cfg.get("webhook_url"):
+            async with httpx.AsyncClient(timeout=8) as client:
+                await client.post(cfg["webhook_url"], json={
+                    "kind": "bounce_digest",
+                    "license_key": digest["license_key"],
+                    "total_bounces": digest["total_bounces"],
+                    "top_users": digest["top_users"],
+                    "top_domains": digest["top_domains"],
+                    "top_reasons": digest["top_reasons"],
+                    "generated_at": digest["generated_at"],
+                })
+            result["delivered"] = True
+        elif method == "slack" and cfg.get("slack_webhook_url"):
+            payload = {"text": _slack_text_for_digest(digest), "mrkdwn": True}
+            ch = (cfg.get("slack_channel") or "").strip()
+            if ch:
+                payload["channel"] = ch if ch.startswith("#") else f"#{ch}"
+            async with httpx.AsyncClient(timeout=8) as client:
+                await client.post(cfg["slack_webhook_url"], json=payload)
+            result["delivered"] = True
+    except Exception as ex:
+        result["error"] = f"{type(ex).__name__}: {str(ex)[:120]}"
+    return result
+
+
 async def _generate_digest_for_license(license_key: str, hours: int = 24) -> dict:
     """Verilen lisans için son N saatlik bounce/defer özetini hesaplar."""
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
@@ -101,8 +159,10 @@ class DigestConfig(BaseModel):
     enabled: bool = True
     recipient_email: Optional[str] = None
     send_hour_utc: int = Field(9, ge=0, le=23)
-    delivery_method: Literal["panel", "webhook"] = "panel"
+    delivery_method: Literal["panel", "webhook", "slack"] = "panel"
     webhook_url: Optional[str] = None
+    slack_webhook_url: Optional[str] = None
+    slack_channel: Optional[str] = None   # opsiyonel; webhook zaten kanal tanımlı olabilir
 
 
 @router.get("/config")
@@ -118,6 +178,8 @@ async def get_config(request: Request):
         "send_hour_utc": doc.get("send_hour_utc", 9),
         "delivery_method": doc.get("delivery_method", "panel"),
         "webhook_url": doc.get("webhook_url"),
+        "slack_webhook_url": doc.get("slack_webhook_url"),
+        "slack_channel": doc.get("slack_channel"),
         "last_run_at": doc.get("last_run_at"),
         "last_bounces": doc.get("last_bounces", 0),
     }
@@ -191,22 +253,10 @@ async def run_now(request: Request):
         d["html_preview"] = _render_html(d)
         await db.bounce_digests.insert_one(dict(d))
         generated += 1
-        # Webhook opsiyonel
+        # Webhook/Slack opsiyonel
         cfg = await db.settings.find_one(
             {"_key": f"bounce_digest_config:{lic_key}"}, {"_id": 0}) or {}
-        if cfg.get("delivery_method") == "webhook" and cfg.get("webhook_url"):
-            try:
-                import httpx
-                async with httpx.AsyncClient(timeout=8) as client:
-                    await client.post(cfg["webhook_url"], json={
-                        "kind": "bounce_digest",
-                        "license_key": lic_key,
-                        "total_bounces": d["total_bounces"],
-                        "top_users": d["top_users"],
-                        "generated_at": d["generated_at"],
-                    })
-            except Exception:
-                pass
+        await _deliver_bounce_digest(cfg, d)
     return {
         "ok": True,
         "generated": generated,
@@ -214,6 +264,23 @@ async def run_now(request: Request):
         "total_scanned": len(license_keys),
         "per_license": per_license,
     }
+
+
+@router.post("/test-slack")
+async def test_slack(request: Request):
+    """Yapılandırılmış Slack webhook'una örnek digest'ı test amaçlı gönder."""
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    if not master_key.startswith("MS-"):
+        raise HTTPException(403, "Master anahtarı gerekli")
+    cfg = await db.settings.find_one(
+        {"_key": f"bounce_digest_config:{master_key}"}, {"_id": 0}) or {}
+    if (cfg.get("delivery_method") or "panel").lower() != "slack":
+        raise HTTPException(400, "Delivery method 'slack' olarak seçilmemiş")
+    if not (cfg.get("slack_webhook_url") or "").startswith("https://hooks.slack.com/"):
+        raise HTTPException(400, "Geçerli bir Slack webhook URL'si gerekli (https://hooks.slack.com/services/...)")
+    d = await _generate_digest_for_license(master_key, 24)
+    result = await _deliver_bounce_digest(cfg, d)
+    return {"ok": result.get("delivered"), "test_digest": {"total_bounces": d["total_bounces"]}, **result}
 
 
 async def _bounce_digest_daily_loop():
@@ -243,6 +310,7 @@ async def _bounce_digest_daily_loop():
                 d["id"] = str(uuid.uuid4())
                 d["html_preview"] = _render_html(d)
                 await db.bounce_digests.insert_one(dict(d))
+                await _deliver_bounce_digest(cfg, d)  # v43.81 — slack/webhook opsiyonel
                 await db.settings.update_one(
                     {"_key": cfg["_key"]},
                     {"$set": {"last_run_at": _iso(), "last_bounces": d["total_bounces"]}},

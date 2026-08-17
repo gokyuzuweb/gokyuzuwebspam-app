@@ -17,6 +17,7 @@ export default function BounceDigest() {
   const [form, setForm] = useState({
     enabled: true, recipient_email: "", send_hour_utc: 9,
     delivery_method: "panel", webhook_url: "",
+    slack_webhook_url: "", slack_channel: "",
   });
   // Sync form once config loads (proper useEffect — render sırasında setState olmamalı)
   useEffect(() => {
@@ -28,6 +29,8 @@ export default function BounceDigest() {
         send_hour_utc: c.send_hour_utc ?? 9,
         delivery_method: c.delivery_method || "panel",
         webhook_url: c.webhook_url || "",
+        slack_webhook_url: c.slack_webhook_url || "",
+        slack_channel: c.slack_channel || "",
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -60,6 +63,15 @@ export default function BounceDigest() {
     onError: (e) => toast.error(e?.response?.data?.detail || "Hata"),
   });
 
+  const testSlack = useMutation({
+    mutationFn: () => api.bounceDigestTestSlack(),
+    onSuccess: (d) => {
+      if (d.ok) toast.success(`Slack'e test mesajı gönderildi (bounce: ${d.test_digest?.total_bounces ?? 0})`);
+      else toast.error(d.error || "Slack teslimi başarısız");
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Slack test başarısız"),
+  });
+
   const p = preview.data;
 
   return (
@@ -72,15 +84,25 @@ export default function BounceDigest() {
           <div className="flex-1">
             <div className="text-slate-100 text-lg font-bold">Bounce Digest — Günlük Rapor</div>
             <div className="text-xs text-slate-400 mt-0.5 max-w-2xl leading-relaxed">
-              Her sabah 09:00 UTC (varsayılan), son 24 saatteki bounce/defer/reject olan outbound maillerin özeti üretilir. Panelde arşivlenir; opsiyonel webhook ile CRM/Slack'e gönderilir.
+              Her sabah 09:00 UTC (varsayılan), son 24 saatteki bounce/defer/reject olan outbound maillerin özeti üretilir. Panel + Webhook + Slack teslim yöntemleri desteklenir.
             </div>
           </div>
-          <button
-            onClick={() => runNow.mutate()}
-            disabled={runNow.isPending}
-            data-testid="bd-run-now"
-            className="text-xs px-3 py-2 rounded bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-40 inline-flex items-center gap-1.5"
-          ><Zap className="w-3.5 h-3.5"/> {runNow.isPending ? "Üretiliyor…" : "Şimdi Üret"}</button>
+          <div className="flex gap-2">
+            {form.delivery_method === "slack" && (
+              <button
+                onClick={() => testSlack.mutate()}
+                disabled={testSlack.isPending || !form.slack_webhook_url}
+                data-testid="bd-test-slack"
+                className="text-xs px-3 py-2 rounded bg-fuchsia-600 hover:bg-fuchsia-500 text-white disabled:opacity-40 inline-flex items-center gap-1.5"
+              >🧪 {testSlack.isPending ? "Gönderiliyor…" : "Slack Test"}</button>
+            )}
+            <button
+              onClick={() => runNow.mutate()}
+              disabled={runNow.isPending}
+              data-testid="bd-run-now"
+              className="text-xs px-3 py-2 rounded bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-40 inline-flex items-center gap-1.5"
+            ><Zap className="w-3.5 h-3.5"/> {runNow.isPending ? "Üretiliyor…" : "Şimdi Üret"}</button>
+          </div>
         </div>
       </div>
 
@@ -121,9 +143,57 @@ export default function BounceDigest() {
               className="w-full text-sm bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200"
             >
               <option value="panel">Sadece Panelde Arşivle</option>
-              <option value="webhook">Webhook (Slack/Discord/CRM)</option>
+              <option value="webhook">Webhook (Discord/Genel HTTP)</option>
+              <option value="slack">Slack (formatlanmış mesaj) ✨</option>
             </select>
           </label>
+          {form.delivery_method === "slack" && (
+            <>
+              <label className="block">
+                <span className="text-[11px] uppercase text-slate-500 mb-1 block flex items-center gap-1"><Webhook className="w-3 h-3"/> Slack Incoming Webhook URL</span>
+                <input
+                  type="url"
+                  value={form.slack_webhook_url}
+                  onChange={(e) => setForm({ ...form, slack_webhook_url: e.target.value })}
+                  data-testid="bd-slack-webhook"
+                  placeholder="https://hooks.slack.com/services/T00/B00/xxxx"
+                  className="w-full text-sm mono bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200"
+                />
+              </label>
+              <label className="block">
+                <span className="text-[11px] uppercase text-slate-500 mb-1 block">Slack Kanalı (opsiyonel)</span>
+                <input
+                  type="text"
+                  value={form.slack_channel}
+                  onChange={(e) => setForm({ ...form, slack_channel: e.target.value })}
+                  data-testid="bd-slack-channel"
+                  placeholder="#mail-alerts"
+                  className="w-full text-sm mono bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200"
+                />
+              </label>
+              <div className="md:col-span-2 rounded border border-fuchsia-500/25 bg-fuchsia-500/5 p-3 text-xs space-y-2" data-testid="bd-slack-guide">
+                <div className="font-semibold text-fuchsia-300 flex items-center gap-1.5">💜 Slack Şablonu (v43.81 · MRKDWN)</div>
+                <ol className="text-slate-400 space-y-1 list-decimal pl-5">
+                  <li>Slack → <b>Apps</b> → <span className="mono text-emerald-300">Incoming Webhooks</span> → <b>Add to Slack</b>.</li>
+                  <li>Yayınlanacak kanalı seç (ör. <span className="mono">#mail-alerts</span>) → webhook URL'yi kopyala → yukarıya yapıştır.</li>
+                  <li>Test için sağdaki <b>🧪 Slack Test</b> butonuna bas — formatlanmış özet Slack'e düşer.</li>
+                </ol>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-slate-300 hover:text-slate-100 text-[11px]">📋 Slack'e giden mesaj örneği</summary>
+                  <pre className="mt-1 text-[10px] mono bg-slate-950 border border-slate-800 rounded p-2 text-slate-300 whitespace-pre-wrap">{`:envelope_with_arrow: *GökyüzüWebSpam Bounce Özeti* · Son 24s · \`MS-C02AB012…\`
+> Toplam Bounce/Defer/Reject: *42*
+
+*En Çok Etkilenen Kullanıcılar*
+• \`destek@ornek.com\` — *12*
+• \`admin@ornek.com\` — *8*
+
+*En Çok Bounce Yiyen Alıcı Domainler*
+• \`gmail.com\` — *18*
+• \`outlook.com\` — *9*`}</pre>
+                </details>
+              </div>
+            </>
+          )}
           {form.delivery_method === "webhook" && (
             <>
               <label className="block">

@@ -14,6 +14,7 @@ Endpoints:
   * GET  /mailscanner/bayes-status     - Bayes DB stats (own counters)
 """
 from __future__ import annotations
+import asyncio
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -715,6 +716,61 @@ async def reject_suggestion(suggestion_id: str, license_key: str = Query(..., mi
 
 
 # ============================================================================
+#  v43.81 — TOPLU ONAYLA / REDDET (bulk apply/reject)
+#  Frontend checkbox toolbar → çoklu id array gönderir.
+# ============================================================================
+class BulkIdsIn(BaseModel):
+    ids: list[str] = Field(..., min_length=1, max_length=200)
+
+
+@router.post("/ai/self-train/bulk-apply")
+async def bulk_apply(payload: BulkIdsIn, license_key: str = Query(..., min_length=8)):
+    """Birden fazla AI önerisini tek tık ile onayla → kurallar listesine ekle."""
+    applied = 0
+    skipped = 0
+    errors: list[str] = []
+    for sid in payload.ids:
+        try:
+            doc = await db.mailscanner_rule_suggestions.find_one(
+                {"id": sid, "license_key": license_key, "applied": False})
+            if not doc:
+                skipped += 1
+                continue
+            rule = {
+                "id": str(uuid.uuid4()), "license_key": license_key,
+                "name": doc.get("name", "ai_sugg")[:80],
+                "pattern": doc.get("pattern", ""),
+                "target": doc.get("target", "subject"),
+                "score": float(doc.get("score") or 3.0),
+                "enabled": True,
+                "description": f"[AI-bulk] {doc.get('description', '')}",
+                "updated_at": _iso(), "created_at": _iso(),
+            }
+            if not rule["pattern"]:
+                skipped += 1
+                continue
+            await db.mailscanner_rules.insert_one(dict(rule))
+            await db.mailscanner_rule_suggestions.update_one(
+                {"id": sid}, {"$set": {"applied": True, "applied_at": _iso(),
+                                        "applied_via": "bulk"}},
+            )
+            applied += 1
+        except Exception as ex:
+            errors.append(f"{sid[:8]}: {type(ex).__name__}")
+    return {"ok": True, "applied": applied, "skipped": skipped,
+            "requested": len(payload.ids), "errors": errors[:5]}
+
+
+@router.post("/ai/self-train/bulk-reject")
+async def bulk_reject(payload: BulkIdsIn, license_key: str = Query(..., min_length=8)):
+    """Birden fazla AI önerisini tek tık ile reddet → sil."""
+    r = await db.mailscanner_rule_suggestions.delete_many(
+        {"id": {"$in": payload.ids}, "license_key": license_key, "applied": False},
+    )
+    return {"ok": True, "rejected": r.deleted_count, "requested": len(payload.ids)}
+
+
+# ============================================================================
 #  KARANTİNA KALIP TARAMA — Gerçek quarantine kayıtlarından pattern öğrenmek
 #  ve regex kural önerisi çıkarmak. (LLM'siz — yerel istatistik + heuristik)
 # ============================================================================
@@ -976,6 +1032,74 @@ async def trigger_quarantine_recommend(
     koleksiyonuna düşer — kullanıcı 'Onayla'yı tıklarsa aktif kural olur."""
     result = await run_quarantine_pattern_scan(license_key, days=days, min_hits=min_hits)
     return {"ok": True, **result}
+
+
+# ============================================================================
+#  v43.81 — OTOMATİK ZAMANLANMIŞ TARAMA (24s cycle)
+#  Her aktif lisans için günde bir kez karantina taraması → yeni öneri sayısı
+#  varsa master_alerts'a `type=quarantine_suggestions_new` bildirim düşer.
+# ============================================================================
+async def _quarantine_scan_daily_loop() -> None:
+    """Her 24 saatte bir tüm aktif lisanslar için karantina taraması çalıştırır.
+    Server startup'ta arka planda başlatılır."""
+    import logging
+    _log = logging.getLogger("mailscanner.autoquascan")
+    # İlk çalıştırma öncesi 10dk bekle (startup storm koruma)
+    await asyncio.sleep(600)
+    while True:
+        try:
+            total_lics = 0
+            total_new = 0
+            hits_by_lic: dict = {}
+            async for lic in db.licenses.find(
+                {"$or": [{"active": True}, {"active": {"$exists": False}}]},
+                {"license_key": 1, "customer_email": 1},
+            ):
+                lk = lic.get("license_key") or ""
+                if not lk:
+                    continue
+                total_lics += 1
+                try:
+                    r = await run_quarantine_pattern_scan(lk, days=7, min_hits=3, max_suggestions=10)
+                    new_cnt = int(r.get("suggested") or 0)
+                    if new_cnt > 0:
+                        total_new += new_cnt
+                        hits_by_lic[lk] = new_cnt
+                        # Master alert (bayi-specific)
+                        await db.master_alerts.insert_one({
+                            "id": str(uuid.uuid4()),
+                            "type": "quarantine_suggestions_new",
+                            "severity": "info",
+                            "license_key": lk,
+                            "message": f"🔎 {lk[:12]}… için {new_cnt} yeni AI kural önerisi (karantina)",
+                            "details": {
+                                "license_key": lk,
+                                "new_suggestions": new_cnt,
+                                "scanned": r.get("scanned"),
+                                "top_domains": r.get("top_domains", [])[:3],
+                            },
+                            "seen": False, "read": False,
+                            "created_at": _iso(),
+                        })
+                except Exception as ex:
+                    _log.warning("quarantine scan failed for %s: %s", lk[:12], ex)
+            # Global audit log
+            await db.ai_training_log.insert_one({
+                "id": str(uuid.uuid4()),
+                "run_at": _iso(),
+                "kind": "quarantine_scan_scheduled",
+                "licenses_scanned": total_lics,
+                "total_new_suggestions": total_new,
+                "top_lics": [{"license_key": k, "new": v}
+                              for k, v in sorted(hits_by_lic.items(),
+                                                  key=lambda x: -x[1])[:5]],
+            })
+            _log.info("Quarantine scheduled scan complete: %d licenses, %d new suggestions",
+                     total_lics, total_new)
+        except Exception as ex:
+            _log.exception("Quarantine daily loop crashed: %s", ex)
+        # 24 saat sonra tekrar
+        await asyncio.sleep(24 * 3600)
 
 
 # ============================================================================
