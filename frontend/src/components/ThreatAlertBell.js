@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, X, Check, AlertTriangle, ExternalLink, CheckCircle2, XCircle, Activity, Terminal } from "lucide-react";
+import { Bell, X, Check, AlertTriangle, ExternalLink, CheckCircle2, XCircle, Activity, Terminal, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useIsMaster } from "@/hooks/useIsMaster";
@@ -50,6 +50,15 @@ function alertMeta(a) {
       iconCls: ok ? "text-cyan-400" : "text-rose-400",
       linkHref: "/panel/remote-admin",
       linkTitle: "Uzak Yönetim'e git",
+    };
+  }
+  // v43.75 — Idle Lock IP değişikliği (session hijack ihtimali)
+  if (type === "idle_lock_ip_change") {
+    return {
+      Icon: ShieldAlert,
+      iconCls: "text-rose-400",
+      linkHref: "/panel/audit-log",
+      linkTitle: "Audit Log'a git",
     };
   }
   // Reseller-based threat (default)

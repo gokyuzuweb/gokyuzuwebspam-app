@@ -1,0 +1,33 @@
+{
+  "summary": "v43.75 backend test: 4 new features validated (Trusted Publisher badge tiers, /public/reseller-og SVG, /r-meta/{host} SEO HTML, /audit/idle-lock-event → master_alerts on IP change). All 13 pytest cases PASS.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/public/reseller-og", "issue": "Endpoint sets Cache-Control: public, max-age=3600 but response headers get overridden by a global middleware to 'no-store, no-cache, must-revalidate'. Public OG images benefit from CDN caching; consider whitelisting /public/reseller-og in the no-cache middleware."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v43_75_features.py",
+    "/app/test_reports/pytest/v43_75_results.xml"
+  ],
+  "action_items": [
+    "(Minor) Allow Cache-Control 'public' header to pass through for /api/public/reseller-og (currently overridden by middleware to no-store)."
+  ],
+  "critical_code_review_comments": [
+    "reseller_branding.py:branding_public correctly pops license_key before returning — verified no leak in public JSON. Good.",
+    "In branding_og_image and branding_seo_meta, doc.get('license_key') is used only for signature count lookup and never included in the response body — verified no leak.",
+    "Tier iteration ascending order + tier overwrite is correct: 6→Trusted, 16→Expert, 31→Elite; <5→null.",
+    "idle-lock-event: master_alerts inserted only for event=='unlock' AND ip_changed=True — confirmed via count deltas. Slack/email best-effort inside try/except — good.",
+    "reseller_branding.py creates its own AsyncIOMotorClient at import time (module-level, not shared with server.db). Not a bug, but couples resource ownership; consider sharing the client via app.state."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v43_75_features.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "N/A (backend-only)"},
+  "test_credentials": "MASTER_LICENSE_KEY=MS-C02AB012652A4FE692D69676; bayi MS-TESTBAYI-STARTER-V4371 (mail.bayihosting.com)",
+  "seed_data_creation": "Test creates/removes marketplace_signatures with id prefix 'TEST_v4375_' for tier boundary tests (5/15/30). After the run, the original 6 baseline signatures for MS-TESTBAYI-STARTER-V4371 were re-seeded (with names 'seed_sig_0..5') so /api/public/reseller-branding?host=mail.bayihosting.com still returns trusted_publisher={label:'Trusted Publisher', badge_color:'emerald', signatures:6}.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "v43.75 all 4 backend features working. Regression test file at /app/backend/tests/test_v43_75_features.py (13 tests). One minor observation: Cache-Control set by /api/public/reseller-og gets overridden to 'no-store' by a global middleware — test tolerates this. Baseline sigs (6) for MS-TESTBAYI-STARTER-V4371 have been restored after cleanup."
+}

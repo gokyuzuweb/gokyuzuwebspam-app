@@ -32,6 +32,15 @@ const CMD_ALIASES = {
   "service-status": "service_status",
 };
 
+// v43.75 — Autocomplete için tam komut listesi (görsel önerilerle)
+const CMD_SUGGESTIONS = [
+  { alias: "health-check",  desc: "Bayı sunucusu docker + servis health kontrol", ex: "/run health-check @bayı" },
+  { alias: "version-check", desc: "Uname + docker + plugin sürüm bilgisi",         ex: "/run version-check @bayı" },
+  { alias: "disk-usage",    desc: "df -h / — disk kullanımı",                       ex: "/run disk-usage @bayı" },
+  { alias: "log",           desc: "Belirli logun son N satırı",                     ex: "/run log exim_main 100 @bayı" },
+  { alias: "service",       desc: "systemctl status <servis>",                      ex: "/run service exim @bayı" },
+];
+
 const COMMAND_HELP = [
   "/run health-check @bayı",
   "/run version-check @bayı",
@@ -79,6 +88,7 @@ export default function SlashCommandBar() {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
+  const [selectedIdx, setSelectedIdx] = useState(0);
   const inputRef = useRef(null);
 
   // Bayı listesi (fuzzy match)
@@ -89,6 +99,52 @@ export default function SlashCommandBar() {
     staleTime: 60_000,
   });
   const bayilervMap = (bayilervQ.data?.items || []).reduce((acc, b) => ({ ...acc, [b.license_key]: b }), {});
+
+  // v43.75 — Autocomplete listesi: /run <partial>  → command önerileri
+  // "@" başlarsa bayı isim önerileri gösterir
+  const suggestions = (() => {
+    const s = input.trim();
+    if (!s || !s.toLowerCase().startsWith("/run")) return [];
+    const rest = s.slice(4).trim().toLowerCase();
+    // Bayı suggestions (@ ile başlıyorsa)
+    const atMatch = rest.match(/@(\S*)$/);
+    if (atMatch) {
+      const needle = atMatch[1].toLowerCase();
+      const items = Object.entries(bayilervMap)
+        .filter(([lk, meta]) => !needle || lk.toLowerCase().includes(needle) || (meta.email || "").toLowerCase().includes(needle))
+        .slice(0, 8)
+        .map(([lk, meta]) => ({
+          type: "bayı",
+          key: lk,
+          label: meta.email || lk.slice(0, 20),
+          hint: `${meta.plan || "?"} · ${lk.slice(0, 20)}...`,
+          insert: (input.trim().replace(/@(\S*)$/, "@" + (meta.email || lk)) + " "),
+        }));
+      if (needle === "" || "all".startsWith(needle)) {
+        items.unshift({
+          type: "bayı",
+          key: "@all",
+          label: "@all — TÜM BAYİLER",
+          hint: `${Object.keys(bayilervMap).length} bayı`,
+          insert: input.trim().replace(/@(\S*)$/, "@all "),
+        });
+      }
+      return items;
+    }
+    // Command suggestions
+    const cmdPart = rest.split(/\s/)[0] || "";
+    return CMD_SUGGESTIONS
+      .filter((c) => !cmdPart || c.alias.startsWith(cmdPart))
+      .slice(0, 6)
+      .map((c) => ({
+        type: "cmd",
+        key: c.alias,
+        label: `/run ${c.alias}`,
+        hint: c.desc,
+        insert: `/run ${c.alias} `,
+        example: c.ex,
+      }));
+  })();
 
   // Global keyboard shortcut: Ctrl+Shift+K veya Cmd+Shift+K (Ctrl+K komut paleti kullanır)
   useEffect(() => {
@@ -107,6 +163,35 @@ export default function SlashCommandBar() {
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 30);
   }, [open]);
+
+  // v43.75 — Reset selected index when input changes
+  useEffect(() => { setSelectedIdx(0); }, [input]);
+
+  // v43.75 — Klavye: ↑/↓ ile arasında dolan, Tab/Enter ile seç, Enter ile çalıştır (öneri boşken)
+  const handleKeyDown = (e) => {
+    if (suggestions.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      setSelectedIdx((v) => {
+        const n = suggestions.length;
+        return (e.key === "ArrowDown" ? v + 1 : v - 1 + n) % n;
+      });
+      return;
+    }
+    if (suggestions.length > 0 && (e.key === "Tab" || (e.key === "Enter" && suggestions[selectedIdx]?.insert))) {
+      // Tab veya Enter → seçili öneriyi input'a insert et (henüz çalıştırma)
+      e.preventDefault();
+      const sel = suggestions[selectedIdx];
+      if (sel && sel.insert) {
+        setInput(sel.insert);
+        setTimeout(() => inputRef.current?.focus(), 20);
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      exec();
+    }
+  };
 
   if (!isMaster) return null;
 
@@ -187,7 +272,7 @@ export default function SlashCommandBar() {
                 data-testid="slash-command-input"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") exec(); }}
+                onKeyDown={handleKeyDown}
                 placeholder="/run health-check @bayı1"
                 className="flex-1 bg-transparent outline-none mono text-sm text-slate-100 placeholder:text-slate-500"
                 disabled={running}
@@ -195,9 +280,40 @@ export default function SlashCommandBar() {
               <button onClick={() => setOpen(false)} className="text-slate-500 hover:text-slate-300"><X className="w-4 h-4"/></button>
             </div>
 
-            {/* Help / autocomplete */}
+            {/* v43.75 — Autocomplete Dropdown */}
+            {suggestions.length > 0 && (
+              <div data-testid="slash-suggestions" className="border-b border-slate-800 max-h-72 overflow-y-auto">
+                {suggestions.map((s, i) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    data-testid={`slash-suggest-${s.type}-${i}`}
+                    onMouseEnter={() => setSelectedIdx(i)}
+                    onClick={() => { setInput(s.insert); setTimeout(() => inputRef.current?.focus(), 20); }}
+                    className={`w-full text-left px-4 py-2 flex items-center gap-3 border-l-2 transition-colors ${
+                      selectedIdx === i
+                        ? "bg-indigo-500/10 border-indigo-400 text-slate-100"
+                        : "border-transparent hover:bg-slate-800/60 text-slate-300"
+                    }`}
+                  >
+                    <span className={`text-[10px] mono px-1.5 py-0.5 rounded ${
+                      s.type === "cmd" ? "bg-indigo-500/20 text-indigo-300" : "bg-emerald-500/20 text-emerald-300"
+                    }`}>{s.type === "cmd" ? "CMD" : "BAYI"}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="mono text-sm truncate">{s.label}</div>
+                      <div className="text-[11px] text-slate-500 truncate">{s.hint}</div>
+                    </div>
+                    {selectedIdx === i && (
+                      <kbd className="ml-auto px-1.5 py-0.5 rounded bg-slate-800 mono text-[9px] text-slate-400 border border-slate-700 shrink-0">Tab</kbd>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Help / preview */}
             <div className="px-4 py-3 text-xs">
-              {input.trim() ? (() => {
+              {input.trim() && suggestions.length === 0 ? (() => {
                 const parsed = parseSlash(input, bayilervMap);
                 if (parsed.error) return <div className="text-rose-400">{parsed.error}</div>;
                 return (
@@ -217,9 +333,9 @@ export default function SlashCommandBar() {
                     </div>
                   </div>
                 );
-              })() : (
+              })() : suggestions.length === 0 ? (
                 <div className="space-y-1">
-                  <div className="text-slate-500 flex items-center gap-1"><Info className="w-3 h-3"/> Örnek komutlar:</div>
+                  <div className="text-slate-500 flex items-center gap-1"><Info className="w-3 h-3"/> Örnek komutlar (tıklayın):</div>
                   {COMMAND_HELP.map((c) => (
                     <button
                       key={c}
@@ -230,13 +346,22 @@ export default function SlashCommandBar() {
                     </button>
                   ))}
                 </div>
-              )}
+              ) : null}
             </div>
 
             {/* Action */}
             <div className="flex items-center justify-between px-4 py-3 border-t border-slate-800 bg-slate-950/40">
               <div className="text-[10px] text-slate-500 flex items-center gap-2">
-                <kbd className="px-1.5 py-0.5 rounded bg-slate-800 mono text-slate-400 border border-slate-700">Enter</kbd> çalıştır
+                {suggestions.length > 0 ? (
+                  <>
+                    <kbd className="px-1.5 py-0.5 rounded bg-slate-800 mono text-slate-400 border border-slate-700">↑↓</kbd> gez
+                    <kbd className="px-1.5 py-0.5 rounded bg-slate-800 mono text-slate-400 border border-slate-700">Tab</kbd> tamamla
+                  </>
+                ) : (
+                  <>
+                    <kbd className="px-1.5 py-0.5 rounded bg-slate-800 mono text-slate-400 border border-slate-700">Enter</kbd> çalıştır
+                  </>
+                )}
                 <kbd className="px-1.5 py-0.5 rounded bg-slate-800 mono text-slate-400 border border-slate-700">Esc</kbd> iptal
               </div>
               <button

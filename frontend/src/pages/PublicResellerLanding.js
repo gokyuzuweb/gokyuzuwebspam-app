@@ -11,7 +11,7 @@
  */
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
-import { Loader2, Mail, MessageCircle, ShieldCheck, Sparkles, CheckCircle2 } from "lucide-react";
+import { Loader2, Mail, MessageCircle, ShieldCheck, Sparkles, CheckCircle2, Award, Star } from "lucide-react";
 import axios from "axios";
 
 const BE = process.env.REACT_APP_BACKEND_URL || "";
@@ -40,6 +40,38 @@ export default function PublicResellerLanding() {
       .then((r) => setState({ loading: false, data: r.data, err: null }))
       .catch((e) => setState({ loading: false, data: null, err: e?.response?.data?.detail || "Bu domain için aktif bayı bulunamadı" }));
   }, [host]);
+
+  // v43.75 — Dinamik SEO: title + meta description + OG tags
+  useEffect(() => {
+    if (!state.data) return;
+    const b = state.data;
+    const brand = b.brand_name || "GökyüzüWebSpam";
+    const tagline = b.brand_tagline || "Kurumsal Mail Güvenliği";
+    document.title = `${brand} — ${tagline}`;
+    const setMeta = (attr, key, val) => {
+      let el = document.querySelector(`meta[${attr}="${key}"]`);
+      if (!el) {
+        el = document.createElement("meta");
+        el.setAttribute(attr, key);
+        document.head.appendChild(el);
+      }
+      el.setAttribute("content", val);
+    };
+    const ogImage = `${BE}/api/public/reseller-og?host=${encodeURIComponent(host)}`;
+    setMeta("name", "description", `${brand} · ${tagline} — Kurumsal mail güvenliği · Spam, phishing, BEC koruması`);
+    setMeta("name", "theme-color", b.primary_color || "#6366f1");
+    setMeta("property", "og:type", "website");
+    setMeta("property", "og:site_name", brand);
+    setMeta("property", "og:title", `${brand} — ${tagline}`);
+    setMeta("property", "og:description", "Kurumsal mail güvenliği · Spam, phishing, BEC koruması · WHM/cPanel entegre");
+    setMeta("property", "og:image", ogImage);
+    setMeta("property", "og:image:width", "1200");
+    setMeta("property", "og:image:height", "630");
+    setMeta("property", "og:locale", "tr_TR");
+    setMeta("name", "twitter:card", "summary_large_image");
+    setMeta("name", "twitter:title", `${brand} — ${tagline}`);
+    setMeta("name", "twitter:image", ogImage);
+  }, [state.data, host]);
 
   if (state.loading) {
     return (
@@ -80,7 +112,27 @@ export default function PublicResellerLanding() {
             <img src={b.logo_url} alt={brand} className="h-12" onError={(e) => (e.currentTarget.style.display = "none")} />
           )}
           <div className="flex-1 min-w-0">
-            <div className="text-2xl font-black" style={{ color }}>{brand}</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-2xl font-black" style={{ color }}>{brand}</span>
+              {/* v43.75 — Trusted Publisher Certification Badge */}
+              {b.trusted_publisher && (
+                <span
+                  data-testid="pub-trusted-badge"
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border ${
+                    b.trusted_publisher.badge_color === "emerald" ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300" :
+                    b.trusted_publisher.badge_color === "violet"  ? "bg-violet-500/15 border-violet-500/40 text-violet-300" :
+                    b.trusted_publisher.badge_color === "amber"   ? "bg-amber-500/15 border-amber-500/40 text-amber-300" :
+                    "bg-slate-700/40 border-slate-600 text-slate-300"
+                  }`}
+                  title={`${b.trusted_publisher.signatures} aktif imza — Marketplace onaylı`}
+                >
+                  {b.trusted_publisher.badge_color === "amber" ? <Star className="w-3 h-3"/> :
+                   b.trusted_publisher.badge_color === "violet" ? <Sparkles className="w-3 h-3"/> :
+                   <Award className="w-3 h-3"/>}
+                  {b.trusted_publisher.label}
+                </span>
+              )}
+            </div>
             <div className="text-sm text-slate-300 mt-0.5">{tagline}</div>
           </div>
           <div className="hidden md:flex items-center gap-4 text-sm">

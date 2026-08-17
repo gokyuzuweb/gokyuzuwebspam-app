@@ -125,11 +125,144 @@ async def branding_public(host: Optional[str] = Query(None, description="mail.ba
     h = _norm_host(host)
     doc = await db.reseller_branding.find_one(
         {"custom_domain": h, "active": True},
-        {"_id": 0, "license_key": 0},
+        {"_id": 0},
     )
     if not doc:
         raise HTTPException(404, "Bu domain için aktif bayı bulunamadı")
+    # v43.75 — Trusted Publisher rozetini ekle (public landing'de gösterilecek)
+    lk = doc.pop("license_key", None)  # license leak etmeden hesapla
+    if lk:
+        total = await db.marketplace_signatures.count_documents(
+            {"publisher_license": lk, "status": "active"}
+        )
+        tier = None
+        for t in [
+            {"min": 5,  "label": "Trusted Publisher", "badge_color": "emerald"},
+            {"min": 15, "label": "Expert Publisher",  "badge_color": "violet"},
+            {"min": 30, "label": "Elite Publisher",   "badge_color": "amber"},
+        ]:
+            if total >= t["min"]:
+                tier = {"label": t["label"], "badge_color": t["badge_color"], "signatures": total}
+        doc["trusted_publisher"] = tier
     return doc
+
+
+# ====================== v43.75 — SEO + OG Tags ======================
+from fastapi.responses import HTMLResponse, Response  # noqa: E402
+
+
+@router.get("/public/reseller-og", response_class=Response)
+async def branding_og_image(host: Optional[str] = Query(None)):
+    """SVG olarak dinamik OG image üretir — sosyal medya paylaşımlarında görünür.
+    1200x630 pixel Twitter/Facebook standardı."""
+    if not host:
+        raise HTTPException(400, "host gerekli")
+    h = _norm_host(host)
+    doc = await db.reseller_branding.find_one({"custom_domain": h, "active": True}, {"_id": 0}) or {}
+    brand = _xml_escape(doc.get("brand_name") or "GökyüzüWebSpam")
+    tagline = _xml_escape(doc.get("brand_tagline") or "Kurumsal Mail Güvenliği")
+    color = doc.get("primary_color") or "#6366f1"
+    # Trusted tier
+    trusted_label = ""
+    if doc.get("license_key"):
+        sig_count = await db.marketplace_signatures.count_documents(
+            {"publisher_license": doc["license_key"], "status": "active"}
+        )
+        if sig_count >= 30:
+            trusted_label = "Elite Publisher · Marketplace Onaylı"
+        elif sig_count >= 15:
+            trusted_label = "Expert Publisher · Marketplace Onaylı"
+        elif sig_count >= 5:
+            trusted_label = "Trusted Publisher · Marketplace Onaylı"
+
+    svg = f"""<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="{color}" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#020617" stop-opacity="1"/>
+    </linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="16"/></filter>
+  </defs>
+  <rect width="1200" height="630" fill="#020617"/>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="1050" cy="120" r="220" fill="{color}" opacity="0.14" filter="url(#glow)"/>
+  <circle cx="150" cy="500" r="160" fill="{color}" opacity="0.10" filter="url(#glow)"/>
+  <g transform="translate(80, 220)">
+    <text x="0" y="0" font-family="Inter,system-ui,sans-serif" font-size="28" font-weight="700" fill="{color}" opacity="0.9">
+      GÖKYÜZÜWEBSPAM · MAIL GÜVENLİK
+    </text>
+    <text x="0" y="72" font-family="Inter,system-ui,sans-serif" font-size="72" font-weight="900" fill="#f1f5f9">
+      {brand}
+    </text>
+    <text x="0" y="130" font-family="Inter,system-ui,sans-serif" font-size="32" fill="#cbd5e1">
+      {tagline}
+    </text>
+    {"" if not trusted_label else f'<g transform="translate(0, 190)"><rect x="0" y="0" width="500" height="52" rx="26" fill="' + color + '" opacity="0.15" stroke="' + color + '" stroke-width="2"/><text x="24" y="34" font-family="Inter,system-ui,sans-serif" font-size="22" font-weight="700" fill="' + color + '">★ ' + _xml_escape(trusted_label) + '</text></g>'}
+    <text x="0" y="290" font-family="Inter,system-ui,sans-serif" font-size="20" fill="#64748b">
+      {_xml_escape(h)} — Bayı ile İletişime Geçin
+    </text>
+  </g>
+</svg>"""
+    return Response(content=svg, media_type="image/svg+xml", headers={
+        "Cache-Control": "public, max-age=3600",
+    })
+
+
+@router.get("/r-meta/{host_slug}", response_class=HTMLResponse)
+async def branding_seo_meta(host_slug: str, request: Request):
+    """Sosyal medya scraper'ları için pre-rendered HTML with OG tags.
+    Bayı landing linki paylaşılınca Twitter/Facebook bu endpoint'i tarar.
+    Normal kullanıcı için client tarafta /r/{host_slug} route'a redirect."""
+    h = _norm_host(host_slug)
+    doc = await db.reseller_branding.find_one({"custom_domain": h, "active": True}, {"_id": 0}) or {}
+    brand = _xml_escape(doc.get("brand_name") or "GökyüzüWebSpam")
+    tagline = _xml_escape(doc.get("brand_tagline") or "Kurumsal Mail Güvenliği")
+    color = doc.get("primary_color") or "#6366f1"
+    base = str(request.base_url).rstrip("/")
+    og_image = f"{base}/api/public/reseller-og?host={h}"
+    landing_url = f"{base}/r/{h}"
+    canonical = f"https://{h}/" if h else landing_url
+
+    html = f"""<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>{brand} — {tagline}</title>
+<meta name="description" content="{brand} · {tagline} — Kurumsal mail güvenliği: spam, phishing, BEC koruması, gerçek zamanlı trafik izleme."/>
+<meta name="theme-color" content="{color}"/>
+<link rel="canonical" href="{canonical}"/>
+<!-- Open Graph -->
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="{brand}"/>
+<meta property="og:title" content="{brand} — {tagline}"/>
+<meta property="og:description" content="Kurumsal mail güvenliği · Spam, phishing, BEC koruması · WHM/cPanel entegre"/>
+<meta property="og:image" content="{og_image}"/>
+<meta property="og:image:width" content="1200"/>
+<meta property="og:image:height" content="630"/>
+<meta property="og:url" content="{canonical}"/>
+<meta property="og:locale" content="tr_TR"/>
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="{brand} — {tagline}"/>
+<meta name="twitter:description" content="Kurumsal mail güvenliği · Spam, phishing, BEC koruması"/>
+<meta name="twitter:image" content="{og_image}"/>
+<!-- SPA redirect for browsers (scraper'lar meta'ları okur ama redirect'i takip etmezler) -->
+<meta http-equiv="refresh" content="0;url={landing_url}"/>
+<script>window.location.replace({landing_url!r});</script>
+</head>
+<body>
+<h1>{brand}</h1>
+<p>{tagline}</p>
+<p><a href="{landing_url}">Landing sayfasına yönlendiriliyorsunuz…</a></p>
+</body>
+</html>"""
+    return HTMLResponse(content=html, headers={"Cache-Control": "public, max-age=1800"})
+
+
+def _xml_escape(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 @router.get("/admin/reseller-branding/list")

@@ -2256,6 +2256,52 @@ async def audit_idle_lock_event(payload: IdleLockEventIn, request: Request):
         "ts": _iso(),
         "at": _iso(),
     })
+    # v43.75 — IP değişikliği → master'a anlık uyarı (ThreatBell + email)
+    if payload.event == "unlock" and payload.ip_changed:
+        alert_msg = f"⚠️ IP değişikliği: {label} · {payload.previous_ip} → {payload.current_ip}"
+        await db.master_alerts.insert_one({
+            "id": str(uuid.uuid4()),
+            "type": "idle_lock_ip_change",
+            "severity": "warning",
+            "license_key": lk if lk else None,
+            "actor_ip": _client_ip(request),
+            "message": alert_msg,
+            "details": {
+                "previous_ip": payload.previous_ip,
+                "current_ip": payload.current_ip,
+                "actor_label": label,
+            },
+            "seen": False,
+            "read": False,
+            "created_at": _iso(),
+        })
+        # Email + Slack (mevcut delivery infrastructure — best-effort, hata yakalanır)
+        try:
+            # Slack notification via master_alert_channels ayarı
+            settings = await db.settings.find_one({"_key": "master_alert_channels"}, {"_id": 0}) or {}
+            slack_webhook = (settings.get("slack_webhook") or "").strip()
+            admin_email = (settings.get("admin_email") or os.environ.get("ADMIN_EMAIL") or "").strip()
+            slack_text = (
+                f":warning: *IP değişikliği (session hijack ihtimali)*\n"
+                f"• Kullanıcı: `{label}`\n"
+                f"• Önceki: `{payload.previous_ip}` → Şu an: `{payload.current_ip}`\n"
+                f"• Zaman: `{_iso()}`\n"
+                f"Audit Log: /panel/audit-log"
+            )
+            email_body = (
+                f"Panel kilit sırasında IP değişti — session hijack ihtimali.\n\n"
+                f"Kullanıcı: {label}\n"
+                f"Önceki IP: {payload.previous_ip}\n"
+                f"Şu anki IP: {payload.current_ip}\n"
+                f"Zaman: {_iso()}\n\n"
+                f"Audit Log: /panel/audit-log"
+            )
+            if slack_webhook:
+                await _send_slack(slack_webhook, slack_text)
+            if admin_email:
+                await _send_email(admin_email, f"[GökyüzüWebSpam] IP değişikliği - {label}", email_body)
+        except Exception:
+            pass  # Sessiz geç — audit + master_alert zaten kaydedildi
     return {"ok": True}
 
 

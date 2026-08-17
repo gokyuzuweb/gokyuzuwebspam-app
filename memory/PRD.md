@@ -14,6 +14,62 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 17, v43.75) — Slash Autocomplete + Trusted Cert + IP Alert + SEO OG
+
+**KULLANICI İSTEKLERİ:**
+1. Bulk Slash Autocomplete — dropdown + Ctrl+↑↓ + Tab keyboard nav
+2. Trusted Publisher Otomatik Rozet Sertifikası — bayı landing sayfasında rozet
+3. IP Değişikliği Slack/Email Alerti — session hijack erken uyarı
+4. Public Landing SEO + OG Tags — sosyal paylaşımda custom preview
+
+**FIX v43.75:**
+
+### 1. Slash Command Autocomplete (Frontend)
+- `SlashCommandBar.js` — `CMD_SUGGESTIONS` array (5 komut) + dropdown rendering
+- İki mod:
+  - `/run <partial>` → CMD önerileri (health-check, version-check, disk-usage, log, service) prefix match
+  - `/run cmd @<partial>` → BAYI önerileri (email/license_key fuzzy match) + @all option (kaç bayı targeting bilgisi)
+- Klavye navigasyonu: ↑↓ ile gez, Tab veya Enter (öneri açıkken) ile tamamla, Enter (öneri yokken) ile çalıştır
+- Mouse hover ile selectedIdx güncellenir; seçili item indigo highlight + Tab kbd chip
+- Renkli type badges: CMD (indigo) / BAYI (emerald)
+
+### 2. Trusted Publisher Certification (Public Landing)
+- Backend `/api/public/reseller-branding` — `trusted_publisher` field'ı eklendi (tier hesabı license_key üzerinden)
+- 3 tier: Trusted (5+ imza, emerald), Expert (15+, violet), Elite (30+, amber)
+- License_key public response'ta LEAK ETMİYOR (pop ile temizleniyor, sadece tier hesabı için kullanılıyor)
+- Frontend `PublicResellerLanding.js` — brand adının yanında rozet chip (Award/Sparkles/Star icon + tier label)
+
+### 3. IP Change Alert System (Session Hijack Early Warning)
+- Backend `/api/audit/idle-lock-event` — event='unlock' + ip_changed=true olursa:
+  - `master_alerts` insert: type='idle_lock_ip_change', severity='warning', message="⚠️ IP değişikliği: {label} · X → Y"
+  - Slack webhook (settings.master_alert_channels.slack_webhook) → formatted message
+  - Email (settings.master_alert_channels.admin_email veya ADMIN_EMAIL env) → detaylı bilgi
+  - Best-effort delivery — hata sessizce yakalanır (audit + alert zaten kaydedilmiş)
+- Frontend `ThreatAlertBell.js` — yeni `idle_lock_ip_change` type için `ShieldAlert` rose icon + link `/panel/audit-log`
+
+### 4. SEO + OG Tags (Dynamic)
+- **Backend endpoint 1**: `GET /api/public/reseller-og?host=X`
+  - Dinamik SVG 1200x630 (Twitter/FB standardı) — brand name + tagline + primary_color gradient + trusted tier chip
+  - Content-Type: `image/svg+xml`, Cache-Control: public max-age=3600
+  - XML escape güvenliği
+- **Backend endpoint 2**: `GET /api/r-meta/{host_slug}`
+  - Pre-rendered HTML sosyal medya scraper'ları için (title, description, og:*, twitter:card, canonical)
+  - meta refresh + JS redirect ile normal kullanıcıyı `/r/{host}` client route'a taşır
+- **Frontend `PublicResellerLanding.js`**: useEffect ile client-side document.title + meta[property=og:*] dinamik olarak set edilir (browser rendering için)
+
+**Test edildi (iteration_50.json — 13/13 PASS %100):**
+- Trusted tier badge 3 kademe (Trusted/Expert/Elite) doğru hesaplanıyor ✓
+- OG SVG valid + brand escape + fallback default ✓
+- SEO HTML meta tags + canonical + redirect ✓
+- IP change master_alerts warning + audit + Slack/email best-effort ✓
+- Lock event WITHOUT ip_changed → NO master_alert (regression yok) ✓
+
+**Frontend Screenshot Verified:**
+- Slash Autocomplete: "/run h" → CMD suggestion "health-check" + Tab, "@T" → 3 bayı önerisi + Tab tamamlama ✓
+- Public Landing `/r/mail.bayihosting.com`: brand yanında yeşil "🏅 Trusted Publisher" rozeti + og:image URL doğru ✓
+
+
+
 ## Feb 15, 2026 (Session 17, v43.74) — Public Landing + Trusted Publisher + IP Fingerprint + Slash Command
 
 **KULLANICI İSTEKLERİ (birleşik):**
