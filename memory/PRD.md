@@ -13,6 +13,47 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.68) — 💀 KRİTİK BUG FIX: Bayi Master DB'yi Sildiriyordu
+
+**KULLANICI ŞİKAYETİ (KRİTİK):**
+"DB Bakım kısmını 78.189.19.188 (bayi IP) bu IP'den yaptığımda BAYİDEN MASTER SUNUCUDAKİ DB KAYITLARI DA SİLİNDİ."
+
+**KÖK NEDEN (v43.65 fix'inin YAN ETKİSİ):**
+v43.65'te `plugin/status` X-License-Key fallback eklemiştim (bayı Pro lisansı ile giren `licensed=true` görüyordu). Ancak `demo_write_guard` middleware'i şu koşulu kontrol ediyordu:
+```python
+if status.get("licensed"):
+    return await call_next(request)  # ← BAYİ MASTER DB'YE YAZABİLİYORDU!!
+```
+Yani "lisans var → yazabilir" mantığı bayi için de geçerliydi. Bayi Pro lisansıyla master panele girip DB Bakım'dan silinen kayıtlar **gerçekten master DB'sinde silindi**.
+
+**FIX v43.68 — Master Panel vs Bayi Panel ayrımı:**
+
+`demo_write_guard` middleware'i artık `MASTER_LICENSE_KEY` env'ini bir signal olarak kullanır:
+
+- **MASTER_LICENSE_KEY env SET** → Bu master panel. Yazma sadece master_key VEYA master_ip eşleşmesiyle. Bayi lisansı ile yazma girişimi → **HTTP 403 BAYI_ON_MASTER_PANEL**.
+- **MASTER_LICENSE_KEY env YOK** → Bu bayi paneli (kendi sunucusunda). Bayi kendi lisansıyla kendi paneline yazabilir.
+
+Bayilerin OKUMA yetkisi korundu (`GET /outbound/stats` vb. hala 200 döner).
+
+**Ek koruma — `/api/maintenance/*` destructive endpoint'lerinde:**
+- `_require_master()` guard eklendi (cleanup, auto-cleanup, run-now, violations, trust-score/snapshot)
+- Middleware'i geçse bile endpoint'te double-lock var.
+
+**Master vs Bayi Mimarisi Dokümanı:**
+`/app/memory/MASTER_VS_BAYI.md` oluşturuldu — 200+ satırlık kapsamlı doküman:
+- Master vs Bayi kimlik/yetki matrisi
+- 9 satırlık "Bayi'nin YAPAMAYACAKLARI" tablosu
+- Veri akışı diagramı (heartbeat, tarball, licence_active)
+- 5 katmanlı defense-in-depth
+- Doğru kullanım örnekleri (bayi throttle, master havale onay)
+- Bayi setup adımları
+
+**Preview Test (v43.68):**
+- Bayi Pro lisansı ile POST /maintenance/cleanup → **403 BAYI_ON_MASTER_PANEL** ✓
+- Bayi lisansı ile GET /outbound/stats → 200 (okuma serbest) ✓
+- Master key ile POST /maintenance/cleanup → 422 (validation, guard geçti) ✓
+
+
 ## Feb 15, 2026 (Session 17, v43.67) — Toplu Master-Only Guard (5 katman ek koruma)
 
 **KULLANICI İSTEĞİ:**

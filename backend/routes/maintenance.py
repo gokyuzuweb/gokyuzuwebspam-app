@@ -27,6 +27,54 @@ def _iso() -> str:
 from cache import cache as _cache
 
 
+# ============================================================================
+# v43.68 — Master-only guard (KRİTİK GÜVENLİK)
+# ---------------------------------------------------------------------------
+# Bayi kullanıcıları master DB'ye ETKİ EDEMEZ. DB Bakım'daki DELETE/PURGE
+# operasyonları sadece master (X-Master-Key + MASTER_IP) tarafından yapılabilir.
+# Bayilerin kendi sunucularında kurdukları KENDİ backend + KENDİ MongoDB var —
+# bayi kendi verisini kendi sunucusunda silmek isterse kendi paneline gider.
+# Master panelde (panel.gokyuzuhosting.com) bayilerin DB'ye erişimi 403.
+# ============================================================================
+import os as _os
+
+
+def _client_ip(request: Request) -> str:
+    xf = request.headers.get("x-forwarded-for", "")
+    if xf:
+        return xf.split(",")[0].strip()
+    return request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+
+
+async def _require_master(request: Request) -> None:
+    """Sadece MASTER (env key + IP). Bayilerin master DB'ye yazması engellenir."""
+    master_env = _os.environ.get("MASTER_LICENSE_KEY", "")
+    master_ip = _os.environ.get("MASTER_IP", "")
+    header_key = request.headers.get("x-master-key") or ""
+    cookie_key = request.cookies.get("gws_master_session") or ""
+
+    # 1) Master session cookie kontrolü
+    if cookie_key:
+        row = await db.settings.find_one({"_key": f"master_session:{cookie_key}"}, {"_id": 0})
+        if row and row.get("valid_until", "") > _iso():
+            return
+
+    # 2) X-Master-Key + MASTER_IP kontrolü
+    if master_env and header_key and header_key == master_env:
+        if master_ip:
+            cip = _client_ip(request)
+            if cip and cip != master_ip:
+                raise HTTPException(403, f"DB Bakım sadece ana yönetici sunucusundan yapılabilir (IP eşleşmedi: {cip}, beklenen: {master_ip})")
+        return
+
+    raise HTTPException(
+        403,
+        "DB Bakım sadece ana yönetici tarafından yapılabilir. Bayi kullanıcılar "
+        "kendi sunucularındaki KENDİ panelinden bu işlemi yapmalıdır — master DB'ye "
+        "etki edilmez.",
+    )
+
+
 # ---- Koleksiyon kategorileri ----
 # DATA_COLS: silinecek "veri" koleksiyonları (event/history/log)
 # SETTINGS_COLS: KORUNACAK ayar/config/lisans koleksiyonları
@@ -104,7 +152,8 @@ class CleanupIn(BaseModel):
 
 
 @router.post("/cleanup")
-async def cleanup_data(payload: CleanupIn):
+async def cleanup_data(payload: CleanupIn, request: Request):
+    await _require_master(request)
     """Sadece veri koleksiyonlarını temizler. Ayarlar/lisanslar korunur.
     Confirm='DELETE_DATA' zorunlu."""
     if payload.confirm != "DELETE_DATA":
@@ -176,7 +225,8 @@ async def get_auto_cleanup():
 
 
 @router.post("/auto-cleanup")
-async def set_auto_cleanup(cfg: AutoCleanupCfg):
+async def set_auto_cleanup(cfg: AutoCleanupCfg, request: Request):
+    await _require_master(request)
     await db.settings.update_one(
         {"_key": "auto_cleanup"},
         {"$set": {"_key": "auto_cleanup", **cfg.model_dump()}},
@@ -186,7 +236,8 @@ async def set_auto_cleanup(cfg: AutoCleanupCfg):
 
 
 @router.post("/auto-cleanup/run-now")
-async def auto_cleanup_run_now():
+async def auto_cleanup_run_now(request: Request):
+    await _require_master(request)
     """Cron'u beklemeden hemen çalıştır (test/manual)."""
     from datetime import timedelta
     r = await _run_auto_cleanup_once()
@@ -194,7 +245,8 @@ async def auto_cleanup_run_now():
 
 
 @router.post("/violations/auto-cleanup")
-async def violations_auto_cleanup(days: int = 7):
+async def violations_auto_cleanup(request: Request, days: int = 7):
+    await _require_master(request)
     """7 günden eski lisans ihlallerini otomatik sil. Cron ile günlük tetiklenir.
     Master paneli üzerinden manuel de çağrılabilir: POST /api/maintenance/violations/auto-cleanup?days=7"""
     from datetime import timedelta
@@ -578,7 +630,8 @@ async def geo_country_detail(cc: str, limit: int = 50):
 # TRUST SCORE HISTORY: son 30 günün skor trendi
 # ============================================================================
 @router.post("/trust-score/snapshot")
-async def trust_score_snapshot(score: int, findings: int = 0, rbl_listed: int = 0):
+async def trust_score_snapshot(request: Request, score: int, findings: int = 0, rbl_listed: int = 0):
+    await _require_master(request)
     """Frontend her Dashboard yüklemesinde günlük skor bırakır. Aynı gün için upsert.
     Skor 60 altına düşerse admin'e e-posta uyarısı gönderir (günde bir kez)."""
     from datetime import date

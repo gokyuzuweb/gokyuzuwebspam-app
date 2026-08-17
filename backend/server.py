@@ -10304,11 +10304,6 @@ async def demo_write_guard(request: Request, call_next):
     # Seller/master modu: master anahtarı istekle geldiyse yazma serbest,
     # gelmediyse (ziyaretçi) demo yazma kilidi çalışır.
     if status.get("mode") == "seller":
-        # ✅ Kritik: Panelde geçerli bir lisans yüklüyse (kendi bayi/pro lisansı)
-        # yazma serbesttir. Aksi halde motor/blacklist/list vb. yazma işlemleri
-        # lisanslı panelde bile 423 dönerdi.
-        if status.get("licensed"):
-            return await call_next(request)
         master_key_env = os.environ.get("MASTER_LICENSE_KEY", "")
         master_ip_env = os.environ.get("MASTER_IP", "")
         provided_key = (
@@ -10317,10 +10312,10 @@ async def demo_write_guard(request: Request, call_next):
             or request.query_params.get("license_key")
             or ""
         )
+        # v43.68 — Master anahtarı ile birebir eşleşen → tam yazma yetkisi
         if master_key_env and provided_key and provided_key == master_key_env:
             return await call_next(request)
-        # Master IP eşleşmesi: request master sunucudan geliyorsa (WHM plugin
-        # iframe içinden) X-Master-Key olmasa da yazmaya izin ver.
+        # Master IP eşleşmesi: request master sunucudan geliyorsa yazma serbest
         client_ip = ""
         try:
             xff = request.headers.get("x-forwarded-for", "")
@@ -10328,6 +10323,26 @@ async def demo_write_guard(request: Request, call_next):
         except Exception:
             pass
         if master_ip_env and client_ip and client_ip == master_ip_env:
+            return await call_next(request)
+        # v43.68 — KRİTİK MİMARİ FIX: Master panelinde (MASTER_LICENSE_KEY env
+        # tanımlıysa) bayi lisansı ile giriş yapan kullanıcı MASTER değildir.
+        # Bayi kendi sunucusunda kendi paneline erişmelidir. Master panelde
+        # bayilerin yazma girişimi ENGELLENİR (özellikle DB Bakım/Ödeme gibi).
+        # Bayi kendi sunucusunda MASTER_LICENSE_KEY env SET DEĞİLDİR — bu path
+        # o durumda çalışmaz ve `licensed` kontrolüne düşer (kendi paneline yazabilir).
+        if master_key_env:
+            # Master panelde çalışıyoruz — bayi lisansı olsa bile yazma kilitli.
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "Bu master panelinde yazma yetkisi yok. Kendi bayi sunucunuzdaki panele bağlanın.",
+                    "code": "BAYI_ON_MASTER_PANEL",
+                    "hint": "Bayiler master panelde sadece OKUMA yapabilir. DB Bakım/Ödeme gibi işlemler için kendi sunucunuzdaki panele giriş yapın.",
+                },
+            )
+        # Master env yok → bu bayi'nin KENDİ paneli. Kendi lisansı ile yazabilir.
+        if status.get("licensed"):
             return await call_next(request)
         # Ziyaretçi: yazma kilitle
         from fastapi.responses import JSONResponse
