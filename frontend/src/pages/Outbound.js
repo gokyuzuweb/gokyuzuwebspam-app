@@ -10,8 +10,27 @@ import { api } from "@/lib/api";
 import SavedFiltersBar from "@/components/SavedFiltersBar";
 import OutboundGeoHeatmap from "@/components/OutboundGeoHeatmap";
 import OutboundAttackMap from "@/components/OutboundAttackMap";
-// v43.63 — Coğrafi Harita artık Kontrol Paneli'ndeki AttackMap ile aynı stack:
-// ComposableMap + geoEqualEarth + real GeoJSON world atlas + curved arcs from Turkey.
+import OriginReputationCard from "@/components/OriginReputationCard";
+// v43.64 — Coğrafi Harita: AttackMap-stack + Origin Reputation + Country-click filter
+
+// v43.64 — ISO ülke kodu → alıcı domain TLD regex (backend _TLD_ISO mapping'inin tersi)
+// Coğrafi Harita'da ülkeye tıklama → o ülke TLD'sine giden mailleri filtrele.
+const ISO_TLD_REGEX = {
+  TR: "\\.tr$", US: "(\\.com|\\.us|\\.net|\\.org|\\.io|\\.info)$",
+  DE: "\\.de$", FR: "\\.fr$", GB: "(\\.uk|\\.co\\.uk|\\.gb)$",
+  RU: "\\.ru$", CN: "\\.cn$", JP: "\\.jp$", KR: "\\.kr$",
+  CA: "\\.ca$", MX: "\\.mx$", BR: "\\.br$", AR: "\\.ar$",
+  IR: "\\.ir$", SA: "\\.sa$", AE: "\\.ae$", EG: "\\.eg$",
+  IT: "\\.it$", ES: "\\.es$", NL: "\\.nl$", PL: "\\.pl$",
+  BE: "\\.be$", CH: "\\.ch$", AT: "\\.at$", UA: "\\.ua$",
+  GR: "\\.gr$", BG: "\\.bg$", RO: "\\.ro$", HU: "\\.hu$",
+  CZ: "\\.cz$", SK: "\\.sk$", AU: "\\.au$", NZ: "\\.nz$",
+  IN: "\\.in$", PK: "\\.pk$", BD: "\\.bd$", ID: "\\.id$",
+  VN: "\\.vn$", TH: "\\.th$", SG: "\\.sg$", MY: "\\.my$",
+  PH: "\\.ph$", IL: "\\.il$", ZA: "\\.za$", NG: "\\.ng$",
+  KE: "\\.ke$", SE: "\\.se$", NO: "\\.no$", DK: "\\.dk$",
+  FI: "\\.fi$", PT: "\\.pt$", IE: "\\.ie$",
+};
 
 const nfmt = (n) => new Intl.NumberFormat("tr-TR").format(n ?? 0);
 const fmtTime = (iso) => {
@@ -681,7 +700,26 @@ tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
       {/* v43.63 — TAB: COĞRAFİ HARITA (Kontrol Paneli'ndeki AttackMap ile aynı: ComposableMap + real world atlas + arcs) */}
       {tab === "geo" && (
         <div className="space-y-4">
-          <OutboundAttackMap hours={6} />
+          <OutboundAttackMap
+            hours={6}
+            onCountryClick={(item) => {
+              // v43.64 — Ülke tıklama → Canlı Trafik'te o ülkeye giden mailleri filtrele
+              const rx = ISO_TLD_REGEX[item.country];
+              if (rx) {
+                setToSearch(rx);
+                setAdvOpen(true);          // Gelişmiş paneli aç ki filtre görünsün
+                setTab("live");
+                toast.success(`✓ ${item.country} ülkesine giden mailler filtrelendi (${item.count} mail)`, {
+                  description: `Alıcı regex: ${rx} · Filtreyi kaldırmak için Sıfırla butonuna tıklayın`,
+                  duration: 6000,
+                });
+              } else {
+                toast.warning(`${item.country} için TLD regex tanımlı değil`, { duration: 4000 });
+              }
+            }}
+          />
+          {/* v43.64 — Kaynak IP Coğrafi Ters Analiz */}
+          <OriginReputationCard hours={24} />
           <OutboundGeoHeatmap />
         </div>
       )}

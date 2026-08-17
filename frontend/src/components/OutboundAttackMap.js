@@ -30,7 +30,7 @@ const COUNTRY_NAMES = {
   CZ: "Çekya", SK: "Slovakya", BG: "Bulgaristan",
 };
 
-export default function OutboundAttackMap({ hours = 6 }) {
+export default function OutboundAttackMap({ hours = 6, onCountryClick }) {
   const [hover, setHover] = useState(null);
   const q = useQuery({
     queryKey: ["outbound-attack-map", hours],
@@ -152,6 +152,8 @@ export default function OutboundAttackMap({ hours = 6 }) {
                   onMouseEnter={(e) => setHover({ item: it, x: e.clientX, y: e.clientY })}
                   onMouseMove={(e) => setHover((h) => h ? { ...h, x: e.clientX, y: e.clientY } : null)}
                   onMouseLeave={() => setHover(null)}
+                  onClick={() => onCountryClick?.(it)}
+                  style={{ cursor: onCountryClick ? "pointer" : "default" }}
                   data-testid={`ob-attack-country-${it.country}`}
                 >
                   <circle r={rad + 6} fill={fill} opacity={0.15}>
@@ -176,13 +178,20 @@ export default function OutboundAttackMap({ hours = 6 }) {
               const spamPct = (it.spam + it.high_spam) / Math.max(it.count, 1);
               const tone = it.blocked > 0 ? "text-rose-400" : spamPct >= 0.25 ? "text-orange-300" : "text-emerald-300";
               return (
-                <div key={it.country} className="flex justify-between gap-2">
+                <div key={it.country}
+                     onClick={() => onCountryClick?.(it)}
+                     className={`flex justify-between gap-2 ${onCountryClick ? "cursor-pointer hover:bg-slate-800/50 rounded px-1" : ""}`}
+                     data-testid={`ob-attack-lb-${it.country}`}
+                     title={onCountryClick ? "Tıkla → bu ülkeye giden mailleri filtrele" : ""}>
                   <span title={COUNTRY_NAMES[it.country] || it.country}>{it.country}</span>
                   <span className={tone}>{it.count}</span>
                 </div>
               );
             })}
             {items.length === 0 && <div className="text-slate-500">Veri bekliyor…</div>}
+            {onCountryClick && items.length > 0 && (
+              <div className="text-[9px] text-slate-600 mt-1 pt-1 border-t border-slate-800">tıkla → filtrele</div>
+            )}
           </div>
 
           {/* Legend */}

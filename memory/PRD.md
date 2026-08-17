@@ -13,6 +13,54 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
+## Feb 15, 2026 (Session 17, v43.64) — Ülke Tıklama Filtresi + Origin IP Reputasyon Analizi
+
+**KULLANICI İSTEĞİ:**
+1. "Ülke Tıklaması → Filtre: Coğrafi Harita'daki bir ülke noktasına tıklayınca Canlı Trafik'te o ülkeye giden mailler filtrelenmeli"
+2. "Kaynak IP Coğrafi Ters Analiz: Outbound origin (server_ip) coğrafi ters DNS lookup + kırmızı flag için düşük reputasyonlu origin uyarısı"
+
+**FIX v43.64:**
+
+### 1. Ülke Tıklama Filtresi
+- ✅ `OutboundAttackMap` component'e `onCountryClick` prop eklendi
+- ✅ Harita marker + top-6 leaderboard rows tıklanabilir (cursor: pointer, hover state)
+- ✅ ISO ülke kodu → TLD regex mapping (50+ ülke): `TR → \\.tr$`, `US → (\\.com|\\.us|\\.net|\\.org|\\.io|\\.info)$`, vb.
+- ✅ Tıklama:
+  1. `setToSearch(regex)` — Alıcı regex filter'ı
+  2. `setAdvOpen(true)` — Gelişmiş filtre paneli açılır
+  3. `setTab("live")` — Canlı Trafik sekmesine geç
+  4. Toast: `✓ {ISO} ülkesine giden mailler filtrelendi ({count} mail)`
+
+### 2. Kaynak IP Reputasyon Analizi
+- ✅ Yeni endpoint `/api/outbound/origin-reputation?hours=24`
+- ✅ Top-20 IP (mail_count desc) için:
+  * **Async concurrent rDNS** (asyncio thread pool, 1.5sn timeout) — 20 IP paralel çözümlenir, blocking'e düşmez
+  * GeoIP ülke tespiti (IPV4_COUNTRY_PREFIXES)
+  * Sender domain'lerin listesi
+  * Reputasyon flag'i:
+    * 🟢 **GREEN**: PTR var ve sender domain ile eşleşiyor
+    * 🟠 **ORANGE**: PTR var ama sender domain ile eşleşmiyor (SPF risk)
+    * 🔴 **RED**: PTR yok VEYA private/reserved IP
+- ✅ Yeni component `OriginReputationCard.js`:
+  * Sortable table: Flag / IP / rDNS / Ülke / Sender Domain / Mail / Spam / Sebep
+  * Renk kodlu flag badge'leri (ShieldCheck / AlertTriangle / ShieldAlert lucide icons)
+  * Header: özet badge'ler (🔴 N riskli / 🟠 N şüpheli / 🟢 N sağlıklı)
+  * Kırmızı/turuncu varsa alt banner: "Kırmızı flag'li IP'lerin PTR record'unu DNS sağlayıcınızdan eklettirin. Turuncu flag'ler için PTR ile sender domain (SPF) uyumunu doğrulayın. %80'e kadar spam filtresi rejection'ı önler."
+
+### 3. Wire-Up
+- ✅ Outbound.js "Coğrafi Harita" tab artık 3 kart içerir:
+  1. `<OutboundAttackMap onCountryClick={...} />` — Kontrol Paneli AttackMap tarzı harita
+  2. `<OriginReputationCard hours={24} />` — Origin IP reputasyon tablosu
+  3. `<OutboundGeoHeatmap />` — TLD/domain breakdown + AI Insights
+
+**Preview Test:**
+- `/api/version/panel` → v43.64 ✓
+- `/api/outbound/origin-reputation?hours=168` → 20 IP analiz: **12 kırmızı** (PTR yok), **8 turuncu** (domain uyuşmuyor), 0 yeşil ✓
+  * Örnek: `174.130.214.216 → h216.214.130.174.dynamic.ip.windstream.net` — dinamik ISP PTR, sender domain ile uyuşmadı
+  * Örnek: `87.181.15.155 → p57b50f9b.dip0.t-ipconnect.de` — Alman T-Home dinamik, `tuzlaadr.com` sender'la uyuşmadı
+- Frontend webpack: 0 error
+
+
 ## Feb 15, 2026 (Session 17, v43.63) — Coğrafi Harita = Kontrol Paneli AttackMap (birebir)
 
 **KULLANICI İSTEĞİ:**

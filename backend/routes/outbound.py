@@ -1618,6 +1618,154 @@ async def outbound_attack_map(request: Request, hours: int = Query(6, ge=1, le=4
 
 
 # ============================================================================
+# v43.64 — Kaynak IP Coğrafi Ters Analiz (Origin Reputation Check)
+# ---------------------------------------------------------------------------
+# Outbound trafik'in gerçek origin (server_ip)'lerini analiz eder:
+#   - Reverse DNS (PTR) lookup
+#   - GeoIP ülke tespiti
+#   - Reputasyon flag'i:
+#     • red:    PTR yok VEYA private IP
+#     • orange: PTR var ama sender domain ile eşleşmiyor
+#     • green:  PTR var ve sender domain ile eşleşiyor
+# ============================================================================
+@router.get("/origin-reputation")
+async def outbound_origin_reputation(
+    request: Request,
+    hours: int = Query(24, ge=1, le=168),
+    license_key: Optional[str] = None,
+):
+    """Outbound origin (server_ip) reputasyon analizi.
+    Dönüş: [{ip, rdns, country, mail_count, spam_count, sender_domains, flag}]"""
+    import socket
+    from ipaddress import ip_address, AddressValueError
+
+    scope = await resolve_tenant_scope(request, license_key, db)
+    lic_key = scope.get("owner_license_key") or ""
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    # Import security_adv utils (aynı modül yapısında)
+    try:
+        from .security_adv import _ip_to_country as _ip2cc
+    except Exception:
+        _ip2cc = lambda x: None
+
+    match: dict = {"direction": "out", "ts": {"$gte": since}}
+    if lic_key:
+        match["license_key"] = lic_key
+
+    ip_agg: dict[str, dict] = {}
+    async for e in db.mail_events.find(
+        match, {"_id": 0, "server_ip": 1, "sender_ip": 1, "from_addr": 1, "verdict": 1},
+    ).limit(10000):
+        ip = e.get("server_ip") or e.get("sender_ip")
+        if not ip:
+            continue
+        b = ip_agg.setdefault(ip, {
+            "ip": ip, "mail_count": 0, "spam_count": 0,
+            "sender_domains": set(), "verdict_dist": {"clean": 0, "spam": 0, "blocked": 0},
+        })
+        b["mail_count"] += 1
+        v = (e.get("verdict") or "").lower()
+        if v in ("spam", "high_spam", "virus"):
+            b["spam_count"] += 1
+            b["verdict_dist"]["spam"] += 1
+        elif v in ("blocked", "block"):
+            b["verdict_dist"]["blocked"] += 1
+        else:
+            b["verdict_dist"]["clean"] += 1
+        from_addr = e.get("from_addr") or ""
+        if "@" in from_addr:
+            domain = from_addr.split("@", 1)[1].lower().rstrip(".")
+            b["sender_domains"].add(domain)
+
+    # Reverse DNS + GeoIP + Flag hesapla — TOP 20 IP için async concurrent rDNS
+    # Blocking gethostbyaddr'ı thread pool'da paralel çalıştır ki 50 IP × 1.5s ≠ 75sn
+    import asyncio as _asyncio
+
+    top_ips = sorted(ip_agg.items(), key=lambda kv: kv[1]["mail_count"], reverse=True)[:20]
+
+    async def _rdns(ip: str) -> Optional[str]:
+        loop = _asyncio.get_event_loop()
+        def _sync_lookup():
+            try:
+                socket.setdefaulttimeout(1.2)
+                return socket.gethostbyaddr(ip)[0]
+            except Exception:
+                return None
+        try:
+            return await _asyncio.wait_for(loop.run_in_executor(None, _sync_lookup), timeout=1.5)
+        except Exception:
+            return None
+
+    rdns_results = await _asyncio.gather(*[_rdns(ip) for ip, _ in top_ips])
+    rdns_map = {ip: rdns for (ip, _), rdns in zip(top_ips, rdns_results)}
+
+    results = []
+    for ip, b in top_ips:
+        rdns = rdns_map.get(ip)
+
+        # Private / reserved kontrolü
+        is_private = False
+        try:
+            addr = ip_address(ip)
+            is_private = addr.is_private or addr.is_loopback or addr.is_reserved
+        except Exception:
+            pass
+
+        # Reputasyon flag hesabı
+        sender_domains = sorted(b["sender_domains"])
+        matched_domain = None
+        if rdns:
+            for d in sender_domains:
+                if d in rdns.lower() or rdns.lower().endswith("." + d):
+                    matched_domain = d
+                    break
+        if is_private:
+            flag = "red"
+            flag_reason = "Private/reserved IP — outbound için uygun değil"
+        elif not rdns:
+            flag = "red"
+            flag_reason = "PTR (reverse DNS) yok — spam filtreleri bloklar"
+        elif not matched_domain and sender_domains:
+            flag = "orange"
+            flag_reason = f"PTR ({rdns}) sender domain ({', '.join(sender_domains[:2])}) ile eşleşmiyor"
+        else:
+            flag = "green"
+            flag_reason = f"PTR sağlıklı ({rdns})"
+
+        country = _ip2cc(ip) if not is_private else "LOCAL"
+
+        results.append({
+            "ip": ip,
+            "rdns": rdns,
+            "country": country,
+            "mail_count": b["mail_count"],
+            "spam_count": b["spam_count"],
+            "sender_domains": sender_domains,
+            "flag": flag,
+            "flag_reason": flag_reason,
+            "verdict_dist": b["verdict_dist"],
+        })
+
+    results.sort(key=lambda x: x["mail_count"], reverse=True)
+
+    # Özet istatistik
+    summary = {
+        "total_ips": len(results),
+        "red": sum(1 for r in results if r["flag"] == "red"),
+        "orange": sum(1 for r in results if r["flag"] == "orange"),
+        "green": sum(1 for r in results if r["flag"] == "green"),
+    }
+
+    return {
+        "hours": hours,
+        "summary": summary,
+        "items": results[:50],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ============================================================================
 # v43.41 — AI Insights on Geo Heatmap Data (LLM-powered risk summary)
 # ============================================================================
 @router.post("/ai-insights")
