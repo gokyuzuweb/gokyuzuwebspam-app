@@ -61,6 +61,8 @@ import Marketplace from "@/pages/Marketplace";
 import BounceDigest from "@/pages/BounceDigest";
 import LiveDiagnostic from "@/pages/LiveDiagnostic";
 import CustomDomainGuide from "@/pages/CustomDomainGuide";
+import AuditLog from "@/pages/AuditLog";
+import SmtpSettings from "@/pages/SmtpSettings";
 import MasterOnlyGuard from "@/components/MasterOnlyGuard";
 
 // v43.67 — Master-only sayfa wrapper'ları (URL'ye direkt yazan bayilere karşı defense-in-depth)
@@ -108,8 +110,10 @@ const NAV = [
   { to: "/panel/version-publish", key: "version_publish", icon: PackageOpen, testid: "nav-version-publish", label: "Sürüm Yayınla", masterOnly: true, sellerOnly: true, group: "master" },
   { to: "/panel/plugin-health", key: "plugin_health", icon: HeartPulse, testid: "nav-plugin-health", label: "Plugin Sağlığı", masterOnly: true, sellerOnly: true, group: "master" },
   { to: "/panel/wake-history", key: "wake_history", icon: History, testid: "nav-wake-history", label: "Ping Geçmişi", masterOnly: true, sellerOnly: true, group: "master" },
+  { to: "/panel/audit-log", key: "audit_log", icon: ShieldAlert, testid: "nav-audit-log", label: "Audit Log", masterOnly: true, sellerOnly: true, group: "master" },
   // 🔧 SİSTEM
   { to: "/panel/my-server", key: "my_server", icon: Server, testid: "nav-my-server", label: "Sunucumu Bağla", group: "sistem" },
+  { to: "/panel/smtp-settings", key: "smtp_settings", icon: Mail, testid: "nav-smtp", label: "Mail (SMTP)", group: "sistem" },
   { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs", label: "Loglar", masterOnly: true, sellerOnly: true, group: "sistem" },
   { to: "/panel/maintenance", key: "maintenance", icon: HardDrive, testid: "nav-maintenance", label: "DB Bakım", masterOnly: true, sellerOnly: true, group: "sistem" },
   { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings", label: "Ayarlar", masterOnly: true, sellerOnly: true, group: "sistem" },
@@ -394,10 +398,12 @@ function Shell() {
             <Route path="/payment/havale" element={<HavalePayment />} />
             <Route path="/version-publish" element={MO(VersionPublish, "Sürüm Yayınla")} />
             <Route path="/wake-history" element={MO(WakeHistory, "Ping Geçmişi")} />
+            <Route path="/audit-log" element={MO(AuditLog, "Master Audit Log")} />
             <Route path="/email-templates" element={MO(EmailTemplates, "Mail Şablonları")} />
             <Route path="/plugin-health" element={MO(PluginHealth, "Plugin Sağlığı")} />
             <Route path="/landing-cms" element={MO(LandingCMS, "Landing CMS")} />
             <Route path="/my-server" element={<BayiServer />} />
+            <Route path="/smtp-settings" element={<SmtpSettings />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/custom-domain" element={MO(CustomDomainGuide, "Kendi Domain'im")} />

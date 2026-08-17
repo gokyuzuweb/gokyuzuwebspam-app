@@ -13,7 +13,38 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
-## Feb 15, 2026 (Session 17, v43.68) — 💀 KRİTİK BUG FIX: Bayi Master DB'yi Sildiriyordu
+## Feb 15, 2026 (Session 17, v43.70) — Bayi SMTP Ayarları + Audit Log
+
+**KULLANICI İSTEĞİ:**
+"Bayi buradaki mail trafiği vs raporlar mail olarak alacak — bu SMTP ayarlarını bayiler nasıl girecek?"
+
+**FIX v43.70:**
+
+### 1. Yeni sayfa: `/panel/smtp-settings` (bayi erişimli)
+- ✅ 6 hazır preset (Gmail / Office365 / Yandex / cPanel / SendGrid / Mailgun) — tek tıkla host/port/TLS doldurulur
+- ✅ Form alanları: enable toggle · Host · Port · Username · Password (show/hide) · From Adresi · TLS mode
+- ✅ Kaydet + Test Gönder butonları
+- ✅ Alt kısımda "Hızlı Rehber" — her sağlayıcı için host/port + kısa açıklama
+- ✅ Master panelde bayi lisansı ile → 403 BAYI_ON_MASTER_PANEL toast: "Kendi sunucunuzdaki bayi paneline giriş yapıp oradan değiştirin"
+
+### 2. Sidebar (Sistem grubu)
+- ✅ Yeni item "Mail (SMTP)" — Mail icon, `masterOnly` DEĞİL → bayilere görünür
+- ✅ Backend GET/PUT `/api/settings/smtp` endpoint'leri zaten mevcuttu, sadece UI ekledim
+
+### 3. v43.69 Audit Log da eklenmişti
+- Master işlemleri (havale onay/red, DB temizlik, sürüm yayınlama) audit_logs koleksiyonuna kaydediliyor
+- Yeni sayfa `/panel/audit-log` (master-only) tabloda kim/ne zaman/hangi IP kayıtları
+
+**Bayı kullanıcı flow:**
+1. Bayi kendi WHM sunucusunda paneli açar
+2. Sidebar → Sistem → "Mail (SMTP)"
+3. Gmail preset'i tıklar → host/port/TLS otomatik dolar
+4. Kullanıcı adı + Uygulama şifresi + From Adresi girer
+5. "Enable" checkbox'ı işaretler + Kaydet
+6. "Test Gönder" → başarılıysa raporlar/bounce digest bu SMTP'den gönderilir
+
+
+## Feb 15, 2026 (Session 17, v43.68) — Bayi Master DB Silinmesin
 
 **KULLANICI ŞİKAYETİ (KRİTİK):**
 "DB Bakım kısmını 78.189.19.188 (bayi IP) bu IP'den yaptığımda BAYİDEN MASTER SUNUCUDAKİ DB KAYITLARI DA SİLİNDİ."

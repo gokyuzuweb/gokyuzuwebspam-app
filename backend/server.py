@@ -5064,6 +5064,59 @@ async def _users_refresh_removed():
 
 
 
+# ============================================================================
+# v43.69 — Master Audit Log
+# ---------------------------------------------------------------------------
+# Her master işlemi (havale onay/red, DB temizlik, lisans üretme, sürüm
+# yayınlama, plan/fiyat değişikliği) audit_logs koleksiyonuna kaydedilir:
+#   - actor_email (varsa) veya "master" (fallback)
+#   - action (kısa isim: havale_approve, db_cleanup, license_issue, vb.)
+#   - target (etkilenen entity: merchant_oid, license_key, collection adı)
+#   - client_ip
+#   - timestamp
+#   - payload_summary (opsiyonel; ödeme tutarı, silinen kayıt sayısı, vb.)
+# ============================================================================
+async def _audit_log(request: Request, action: str, target: str = "", summary: dict | None = None) -> None:
+    """Master işlemini audit_logs koleksiyonuna kaydeder. Silent-fail (log kaybı işlemi bloklamamalı)."""
+    try:
+        entry = {
+            "id": str(uuid.uuid4()),
+            "action": action,
+            "target": target,
+            "actor": "master",
+            "client_ip": _client_ip(request),
+            "user_agent": (request.headers.get("user-agent") or "")[:200],
+            "path": str(request.url.path),
+            "method": request.method,
+            "summary": summary or {},
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.audit_logs.insert_one(entry)
+    except Exception as e:
+        log.warning("audit_log insert failed: %s", e)
+
+
+@api.get("/audit/logs")
+async def audit_logs_list(request: Request, limit: int = Query(200, ge=1, le=1000),
+                           action: Optional[str] = None, hours: int = Query(168, ge=1, le=8760)):
+    """Master audit log listesi. Sadece master erişebilir."""
+    await _require_master(request, None)
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    q: dict = {"ts": {"$gte": since}}
+    if action:
+        q["action"] = action
+    rows = await db.audit_logs.find(q, {"_id": 0}).sort("ts", -1).limit(limit).to_list(limit)
+    # Özet aggregate
+    by_action: dict = {}
+    for r in rows:
+        by_action[r.get("action", "?")] = by_action.get(r.get("action", "?"), 0) + 1
+    return {
+        "hours": hours, "count": len(rows),
+        "items": rows,
+        "summary_by_action": by_action,
+    }
+
+
 async def _require_master(request: Request, license_key: Optional[str]) -> None:
     # Accept cookie-based session too
     cookie_master = request.cookies.get("gws_master_session")
@@ -5092,6 +5145,10 @@ async def version_publish(payload: VersionPublishIn, request: Request):
     from the master license's last_heartbeat_version. Generates DUAL download URLs
     (gokyuzuhosting.com + 89.19.15.58) so plugins can fall back if DNS fails."""
     await _require_master(request, payload.license_key)
+    # v43.69 — Audit log
+    await _audit_log(request, "version_publish",
+                      target=payload.latest_version or "auto",
+                      summary={"changelog": (payload.changelog or "")[:400]})
 
     # Auto-detect version from the installed version (no auto-bump).
     # Precedence: 1) master heartbeat, 2) installed panel version.

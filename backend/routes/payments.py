@@ -265,6 +265,13 @@ async def havale_create(payload: HavaleRequest):
 async def havale_approve(payload: HavaleApprove, request: Request):
     """Admin havaleyi doğrulayıp aktive eder. SADECE MASTER."""
     await _require_master_payments(request)
+    # v43.69 — Audit log
+    try:
+        from server import _audit_log
+        await _audit_log(request, "havale_approve", target=payload.merchant_oid,
+                          summary={"note": (payload.admin_note or "")[:200]})
+    except Exception:
+        pass
     r = await db.payments.find_one({"merchant_oid": payload.merchant_oid}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Sipariş bulunamadı")
@@ -285,6 +292,13 @@ async def havale_approve(payload: HavaleApprove, request: Request):
 async def havale_reject(payload: HavaleReject, request: Request):
     """Admin havaleyi reddeder. SADECE MASTER."""
     await _require_master_payments(request)
+    # v43.69 — Audit log
+    try:
+        from server import _audit_log
+        await _audit_log(request, "havale_reject", target=payload.merchant_oid,
+                          summary={"reason": (payload.reason or "")[:200]})
+    except Exception:
+        pass
     r = await db.payments.find_one({"merchant_oid": payload.merchant_oid}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Sipariş bulunamadı")

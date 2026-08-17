@@ -154,6 +154,13 @@ class CleanupIn(BaseModel):
 @router.post("/cleanup")
 async def cleanup_data(payload: CleanupIn, request: Request):
     await _require_master(request)
+    # v43.69 — Audit log
+    try:
+        from server import _audit_log
+        await _audit_log(request, "db_cleanup", target=",".join(payload.collections or []),
+                          summary={"keep_days": payload.keep_days, "confirm": payload.confirm})
+    except Exception:
+        pass
     """Sadece veri koleksiyonlarını temizler. Ayarlar/lisanslar korunur.
     Confirm='DELETE_DATA' zorunlu."""
     if payload.confirm != "DELETE_DATA":
