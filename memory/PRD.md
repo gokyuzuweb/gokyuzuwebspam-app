@@ -13,7 +13,44 @@ gokyuzuhosting.com.
   quarantine, lists, settings.
 - Impersonation: `gws_impersonate` cookie.
 
-## Feb 15, 2026 (Session 17, v43.66) — KRİTİK GÜVENLİK FIX: Ödeme Panosu Master-Only
+## Feb 15, 2026 (Session 17, v43.67) — Toplu Master-Only Guard (5 katman ek koruma)
+
+**KULLANICI İSTEĞİ:**
+"master sunucu olması gerekenler yetkiler ve işlemler satın alınan bayilerde gözükmemeli"
+
+**AUDIT + FIX v43.67:**
+
+### Yeni master-only sidebar item'ları (5 adet)
+Aşağıdaki hassas sayfalar artık master flag'i ile korunuyor — sidebar'da bayilere görünmez:
+- `logs` — Sistem Logları (diğer bayilerin loglarını görebilir)
+- `maintenance` — DB Bakım (yedekle/geri yükle → felaket riski)
+- `settings` — Global Ayarlar (tüm bayilerin davranışını etkiler)
+- `install` — Kurulum sihirbazı
+- `custom-domain` — Master domain/certificate yönetimi
+
+### Reusable MasterOnlyGuard Component
+Yeni `/app/frontend/src/components/MasterOnlyGuard.js`:
+- Sidebar filter'ı ATLAYIP direkt URL yazan bayileri karşılar
+- "Erişim Reddedildi" ekranı + kendi IP + Master IP gösterir + Ana sayfaya dön link
+- Server-side `whoami` ile doğrulanmış `isMaster` state'ini kullanır
+
+### 17 Route Wrapper (App.js)
+Master-only route'lar toplu MO() helper ile wrap edildi:
+```
+maintenance, payments-admin, resellers-admin, master-live, plan-analytics,
+plan-config, version-publish, wake-history, email-templates, plugin-health,
+landing-cms, custom-domain, licenses, pricing, logs, settings, install
+```
+
+### Toplam Güvenlik Katmanları (defense in depth)
+1. **Backend** — Endpoint'lerde `_require_master()` kontrolü (v43.66'da payments'a eklenmişti)
+2. **Sidebar filter** — `masterOnly:true` flag'i sayfayı bayilerin sidebar'ında gizler
+3. **URL guard** — MasterOnlyGuard wrapper direkt URL yazma denemesini "Erişim Reddedildi" ekranına yönlendirir
+4. **whoami server-verify** — useIsMaster hook backend'den doğrular (localStorage taklidi işe yaramaz)
+5. **X-Master-Key + MASTER_IP** — Backend hem key hem IP eşleşmesini arar (kısıtlı hedef)
+
+
+## Feb 15, 2026 (Session 17, v43.66) — Ödeme Panosu Master-Only
 
 **KULLANICI ŞİKAYETİ (KRİTİK):**
 "Ödeme Yönetim Panosu master sunucu dışında farklı IP girince de gözüküyor — bunlar ana yöneticiye özel değil midir?"

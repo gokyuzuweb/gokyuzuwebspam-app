@@ -61,6 +61,10 @@ import Marketplace from "@/pages/Marketplace";
 import BounceDigest from "@/pages/BounceDigest";
 import LiveDiagnostic from "@/pages/LiveDiagnostic";
 import CustomDomainGuide from "@/pages/CustomDomainGuide";
+import MasterOnlyGuard from "@/components/MasterOnlyGuard";
+
+// v43.67 — Master-only sayfa wrapper'ları (URL'ye direkt yazan bayilere karşı defense-in-depth)
+const MO = (Component, title) => <MasterOnlyGuard pageTitle={title}><Component /></MasterOnlyGuard>;
 import CommandPalette from "@/components/CommandPalette";
 import Header from "@/components/Header";
 
@@ -106,12 +110,12 @@ const NAV = [
   { to: "/panel/wake-history", key: "wake_history", icon: History, testid: "nav-wake-history", label: "Ping Geçmişi", masterOnly: true, sellerOnly: true, group: "master" },
   // 🔧 SİSTEM
   { to: "/panel/my-server", key: "my_server", icon: Server, testid: "nav-my-server", label: "Sunucumu Bağla", group: "sistem" },
-  { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs", label: "Loglar", group: "sistem" },
-  { to: "/panel/maintenance", key: "maintenance", icon: HardDrive, testid: "nav-maintenance", label: "DB Bakım", group: "sistem" },
-  { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings", label: "Ayarlar", group: "sistem" },
-  { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install", label: "Kurulum", group: "sistem" },
+  { to: "/panel/logs", key: "logs", icon: Terminal, testid: "nav-logs", label: "Loglar", masterOnly: true, sellerOnly: true, group: "sistem" },
+  { to: "/panel/maintenance", key: "maintenance", icon: HardDrive, testid: "nav-maintenance", label: "DB Bakım", masterOnly: true, sellerOnly: true, group: "sistem" },
+  { to: "/panel/settings", key: "settings", icon: Settings2, testid: "nav-settings", label: "Ayarlar", masterOnly: true, sellerOnly: true, group: "sistem" },
+  { to: "/panel/install", key: "install", icon: PackageOpen, testid: "nav-install", label: "Kurulum", masterOnly: true, sellerOnly: true, group: "sistem" },
   { to: "/panel/docs", key: "docs", icon: BookOpen, testid: "nav-docs", label: "Dokümantasyon", group: "sistem" },
-  { to: "/panel/custom-domain", key: "custom_domain", icon: Globe, testid: "nav-custom-domain", label: "Kendi Domain'im", group: "sistem" },
+  { to: "/panel/custom-domain", key: "custom_domain", icon: Globe, testid: "nav-custom-domain", label: "Kendi Domain'im", masterOnly: true, sellerOnly: true, group: "sistem" },
 ];
 
 const NAV_GROUPS = [
@@ -380,23 +384,23 @@ function Shell() {
             <Route path="/mailscanner" element={<MailScanner />} />
             <Route path="/threat-intel" element={<ThreatIntel />} />
             <Route path="/mail-health" element={<MailHealth />} />
-            <Route path="/maintenance" element={<Maintenance />} />
-            <Route path="/payments-admin" element={<PaymentsAdmin />} />
-            <Route path="/resellers-admin" element={<ResellersAdmin />} />
-            <Route path="/master-live" element={<MasterLive />} />
-            <Route path="/plan-analytics" element={<PlanAnalytics />} />
-            <Route path="/plan-config" element={<PlanConfig />} />
+            <Route path="/maintenance" element={MO(Maintenance, "DB Bakım")} />
+            <Route path="/payments-admin" element={MO(PaymentsAdmin, "Ödeme Yönetim Panosu")} />
+            <Route path="/resellers-admin" element={MO(ResellersAdmin, "Bayi Yönetimi")} />
+            <Route path="/master-live" element={MO(MasterLive, "Canlı Bayi Trafiği")} />
+            <Route path="/plan-analytics" element={MO(PlanAnalytics, "Plan Analitiği")} />
+            <Route path="/plan-config" element={MO(PlanConfig, "Plan Modülleri")} />
             <Route path="/subscription" element={<Subscription />} />
             <Route path="/payment/havale" element={<HavalePayment />} />
-            <Route path="/version-publish" element={<VersionPublish />} />
-            <Route path="/wake-history" element={<WakeHistory />} />
-            <Route path="/email-templates" element={<EmailTemplates />} />
-            <Route path="/plugin-health" element={<PluginHealth />} />
-            <Route path="/landing-cms" element={<LandingCMS />} />
+            <Route path="/version-publish" element={MO(VersionPublish, "Sürüm Yayınla")} />
+            <Route path="/wake-history" element={MO(WakeHistory, "Ping Geçmişi")} />
+            <Route path="/email-templates" element={MO(EmailTemplates, "Mail Şablonları")} />
+            <Route path="/plugin-health" element={MO(PluginHealth, "Plugin Sağlığı")} />
+            <Route path="/landing-cms" element={MO(LandingCMS, "Landing CMS")} />
             <Route path="/my-server" element={<BayiServer />} />
             <Route path="/whitelist-history" element={<WhitelistHistory />} />
             <Route path="/docs" element={<Docs />} />
-            <Route path="/custom-domain" element={<CustomDomainGuide />} />
+            <Route path="/custom-domain" element={MO(CustomDomainGuide, "Kendi Domain'im")} />
             <Route path="/marketplace" element={<Marketplace />} />
             <Route path="/bounce-digest" element={<BounceDigest />} />
             <Route path="/live-diagnostic" element={<LiveDiagnostic />} />
@@ -408,13 +412,13 @@ function Shell() {
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/alerts" element={<AlertsRules />} />
             <Route path="/reports" element={<Reports />} />
-            <Route path="/licenses" element={<Licenses />} />
-            <Route path="/pricing" element={<Pricing />} />
+            <Route path="/licenses" element={MO(Licenses, "Lisans Yönetimi")} />
+            <Route path="/pricing" element={MO(Pricing, "Fiyatlandırma Yönetimi")} />
             <Route path="/blacklist" element={<Blacklist />} />
             <Route path="/users" element={<UsersPage />} />
-            <Route path="/logs" element={<LogsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/install" element={<Install />} />
+            <Route path="/logs" element={MO(LogsPage, "Sistem Logları")} />
+            <Route path="/settings" element={MO(SettingsPage, "Global Ayarlar")} />
+            <Route path="/install" element={MO(Install, "Kurulum")} />
             <Route path="*" element={<Navigate to="/panel" replace />} />
           </Routes>
         </main>

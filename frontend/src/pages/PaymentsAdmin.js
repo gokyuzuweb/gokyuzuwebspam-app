@@ -12,10 +12,6 @@ import ModuleFooter from "@/components/ModuleFooter";
 export default function PaymentsAdmin() {
   const qc = useQueryClient();
   const [tab, setTab] = useState("pending");
-  // v43.66 — Master-only guard (defense in depth). Backend zaten 403 döner
-  // ama kullanıcı direkt URL yazınca kırılmış UI görmesin diye erken redirect.
-  const guardStatus = useQuery({ queryKey: ["plugin-status-payments-guard"], queryFn: api.pluginStatus, staleTime: 30_000 });
-  const isMaster = guardStatus.data?.is_master === true;
   const pending = useQuery({
     queryKey: ["admin-pending-havale"],
     queryFn: api.adminPendingHavale,
@@ -53,28 +49,6 @@ export default function PaymentsAdmin() {
   const p = pending.data || {};
   const inboxItems = inbox.data?.items || [];
   const unread = inbox.data?.unread || 0;
-
-  // v43.66 — Master-only guard: hook'ları çağırdıktan SONRA redirect yap
-  if (guardStatus.isLoading) return null;
-  if (!isMaster) {
-    return (
-      <div className="p-6" data-testid="pa-guarded">
-        <Card>
-          <CardBody className="p-8 text-center">
-            <XCircle className="w-12 h-12 text-rose-400 mx-auto mb-3" />
-            <h1 className="text-lg font-semibold text-slate-100 mb-2">Erişim Reddedildi</h1>
-            <p className="text-sm text-slate-400 mb-4 max-w-md mx-auto">
-              Ödeme Yönetim Panosu <b className="text-rose-300">sadece ana yöneticiye</b> özeldir.
-              Master anahtarınızı Header'daki <b>"Master Aktif Et"</b> butonuyla girip tekrar deneyin.
-            </p>
-            <a href="/panel" className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/20">
-              ← Ana sayfaya dön
-            </a>
-          </CardBody>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div className="p-6 space-y-6">
