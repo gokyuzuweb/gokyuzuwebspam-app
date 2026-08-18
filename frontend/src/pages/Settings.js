@@ -75,6 +75,74 @@ function IdleLockConfigCard() {
 }
 
 
+// v43.84 — Kilit ekranı teması için mini overlay preview (state'i etkilemez)
+function IdleLockThemePreview({ theme, minutes = 15, hasPin = false }) {
+  const styles = {
+    dark: {
+      wrap: "bg-slate-950 border-slate-700",
+      panel: "bg-gradient-to-br from-slate-900 to-slate-950 border-slate-700/60",
+      icon: "bg-amber-500/15 border-amber-500/40 text-amber-400",
+      title: "text-slate-100",
+      helper: "text-slate-400",
+      pin: "bg-slate-800 text-slate-100 border-slate-700",
+      btn: "from-amber-500 to-orange-500",
+      lbl: "🌙 Karanlık",
+    },
+    light: {
+      wrap: "bg-slate-100 border-slate-300",
+      panel: "bg-gradient-to-br from-white to-slate-100 border-slate-300",
+      icon: "bg-amber-100 border-amber-300 text-amber-600",
+      title: "text-slate-900",
+      helper: "text-slate-600",
+      pin: "bg-white text-slate-900 border-slate-300",
+      btn: "from-amber-500 to-orange-500",
+      lbl: "☀️ Aydınlık",
+    },
+    alarm: {
+      wrap: "bg-rose-950 border-rose-500/40",
+      panel: "bg-gradient-to-br from-rose-950 to-slate-950 border-rose-500/60",
+      icon: "bg-rose-500/20 border-rose-500/60 text-rose-300 animate-pulse",
+      title: "text-rose-100",
+      helper: "text-rose-200/80",
+      pin: "bg-rose-900/40 text-rose-100 border-rose-700/40",
+      btn: "from-rose-500 to-orange-500",
+      lbl: "🚨 Kırmızı-Alarm",
+    },
+  };
+  const s = styles[theme] || styles.dark;
+  return (
+    <div className="mt-3" data-testid="idle-lock-theme-preview">
+      <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-2">Önizleme · {s.lbl}</div>
+      <div className={`rounded-lg border overflow-hidden ${s.wrap}`}>
+        <div className={`p-4 border ${s.panel}`}>
+          <div className="flex items-center gap-3 mb-3">
+            <div className={`w-10 h-10 rounded-full border flex items-center justify-center ${s.icon}`}>
+              <Lock className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className={`text-sm font-semibold ${s.title}`}>
+                {theme === "alarm" ? "⚠ Panel Kilitli" : "Panel Kilitlendi"}
+              </div>
+              <div className={`text-[11px] ${s.helper}`}>
+                {minutes} dk hareketsizlik · {hasPin ? "PIN sorulur" : "Lisans key sorulur"}
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5 mb-2">
+            {["1","2","3","4","5","6"].map((n) => (
+              <div key={n} className={`text-center text-xs py-1.5 rounded border mono ${s.pin}`}>{n}</div>
+            ))}
+          </div>
+          <div className={`text-center text-xs py-1.5 rounded bg-gradient-to-r ${s.btn} text-white font-semibold`}>
+            Kilidi Aç (önizleme)
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // v43.81 — Per-user Otomatik Kilit + PIN (her bayi kendisi)
 function IdleLockPersonalCard() {
   const qc = useQueryClient();
@@ -174,6 +242,9 @@ function IdleLockPersonalCard() {
             <option value="alarm">🚨 Kırmızı-Alarm</option>
           </select>
         </Row>
+
+        {/* v43.84 — Kilit tema önizlemesi */}
+        <IdleLockThemePreview theme={theme} minutes={minutes} hasPin={hasPin} />
         <button
           data-testid="idle-lock-me-save"
           onClick={() => saveSettings.mutate()}

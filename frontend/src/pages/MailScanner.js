@@ -764,6 +764,19 @@ function LearnTab() {
     if (prev.size === filteredItems.length && filteredItems.length > 0) return new Set();
     return new Set(allIds);
   });
+
+  // v43.84 — Arama vurgulama: query eşleşen tüm oluşumları <mark> ile boyar
+  const highlight = (txt) => {
+    const q = searchQ.trim();
+    if (!q || !txt) return txt;
+    const parts = String(txt).split(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
+    return parts.map((p, i) => {
+      if (p.toLowerCase() === q.toLowerCase()) {
+        return <mark key={i} className="bg-amber-500/40 text-amber-100 px-0.5 rounded">{p}</mark>;
+      }
+      return <span key={i}>{p}</span>;
+    });
+  };
   return (
     <div className="grid grid-cols-12 gap-4">
       <div className="col-span-12 lg:col-span-6">
@@ -907,7 +920,7 @@ function LearnTab() {
                           checked={isSel}
                           onChange={() => toggleSel(s.id)}
                           className="mt-1 rounded border-slate-600 bg-slate-950" />
-                        <span className="text-sm text-slate-100 truncate">{s.name}</span>
+                        <span className="text-sm text-slate-100 truncate">{highlight(s.name)}</span>
                       </label>
                       <div className="flex items-center gap-1 shrink-0">
                         {s.hit_count ? (
@@ -918,13 +931,13 @@ function LearnTab() {
                     </div>
                     <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">{sourceLabel}</div>
                     <div className="text-[11px] mono text-slate-400 truncate mb-1">
-                      <span className="text-slate-500">{s.target}:</span> /{s.pattern}/
+                      <span className="text-slate-500">{s.target}:</span> /{highlight(s.pattern)}/
                     </div>
-                    <div className="text-[11px] text-slate-400 mb-2">{s.description}</div>
+                    <div className="text-[11px] text-slate-400 mb-2">{highlight(s.description)}</div>
                     {Array.isArray(s.sample_subjects) && s.sample_subjects.length > 0 && (
                       <div className="text-[10px] text-slate-500 mb-2 border-l-2 border-slate-700 pl-2 space-y-0.5">
                         {s.sample_subjects.slice(0, 3).map((ss, i) => (
-                          <div key={i} className="truncate italic">"{ss}"</div>
+                          <div key={i} className="truncate italic">"{highlight(ss)}"</div>
                         ))}
                       </div>
                     )}

@@ -1111,7 +1111,8 @@ async def _quarantine_scan_daily_loop() -> None:
 async def run_quarantine_weekly_report_once() -> dict:
     """Son 7 günde her lisans için üretilen öneri sayılarını topla + master'a mail at."""
     from datetime import datetime, timezone, timedelta
-    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    now_utc = datetime.now(timezone.utc)
+    since = (now_utc - timedelta(days=7)).isoformat()
 
     # Per-license new suggestion counts (last 7 days) + top domains
     pipeline = [
@@ -1125,6 +1126,17 @@ async def run_quarantine_weekly_report_once() -> dict:
         {"$limit": 100},
     ]
     rows = await db.mailscanner_rule_suggestions.aggregate(pipeline).to_list(100)
+
+    # v43.84 — Daily trend (son 7 gün, gün başına yeni öneri sayısı) → PDF sparkline için
+    daily_trend: list = []
+    for d in range(6, -1, -1):
+        start = (now_utc - timedelta(days=d+1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        cnt = await db.mailscanner_rule_suggestions.count_documents({
+            "source": "quarantine_pattern",
+            "created_at": {"$gte": start.isoformat(), "$lt": end.isoformat()},
+        })
+        daily_trend.append({"day": start.strftime("%m-%d"), "count": int(cnt)})
     # License -> email lookup for readable report
     lic_emails: dict = {}
     if rows:
@@ -1170,7 +1182,8 @@ async def run_quarantine_weekly_report_once() -> dict:
     # v43.83 — PDF eki oluştur
     pdf_bytes = None
     try:
-        pdf_bytes = _build_weekly_report_pdf(total_new, active_lics, rows[:20], lic_emails)
+        pdf_bytes = _build_weekly_report_pdf(total_new, active_lics, rows[:20],
+                                              lic_emails, daily_trend=daily_trend)
     except Exception:
         pdf_bytes = None
 
@@ -1209,12 +1222,14 @@ async def run_quarantine_weekly_report_once() -> dict:
         "email_error": email_error,
         "pdf_attached": bool(pdf_bytes),
         "pdf_size_bytes": len(pdf_bytes) if pdf_bytes else 0,
+        "daily_trend": daily_trend,
         "top_rows": rows[:20],
     }
 
 
 def _build_weekly_report_pdf(total_new: int, active_lics: int,
-                              top_rows: list, lic_emails: dict) -> bytes:
+                              top_rows: list, lic_emails: dict,
+                              daily_trend: list = None) -> bytes:
     """ReportLab ile 1-sayfa PDF özet — başlık + KPI + top bayilerin bar grafiği + tablo."""
     from io import BytesIO
     from reportlab.lib.pagesizes import A4
@@ -1255,6 +1270,44 @@ def _build_weekly_report_pdf(total_new: int, active_lics: int,
         c.setFillColor(HexColor(col))
         c.setFont("Helvetica-Bold", 20)
         c.drawString(x + 0.4 * cm, y + 0.5 * cm, value)
+
+    # v43.84 — 7-day sparkline (daily trend)
+    if daily_trend and len(daily_trend) >= 2:
+        sp_x = 2 * cm
+        sp_y = H - 8.2 * cm
+        sp_w = W - 4 * cm
+        sp_h = 1.5 * cm
+        c.setFillColor(HexColor("#94a3b8"))
+        c.setFont("Helvetica", 8)
+        c.drawString(sp_x, sp_y + sp_h + 0.15 * cm, "SON 7 GÜN · GÜNLÜK YENİ ÖNERİ TRENDİ")
+        # sparkline background
+        c.setFillColor(HexColor("#1e293b"))
+        c.roundRect(sp_x, sp_y, sp_w, sp_h, 4, fill=True, stroke=False)
+        # data path
+        counts = [int(d.get("count") or 0) for d in daily_trend]
+        max_c = max(counts) or 1
+        n = len(counts)
+        step = sp_w / max(n - 1, 1)
+        c.setStrokeColor(HexColor("#22d3ee"))
+        c.setLineWidth(1.4)
+        prev = None
+        for i, v in enumerate(counts):
+            px = sp_x + i * step
+            py = sp_y + 0.2 * cm + (v / max_c) * (sp_h - 0.4 * cm)
+            if prev is not None:
+                c.line(prev[0], prev[1], px, py)
+            # nokta + değer
+            c.setFillColor(HexColor("#22d3ee"))
+            c.circle(px, py, 2.2, fill=True, stroke=False)
+            c.setFillColor(HexColor("#e2e8f0"))
+            c.setFont("Helvetica-Bold", 6)
+            if v > 0:
+                c.drawCentredString(px, py + 0.12 * cm, str(v))
+            # gün etiketi
+            c.setFillColor(HexColor("#64748b"))
+            c.setFont("Helvetica", 6)
+            c.drawCentredString(px, sp_y - 0.28 * cm, daily_trend[i]["day"])
+            prev = (px, py)
 
     # Bar chart — top 8 licenses
     top_chart = top_rows[:8]
@@ -1354,7 +1407,8 @@ async def download_weekly_report_pdf():
     """Son 7 gün karantina raporunu PDF olarak indir."""
     from fastapi.responses import Response
     from datetime import datetime, timezone, timedelta
-    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    now_utc = datetime.now(timezone.utc)
+    since = (now_utc - timedelta(days=7)).isoformat()
     pipeline = [
         {"$match": {"source": "quarantine_pattern", "created_at": {"$gte": since}}},
         {"$group": {"_id": "$license_key",
@@ -1370,7 +1424,18 @@ async def download_weekly_report_pdf():
                                            {"license_key": 1, "customer_email": 1, "email": 1}):
             lic_emails[lic["license_key"]] = lic.get("customer_email") or lic.get("email") or "-"
     total_new = sum(int(r.get("new_count") or 0) for r in rows)
-    pdf_bytes = _build_weekly_report_pdf(total_new, len(rows), rows[:20], lic_emails)
+    # v43.84 — Daily trend for sparkline
+    daily_trend: list = []
+    for d in range(6, -1, -1):
+        start = (now_utc - timedelta(days=d+1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        cnt = await db.mailscanner_rule_suggestions.count_documents({
+            "source": "quarantine_pattern",
+            "created_at": {"$gte": start.isoformat(), "$lt": end.isoformat()},
+        })
+        daily_trend.append({"day": start.strftime("%m-%d"), "count": int(cnt)})
+    pdf_bytes = _build_weekly_report_pdf(total_new, len(rows), rows[:20], lic_emails,
+                                          daily_trend=daily_trend)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

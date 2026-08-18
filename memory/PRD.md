@@ -14,6 +14,53 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 18, v43.84) — Tema Önizleme + Arama Vurgulama + PDF Trendline Sparkline
+
+**KULLANICI İSTEKLERİ (3 Next Action Item):**
+1. Kilit Tema Önizleme — tema seçince mini overlay preview
+2. Öneri Arama Vurgulama — query eşleşen yerleri highlight
+3. PDF Trendline — Weekly PDF'e 7 gün sparkline (günlük yeni öneri çizgisi)
+
+**IMPLEMENTATION:**
+
+### 1. Kilit Tema Önizleme (Settings.js)
+- Yeni `IdleLockThemePreview({ theme, minutes, hasPin })` component eklendi
+- 3 paletle mini overlay preview (dark/light/alarm) — real IdleAutoLock overlay ile aynı görsel dil
+- Küçük panel içerir: 40px lock icon (alarm modda pulse), başlık ("Panel Kilitli" veya "⚠ Panel Kilitli"), "dk hareketsizlik · PIN/Lisans sorulur" alt yazı, 6 rakam mini grid (2x3), "Kilidi Aç (önizleme)" gradient buton
+- Theme select değişince canlı güncellenir — kaydetmeden önce sonuç görülür
+
+### 2. Öneri Arama Vurgulama (MailScanner.js)
+- Yeni `highlight(txt)` helper — search query'yi RegExp ile split edip eşleşen part'ları `<mark className="bg-amber-500/40 text-amber-100 px-0.5 rounded">` içine sarar
+- Case-insensitive · regex-safe escape (`[.*+?^${}()|[\]\\]` özel karakterler)
+- Uygulandığı alanlar: `s.name` · `s.pattern` · `s.description` · `sample_subjects[]`
+- Boş query durumunda pass-through (extra render yok)
+
+### 3. PDF Sparkline Trendline (mailscanner.py)
+- `run_quarantine_weekly_report_once`:
+  - Yeni `daily_trend` list — son 7 gün için gün başına `count_documents` (isoformat tarih range)
+  - Response'a `daily_trend: [{day: "MM-DD", count: N}, ...]` eklendi
+  - PDF builder'a `daily_trend=daily_trend` parametresi geçirilir
+- `_build_weekly_report_pdf`:
+  - Yeni sparkline block (KPI kartlarının altında, bar chart'ın üstünde) — indigo bg, cyan çizgi + noktalar, üstünde count etiketi + altında gün etiketi (MM-DD)
+  - `max_count` ile normalize edilir, tek nokta durumu handle edilir
+- `download_weekly_report_pdf` endpoint'i de `daily_trend` üretip PDF builder'a geçer
+
+**Test edildi (tests/test_v43_84_sparkline.py — 4/4 pytest PASS %100):**
+- weekly-report response `daily_trend` alanı içerir (list × 7 gün) ✓
+- Her trend entry `day` (MM-DD) + `count` (int) yapısında ✓
+- Trend counts toplamı `total_new_suggestions`'a eşit (aynı zaman aralığı) ✓
+- PDF endpoint sparkline ile > 4000 byte (v43.83'te 3580, şimdi 4532) ✓
+- Regression 55/55 hala PASS (v43.78+79+80+81+82+83) ✓
+
+**Preview smoke:**
+- Settings > Otomatik Kilit (Kişisel): theme select "🚨 Kırmızı-Alarm" seçince önizlemesi anında değişir (kırmızı panel + pulse lock icon + gradient rose→orange buton) ✓
+- MailScanner AI Öğrenme "test" araması → **15 amber `<mark>` vurgu** kartlarda (name/pattern/description/sample_subjects hepsinde) ✓
+- PDF sparkline: 7 gün cyan çizgi + noktalar (bugün 7, önceki günler 0 test datasında) ✓
+
+
+
+
+
 ## Feb 17, 2026 (Session 18, v43.83) — Öneri Arama + Discord Kanal Seçici + Kilit Teması + Weekly PDF
 
 **KULLANICI İSTEKLERİ (4 Next Action Item):**
