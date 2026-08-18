@@ -1048,6 +1048,29 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
     if (!order) return;
     const movable = ["notified_by_user", "awaiting_transfer", "pending"];
     if (targetKey === "paid" && movable.includes(order.status)) {
+      // v43.96 — Onaylandı chime (soft ascending "success" ding-ding-ding)
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (AC && localStorage.getItem("gws.kanban.chime.muted") !== "1") {
+          const ctx = new AC();
+          const now = ctx.currentTime;
+          // Ascending 3-note pentatonic: C5, E5, G5
+          [523, 659, 784].forEach((freq, i) => {
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.type = "triangle";
+            o.frequency.value = freq;
+            g.gain.value = 0;
+            const t0 = now + i * 0.09;
+            g.gain.linearRampToValueAtTime(0.14, t0 + 0.02);
+            g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.28);
+            o.connect(g).connect(ctx.destination);
+            o.start(t0);
+            o.stop(t0 + 0.3);
+          });
+          setTimeout(() => { try { ctx.close(); } catch {} }, 800);
+        }
+      } catch {}
       onApprove(order.merchant_oid);
     } else if (targetKey === "failed" && movable.includes(order.status)) {
       onReject(order.merchant_oid);
@@ -1063,11 +1086,26 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
           <LayoutGrid className="w-4 h-4 text-indigo-400"/>
           <span>Sürükle-bırak: kartı <span className="text-emerald-300 font-semibold">Onaylandı</span> veya <span className="text-rose-300 font-semibold">Başarısız</span> sütununa taşı</span>
         </div>
-        <button onClick={onRefetch}
-                className="text-[10px] text-slate-500 hover:text-slate-300 inline-flex items-center gap-1"
-                data-testid="kanban-refresh">
-          <RefreshCw className="w-3 h-3"/> yenile
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            data-testid="kanban-chime-toggle"
+            type="button"
+            onClick={() => {
+              const curr = localStorage.getItem("gws.kanban.chime.muted") === "1";
+              localStorage.setItem("gws.kanban.chime.muted", curr ? "0" : "1");
+              toast.info(curr ? "🔔 Onay sesi açıldı" : "🔕 Onay sesi kapatıldı");
+            }}
+            title="Onay sesini aç/kapat"
+            className="text-[11px] text-slate-500 hover:text-slate-300 inline-flex items-center gap-1"
+          >
+            {localStorage.getItem("gws.kanban.chime.muted") === "1" ? "🔕" : "🔔"}
+          </button>
+          <button onClick={onRefetch}
+                  className="text-[10px] text-slate-500 hover:text-slate-300 inline-flex items-center gap-1"
+                  data-testid="kanban-refresh">
+            <RefreshCw className="w-3 h-3"/> yenile
+          </button>
+        </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         {columns.map((col) => {

@@ -38,6 +38,8 @@ export default function MasterLive() {
   const [pingWatchList, setPingWatchList] = useState(null); // ping sonrası izlenen license'lar
   const [tab, setTab] = useState(() => localStorage.getItem("gws.ml.tab") || "all");
   const chooseTab = (id) => { setTab(id); try { localStorage.setItem("gws.ml.tab", id); } catch {} };
+  const [sortBy, setSortBy] = useState(() => localStorage.getItem("gws.ml.sort") || "health");
+  const chooseSort = (s) => { setSortBy(s); try { localStorage.setItem("gws.ml.sort", s); } catch {} };
   const qc = useQueryClient();
 
   const live = useQuery({
@@ -86,6 +88,19 @@ export default function MasterLive() {
     return (r.email || "").toLowerCase().includes(s)
         || (r.company || "").toLowerCase().includes(s)
         || (r.license_key || "").toLowerCase().includes(s);
+  });
+
+  // v43.96 — Sıralama
+  const HEALTH_ORDER = { red: 0, yellow: 1, green: 2 };
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === "mails") return (b.counters?.mails || 0) - (a.counters?.mails || 0);
+    if (sortBy === "spam_ratio") {
+      const ra = (a.counters?.mails || 0) > 0 ? (a.counters?.spam || 0) / a.counters.mails : 0;
+      const rb = (b.counters?.mails || 0) > 0 ? (b.counters?.spam || 0) / b.counters.mails : 0;
+      return rb - ra;
+    }
+    // default health: red first, then yellow, then green
+    return (HEALTH_ORDER[a.health] ?? 3) - (HEALTH_ORDER[b.health] ?? 3);
   });
 
   return (
@@ -235,6 +250,33 @@ export default function MasterLive() {
           <span className="text-[11px] text-slate-500 mono">
             {filtered.length}/{rows.length} bayi görüntüleniyor
           </span>
+          {/* v43.96 — Sıralama */}
+          <div className="flex items-center gap-1 ml-auto">
+            <span className="text-[11px] text-slate-500 mr-1">Sırala:</span>
+            {[
+              { k: "health",     l: "Sağlık",         t: "rose" },
+              { k: "mails",      l: "Mail Hacmi",     t: "indigo" },
+              { k: "spam_ratio", l: "Spam Oranı",     t: "amber" },
+            ].map(({ k, l, t }) => {
+              const active = sortBy === k;
+              const tones = {
+                rose:   "border-rose-500/50 bg-rose-500/15 text-rose-200",
+                indigo: "border-indigo-500/50 bg-indigo-500/15 text-indigo-200",
+                amber:  "border-amber-500/50 bg-amber-500/15 text-amber-200",
+              };
+              return (
+                <button key={k}
+                  data-testid={`ml-sort-${k}`}
+                  type="button"
+                  onClick={() => chooseSort(k)}
+                  className={`text-[11px] px-2.5 py-1 rounded border font-semibold transition-colors ${
+                    active ? tones[t] : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700"
+                  }`}>
+                  {l}
+                </button>
+              );
+            })}
+          </div>
         </CardBody>
       </Card>
       )}
@@ -244,7 +286,7 @@ export default function MasterLive() {
       <>{live.isLoading ? (
         <div className="text-center py-16 text-slate-500 text-sm">Yükleniyor…</div>
       ) : (() => {
-        const tabFiltered = tab === "red" ? filtered.filter(r => r.health === "red") : filtered;
+        const tabFiltered = tab === "red" ? sorted.filter(r => r.health === "red") : sorted;
         if (tabFiltered.length === 0) {
           return (
             <Card>

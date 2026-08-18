@@ -162,15 +162,27 @@ async def send_test(sched_id: str, request: Request):
     if not sched:
         raise HTTPException(404, "Zamanlama bulunamadı")
     result = await _execute_schedule(sched, dry_run=False)
-    if result.get("ok"):
-        # last_run bilgilerini güncelle (schedule ilerlemesin — next_run_at aynı kalsın)
-        await db.mail_report_schedules.update_one(
-            {"id": sched_id},
-            {"$set": {"last_run_at": _iso(), "last_run_status": "test_ok",
-                       "last_run_error": None},
-              "$inc": {"run_count": 1}},
-        )
-    return {"ok": bool(result.get("ok")), "result": result}
+    # v43.96 — Push to test_history (last 5)
+    entry = {
+        "at": _iso(),
+        "ok": bool(result.get("ok")),
+        "sent_via": result.get("sent_via") or "",
+        "sent_total": result.get("sent_total", 0),
+        "received_total": result.get("received_total", 0),
+        "error": (result.get("error") or "")[:200] if not result.get("ok") else None,
+        "content_bytes": result.get("content_bytes", 0),
+    }
+    updates = {
+        "last_run_at": _iso(),
+        "last_run_status": "test_ok" if result.get("ok") else "test_fail",
+        "last_run_error": None if result.get("ok") else (result.get("error") or "")[:200],
+    }
+    await db.mail_report_schedules.update_one(
+        {"id": sched_id},
+        {"$set": updates, "$push": {"test_history": {"$each": [entry], "$slice": -5}},
+         "$inc": {"run_count": 1}},
+    )
+    return {"ok": bool(result.get("ok")), "result": result, "history_entry": entry}
 
 
 async def _execute_schedule(sched: dict, dry_run: bool = False) -> dict:

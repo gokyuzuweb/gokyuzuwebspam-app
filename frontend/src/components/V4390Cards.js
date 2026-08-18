@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Palette, ShieldCheck, KeyRound, Check, X, Clock, Send, Trash2, Plus, ShieldAlert, Star, Sparkles, Download } from "lucide-react";
+import { Palette, ShieldCheck, KeyRound, Check, X, Clock, Send, Trash2, Plus, ShieldAlert, Star, Sparkles, Download, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -284,6 +284,51 @@ export function TrustedIPsCard() {
           >
             <Download className="w-4 h-4" /> Excel/CSV
           </button>
+          {/* v43.96 — CSV Import Wizard */}
+          <label
+            data-testid="trusted-ip-import-label"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-indigo-500/40 bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/25 text-sm font-semibold cursor-pointer"
+          >
+            <Upload className="w-4 h-4" /> CSV Yükle
+            <input
+              data-testid="trusted-ip-import-input"
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                try {
+                  const text = await file.text();
+                  // CSV parse — split lines, skip header if it starts with "ip,"
+                  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                  const rows = lines[0]?.toLowerCase().startsWith("ip,") ? lines.slice(1) : lines;
+                  // Extract ip + label from CSV (assume export format: ip,country_code,label,...)
+                  // Build bulk-format text: "ip=label" per line
+                  const bulkLines = rows.map(row => {
+                    const cols = row.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
+                    const ip = cols[0] || "";
+                    const label = cols[2] || "";
+                    return label ? `${ip}=${label}` : ip;
+                  }).filter(l => l.length >= 3);
+                  if (bulkLines.length === 0) {
+                    toast.error("CSV boş veya geçerli IP yok");
+                    e.target.value = "";
+                    return;
+                  }
+                  const conf = window.confirm(`${bulkLines.length} IP kaydı içe aktarılacak. Devam edilsin mi?`);
+                  if (!conf) { e.target.value = ""; return; }
+                  const res = await api.trustedIpsBulkAdd(bulkLines.join("\n"), "import");
+                  const { added = 0, skipped = 0, errors = 0 } = res.counts || {};
+                  qc.invalidateQueries({ queryKey: ["trusted-ips"] });
+                  toast.success(`CSV içe aktarıldı: ${added} eklendi · ${skipped} zaten mevcut · ${errors} hata`);
+                } catch (err) {
+                  toast.error(err?.message || err?.response?.data?.detail || "İçe aktarma başarısız");
+                }
+                e.target.value = "";
+              }}
+            />
+          </label>
         </div>
 
         {/* v43.93 — Toplu içe aktarma paneli */}
