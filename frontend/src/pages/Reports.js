@@ -1,10 +1,241 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { FileText, Download, Send, Mail, Clock } from "lucide-react";
+import {
+  FileText, Download, Send, Mail, Clock, Search, FileSpreadsheet, Loader2,
+  ArrowUpRight, ArrowDownLeft, ArrowLeftRight,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { useT } from "@/i18n";
+
+// v43.90 — Gelişmiş Mail Aktivite Raporu (POST /api/reports/mail-activity)
+function AdvancedMailReportCard() {
+  const [email, setEmail] = useState("");
+  const [direction, setDirection] = useState("both");
+  const [days, setDays] = useState(30);
+  const [preview, setPreview] = useState(null);
+
+  const previewMut = useMutation({
+    mutationFn: () => api.mailActivityReport({ email: email.trim(), direction, days, format: "json", limit: 1000 }),
+    onSuccess: (data) => {
+      setPreview(data);
+      const sT = data?.sent?.summary?.total || 0;
+      const rT = data?.received?.summary?.total || 0;
+      toast.success(`Rapor hazırlandı — Gönderilen: ${sT} · Gelen: ${rT}`);
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Rapor hazırlanamadı"),
+  });
+
+  const downloadMut = useMutation({
+    mutationFn: async (fmt) => {
+      const res = await api.mailActivityDownload({ email: email.trim(), direction, days, format: fmt, limit: 5000 });
+      // Trigger browser download
+      const blob = new Blob([res.data], {
+        type: fmt === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safe = email.replace(/[@/]/g, "_");
+      a.download = `mail-report-${safe}-${days}d.${fmt === "pdf" ? "pdf" : "xlsx"}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      return fmt;
+    },
+    onSuccess: (fmt) => toast.success(`${fmt.toUpperCase()} indirildi`),
+    onError: (e) => toast.error(e?.response?.data?.detail || "İndirme başarısız"),
+  });
+
+  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const canQuery = validEmail && !previewMut.isPending && !downloadMut.isPending;
+
+  const dirButton = (val, Icon, label, tone) => {
+    const active = direction === val;
+    const tones = {
+      indigo: "border-indigo-500/50 bg-indigo-500/15 text-indigo-200",
+      emerald: "border-emerald-500/50 bg-emerald-500/15 text-emerald-200",
+      cyan: "border-cyan-500/50 bg-cyan-500/15 text-cyan-200",
+    };
+    return (
+      <button
+        data-testid={`mail-report-dir-${val}`}
+        type="button"
+        onClick={() => setDirection(val)}
+        className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-semibold transition-all ${
+          active ? tones[tone] + " shadow-md" : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700"
+        }`}
+      >
+        <Icon className="w-3.5 h-3.5" /> {label}
+      </button>
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><Search className="w-4 h-4 text-fuchsia-400" /> Gelişmiş Mail Aktivite Raporu</span>}
+        subtitle="Belirli bir email adresinin gönderdiği/aldığı tüm mailleri kimlere/kimden olduğu bilgisiyle raporlayın."
+        right={<Badge tone="fuchsia">v43.90</Badge>}
+      />
+      <CardBody className="space-y-4">
+        {/* Email Input */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-300 mb-1.5">Email Adresi</label>
+          <div className="relative">
+            <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              data-testid="mail-report-email"
+              type="email"
+              placeholder="ornek@musteri.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-md pl-9 pr-3 py-2.5 text-sm mono focus:outline-none focus:border-fuchsia-500/50 focus:ring-2 focus:ring-fuchsia-500/10"
+            />
+          </div>
+          {email && !validEmail && (
+            <p className="text-[11px] text-rose-400 mt-1">Geçersiz email formatı</p>
+          )}
+        </div>
+
+        {/* Direction Radio */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-300 mb-1.5">Yön</label>
+          <div className="flex flex-wrap gap-2">
+            {dirButton("sent", ArrowUpRight, "📤 Gönderilen", "indigo")}
+            {dirButton("received", ArrowDownLeft, "📥 Gelen", "emerald")}
+            {dirButton("both", ArrowLeftRight, "🔄 Her ikisi", "cyan")}
+          </div>
+        </div>
+
+        {/* Days Selector */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+            Zaman Aralığı: <span className="text-fuchsia-300 mono font-bold">Son {days} gün</span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {[7, 30, 90, 180, 365].map(d => (
+              <button
+                key={d}
+                data-testid={`mail-report-days-${d}`}
+                type="button"
+                onClick={() => setDays(d)}
+                className={`px-3 py-1.5 rounded-md border text-xs font-semibold transition-all ${
+                  days === d
+                    ? "border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-200 shadow-md"
+                    : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700"
+                }`}
+              >
+                {d} gün
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-800/60">
+          <button
+            data-testid="mail-report-preview"
+            type="button"
+            disabled={!canQuery}
+            onClick={() => previewMut.mutate()}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md border border-slate-700 bg-slate-800/40 text-slate-200 hover:bg-slate-800/70 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            {previewMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            Önizle (JSON)
+          </button>
+          <button
+            data-testid="mail-report-pdf"
+            type="button"
+            disabled={!canQuery}
+            onClick={() => downloadMut.mutate("pdf")}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md border border-rose-500/40 bg-rose-500/15 text-rose-200 hover:bg-rose-500/25 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md shadow-rose-500/10"
+          >
+            {downloadMut.isPending && downloadMut.variables === "pdf" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+            PDF İndir
+          </button>
+          <button
+            data-testid="mail-report-xlsx"
+            type="button"
+            disabled={!canQuery}
+            onClick={() => downloadMut.mutate("xlsx")}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md border border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md shadow-emerald-500/10"
+          >
+            {downloadMut.isPending && downloadMut.variables === "xlsx" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+            Excel İndir
+          </button>
+        </div>
+
+        {/* Preview */}
+        {preview && (
+          <div data-testid="mail-report-preview-panel" className="mt-3 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              {["sent", "received"].map(k => {
+                const s = preview[k]?.summary || { total: 0, by_verdict: {}, top_peers: [] };
+                const label = k === "sent" ? "📤 Gönderilen" : "📥 Gelen";
+                const tone = k === "sent" ? "indigo" : "emerald";
+                if (direction !== "both" && direction !== k) return null;
+                return (
+                  <div key={k} className={`rounded-md border p-3 ${tone === "indigo" ? "border-indigo-500/30 bg-indigo-500/5" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+                    <div className="text-xs font-semibold text-slate-300">{label}</div>
+                    <div className={`text-2xl font-black mt-1 mono ${tone === "indigo" ? "text-indigo-300" : "text-emerald-300"}`}>{s.total}</div>
+                    <div className="text-[10px] text-slate-500 mt-1">
+                      {Object.entries(s.by_verdict).length === 0
+                        ? "verdict yok"
+                        : Object.entries(s.by_verdict).map(([v, c]) => `${v}=${c}`).join(" · ")}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Top peers (both directions) */}
+            {["sent", "received"].map(k => {
+              const rows = preview[k]?.summary?.top_peers || [];
+              if (rows.length === 0) return null;
+              if (direction !== "both" && direction !== k) return null;
+              const peerLabel = k === "sent" ? "Alıcı (peer)" : "Gönderen (peer)";
+              return (
+                <div key={k} className="rounded-md border border-slate-800 bg-slate-950/60">
+                  <div className="text-[11px] font-bold text-slate-300 px-3 py-2 border-b border-slate-800 flex items-center gap-1.5">
+                    {k === "sent" ? <ArrowUpRight className="w-3.5 h-3.5 text-indigo-400" /> : <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-400" />}
+                    Top {peerLabel} — {rows.length}
+                  </div>
+                  <div className="max-h-56 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-900/60 text-slate-500 sticky top-0">
+                        <tr>
+                          <th className="text-left px-3 py-1.5 font-semibold">#</th>
+                          <th className="text-left px-3 py-1.5 font-semibold">{peerLabel}</th>
+                          <th className="text-right px-3 py-1.5 font-semibold">Adet</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.slice(0, 20).map((p, i) => (
+                          <tr key={i} className="border-t border-slate-800/60 hover:bg-slate-800/30">
+                            <td className="px-3 py-1.5 text-slate-500 mono">{i + 1}</td>
+                            <td className="px-3 py-1.5 text-slate-200 mono truncate max-w-[280px]">{p.peer}</td>
+                            <td className="px-3 py-1.5 text-right text-fuchsia-300 mono font-bold">{p.count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+
+            <div className="text-[10px] text-slate-500 mono">
+              Oluşturma: {(preview.generated_at || "").slice(0, 19)} UTC · Kapsam: son {preview.days} gün
+            </div>
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
 
 export default function Reports() {
   const t = useT();
@@ -22,6 +253,9 @@ export default function Reports() {
   return (
     <div className="p-6 grid grid-cols-12 gap-6">
       <div className="col-span-12 lg:col-span-8 space-y-4">
+        {/* v43.90 — Gelişmiş Mail Aktivite Raporu (en üstte, öncelikli) */}
+        <AdvancedMailReportCard />
+
         <Card>
           <CardHeader
             title={<span className="flex items-center gap-2"><FileText className="w-4 h-4 text-indigo-400" /> {t("reports.weekly_title")}</span>}
@@ -77,6 +311,28 @@ journalctl -u mailshield-report.service --since=today`}
       </div>
 
       <div className="col-span-12 lg:col-span-4 space-y-4">
+        <Card>
+          <CardHeader title="🎯 Nasıl Kullanılır?" />
+          <CardBody className="text-xs text-slate-400 space-y-2.5">
+            <div className="flex items-start gap-2">
+              <span className="w-5 h-5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 text-[10px] font-bold flex items-center justify-center mt-0.5 shrink-0">1</span>
+              <div>Email adresi girin (örn: <span className="mono text-slate-300">musteri@sunucu.com</span>)</div>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="w-5 h-5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 text-[10px] font-bold flex items-center justify-center mt-0.5 shrink-0">2</span>
+              <div>Yön seçin: <span className="text-indigo-300">Gönderilen</span> (kime yolladı) veya <span className="text-emerald-300">Gelen</span> (kim yolladı) ya da <span className="text-cyan-300">Her ikisi</span></div>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="w-5 h-5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 text-[10px] font-bold flex items-center justify-center mt-0.5 shrink-0">3</span>
+              <div>Zaman aralığı belirleyin (7–365 gün)</div>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="w-5 h-5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 text-[10px] font-bold flex items-center justify-center mt-0.5 shrink-0">4</span>
+              <div><span className="text-rose-300">PDF</span> paylaşım için, <span className="text-emerald-300">Excel</span> analiz için indirin</div>
+            </div>
+          </CardBody>
+        </Card>
+
         <Card>
           <CardHeader title={t("reports.content_title")} />
           <CardBody className="text-xs text-slate-400 space-y-2">

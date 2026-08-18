@@ -3995,6 +3995,41 @@ async def admin_whoami(request: Request, license_key: Optional[str] = None):
     # yanlışlıkla tetiklenmesin). Sadece is_master true iken güvenli.
     if r.get("is_master"):
         r["master_key"] = os.environ.get("MASTER_LICENSE_KEY", "")
+        # v43.90 — Header personalize: customer_name + previous login IP/timestamp
+        try:
+            master_lic = await db.licenses.find_one(
+                {"license_key": MASTER_LICENSE_KEY} if MASTER_LICENSE_KEY else {"is_master": True},
+                {"_id": 0, "customer_name": 1, "customer_email": 1, "plan": 1},
+            )
+            if master_lic:
+                r["customer_name"] = master_lic.get("customer_name") or "Master"
+                r["customer_email"] = master_lic.get("customer_email") or ""
+                r["plan"] = master_lic.get("plan") or "enterprise"
+            # Önceki giriş — bu istekten önceki en son kayıt
+            now_iso = _iso()
+            prev = await db.master_login_history.find_one(
+                {"at": {"$lt": now_iso}}, {"_id": 0}, sort=[("at", -1)],
+            )
+            if prev:
+                r["last_login_ip"] = prev.get("ip") or ""
+                r["last_login_at"] = prev.get("at") or ""
+                r["last_login_ua"] = (prev.get("ua") or "")[:80]
+            # Bu isteği geçmişe yaz (dedup: aynı IP için son 60sn'de bir kez)
+            client_ip = r.get("client_ip") or ""
+            recent = await db.master_login_history.find_one({
+                "ip": client_ip,
+                "at": {"$gte": (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()},
+            })
+            if not recent and client_ip:
+                await db.master_login_history.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "ip": client_ip,
+                    "at": now_iso,
+                    "ua": (request.headers.get("user-agent", "") or "")[:120],
+                    "path": "/admin/whoami",
+                })
+        except Exception:
+            pass
     return r
 
 

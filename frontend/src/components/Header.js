@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Clock, RefreshCw, Search, Sparkles, KeyRound, ShieldCheck, DownloadCloud } from "lucide-react";
+import { Clock, RefreshCw, Search, Sparkles, KeyRound, ShieldCheck, DownloadCloud, User2 } from "lucide-react";
 import { toast } from "sonner";
 import ThreatAlertBell from "@/components/ThreatAlertBell";
 import SlashCommandBar from "@/components/SlashCommandBar";
@@ -139,6 +139,59 @@ export default function Header({ title }) {
   return <HeaderMain title={title} />;
 }
 
+// v43.90 — Master welcome + last login chip
+function WelcomeChip() {
+  const who = useQuery({
+    queryKey: ["whoami-header"],
+    queryFn: () => api.whoami(),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  });
+  const d = who.data || {};
+  if (!d.is_master) return null;
+  const name = d.customer_name || "Master";
+  const lastIp = d.last_login_ip || "";
+  const lastAt = d.last_login_at || "";
+  const relTime = lastAt ? formatRelative(lastAt) : "";
+  const tooltip = lastAt
+    ? `Son giriş: ${lastAt.slice(0, 19)} UTC · IP: ${lastIp || "?"}`
+    : "İlk oturum";
+  return (
+    <div
+      data-testid="header-welcome-chip"
+      title={tooltip}
+      className="hidden lg:flex items-center gap-2 pl-3 pr-3 py-1 rounded-md border border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent shadow-[0_0_10px_rgba(16,185,129,0.15)] shrink-0"
+    >
+      <User2 className="w-3.5 h-3.5 text-emerald-300 shrink-0" strokeWidth={2.2} />
+      <div className="flex flex-col leading-none">
+        <span className="text-[11px] font-bold text-emerald-200 truncate max-w-[220px]">
+          Hoşgeldin, <span className="text-emerald-100">{name}</span>
+        </span>
+        {lastAt && (
+          <span className="text-[9.5px] mono text-emerald-400/70 mt-0.5">
+            Son: {relTime}{lastIp ? ` · ${lastIp}` : ""}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatRelative(iso) {
+  try {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const diff = Math.max(0, now - then) / 1000;
+    if (diff < 60) return `${Math.floor(diff)}sn önce`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}dk önce`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}sa önce`;
+    if (diff < 30 * 86400) return `${Math.floor(diff / 86400)}g önce`;
+    return iso.slice(0, 10);
+  } catch {
+    return iso.slice(0, 16);
+  }
+}
+
 function HeaderMain({ title }) {
   const { data, refetch, isFetching } = useQuery({
     queryKey: ["overview-header"],
@@ -177,6 +230,7 @@ function HeaderMain({ title }) {
       </div>
       <GlobalSearch />
       <div className="flex items-center gap-3 shrink-0">
+        <WelcomeChip />
         <MasterModeToggle />
         <MasterUpdatePush />
         <div className="hidden xl:flex items-center gap-2 text-xs text-slate-400 mono">

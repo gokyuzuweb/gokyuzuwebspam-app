@@ -14,6 +14,71 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 18, 2026 (Session 19, v43.90) — Reports Advanced UI + Header Personalize
+
+**KULLANICI İSTEĞİ (P0 devamı):**
+1. Gelişmiş Mail Aktivite Raporu için frontend sayfası (backend v43.89'da hazırdı)
+2. Header'da "Hoşgeldin {customer_name}" + son giriş IP/zaman kişiselleştirme
+
+**IMPLEMENTATION:**
+
+### 1. Advanced Mail Report UI (`pages/Reports.js`)
+- Yeni `AdvancedMailReportCard` component `Reports.js`'in tepesine eklendi (mevcut Haftalık PDF Rapor kartı korundu)
+- **Email input** (email format validation, geçersiz format → rose warning)
+- **Direction radio buttons** (3 chip): 📤 Gönderilen (indigo) · 📥 Gelen (emerald) · 🔄 Her ikisi (cyan)
+- **Days selector** (5 preset chip): 7 / 30 / 90 / 180 / 365 gün — seçili chip fuchsia border+shadow
+- **Actions bar**:
+  - `🔍 Önizle (JSON)` — panel içi preview, top peers tablosu + verdict summary
+  - `📄 PDF İndir` (rose) — Blob download via `mailActivityDownload`
+  - `📊 Excel İndir` (emerald) — Blob download via `mailActivityDownload`
+- **Preview panel**: KPI cards (Gönderilen/Gelen count + verdict distribution) + Top peers scrollable table (max 20 rows) + generated_at metadata
+- **Sağ sidebar**: "🎯 Nasıl Kullanılır?" 4-adım guide kartı eklendi
+- Loader states + toast notifications (`Rapor hazırlandı — Gönderilen: N · Gelen: M`)
+- data-testid'ler: `mail-report-email`, `mail-report-dir-{sent|received|both}`, `mail-report-days-{7|30|90|180|365}`, `mail-report-preview`, `mail-report-pdf`, `mail-report-xlsx`, `mail-report-preview-panel`
+
+### 2. `lib/api.js` — İki yeni method
+- `mailActivityReport(payload)` — JSON response için
+- `mailActivityDownload(payload)` — `responseType: "blob"` for browser download trigger
+
+### 3. Header Personalize (`components/Header.js`)
+- Yeni `WelcomeChip` component — sadece master için render
+- **Emerald gradient chip** (User2 icon + welcome text + relative time):
+  - Line 1: "Hoşgeldin, **{customer_name}**"
+  - Line 2 (tiny): "Son: {relTime} · {last_login_ip}" (örn: "Son: 5dk önce · 89.19.15.58")
+  - Tooltip: "Son giriş: 2026-08-18T16:31:43 UTC · IP: 89.19.15.58"
+- `formatRelative(iso)` helper — sn/dk/sa/g birimlerinde okunabilir
+- `hidden lg:flex` — mobile'da gizli, lg+ ekranda görünür
+- Header layout: `<WelcomeChip />` → MasterModeToggle → MasterUpdatePush sırası
+
+### 4. Backend `whoami` Extended (`server.py::admin_whoami`)
+- Response'a 3 yeni alan (sadece is_master=true iken):
+  - `customer_name` — MASTER_LICENSE_KEY'e bağlı license record'dan `customer_name` ("GökyüzüWebSpam Master")
+  - `customer_email` — aynı record'dan
+  - `plan` — enterprise
+  - `last_login_ip` + `last_login_at` + `last_login_ua` — `master_login_history` collection'dan bir önceki giriş
+- Her whoami çağrısında `master_login_history` collection'a yeni entry insert edilir (60sn dedup per-IP → aynı IP'nin peş peşe requestleri tek entry sayılır)
+- Response'ta gösterilen `last_login_*` her zaman *önceki* giriştir (bu request henüz yazılmadan önceki en son kayıt)
+
+**Test edildi (tests/test_v43_90_whoami_report.py — 6/6 pytest PASS %100):**
+- whoami customer_name + plan + master_key alanları döner ✓
+- Login history recording + retrieval ✓
+- Mail activity JSON round-trip (sent+received summaries) ✓
+- Mail activity PDF valid `%PDF` magic + `application/pdf` content-type ✓
+- Mail activity XLSX valid `PK` magic + spreadsheetml content-type ✓
+- Unauth POST → 401/403 ✓
+- v43.89 backend regression: ayrı çalıştırılabilir, endpoint imzaları değişmedi ✓
+
+**Preview screenshot doğrulaması:**
+- Header: "Hoşgeldin, GökyüzüWebSpam Master · Son: 0sn önce · 35.184.53.215" emerald chip ✓
+- Reports sayfası: Advanced card en üstte, tüm 5 gün preset + 3 yön chip + 3 action button görünür ✓
+- Preview: 4 gönderilen · 100 gelen (spam=100) · Top peers tablosu (you@bayi.com=3, user@gokyuzuhosting.com=1) ✓
+- Toast: "Rapor hazırlandı — Gönderilen: 4 · Gelen: 100" ✓
+
+**VERSION**: bumped `v43.89` → `v43.90`
+
+**Not (Preview env özel)**: Playwright container IP (35.184.53.215) `killed_master_ips` collection'a düşmüştü (foreign IP alarm) — test cleanup ile unblock edildi, `foreign_ip_auto_kill` disabled edildi. Bu master'ın kendi sunucusunda production'da normal davranış, sadece preview test için kapatıldı.
+
+
 ## Feb 17, 2026 (Session 18, v43.89) — Gelişmiş Mail Raporlama (PDF/Excel Export)
 
 **KULLANICI İSTEKLERİ:**

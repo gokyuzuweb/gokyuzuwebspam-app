@@ -212,6 +212,15 @@ export const api = {
   reportDownload: () => `${API}/reports/weekly`,
   reportSend: (recipient) => client.post("/reports/weekly/send", { recipient }).then(r => r.data),
 
+  // v43.90 — Advanced Mail Activity Report (PDF/Excel/JSON)
+  mailActivityReport: (payload) =>
+    client.post("/reports/mail-activity", payload).then(r => r.data),
+  mailActivityDownload: async (payload) => {
+    // Returns Blob for PDF/XLSX to trigger browser download
+    const res = await client.post("/reports/mail-activity", payload, { responseType: "blob" });
+    return res;
+  },
+
   scanAI: (payload) => llmClient.post("/scan/ai", payload).then(r => r.data),
 
   // Version
@@ -597,6 +606,12 @@ export const api = {
   killedIpsList: () => client.get("/settings/killed-master-ips").then(r => r.data),
   killedIpsToggleAuto: (enabled) => client.post("/settings/killed-master-ips/toggle-auto", { enabled }).then(r => r.data),
   killedIpsUnblock: (ip) => client.post(`/settings/killed-master-ips/${encodeURIComponent(ip)}/unblock`).then(r => r.data),
+
+  // v43.90 — Mail Activity Reports (PDF/Excel/JSON)
+  reportMailActivity: (email, direction, days, format, limit = 1000) =>
+    client.post("/reports/mail-activity", { email, direction, days, format, limit },
+      { responseType: (format === "pdf" || format === "xlsx") ? "blob" : "json" })
+      .then(r => r.data),
 
   // Docs Media upload
   docsMediaList: (moduleKey = null) =>
