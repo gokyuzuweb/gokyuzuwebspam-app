@@ -9,6 +9,18 @@ import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 
+// v43.94 — Country code (ISO 3166-1 alpha-2) → emoji flag
+function ccToFlag(cc) {
+  if (!cc || cc.length !== 2) return "🌐";
+  const base = 0x1F1E6;
+  const A = "A".charCodeAt(0);
+  try {
+    return String.fromCodePoint(base + (cc.charCodeAt(0) - A), base + (cc.charCodeAt(1) - A));
+  } catch {
+    return "🌐";
+  }
+}
+
 const ACCENT_COLORS = [
   { key: "indigo",   label: "İndigo",  bg: "bg-indigo-500",  ring: "ring-indigo-400",  glow: "shadow-indigo-500/50" },
   { key: "fuchsia",  label: "Fuşya",   bg: "bg-fuchsia-500", ring: "ring-fuchsia-400", glow: "shadow-fuchsia-500/50" },
@@ -300,12 +312,28 @@ export function TrustedIPsCard() {
             {items.map(i => (
               <div key={i.ip} data-testid={`trusted-ip-row-${i.ip}`}
                 className="flex items-center justify-between border border-slate-800 bg-slate-950 rounded-md px-3 py-2 hover:border-cyan-500/30">
-                <div className="min-w-0">
-                  <div className="text-sm font-bold mono text-slate-100">{i.ip}</div>
-                  <div className="text-[10px] text-slate-500">
-                    {i.label && <>{i.label} · </>}
-                    {i.added_via === "bulk" && <span className="text-fuchsia-400">toplu · </span>}
-                    Eklenme: {(i.added_at || "").slice(0, 19)}
+                <div className="min-w-0 flex items-center gap-3">
+                  <span
+                    className="text-2xl leading-none shrink-0"
+                    title={i.country_code ? `Ülke: ${i.country_code}` : "Bilinmiyor"}
+                    data-testid={`trusted-ip-flag-${i.ip}`}
+                  >
+                    {ccToFlag(i.country_code || "")}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold mono text-slate-100 flex items-center gap-2">
+                      {i.ip}
+                      {i.country_code && (
+                        <span className="text-[9px] mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                          {i.country_code}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      {i.label && <>{i.label} · </>}
+                      {i.added_via === "bulk" && <span className="text-fuchsia-400">toplu · </span>}
+                      Eklenme: {(i.added_at || "").slice(0, 19)}
+                    </div>
                   </div>
                 </div>
                 <button

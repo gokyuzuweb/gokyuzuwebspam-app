@@ -152,6 +152,27 @@ async def run_now(sched_id: str, request: Request):
     return {"ok": True, "result": result}
 
 
+@router.post("/{sched_id}/send-test")
+async def send_test(sched_id: str, request: Request):
+    """v43.94 — Gerçek gönderim testi: raporu hemen üretir ve recipient'a email atar."""
+    key = _requester_key(request)
+    if not key:
+        raise HTTPException(401, "Lisans anahtarı gerekli")
+    sched = await db.mail_report_schedules.find_one({"id": sched_id, "owner_license_key": key}, {"_id": 0})
+    if not sched:
+        raise HTTPException(404, "Zamanlama bulunamadı")
+    result = await _execute_schedule(sched, dry_run=False)
+    if result.get("ok"):
+        # last_run bilgilerini güncelle (schedule ilerlemesin — next_run_at aynı kalsın)
+        await db.mail_report_schedules.update_one(
+            {"id": sched_id},
+            {"$set": {"last_run_at": _iso(), "last_run_status": "test_ok",
+                       "last_run_error": None},
+              "$inc": {"run_count": 1}},
+        )
+    return {"ok": bool(result.get("ok")), "result": result}
+
+
 async def _execute_schedule(sched: dict, dry_run: bool = False) -> dict:
     """Bir schedule için raporu üret ve email ile gönder."""
     from server import _send_email     # avoid circular import at module load

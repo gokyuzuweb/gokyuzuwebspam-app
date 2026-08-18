@@ -14,6 +14,59 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 18, 2026 (Session 19, v43.94) — PaymentsAdmin/BounceDigest Tabs + Trusted IP Flags + Real Test Email
+
+**KULLANICI İSTEĞİ:**
+1. PaymentsAdmin Tab Yap — Havale Kuyruğu / Stripe / Faturalar / İadeler
+2. BounceDigest Tab Yap — Kanal / Zamanlama / Geçmiş
+3. Trusted IP Coğrafya — IP yanında bayrak ile yabancı IP'leri hızlı fark et
+4. Zamanlama Test E-mail — Gerçek gönderim (dry-run değil)
+
+**IMPLEMENTATION:**
+
+### 1. PaymentsAdmin Tab Restyle (pages/PaymentsAdmin.js)
+- Küçük underline chip-bar → Settings/Reports ile aynı büyük renkli tab bar
+- 5 sekme (renklendirildi): **Havale Kuyruğu** (amber) · **Kanban Panosu** (indigo) · **Bildirimler** (rose) · **Faturalar** (emerald) · **Stripe & Akıllı POS** (fuchsia)
+- Sticky top + backdrop blur + persist via `localStorage.gws.payments.tab`
+
+### 2. BounceDigest Tab Layout (pages/BounceDigest.js)
+- Header sonrası tab bar eklendi (Settings stili)
+- 3 sekme: **Kanal & Ayarlar** (fuchsia, Radio icon) · **Zamanlama** (indigo, Clock — Preview kartı) · **Geçmiş** (rose, History)
+- Config Card → Kanal tab, Preview Card → Zamanlama tab, History Card → Geçmiş tab
+- `localStorage.gws.bd.tab` persist
+
+### 3. Trusted IP Country Flags (server.py + V4390Cards.js)
+- Backend `trusted_ips_list` — her IP için `routes/security_adv._ip_to_country` çağrısıyla `country_code` alanı eklendi (existing offline GeoIP)
+- Frontend `V4390Cards.js`:
+  - Yeni `ccToFlag(cc)` helper — ISO 3166 alpha-2 → emoji flag (Regional Indicator Symbol)
+  - Row başında `text-2xl` bayrak ikonu + IP yanına country_code chip (örn: 🇹🇷 TR)
+  - Bilinmiyorsa 🌐 fallback
+- Test: 8.8.8.8 → US, 85.14.22.x → FR, 1.2.3.4 → CN doğrulandı ✓
+
+### 4. Real Test Email (routes/report_schedules.py + Reports.js)
+- Yeni endpoint `POST /api/report-schedules/{id}/send-test`
+- `_execute_schedule(..., dry_run=False)` çağırır → PDF/XLSX üretir + `_send_email` ile recipient'a gönderir
+- `run_count` artırılır, `last_run_status="test_ok"`, `next_run_at` DEĞİŞTİRİLMEZ (schedule normal akışı bozulmaz)
+- Frontend Reports.js:
+  - Schedule row'una fuchsia Mail button eklendi (dry-run cyan Send button'ın yanına)
+  - `window.confirm(...)` — "Gerçek bir test raporu email'i gönderilecek" onayı
+  - Toast success: "Gerçek test emaili gönderildi ✓" description'da `sent_via`, sent_total, received_total
+  - Toast error: hata detayı
+
+**Test edildi:**
+- pytest v43_90 (6) + v43_91 (9) + v43_92 (4) + v43_93 (5) + v43_94 (3) = **27/27 PASS** ✓
+- Country enrichment: 8.8.8.8 → US, 85.14.22.x → FR ✓
+- Schedule send-test: 200, run_count arttı, last_run_status="test_ok" ✓
+- Send-test unknown ID → 404 ✓
+- Screenshots:
+  - PaymentsAdmin: 5 renkli tab (Havale Kuyruğu amber active + Kanban indigo + Bildirimler·94 rose + Faturalar emerald + Stripe fuchsia) ✓
+  - BounceDigest: 3 tab (Kanal fuchsia active + Zamanlama indigo + Geçmiş rose) ✓
+  - Trusted IPs: 🇫🇷 FR badges for 85.14.22.x + 🇨🇳 CN for 1.2.3.4 ✓
+
+**VERSION**: v43.93 → v43.94 — canlıya hazır sürüm
+
+---
+
 ## Feb 18, 2026 (Session 19, v43.93) — MailScanner Tabs + Trusted IP Bulk + Theme Toast + PIN Chime
 
 **KULLANICI İSTEĞİ:**

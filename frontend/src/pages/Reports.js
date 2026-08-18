@@ -61,6 +61,22 @@ function ScheduledReportsCard() {
     onError: (e) => toast.error(e?.response?.data?.detail || "İşlem başarısız"),
   });
 
+  const sendTestMut = useMutation({
+    mutationFn: (id) => api.reportScheduleSendTest(id),
+    onSuccess: (d) => {
+      const r = d?.result || {};
+      if (r.ok) {
+        toast.success("Gerçek test emaili gönderildi ✓", {
+          description: `${r.sent_via || "unknown"} · Gönderilen: ${r.sent_total ?? 0}, Gelen: ${r.received_total ?? 0}`,
+          duration: 7000,
+        });
+      } else {
+        toast.error(`Test gönderimi başarısız: ${r.error || "bilinmiyor"}`);
+      }
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Test gönderilemedi"),
+  });
+
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
   const recipientValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.recipient.trim());
   const canCreate = emailValid && recipientValid;
@@ -123,6 +139,16 @@ function ScheduledReportsCard() {
                     className="p-1.5 rounded border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50"
                   >
                     <Send className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    data-testid={`schedule-sendtest-${s.id}`}
+                    type="button"
+                    onClick={() => { if (window.confirm(`${s.recipient} adresine hemen GERÇEK bir test raporu email'i gönderilecek. Onaylıyor musun?`)) sendTestMut.mutate(s.id); }}
+                    disabled={sendTestMut.isPending}
+                    title={`Gerçek test: ${s.recipient} adresine email gönder`}
+                    className="p-1.5 rounded border border-fuchsia-500/40 bg-fuchsia-500/15 text-fuchsia-200 hover:bg-fuchsia-500/25 disabled:opacity-50"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
                   </button>
                   <button
                     data-testid={`schedule-delete-${s.id}`}

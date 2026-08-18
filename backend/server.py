@@ -2322,6 +2322,16 @@ class TrustedIPIn(BaseModel):
 async def trusted_ips_list(request: Request, license_key: Optional[str] = None):
     await _require_master(request, license_key)
     rows = await db.trusted_ips.find({"active": True}, {"_id": 0}).sort("added_at", -1).to_list(200)
+    # v43.94 — Enrich with country code for flag display
+    try:
+        from routes.security_adv import _ip_to_country
+        for r in rows:
+            try:
+                r["country_code"] = (_ip_to_country(r.get("ip") or "") or "").upper()
+            except Exception:
+                r["country_code"] = ""
+    except Exception:
+        pass
     return {"items": rows, "count": len(rows)}
 
 

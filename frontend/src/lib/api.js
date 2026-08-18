@@ -226,6 +226,7 @@ export const api = {
   reportScheduleCreate: (payload) => client.post("/report-schedules/", payload).then(r => r.data),
   reportScheduleDelete: (id) => client.delete(`/report-schedules/${id}`).then(r => r.data),
   reportScheduleRunNow: (id) => client.post(`/report-schedules/${id}/run-now`).then(r => r.data),
+  reportScheduleSendTest: (id) => client.post(`/report-schedules/${id}/send-test`).then(r => r.data),
   reportScheduleToggle: (id) => client.post(`/report-schedules/${id}/toggle`).then(r => r.data),
 
   // v43.90 — UI Theme (accent color)

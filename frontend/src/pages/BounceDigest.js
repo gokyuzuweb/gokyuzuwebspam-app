@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Mail, Send, Clock, AlertTriangle, Save, Eye, Zap, Webhook } from "lucide-react";
+import { Mail, Send, Clock, AlertTriangle, Save, Eye, Zap, Webhook, Radio, History } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 
 export default function BounceDigest() {
   const [hours, setHours] = useState(24);
+  const [tab, setTab] = useState(() => localStorage.getItem("gws.bd.tab") || "channel");
+  const chooseTab = (id) => { setTab(id); try { localStorage.setItem("gws.bd.tab", id); } catch {} };
   const qc = useQueryClient();
   const cfg = useQuery({ queryKey: ["bd-config"], queryFn: api.bounceDigestConfig });
   const preview = useQuery({
@@ -124,7 +126,34 @@ export default function BounceDigest() {
         </div>
       </div>
 
+      {/* v43.94 — Tab Bar (Kanal / Zamanlama / Geçmiş) */}
+      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3 sticky top-14 bg-slate-950/80 backdrop-blur z-10" data-testid="bd-tabs">
+        {[
+          { k: "channel",  l: "Kanal & Ayarlar", Icon: Radio,   tone: "fuchsia" },
+          { k: "schedule", l: "Zamanlama",       Icon: Clock,   tone: "indigo"  },
+          { k: "history",  l: "Geçmiş",          Icon: History, tone: "rose"    },
+        ].map(({ k, l, Icon, tone }) => {
+          const tones = {
+            fuchsia: "border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-200",
+            indigo:  "border-indigo-500/50 bg-indigo-500/15 text-indigo-200",
+            rose:    "border-rose-500/50 bg-rose-500/15 text-rose-200",
+          };
+          const active = tab === k;
+          return (
+            <button key={k} type="button" onClick={() => chooseTab(k)}
+              data-testid={`bd-tab-${k}`}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                active ? tones[tone] + " shadow-md" : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+              }`}>
+              <Icon className="w-4 h-4" />
+              {l}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Config */}
+      {tab === "channel" && (
       <Card>
         <CardHeader title="Digest Yapılandırması" subtitle="Kime, ne zaman, hangi yolla gönderilecek"/>
         <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -304,8 +333,10 @@ export default function BounceDigest() {
           </div>
         </div>
       </Card>
+      )}
 
       {/* Preview */}
+      {tab === "schedule" && (
       <Card>
         <CardHeader
           title={<span className="flex items-center gap-2"><Eye className="w-4 h-4 text-sky-400"/> Canlı Önizleme</span>}
@@ -386,8 +417,10 @@ export default function BounceDigest() {
           </div>
         )}
       </Card>
+      )}
 
       {/* History */}
+      {tab === "history" && (
       <Card>
         <CardHeader
           title={<span className="flex items-center gap-2"><Clock className="w-4 h-4 text-slate-400"/> Digest Geçmişi</span>}
@@ -413,6 +446,7 @@ export default function BounceDigest() {
           ))}
         </div>
       </Card>
+      )}
     </div>
   );
 }

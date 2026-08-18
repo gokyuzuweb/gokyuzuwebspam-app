@@ -11,7 +11,8 @@ import ModuleFooter from "@/components/ModuleFooter";
 
 export default function PaymentsAdmin() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState("pending");
+  const [tab, setTab] = useState(() => localStorage.getItem("gws.payments.tab") || "pending");
+  const chooseTab = (id) => { setTab(id); try { localStorage.setItem("gws.payments.tab", id); } catch {} };
   const pending = useQuery({
     queryKey: ["admin-pending-havale"],
     queryFn: api.adminPendingHavale,
@@ -83,25 +84,33 @@ export default function PaymentsAdmin() {
       {/* Gateway toggle (master default) */}
       <GatewayToggle />
 
-      {/* Tabs */}
-      <div className="flex gap-2 border-b border-slate-800">
+      {/* Tabs — v43.94 restyled to big colored bar */}
+      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3 sticky top-14 bg-slate-950/80 backdrop-blur z-10" data-testid="pa-tabs">
         {[
-          { k: "pending", label: `Bekleyen (${p.notified_count || 0})` },
-          { k: "kanban", label: "📋 Kanban" },
-          { k: "inbox", label: `Bildirimler${unread ? ` · ${unread}` : ""}` },
-          { k: "all", label: "Tüm Siparişler" },
-          { k: "smart_pos", label: "🎯 Akıllı POS" },
-        ].map((t) => (
-          <button key={t.k} onClick={() => setTab(t.k)}
-                  data-testid={`pa-tab-${t.k}`}
-                  className={`px-4 py-2 text-sm transition-all border-b-2 -mb-px ${
-                    tab === t.k
-                      ? "border-indigo-500 text-slate-100"
-                      : "border-transparent text-slate-500 hover:text-slate-300"
-                  }`}>
-            {t.label}
-          </button>
-        ))}
+          { k: "pending",   label: `Havale Kuyruğu${p.notified_count ? ` (${p.notified_count})` : ""}`, tone: "amber"   },
+          { k: "kanban",    label: "Kanban Panosu",   tone: "indigo"  },
+          { k: "inbox",     label: `Bildirimler${unread ? ` · ${unread}` : ""}`, tone: "rose"    },
+          { k: "all",       label: "Faturalar",       tone: "emerald" },
+          { k: "smart_pos", label: "Stripe & Akıllı POS", tone: "fuchsia" },
+        ].map((t) => {
+          const tones = {
+            amber:   "border-amber-500/50 bg-amber-500/15 text-amber-200",
+            indigo:  "border-indigo-500/50 bg-indigo-500/15 text-indigo-200",
+            rose:    "border-rose-500/50 bg-rose-500/15 text-rose-200",
+            emerald: "border-emerald-500/50 bg-emerald-500/15 text-emerald-200",
+            fuchsia: "border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-200",
+          };
+          const active = tab === t.k;
+          return (
+            <button key={t.k} onClick={() => chooseTab(t.k)}
+              data-testid={`pa-tab-${t.k}`}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                active ? tones[t.tone] + " shadow-md" : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+              }`}>
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Pending Approvals */}
