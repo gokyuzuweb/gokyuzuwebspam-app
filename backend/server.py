@@ -4137,9 +4137,12 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                                 "at": _iso(), "severity": "critical",
                             })
                             # v43.87 — Session Kill: bu IP'yi block listeye ekle
+                            # v43.96 — Default DISABLED — master key sahibi farklı IP'lerden girmek
+                            # istiyorsa (WHM cPanel iframe, mobil, VPN) engellemesin. Sadece alarm
+                            # düşer. Opt-in için Ayarlar > Güvenlik'ten açılabilir.
                             prot = await db.settings.find_one({"_key": "foreign_ip_auto_kill"},
                                                                 {"_id": 0}) or {}
-                            if prot.get("enabled", True):
+                            if prot.get("enabled") is True:   # explicit True required
                                 await db.killed_master_ips.update_one(
                                     {"ip": client_ip},
                                     {"$set": {
