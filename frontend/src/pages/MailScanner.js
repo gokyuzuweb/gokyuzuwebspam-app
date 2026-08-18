@@ -138,33 +138,55 @@ function MetricPill({ label, v, tone }) {
 }
 
 export default function MailScanner() {
-  const [tab, setTab] = useState("config");
+  const [tab, setTab] = useState(() => localStorage.getItem("gws.ms.tab") || "config");
+  const choose = (id) => { setTab(id); try { localStorage.setItem("gws.ms.tab", id); } catch {} };
+
+  const TABS = [
+    { k: "config", l: "Yapılandırma",     i: Sliders,  t: "indigo" },
+    { k: "stats",  l: "İstatistik",        i: BarChart, t: "cyan" },
+    { k: "rules",  l: "Kurallar",          i: Filter,   t: "emerald" },
+    { k: "bayes",  l: "Bayes",             i: Brain,    t: "amber" },
+    { k: "policy", l: "Kullanıcı Politika", i: Users,   t: "fuchsia" },
+    { k: "url",    l: "URL Koruma",        i: LinkIcon, t: "rose" },
+    { k: "learn",  l: "AI Öğrenme",        i: Sparkles, t: "indigo" },
+  ];
+  const tones = {
+    indigo:  "border-indigo-500/50 bg-indigo-500/15 text-indigo-200",
+    cyan:    "border-cyan-500/50 bg-cyan-500/15 text-cyan-200",
+    emerald: "border-emerald-500/50 bg-emerald-500/15 text-emerald-200",
+    amber:   "border-amber-500/50 bg-amber-500/15 text-amber-200",
+    fuchsia: "border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-200",
+    rose:    "border-rose-500/50 bg-rose-500/15 text-rose-200",
+  };
+
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-slate-100 text-lg font-semibold flex items-center gap-2">
-            <Filter className="w-5 h-5 text-indigo-400"/> Bağımsız MailScanner Modülü
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">Kendi motorumuz · SpamAssassin ayarları · Bayes eğitimi · Kullanıcı politikaları</p>
-        </div>
-        <div className="flex gap-1 bg-slate-800/50 rounded p-1">
-          {[
-            { k: "config", l: "Yapılandırma", i: Sliders },
-            { k: "stats", l: "İstatistik", i: BarChart },
-            { k: "rules", l: "Kurallar", i: Filter },
-            { k: "bayes", l: "Bayes", i: Brain },
-            { k: "policy", l: "Kullanıcı Politika", i: Users },
-            { k: "url", l: "URL Koruma", i: LinkIcon },
-            { k: "learn", l: "AI Öğrenme", i: Sparkles },
-          ].map(({ k, l, i: Icon }) => (
-            <button key={k} data-testid={`ms-tab-${k}`} onClick={() => setTab(k)}
-                    className={`text-xs px-3 py-1.5 rounded transition-colors flex items-center gap-1
-                    ${tab === k ? "bg-indigo-500/20 text-indigo-300" : "text-slate-400 hover:text-slate-100"}`}>
-              <Icon className="w-3 h-3"/>{l}
+    <div className="p-6 space-y-4">
+      <div>
+        <h1 className="text-slate-100 text-lg font-semibold flex items-center gap-2">
+          <Filter className="w-5 h-5 text-indigo-400"/> Bağımsız MailScanner Modülü
+        </h1>
+        <p className="text-xs text-slate-500 mt-0.5">Kendi motorumuz · SpamAssassin ayarları · Bayes eğitimi · Kullanıcı politikaları</p>
+      </div>
+
+      {/* v43.93 — Tab Bar (Settings/Reports ile aynı stil) */}
+      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3 sticky top-14 bg-slate-950/80 backdrop-blur z-10" data-testid="ms-tabs">
+        {TABS.map(({ k, l, i: Icon, t }) => {
+          const active = tab === k;
+          return (
+            <button
+              key={k}
+              data-testid={`ms-tab-${k}`}
+              type="button"
+              onClick={() => choose(k)}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                active ? tones[t] + " shadow-md" : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {l}
             </button>
-          ))}
-        </div>
+          );
+        })}
       </div>
 
       <AiAnalyzeCard/>

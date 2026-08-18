@@ -1,3 +1,4 @@
+import React, { useEffect, useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Clock, RefreshCw, Search, Sparkles, KeyRound, ShieldCheck, DownloadCloud, User2 } from "lucide-react";
@@ -7,7 +8,7 @@ import ThreatAlertBell from "@/components/ThreatAlertBell";
 import SlashCommandBar from "@/components/SlashCommandBar";
 import { ImpersonatePicker } from "@/components/Impersonate";
 
-// v43.91 — Pending PIN Approval floating badge (master-only)
+// v43.91/93 — Pending PIN Approval floating badge (master-only) + soft chime
 function PinPendingBadge() {
   const nav = useNavigate();
   const who = useQuery({ queryKey: ["whoami-header"], queryFn: () => api.whoami(), staleTime: 60_000 });
@@ -19,22 +20,80 @@ function PinPendingBadge() {
     enabled: !!isMaster,
   });
   const count = q.data?.count || 0;
+  const prevCountRef = React.useRef(null);
+
+  // v43.93 — Count arttığında soft chime çal (Web Audio API)
+  React.useEffect(() => {
+    if (!isMaster) return;
+    const prev = prevCountRef.current;
+    if (prev !== null && count > prev) {
+      // Sadece muted değilse çal
+      const muted = localStorage.getItem("gws.pin.chime.muted") === "1";
+      if (!muted) {
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (AC) {
+            const ctx = new AC();
+            const now = ctx.currentTime;
+            // 2 tonlu soft "ding-dong"
+            [880, 660].forEach((freq, i) => {
+              const o = ctx.createOscillator();
+              const g = ctx.createGain();
+              o.type = "sine";
+              o.frequency.value = freq;
+              g.gain.value = 0;
+              const t0 = now + i * 0.18;
+              g.gain.linearRampToValueAtTime(0.12, t0 + 0.02);
+              g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.4);
+              o.connect(g).connect(ctx.destination);
+              o.start(t0);
+              o.stop(t0 + 0.42);
+            });
+            setTimeout(() => { try { ctx.close(); } catch {} }, 800);
+          }
+        } catch {}
+        toast.info(`Yeni PIN talebi geldi (toplam ${count})`, { duration: 4000 });
+      }
+    }
+    prevCountRef.current = count;
+  }, [count, isMaster]);
+
   if (!isMaster || count === 0) return null;
   const go = () => {
     try { localStorage.setItem("gws.settings.tab", "lock"); } catch {}
     nav("/panel/settings");
   };
+  const toggleMute = (e) => {
+    e.stopPropagation();
+    const curr = localStorage.getItem("gws.pin.chime.muted") === "1";
+    localStorage.setItem("gws.pin.chime.muted", curr ? "0" : "1");
+    toast.info(curr ? "🔔 PIN ses bildirimi açıldı" : "🔕 PIN ses bildirimi kapatıldı");
+  };
+  const muted = localStorage.getItem("gws.pin.chime.muted") === "1";
   return (
-    <button
-      data-testid="header-pin-pending-badge"
-      type="button"
-      onClick={go}
-      title={`${count} PIN değişiklik talebi onay bekliyor — tıklayın`}
-      className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono font-bold tracking-wide px-2.5 py-1 rounded-md border border-amber-500/60 bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 transition-all shrink-0 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.35)]"
-    >
-      <KeyRound className="w-3 h-3" />
-      <span>{count} PIN Bekliyor</span>
-    </button>
+    <div className="hidden md:inline-flex items-center gap-0.5 shrink-0">
+      <button
+        data-testid="header-pin-pending-badge"
+        type="button"
+        onClick={go}
+        title={`${count} PIN değişiklik talebi onay bekliyor — tıklayın`}
+        className="inline-flex items-center gap-1.5 text-[11px] mono font-bold tracking-wide px-2.5 py-1 rounded-l-md border border-amber-500/60 bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 transition-all animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.35)]"
+      >
+        <KeyRound className="w-3 h-3" />
+        <span>{count} PIN Bekliyor</span>
+      </button>
+      <button
+        data-testid="header-pin-chime-toggle"
+        type="button"
+        onClick={toggleMute}
+        title={muted ? "PIN sesi kapalı — açmak için tıkla" : "PIN sesi açık — kapatmak için tıkla"}
+        className={`inline-flex items-center px-1.5 py-1 rounded-r-md border border-l-0 text-[10px] transition-all ${
+          muted ? "border-slate-700 bg-slate-800 text-slate-500 hover:text-slate-300" : "border-amber-500/60 bg-amber-500/20 text-amber-200 hover:bg-amber-500/30"
+        }`}
+      >
+        {muted ? "🔕" : "🔔"}
+      </button>
+    </div>
   );
 }
 

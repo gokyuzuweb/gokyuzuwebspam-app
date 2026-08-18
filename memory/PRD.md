@@ -14,6 +14,60 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 18, 2026 (Session 19, v43.93) — MailScanner Tabs + Trusted IP Bulk + Theme Toast + PIN Chime
+
+**KULLANICI İSTEĞİ:**
+1. Dashboard Tema Bildirim — İlk renk değişikliğinde "cihazlar arası senkronize" toast'ı
+2. MailScanner Tab Yap — Uzun sayfa, Settings/Reports gibi büyük tab yapısı
+3. Trusted IP Toplu İçe Aktar — Çoklu IP yapıştırıp tek seferde ekle
+4. PIN Bekliyor Ses — Yeni PIN talebi geldiğinde soft chime
+
+**IMPLEMENTATION:**
+
+### 1. MailScanner Tabs Restyle (pages/MailScanner.js)
+- Eski küçük chip tab bar → Settings/Reports ile aynı büyük tab bar
+- 7 sekme: **Yapılandırma** (indigo) · **İstatistik** (cyan) · **Kurallar** (emerald) · **Bayes** (amber) · **Kullanıcı Politika** (fuchsia) · **URL Koruma** (rose) · **AI Öğrenme** (indigo)
+- Sticky top + backdrop blur + persist via `localStorage.gws.ms.tab`
+- `border-b` alt çizgi + tone renkli aktif state (aynı tarz)
+
+### 2. Trusted IP Bulk Import (server.py + V4390Cards.js)
+- Yeni endpoint `POST /api/settings/trusted-ips/bulk` {text, label}
+- Parser mantığı:
+  - Önce satırlara böl (labellar boşluk içerebilir)
+  - Satırda `=` veya `|` varsa → `ip=label` (label boşluk destekler)
+  - Satırda yoksa → space/comma/semicolon split → sadece IPs (default label)
+- IP validasyonu regex `[0-9a-fA-F.:/]+` (IPv4 + IPv6)
+- Duplicate detection → skipped listesine
+- Response: `{added: [...], skipped: [...], errors: [...], counts: {...}}`
+- Frontend `TrustedIPsCard`:
+  - "Toplu İçe Aktar" fuchsia button toggler
+  - Bulk panel: 7-row textarea + varsayılan etiket + "Hepsini Ekle" button
+  - Toast: "Toplu ekleme: N eklendi, M atlandı, K hata"
+  - Bulk eklenen IP'lerin listede "toplu" fuchsia etiketi görünür
+
+### 3. Theme First-Time Toast (V4390Cards.js::UIThemeCard.saveMut)
+- localStorage flag `gws.ui.accent.toast_shown`
+- İlk seçim → 6sn süreli detaylı toast: "Bu tercih sunucuda saklandı. Başka bir tarayıcı veya cihazda giriş yaptığınızda da aynı renk otomatik uygulanacak."
+- Sonraki seçimlerde kısa toast: `Tema: {color}`
+
+### 4. PIN Chime + Mute Toggle (Header.js::PinPendingBadge)
+- `useRef` ile önceki count tutulur; her poll sonrası count > prevCount ise:
+  - Web Audio API ile 2 tonlu (880Hz + 660Hz) 400ms soft "ding-dong" çal
+  - Toast bilgi: "Yeni PIN talebi geldi (toplam N)"
+- Sağa 🔔/🔕 toggle butonu → `gws.pin.chime.muted` localStorage
+- Mute açıksa oscillator + toast atlanır
+
+**Test edildi:**
+- Backend pytest v43_90 (6) + v43_91 (9) + v43_92 (4) + v43_93 (5) = **24/24 PASS** ✓
+- Bulk parser: labels with spaces, multi-IP per line, invalid entries flagged, dedupe skipped, master-only guard hepsi ✓
+- Screenshots:
+  - MailScanner: 7 renkli büyük tab (Yapılandırma indigo active, sticky) ✓
+  - Settings > Güvenlik > Trusted IPs Bulk Panel: textarea + Hepsini Ekle button + existing 85.14.22.1-5 IPs "toplu" fuchsia badge ile listede ✓
+
+**VERSION**: v43.92 → v43.93 — canlıya hazır sürüm
+
+---
+
 ## Feb 18, 2026 (Session 19, v43.92) — Trusted IPs + PIN Pending Badge + Theme Preview + Schedule Pause + Reports Tabs
 
 **KULLANICI İSTEĞİ:**

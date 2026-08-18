@@ -53,7 +53,17 @@ export function UIThemeCard() {
     onSuccess: (d) => {
       applyAccentColor(d.accent_color);
       qc.invalidateQueries({ queryKey: ["ui-theme-me"] });
-      toast.success(`Tema kaydedildi: ${d.accent_color}`);
+      // v43.93 — İlk seçimde sync bilgi toast'ı göster
+      const shown = localStorage.getItem("gws.ui.accent.toast_shown");
+      if (!shown) {
+        toast.success("Tema kaydedildi ✓", {
+          description: "Bu tercih sunucuda saklandı. Başka bir tarayıcı veya cihazda giriş yaptığınızda da aynı renk otomatik uygulanacak.",
+          duration: 6000,
+        });
+        try { localStorage.setItem("gws.ui.accent.toast_shown", "1"); } catch {}
+      } else {
+        toast.success(`Tema: ${d.accent_color}`);
+      }
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Tema kaydedilemedi"),
   });
@@ -150,13 +160,16 @@ export function UIThemeCard() {
   );
 }
 
-// v43.91 — Trusted IPs (foreign-IP alarm muafiyeti)
+// v43.91/93 — Trusted IPs (foreign-IP alarm muafiyeti) + Bulk Import
 export function TrustedIPsCard() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["trusted-ips"], queryFn: () => api.trustedIpsList(), staleTime: 30_000 });
   const items = q.data?.items || [];
   const [ip, setIp] = useState("");
   const [label, setLabel] = useState("");
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkLabel, setBulkLabel] = useState("");
 
   const addMut = useMutation({
     mutationFn: () => api.trustedIpsAdd(ip.trim(), label.trim()),
@@ -167,12 +180,30 @@ export function TrustedIPsCard() {
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Eklenemedi"),
   });
+  const bulkMut = useMutation({
+    mutationFn: () => api.trustedIpsBulkAdd(bulkText.trim(), bulkLabel.trim()),
+    onSuccess: (d) => {
+      qc.invalidateQueries({ queryKey: ["trusted-ips"] });
+      const { added = 0, skipped = 0, errors = 0 } = d.counts || {};
+      if (added > 0) {
+        toast.success(`Toplu ekleme: ${added} eklendi, ${skipped} atlandı, ${errors} hata`);
+        setBulkOpen(false);
+        setBulkText(""); setBulkLabel("");
+      } else if (skipped > 0 && errors === 0) {
+        toast.info(`Tümü zaten kayıtlı (${skipped} atlandı)`);
+      } else {
+        toast.error(`Hiç IP eklenmedi — ${errors} geçersiz format`);
+      }
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Toplu ekleme başarısız"),
+  });
   const delMut = useMutation({
     mutationFn: (i) => api.trustedIpsRemove(i),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["trusted-ips"] }); toast.success("IP kaldırıldı"); },
   });
 
   const validIp = ip.trim().length >= 3;
+  const bulkCanSubmit = bulkText.trim().length >= 3 && !bulkMut.isPending;
 
   return (
     <Card>
@@ -206,7 +237,62 @@ export function TrustedIPsCard() {
           >
             <Plus className="w-4 h-4" /> Ekle
           </button>
+          <button
+            data-testid="trusted-ip-bulk-open"
+            type="button"
+            onClick={() => setBulkOpen(!bulkOpen)}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-semibold transition-colors ${
+              bulkOpen
+                ? "border-fuchsia-500/50 bg-fuchsia-500/20 text-fuchsia-200"
+                : "border-slate-700 bg-slate-900 text-slate-300 hover:border-fuchsia-500/40 hover:text-fuchsia-200"
+            }`}
+          >
+            <Sparkles className="w-4 h-4" /> Toplu İçe Aktar
+          </button>
         </div>
+
+        {/* v43.93 — Toplu içe aktarma paneli */}
+        {bulkOpen && (
+          <div data-testid="trusted-ip-bulk-panel" className="border border-fuchsia-500/30 bg-fuchsia-500/5 rounded-md p-3 space-y-2">
+            <div className="text-[11px] text-slate-400">
+              Satır başına bir IP yapıştırın. Etiket için <span className="mono text-fuchsia-300">ip=Etiket</span> veya <span className="mono text-fuchsia-300">ip|Etiket</span> yazabilirsiniz. CSV/space ile de çalışır.
+            </div>
+            <textarea
+              data-testid="trusted-ip-bulk-text"
+              rows={7}
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              placeholder={`89.19.15.58=Ofis Sabit\n10.0.0.5|VPN Docker\n85.14.22.9 85.14.22.10 85.14.22.11\n2a01:4f8:c17:b8f::1`}
+              className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-xs mono focus:border-fuchsia-500/50 focus:outline-none resize-y"
+            />
+            <div className="flex flex-col md:flex-row gap-2 items-stretch md:items-center">
+              <input
+                data-testid="trusted-ip-bulk-label"
+                placeholder="Varsayılan etiket (etiketsizler için)"
+                value={bulkLabel}
+                onChange={(e) => setBulkLabel(e.target.value.slice(0, 100))}
+                className="flex-1 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm focus:border-fuchsia-500/50 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setBulkOpen(false)}
+                className="px-3 py-2 rounded border border-slate-700 text-slate-400 hover:text-slate-200 text-sm"
+              >
+                Vazgeç
+              </button>
+              <button
+                data-testid="trusted-ip-bulk-submit"
+                type="button"
+                onClick={() => bulkMut.mutate()}
+                disabled={!bulkCanSubmit}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-fuchsia-500/50 bg-fuchsia-500/20 text-fuchsia-100 hover:bg-fuchsia-500/30 text-sm font-semibold disabled:opacity-50 shadow-md shadow-fuchsia-500/20"
+              >
+                <Plus className="w-4 h-4" /> {bulkMut.isPending ? "Ekleniyor..." : "Hepsini Ekle"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {items.length === 0 ? (
           <div className="text-xs text-slate-500 italic py-3 text-center">Henüz güvenilir IP yok.</div>
         ) : (
@@ -217,7 +303,9 @@ export function TrustedIPsCard() {
                 <div className="min-w-0">
                   <div className="text-sm font-bold mono text-slate-100">{i.ip}</div>
                   <div className="text-[10px] text-slate-500">
-                    {i.label && <>{i.label} · </>}Eklenme: {(i.added_at || "").slice(0, 19)}
+                    {i.label && <>{i.label} · </>}
+                    {i.added_via === "bulk" && <span className="text-fuchsia-400">toplu · </span>}
+                    Eklenme: {(i.added_at || "").slice(0, 19)}
                   </div>
                 </div>
                 <button

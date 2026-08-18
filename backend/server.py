@@ -2349,6 +2349,64 @@ async def trusted_ips_add(payload: TrustedIPIn, request: Request, license_key: O
     return {"ok": True, "ip": ip}
 
 
+class TrustedIPsBulkIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=20000)
+    label: str = Field("", max_length=100)
+
+
+@api.post("/settings/trusted-ips/bulk")
+async def trusted_ips_bulk_add(payload: TrustedIPsBulkIn, request: Request, license_key: Optional[str] = None):
+    """v43.93 — Toplu IP ekleme: satır/CSV/space ayrılmış listeden çoklu IP ekler."""
+    await _require_master(request, license_key)
+    import re as _re
+    label_default = (payload.label or "").strip()[:100]
+
+    # Önce satırlara böl (label boşluk içerebilir)
+    lines = [l.strip() for l in payload.text.strip().splitlines() if l.strip()]
+    parsed: List[tuple] = []  # [(ip, label), ...]
+    for line in lines:
+        # Etiket ayırıcısı: '=' veya '|'
+        m = _re.match(r"^([^=|\s]+)\s*[=|]\s*(.+)$", line)
+        if m:
+            parsed.append((m.group(1).strip(), m.group(2).strip()[:100] or label_default))
+        else:
+            # Satırda ip=label yoksa boşluk/virgül ile birden fazla IP olabilir
+            for tok in _re.split(r"[\s,;]+", line):
+                t = tok.strip().strip('"').strip("'")
+                if t:
+                    parsed.append((t, label_default))
+
+    added, skipped, errors = [], [], []
+    for ip_val, lbl in parsed:
+        if not _re.match(r"^[0-9a-fA-F.:/]+$", ip_val) or len(ip_val) < 3:
+            errors.append(ip_val)
+            continue
+        existing = await db.trusted_ips.find_one({"ip": ip_val, "active": True}, {"_id": 0})
+        if existing:
+            skipped.append(ip_val)
+            continue
+        doc = {
+            "id": str(uuid.uuid4()), "ip": ip_val, "label": lbl,
+            "active": True, "added_at": _iso(), "added_by_ip": _client_ip(request),
+            "added_via": "bulk",
+        }
+        await db.trusted_ips.update_one({"ip": ip_val}, {"$set": doc}, upsert=True)
+        try:
+            await db.killed_master_ips.update_one({"ip": ip_val}, {"$set": {"active": False, "unblocked_reason": "trusted_ip_bulk_added"}})
+        except Exception:
+            pass
+        added.append(ip_val)
+
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()), "action": "trusted_ip_bulk_added",
+        "actor_ip": _client_ip(request),
+        "details": {"added": added, "skipped": skipped, "errors": errors, "label_default": label_default},
+        "at": _iso(), "severity": "info",
+    })
+    return {"ok": True, "added": added, "skipped": skipped, "errors": errors,
+            "counts": {"added": len(added), "skipped": len(skipped), "errors": len(errors)}}
+
+
 @api.delete("/settings/trusted-ips/{ip:path}")
 async def trusted_ips_remove(ip: str, request: Request, license_key: Optional[str] = None):
     await _require_master(request, license_key)
