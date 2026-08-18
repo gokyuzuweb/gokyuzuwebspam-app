@@ -731,6 +731,18 @@ function LearnTab() {
     },
     onError: (e) => toast.error(e?.response?.data?.detail || e.message),
   });
+  // v43.85 — Weekly PDF Email Trigger
+  const weeklyReport = useMutation({
+    mutationFn: () => api.msWeeklyReport(),
+    onSuccess: (d) => {
+      if (d.email_sent) {
+        toast.success(`Rapor gönderildi: ${d.total_new_suggestions} öneri · ${d.active_licenses} bayi · PDF ${(d.pdf_size_bytes / 1024).toFixed(1)}KB`);
+      } else {
+        toast.warning(`Rapor üretildi ama email atılamadı: ${d.email_error || "admin_email boş"}`);
+      }
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Rapor tetiklenemedi"),
+  });
   const items = suggs.data?.items || [];
   // v43.82 — Öneri filtreleri: source + min_score
   const [sourceFilter, setSourceFilter] = useState("all"); // all | quarantine | selftrain
@@ -785,10 +797,29 @@ function LearnTab() {
             title={<span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-fuchsia-400"/> AI Öğrenme Günlüğü</span>}
             subtitle="Sistem her saat kendini eğitir: high_spam → Bayes, clean → Bayes"
             right={
-              <button data-testid="selftrain-run" onClick={() => run.mutate()} disabled={run.isPending}
-                      className="text-xs px-3 py-1.5 rounded-md bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-500/30 disabled:opacity-40">
-                {run.isPending ? "Çalışıyor..." : "Şimdi Çalıştır"}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <a
+                  data-testid="weekly-pdf-download"
+                  href={`${process.env.REACT_APP_BACKEND_URL}/api/mailscanner/ai/quarantine-recommend/weekly-report.pdf`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Haftalık raporu PDF olarak indir"
+                  className="text-xs px-2.5 py-1.5 rounded-md bg-indigo-500/15 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/25 whitespace-nowrap">
+                  📄 PDF
+                </a>
+                <button
+                  data-testid="weekly-report-send"
+                  onClick={() => weeklyReport.mutate()}
+                  disabled={weeklyReport.isPending}
+                  title="Haftalık raporu master admin_email adresine PDF ek ile gönder"
+                  className="text-xs px-2.5 py-1.5 rounded-md bg-rose-500/15 text-rose-300 border border-rose-500/40 hover:bg-rose-500/25 disabled:opacity-40 whitespace-nowrap">
+                  ✉ {weeklyReport.isPending ? "Yollanıyor…" : "Rapor Yolla"}
+                </button>
+                <button data-testid="selftrain-run" onClick={() => run.mutate()} disabled={run.isPending}
+                        className="text-xs px-3 py-1.5 rounded-md bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-500/30 disabled:opacity-40">
+                  {run.isPending ? "Çalışıyor..." : "Şimdi Çalıştır"}
+                </button>
+              </div>
             }
           />
           <CardBody>
@@ -910,9 +941,19 @@ function LearnTab() {
                      : "Karantina · Konu Kelimesi")
                   : "Öz-eğitim · Konu";
                 const isSel = selected.has(s.id);
+                // v43.85 — Skor ısı haritası: 0=gri, 3=sarı, 6=kırmızı (soldaki 3px bar)
+                const sc = Math.max(0, Math.min(6, Number(s.score) || 0));
+                const hue = 180 - (sc / 6) * 180; // 180 (cyan/gri) → 0 (kırmızı)
+                const heatColor = sc < 0.1 ? "#475569" : `hsl(${hue.toFixed(0)}, 85%, 55%)`;
                 return (
                   <div key={s.id} data-testid={`suggestion-${s.id}`}
-                       className={`border ${borderCls} rounded p-3 ${isSel ? "ring-1 ring-indigo-400" : ""}`}>
+                       className={`border ${borderCls} rounded p-3 pl-4 relative ${isSel ? "ring-1 ring-indigo-400" : ""}`}>
+                    <div
+                      data-testid={`suggestion-heat-${s.id}`}
+                      title={`Skor: ${sc.toFixed(1)} / 6.0`}
+                      className="absolute left-0 top-1 bottom-1 w-1 rounded-l"
+                      style={{ backgroundColor: heatColor, boxShadow: sc >= 5 ? `0 0 8px ${heatColor}` : "none" }}
+                    />
                     <div className="flex justify-between items-start gap-3 mb-1">
                       <label className="flex items-start gap-2 flex-1 cursor-pointer">
                         <input type="checkbox"

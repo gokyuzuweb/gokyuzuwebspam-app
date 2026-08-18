@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Key, Plus, Trash2, ShieldAlert, Copy, Server, Calendar, Users2, AlertTriangle,
-  CheckCircle2, XCircle, Package, PackagePlus, RefreshCw, Radio, Pencil, Wrench,
+  CheckCircle2, XCircle, Package, PackagePlus, RefreshCw, Radio, Pencil, Wrench, Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
@@ -615,11 +615,13 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
                 <input
                   type="checkbox"
                   data-testid="lic-select-all"
-                  checked={rows.length > 0 && rows.every(r => selectedIds.has(r.id || r.license_key))}
+                  checked={rows.filter(r => !(r.is_master || r.protected)).length > 0
+                           && rows.filter(r => !(r.is_master || r.protected)).every(r => selectedIds.has(r.id || r.license_key))}
                   onClick={(e) => e.stopPropagation()}
                   onChange={(e) => {
-                    console.log("[GWS] select-all →", e.target.checked, "rows:", rows.length);
-                    if (e.target.checked) setSelectedIds(new Set(rows.map(r => r.id || r.license_key)));
+                    // v43.85 — Master lisansları tümünü-seç'ten hariç tut
+                    if (e.target.checked)
+                      setSelectedIds(new Set(rows.filter(r => !(r.is_master || r.protected)).map(r => r.id || r.license_key)));
                     else setSelectedIds(new Set());
                   }}
                   style={{ minWidth: 18, minHeight: 18, cursor: "pointer", accentColor: "#6366f1" }}
@@ -642,34 +644,45 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
               const status = !r.active ? "inactive" : expired ? "expired" : "active";
               const rowKey = r.id || r.license_key;
               const isSelected = selectedIds.has(rowKey);
+              const isMasterLic = Boolean(r.is_master || r.protected);   // v43.85 — master koruma
               return (
-                <tr key={rowKey} data-row data-testid={`lic-row-${rowKey}`} className={`border-t border-slate-800 ${isSelected ? "bg-indigo-500/10" : ""}`}>
+                <tr key={rowKey} data-row data-testid={`lic-row-${rowKey}`} className={`border-t border-slate-800 ${isSelected ? "bg-indigo-500/10" : ""} ${isMasterLic ? "bg-gradient-to-r from-amber-500/5 to-transparent" : ""}`}>
                   <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      data-testid={`lic-select-${rowKey}`}
-                      checked={isSelected}
-                      readOnly={false}
-                      disabled={false}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => {
-                        // Debug: F12 → Console'da görün ki tıklamanın gerçekten
-                        // event tetiklediğini onaylayalım.
-                        console.log("[GWS] toggle row:", rowKey, "checked:", e.target.checked);
-                        setSelectedIds((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(rowKey)) next.delete(rowKey);
-                          else next.add(rowKey);
-                          console.log("[GWS] selectedIds.size:", next.size);
-                          return next;
-                        });
-                      }}
-                      style={{ minWidth: 18, minHeight: 18, cursor: "pointer", accentColor: "#6366f1" }}
-                      className="w-[18px] h-[18px] cursor-pointer"
-                    />
+                    {isMasterLic ? (
+                      <span
+                        data-testid={`lic-select-${rowKey}`}
+                        title="Master lisans korumalıdır — seçilemez ve silinemez"
+                        className="w-[18px] h-[18px] inline-flex items-center justify-center text-amber-400"
+                      >🔒</span>
+                    ) : (
+                      <input
+                        type="checkbox"
+                        data-testid={`lic-select-${rowKey}`}
+                        checked={isSelected}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(rowKey)) next.delete(rowKey);
+                            else next.add(rowKey);
+                            return next;
+                          });
+                        }}
+                        style={{ minWidth: 18, minHeight: 18, cursor: "pointer", accentColor: "#6366f1" }}
+                        className="w-[18px] h-[18px] cursor-pointer"
+                      />
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
-                    <div className="text-slate-200">{r.customer_name}</div>
+                    <div className="text-slate-200 flex items-center gap-1.5">
+                      {r.customer_name}
+                      {isMasterLic && (
+                        <span data-testid={`lic-master-badge-${rowKey}`}
+                              className="text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40 font-bold">
+                          MASTER
+                        </span>
+                      )}
+                    </div>
                     <div className="text-[11px] text-slate-500 mono">{r.customer_email || "—"}</div>
                   </td>
                   <td className="px-4 py-2.5" data-testid={`lic-status-${r.id}`}>
@@ -716,11 +729,14 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
                       <Pencil className="w-3.5 h-3.5" />
                       <span className="hidden xl:inline">Düzenle</span>
                     </button>
-                    <button onClick={() => onToggle.mutate({ lic: r, active: !r.active })}
-                            title={r.active ? "Devre dışı bırak" : "Aktifleştir"}
+                    <button onClick={() => { if (!isMasterLic) onToggle.mutate({ lic: r, active: !r.active }); }}
+                            title={isMasterLic ? "Master lisans — pasif edilemez" : (r.active ? "Devre dışı bırak" : "Aktifleştir")}
+                            disabled={isMasterLic}
                             data-testid={`lic-toggle-${r.id}`}
                             className={`mr-1.5 inline-flex items-center px-1.5 py-1 rounded border transition ${
-                              r.active
+                              isMasterLic
+                                ? "border-slate-700 bg-slate-800/40 text-slate-600 cursor-not-allowed opacity-50"
+                                : r.active
                                 ? "border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/25"
                                 : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/25"
                             }`}>
@@ -733,9 +749,21 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
                       <RefreshCw className="w-3.5 h-3.5" />
                     </button>
                     <button data-testid={`lic-del-${r.id}`}
-                            onClick={() => { if (confirm(`${r.customer_name} lisansı silinsin mi?`)) onDelete.mutate(r.id); }}
-                            className="inline-flex items-center px-1.5 py-1 rounded border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/25 transition" title="Sil">
-                      <Trash2 className="w-3.5 h-3.5" />
+                            onClick={() => {
+                              if (isMasterLic) {
+                                toast.error("Master lisans korumalıdır — silinemez. Bu hesap sistem-kritik root'tur.");
+                                return;
+                              }
+                              if (window.confirm(`${r.customer_name} lisansı silinsin mi?`)) onDelete.mutate(r.id);
+                            }}
+                            disabled={isMasterLic}
+                            className={`inline-flex items-center px-1.5 py-1 rounded border transition ${
+                              isMasterLic
+                                ? "border-slate-700 bg-slate-800/40 text-slate-600 cursor-not-allowed opacity-50"
+                                : "border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/25"
+                            }`}
+                            title={isMasterLic ? "Master lisans — korumalı, silinemez" : "Sil"}>
+                      {isMasterLic ? <Lock className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
                     </button>
                   </td>
                 </tr>

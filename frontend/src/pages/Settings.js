@@ -76,7 +76,12 @@ function IdleLockConfigCard() {
 
 
 // v43.84 — Kilit ekranı teması için mini overlay preview (state'i etkilemez)
-function IdleLockThemePreview({ theme, minutes = 15, hasPin = false }) {
+// v43.85 — Zaman bazlı schedule uyarısı da göster
+function IdleLockThemePreview({ theme, minutes = 15, hasPin = false, schedule = "off" }) {
+  const hour = new Date().getHours();
+  const isNight = hour >= 22 || hour < 6;
+  const scheduleActive = schedule === "night_alarm" && isNight;
+  const effectiveTheme = scheduleActive ? "alarm" : theme;
   const styles = {
     dark: {
       wrap: "bg-slate-950 border-slate-700",
@@ -109,10 +114,22 @@ function IdleLockThemePreview({ theme, minutes = 15, hasPin = false }) {
       lbl: "🚨 Kırmızı-Alarm",
     },
   };
-  const s = styles[theme] || styles.dark;
+  const s = styles[effectiveTheme] || styles.dark;
   return (
     <div className="mt-3" data-testid="idle-lock-theme-preview">
-      <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-2">Önizleme · {s.lbl}</div>
+      <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-2">
+        Önizleme · {s.lbl}
+        {scheduleActive && (
+          <span className="text-[10px] text-amber-300 bg-amber-500/15 border border-amber-500/40 px-1.5 py-0.5 rounded normal-case tracking-normal">
+            ⏰ Gece Alarm aktif (saat {hour}:00)
+          </span>
+        )}
+        {schedule === "night_alarm" && !scheduleActive && (
+          <span className="text-[10px] text-slate-400 bg-slate-800 border border-slate-700 px-1.5 py-0.5 rounded normal-case tracking-normal">
+            ⏰ Gündüz — Alarm 22:00'de devreye girer
+          </span>
+        )}
+      </div>
       <div className={`rounded-lg border overflow-hidden ${s.wrap}`}>
         <div className={`p-4 border ${s.panel}`}>
           <div className="flex items-center gap-3 mb-3">
@@ -154,19 +171,21 @@ function IdleLockPersonalCard() {
   const [confirmPin, setConfirmPin] = useState("");
   const [currentPin, setCurrentPin] = useState("");
   const [theme, setTheme] = useState("dark");  // v43.83
+  const [themeSchedule, setThemeSchedule] = useState("off");  // v43.85
   useEffect(() => {
     if (q.data) {
       setEnabled(!!q.data.enabled);
       setMinutes(Number(q.data.minutes || 15));
       setWarnSec(Number(q.data.warn_seconds || 30));
       setTheme(q.data.theme || "dark");
+      setThemeSchedule(q.data.theme_schedule || "off");
     }
   }, [q.data]);
   const hasPin = q.data?.has_pin;
   const owner = q.data?.owner || "";
 
   const saveSettings = useMutation({
-    mutationFn: () => api.idleLockMeSet({ enabled, minutes, warn_seconds: warnSec, theme }),
+    mutationFn: () => api.idleLockMeSet({ enabled, minutes, warn_seconds: warnSec, theme, theme_schedule: themeSchedule }),
     onSuccess: () => {
       toast.success("Kişisel kilit ayarı kaydedildi");
       qc.invalidateQueries({ queryKey: ["idle-lock-me"] });
@@ -242,9 +261,18 @@ function IdleLockPersonalCard() {
             <option value="alarm">🚨 Kırmızı-Alarm</option>
           </select>
         </Row>
+        <Row title="Zaman bazlı otomatik tema" hint="Gece 22:00-06:00 arası alarm tema devreye girer (gündüz normal tema)" testid="row-me-schedule">
+          <select value={themeSchedule}
+            data-testid="idle-lock-me-schedule"
+            onChange={(e) => setThemeSchedule(e.target.value)}
+            className="w-52 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm text-slate-200">
+            <option value="off">Kapalı (sabit tema kullan)</option>
+            <option value="night_alarm">🌙→🚨 Gece Alarm (22:00-06:00)</option>
+          </select>
+        </Row>
 
         {/* v43.84 — Kilit tema önizlemesi */}
-        <IdleLockThemePreview theme={theme} minutes={minutes} hasPin={hasPin} />
+        <IdleLockThemePreview theme={theme} minutes={minutes} hasPin={hasPin} schedule={themeSchedule} />
         <button
           data-testid="idle-lock-me-save"
           onClick={() => saveSettings.mutate()}

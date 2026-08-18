@@ -47,7 +47,12 @@ export default function IdleAutoLock() {
   const minutes = Math.max(1, Math.min(1440, cfg.data?.minutes ?? 15));
   const warnSec = Math.max(0, Math.min(300, cfg.data?.warn_seconds ?? 30));
   const hasPin = Boolean(cfg.data?.has_pin);
-  const theme = cfg.data?.theme || "dark";   // v43.83 — dark|light|alarm
+  const savedTheme = cfg.data?.theme || "dark";
+  const themeSchedule = cfg.data?.theme_schedule || "off";   // v43.85
+  // v43.85 — Zaman bazlı override: gece 22:00-06:00 arasında "alarm" tema
+  const hour = new Date().getHours();
+  const isNight = hour >= 22 || hour < 6;
+  const theme = (themeSchedule === "night_alarm" && isNight) ? "alarm" : savedTheme;
   const lockMs = minutes * 60_000;
 
   const [now, setNow] = useState(Date.now());

@@ -14,6 +14,54 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 18, v43.85) — 🐛 KRİTİK BUG FIX: Master License Silme Koruması
+
+**KULLANICI ŞİKAYETİ:**
+"`MS-C02AB012652A4FE692D69676` lisanslar kısmında bu var kaldırılmıyor.."
+
+**KÖK NEDEN:**
+Master license (`MS-C02AB012652A4FE692D69676`) tüm silme yollarında (DELETE, POST /delete, bulk-action delete/suspend, toggle-active) korunmuyordu. Frontend'de sil butonuna basınca backend sessizce silebiliyor, ama muhtemelen kullanıcı silinen master ile ilgili başka bir problemi görüp "kaldırılmıyor" diye şikayet etmişti. Ayrıca master silinirse tüm heartbeat/plan matrix/tenant scope çalışmayı durduruyor.
+
+**FIX v43.85:**
+
+### Backend (server.py)
+- `licenses_delete` (DELETE + POST alternatif) → master license eşleşirse **HTTP 403** ile ret:
+  - Kontrol: `MASTER_LICENSE_KEY` env eşleşmesi VEYA `is_master: True` bayrağı
+  - Mesaj: "Master lisans korumalıdır — silinemez. Bu hesap sistem-kritik root hesabıdır"
+- `licenses_bulk_action` (delete/suspend) → seçim master içeriyorsa 403:
+  - Mesaj: "Master lisans korumalıdır — toplu işlemde silinemez/askıya alınamaz"
+- `licenses_toggle_active` → master aktifken pasif etmeye çalışırsa 403:
+  - Mesaj: "Master lisans korumalıdır — pasif duruma alınamaz"
+- `licenses_list` → response'a her master license için `is_master: True` + `protected: True` bayrakları eklenir (frontend disabled UI için)
+- `POST /licenses/{lid}/delete` `licenses_delete_post` artık `request` parameter'ını da geçirir
+
+### Frontend (Licenses.js)
+- Yeni `isMasterLic` computed field (r.is_master || r.protected)
+- Row background: amber gradient (`bg-gradient-to-r from-amber-500/5 to-transparent`)
+- Checkbox alanı: **🔒 kilit ikonu** göster, tıklanamaz (master seçilemez)
+- Müşteri adı yanında **MASTER** amber badge
+- Toggle butonu: `disabled` + gri opacity-50 (isMasterLic ise)
+- Sil butonu: `disabled` + gri opacity-50 + Lock ikon (Trash yerine), tıklanırsa toast error
+- "Tümünü seç" (`lic-select-all`) master license'ları HARIÇ tutar (filter'da)
+
+**Test edildi (tests/test_v43_85_master_protection.py — 7/7 pytest PASS %100):**
+- GET /licenses master için `is_master: True` + `protected: True` döner ✓
+- DELETE /licenses/{master_key} → 403 ✓
+- POST /licenses/{master_key}/delete (WAF-safe) → 403 ✓
+- POST /licenses/bulk-action master delete → 403 ✓
+- POST /licenses/bulk-action master suspend → 403 ✓
+- POST /licenses/{master_id}/toggle-active → 403 + DB'de hala aktif ✓
+- Normal bayi lisansı silme hala çalışıyor (regression negative) ✓
+- Regression 62/62 hala PASS (v43.78+79+80+81+82+83+84) ✓
+
+**Preview smoke:**
+- Licenses sayfası en alt satır: `GökyüzüWebSpam Master` + **MASTER** badge, sol tarafta 🔒 kilit, sil butonu Lock ikonu ile disabled, toggle disabled — tam UX ✓
+- Diğer bayi lisansları normal delete butonu ile silinebilir ✓
+
+
+
+
+
 ## Feb 17, 2026 (Session 18, v43.84) — Tema Önizleme + Arama Vurgulama + PDF Trendline Sparkline
 
 **KULLANICI İSTEKLERİ (3 Next Action Item):**

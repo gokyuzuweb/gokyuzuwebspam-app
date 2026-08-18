@@ -2265,6 +2265,8 @@ class IdleLockMeIn(BaseModel):
     warn_seconds: Optional[int] = Field(None, ge=0, le=300)
     # v43.83 — Kilit ekranı teması
     theme: Optional[Literal["dark", "light", "alarm"]] = None
+    # v43.85 — Zaman bazlı otomatik tema: "off" (sabit) | "night_alarm" (22:00-06:00 alarm)
+    theme_schedule: Optional[Literal["off", "night_alarm"]] = None
     # PIN yönetimi
     new_pin: Optional[str] = Field(None, pattern=r"^\d{4,8}$")   # 4-8 haneli sayı
     current_pin: Optional[str] = Field(None, pattern=r"^\d{4,8}$")  # PIN değişiminde mevcut PIN
@@ -2296,6 +2298,7 @@ async def settings_idle_lock_me_get(request: Request,
         "warn_seconds": int(warn_seconds),
         "has_pin": bool(user_doc.get("pin_hash")),
         "theme": user_doc.get("theme") or "dark",   # v43.83
+        "theme_schedule": user_doc.get("theme_schedule") or "off",   # v43.85
         "source": "user" if user_doc else "global",
         "owner": owner if owner != "__master__" else "master",
     }
@@ -2319,6 +2322,8 @@ async def settings_idle_lock_me_set(payload: IdleLockMeIn, request: Request,
         update["warn_seconds"] = int(payload.warn_seconds)
     if payload.theme is not None:
         update["theme"] = payload.theme   # v43.83
+    if payload.theme_schedule is not None:
+        update["theme_schedule"] = payload.theme_schedule   # v43.85
     # PIN yönetimi
     if payload.clear_pin:
         # Mevcut PIN varsa current_pin gerekli
@@ -5694,6 +5699,14 @@ async def _fire_license_alert(violation: dict) -> None:
 @api.get("/licenses")
 async def licenses_list():
     docs = await db.licenses.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # v43.85 — Master license bayrağı frontend için (delete disabled UI)
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    for d in docs:
+        if master_env and d.get("license_key") == master_env:
+            d["is_master"] = True
+            d["protected"] = True
+        elif d.get("is_master"):
+            d["protected"] = True
     return docs
 
 
@@ -5784,13 +5797,25 @@ async def licenses_update(lid: str, payload: LicenseIn):
 
 
 @api.delete("/licenses/{lid}")
-async def licenses_delete(lid: str):
+async def licenses_delete(lid: str, request: Request):
     # id ile dene, bulamazsa license_key olarak dene (eski seed'ler id-siz olabilir)
     doc = await db.licenses.find_one({"id": lid}, {"_id": 0})
     if not doc:
         doc = await db.licenses.find_one({"license_key": lid}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Lisans bulunamadı")
+    # v43.85 — Master license koruması: root hesap silinemez → sistem-kritik
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    if master_env and doc.get("license_key") == master_env:
+        raise HTTPException(
+            status_code=403,
+            detail="Master lisans korumalıdır — silinemez. Bu hesap sistem-kritik root hesabıdır (heartbeat, plan matrix, tenant scope). Silme yerine bayi lisanslarını yönetin.",
+        )
+    if doc.get("is_master"):
+        raise HTTPException(
+            status_code=403,
+            detail="Master lisans korumalıdır — silinemez (is_master=true bayrağı).",
+        )
     # Silinen lisansı revoke listesine ekle → NS auto-license bunu tekrar
     # oluşturmaz (kullanıcı manuel sildikten sonra kalıcı olarak silinsin diye)
     ip_addrs = doc.get("ip_addresses") or []
@@ -5802,6 +5827,7 @@ async def licenses_delete(lid: str):
         "customer_name": doc.get("customer_name"),
         "revoked_at": datetime.now(timezone.utc).isoformat(),
         "reason": "manual_delete",
+        "revoked_by_ip": _client_ip(request),
     }
     await db.revoked_licenses.update_one(
         {"license_key": revoke_entry["license_key"]},
@@ -5827,10 +5853,10 @@ async def licenses_update_post(lid: str, payload: LicenseIn):
 
 
 @api.post("/licenses/{lid}/delete")
-async def licenses_delete_post(lid: str):
+async def licenses_delete_post(lid: str, request: Request):
     """POST alternatifi — DELETE method'u proxy/WAF tarafından bloklu olabilir.
     Bu endpoint aynı silme işlemini POST ile yapar."""
-    return await licenses_delete(lid)
+    return await licenses_delete(lid, request)
 
 
 @api.post("/licenses/{lid}/toggle-active")
@@ -5840,9 +5866,17 @@ async def licenses_toggle_active(lid: str, request: Request, license_key: Option
     `session_expired:true` bayrağı düşer ve panel oturumu otomatik kapanır.
     Broadcast: `type=license_state_changed` WS mesajı."""
     await _require_master(request, license_key)
-    doc = await db.licenses.find_one({"id": lid}, {"_id": 0, "active": 1, "license_key": 1, "plan": 1, "customer_name": 1})
+    doc = await db.licenses.find_one({"id": lid}, {"_id": 0, "active": 1, "license_key": 1, "plan": 1, "customer_name": 1, "is_master": 1})
     if not doc:
         raise HTTPException(404, "Lisans bulunamadı")
+    # v43.85 — Master license'ı pasif etme yasağı (heartbeat kırılır)
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    if doc.get("is_master") or (master_env and doc.get("license_key") == master_env):
+        if doc.get("active"):   # aktifi pasif yapmaya çalışıyorsa engelle
+            raise HTTPException(
+                status_code=403,
+                detail="Master lisans korumalıdır — pasif duruma alınamaz.",
+            )
     new_active = not doc.get("active", True)
     await db.licenses.update_one({"id": lid}, {"$set": {"active": new_active}})
     await db.logs.insert_one(ActivityLog(
@@ -5914,6 +5948,18 @@ async def licenses_bulk_action(payload: BulkLicenseAction):
         return {"affected": 0, "action": payload.action}
     # id VEYA license_key ile eşleştir (eski kayıtlarda id yoksa)
     match = {"$or": [{"id": {"$in": payload.ids}}, {"license_key": {"$in": payload.ids}}]}
+    # v43.85 — Master license bulk delete/suspend'e karşı korumalı
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    if payload.action in ("delete", "suspend") and master_env:
+        master_doc = await db.licenses.find_one(
+            {"$and": [match, {"$or": [{"license_key": master_env}, {"is_master": True}]}]},
+            {"_id": 0, "license_key": 1},
+        )
+        if master_doc:
+            raise HTTPException(
+                status_code=403,
+                detail="Master lisans korumalıdır — toplu işlemde silinemez/askıya alınamaz. Master lisansı seçimden çıkarın.",
+            )
     if payload.action == "delete":
         # Silmeden ÖNCE revoke listesine ekle ki NS auto-license
         # kalıcı silinen lisansları tekrar oluşturmasın.
