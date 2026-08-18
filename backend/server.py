@@ -4099,13 +4099,31 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                     detail=f"Bu IP ({client_ip}) master session güvenliği nedeniyle blocklistedendi. Kaldırmak için: Ayarlar → Master → Blocked IP's."
                 )
             # v43.86 — Master IP alarm: Master key farklı IP'den geliyorsa Slack alert
+            # v43.97 — Alarm da opt-in: default KAPALI. Master keyi olan istediği IP'den
+            # girer (WHM iframe, mobil, VPN, farklı ofis). Sertleştirme isteyen kullanıcı
+            # `foreign_ip_strict_mode.enabled=True` yapar; hem alarm hem auto-kill aktif olur.
             if MASTER_IP and MASTER_IP not in xff_chain:
-                # v43.91 — Trusted IP whitelist: alarm ve auto-kill'i atla
+                # Trusted IP whitelist: kesinlikle skip
                 try:
                     trusted = await db.trusted_ips.find_one({"ip": client_ip, "active": True})
                 except Exception:
                     trusted = None
-                if not trusted:
+                # Alarm/kill'in aktif olması için EXPLICIT opt-in gerekli
+                try:
+                    strict_prot = await db.settings.find_one({"_key": "foreign_ip_strict_mode"},
+                                                              {"_id": 0}) or {}
+                except Exception:
+                    strict_prot = {}
+                # Eski setting'i geriye dönük destekle (foreign_ip_auto_kill.enabled)
+                if not strict_prot.get("enabled"):
+                    try:
+                        legacy = await db.settings.find_one({"_key": "foreign_ip_auto_kill"},
+                                                             {"_id": 0}) or {}
+                        if legacy.get("enabled"):
+                            strict_prot = {"enabled": True}
+                    except Exception:
+                        pass
+                if not trusted and strict_prot.get("enabled") is True:
                     try:
                         # Rate-limit: aynı IP için 15dk'da bir alert
                         recent = await db.master_alerts.find_one({
@@ -4136,24 +4154,18 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                                 "details": alert["details"],
                                 "at": _iso(), "severity": "critical",
                             })
-                            # v43.87 — Session Kill: bu IP'yi block listeye ekle
-                            # v43.96 — Default DISABLED — master key sahibi farklı IP'lerden girmek
-                            # istiyorsa (WHM cPanel iframe, mobil, VPN) engellemesin. Sadece alarm
-                            # düşer. Opt-in için Ayarlar > Güvenlik'ten açılabilir.
-                            prot = await db.settings.find_one({"_key": "foreign_ip_auto_kill"},
-                                                                {"_id": 0}) or {}
-                            if prot.get("enabled") is True:   # explicit True required
-                                await db.killed_master_ips.update_one(
-                                    {"ip": client_ip},
-                                    {"$set": {
-                                        "ip": client_ip,
-                                        "active": True,
-                                        "killed_at": _iso(),
-                                        "reason": "foreign_ip_master_key",
-                                        "user_agent": request.headers.get("user-agent", "")[:120],
-                                    }},
-                                    upsert=True,
-                                )
+                            # Session Kill: bu IP'yi block listeye ekle (strict mode aktifken)
+                            await db.killed_master_ips.update_one(
+                                {"ip": client_ip},
+                                {"$set": {
+                                    "ip": client_ip,
+                                    "active": True,
+                                    "killed_at": _iso(),
+                                    "reason": "foreign_ip_strict_mode",
+                                    "user_agent": request.headers.get("user-agent", "")[:120],
+                                }},
+                                upsert=True,
+                            )
                             # Slack async fire (reuse license alert pipeline)
                             try:
                                 asyncio.create_task(_fire_license_alert({
