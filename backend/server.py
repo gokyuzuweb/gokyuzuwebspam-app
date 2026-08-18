@@ -11317,6 +11317,8 @@ from routes.bounce_digest import router as _bounce_router, _leaderboard_router  
 from routes.live_diagnostic import router as _live_diag_router  # noqa: E402
 from routes.remote_admin import router as _remote_admin_router  # noqa: E402
 from routes.reseller_branding import router as _reseller_branding_router  # noqa: E402
+from routes.reports import router as _reports_router  # noqa: E402 v43.89
+app.include_router(_reports_router, prefix="/api")
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")

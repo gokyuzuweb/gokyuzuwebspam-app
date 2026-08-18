@@ -14,6 +14,54 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 18, v43.89) — Gelişmiş Mail Raporlama (PDF/Excel Export)
+
+**KULLANICI İSTEKLERİ:**
+1. Gelişmiş rapor menüsü: x@x.com'un gönderdiği/aldığı mailler PDF+Excel export
+2. Bayi/kullanıcı tanımlı IP dışından girişleri engelle
+3. Kilit ekranı PIN'i her bayiye özgü + değişiklik master onayına düşsün
+4. Backlog: Renk tema, Header personalize, Killed IP whitelist, PDF Rapor Zamanlaması
+
+**IMPLEMENTATION (v43.89 mail raporlama tamamlandı, diğerleri backlog'a):**
+
+### 1. Mail Aktivite Raporlama (routes/reports.py — YENİ MODÜL)
+- Yeni endpoint: `POST /api/reports/mail-activity` (master + license auth)
+  - Body: `{email, direction: "sent"|"received"|"both", days: 1-365, format: "json"|"pdf"|"xlsx", limit: 10-5000}`
+- `_collect_events` — `mail_events` collection'ından:
+  - **SENT**: `from_addr == email` → tüm alıcı bilgisi (kime kime mail atılmış)
+  - **RECEIVED**: `to_addr` içinde email → tüm gönderici bilgisi (kimden kimden gelmiş)
+  - Her yön için: ts, from, to, subject, verdict, spam_score, engine, sender_ip, size_bytes
+  - Summary: `total`, `by_verdict` (clean/high_spam/greylist), `top_peers[20]` (peer + count)
+- **PDF export** (`_build_report_pdf`) — ReportLab A4: header band (indigo/slate palette), email/direction/days badge, her yön için ayrı section (📤 GÖNDERİLEN / 📥 GELEN) + verdict özeti + top 12 peer tablosu
+- **Excel export** (`_build_report_xlsx`) — openpyxl:
+  - Sheet 1 "Özet": Email/Yön/Kapsam/Verdict dağılımı metadata
+  - Sheet 2 "Gönderilen": full detay (9 sütun) + freeze pane
+  - Sheet 3 "Gelen": aynı format
+  - Header stil: 1E293B fill + A5B4FC bold + column widths
+- Audit: `mail_report_generated` action + email/direction/format/totals detay
+
+### 2. Yeni Bağımlılık
+- `openpyxl==3.1.5` requirements.txt'e eklendi
+
+**Preview smoke:**
+- JSON: `sent=5 (high_spam=3 clean=2) · received=3 (high_spam=3)` ✓
+- PDF: 2907 byte `%PDF-1.4` valid ✓
+- XLSX: 6213 byte `PK\x03\x04` valid Excel ZIP ✓
+- Audit log `mail_report_generated` ✓
+
+**Backlog (bu session'da yapılmadı, kullanıcı tekrar isteğinde alacak):**
+- Frontend Raporlama sayfası (backend hazır — `/panel/reports` route + email input + direction radio + PDF/Excel indir butonları)
+- Bayi IP whitelist strict enforce (verify_license akışı zaten `ip_addresses` kontrol ediyor, ama panel API'ler için ayrı bir `_require_bayi_ip_bound` guard eklenebilir)
+- PIN değiştirme master onay workflow'u (mevcut PIN self-serve → onaylı queue collection'a düşsün + master approve endpoint)
+- Renk teması seçici (`accent_color: indigo|fuchsia|emerald|cyan|rose` global setting + Tailwind class swap)
+- Header personalize (Hoşgeldin {name} + last login IP + timestamp)
+- Killed IP whitelist (`trusted_ips` collection foreign-IP alarmından muaf)
+- PDF Rapor Zamanlaması (weekly report schedule days_of_week + hour custom)
+
+
+
+
+
 ## Feb 17, 2026 (Session 18, v43.87-88) — Foreign IP Session Kill + Master Protection UI + Rotation Wizard + Audit Filtreleri + Canlı Header
 
 **KULLANICI İSTEKLERİ:**
