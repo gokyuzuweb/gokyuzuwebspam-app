@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Palette, ShieldCheck, KeyRound, Check, X, Clock, Send } from "lucide-react";
+import { Palette, ShieldCheck, KeyRound, Check, X, Clock, Send, Trash2, Plus, ShieldAlert, Star, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -34,11 +34,12 @@ export function applyAccentColor(color) {
   } catch {}
 }
 
-// v43.90 — Görünüm ayarı kartı (her kullanıcı için)
+// v43.90/91 — Görünüm ayarı kartı (her kullanıcı için) + Live Preview
 export function UIThemeCard() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["ui-theme-me"], queryFn: () => api.uiThemeGet(), staleTime: 60_000 });
   const [selected, setSelected] = useState(() => localStorage.getItem("gws.ui.accent") || "indigo");
+  const [preview, setPreview] = useState(null);   // hover preview
 
   useEffect(() => {
     if (q.data?.accent_color) {
@@ -57,14 +58,24 @@ export function UIThemeCard() {
     onError: (e) => toast.error(e?.response?.data?.detail || "Tema kaydedilemedi"),
   });
 
+  const active = preview || selected;
+  const previewStyles = {
+    indigo:  { bg: "bg-indigo-500",  bg15: "bg-indigo-500/15",  bd: "border-indigo-500/50",  txt: "text-indigo-200",  glow: "shadow-indigo-500/40" },
+    fuchsia: { bg: "bg-fuchsia-500", bg15: "bg-fuchsia-500/15", bd: "border-fuchsia-500/50", txt: "text-fuchsia-200", glow: "shadow-fuchsia-500/40" },
+    emerald: { bg: "bg-emerald-500", bg15: "bg-emerald-500/15", bd: "border-emerald-500/50", txt: "text-emerald-200", glow: "shadow-emerald-500/40" },
+    cyan:    { bg: "bg-cyan-500",    bg15: "bg-cyan-500/15",    bd: "border-cyan-500/50",    txt: "text-cyan-200",    glow: "shadow-cyan-500/40" },
+    rose:    { bg: "bg-rose-500",    bg15: "bg-rose-500/15",    bd: "border-rose-500/50",    txt: "text-rose-200",    glow: "shadow-rose-500/40" },
+  };
+  const s = previewStyles[active] || previewStyles.indigo;
+
   return (
     <Card>
       <CardHeader
         title={<span className="flex items-center gap-2"><Palette className="w-4 h-4 text-fuchsia-400" /> Görünüm · Vurgu Rengi</span>}
-        subtitle="Panelinizin butonlar ve vurgu öğelerinde kullanılan ana rengi kişiselleştirin."
-        right={<Badge tone="fuchsia">v43.90</Badge>}
+        subtitle="Panelinizin butonlar ve vurgu öğelerinde kullanılan ana rengi kişiselleştirin. Renk üstüne gelin — canlı önizleme aşağıda."
+        right={<Badge tone="fuchsia">v43.91</Badge>}
       />
-      <CardBody>
+      <CardBody className="space-y-4">
         <div className="flex flex-wrap gap-3" data-testid="ui-theme-picker">
           {ACCENT_COLORS.map(c => {
             const isSel = selected === c.key;
@@ -73,7 +84,9 @@ export function UIThemeCard() {
                 key={c.key}
                 data-testid={`accent-color-${c.key}`}
                 type="button"
-                onClick={() => { setSelected(c.key); applyAccentColor(c.key); saveMut.mutate(c.key); }}
+                onMouseEnter={() => setPreview(c.key)}
+                onMouseLeave={() => setPreview(null)}
+                onClick={() => { setSelected(c.key); applyAccentColor(c.key); saveMut.mutate(c.key); setPreview(null); }}
                 className={`group relative flex flex-col items-center gap-2 px-4 py-3 rounded-lg border transition-all ${
                   isSel
                     ? `border-slate-600 bg-slate-800/60 shadow-lg ${c.glow}`
@@ -87,9 +100,138 @@ export function UIThemeCard() {
             );
           })}
         </div>
-        <p className="text-[11px] text-slate-500 mt-3">
-          Seçim anında uygulanır ve sunucuya kaydedilir. Panel her yenilendiğinde bu renk hatırlanır.
+
+        {/* v43.91 — Live Preview Panel */}
+        <div data-testid="theme-preview-panel"
+             className={`rounded-lg border ${s.bd} bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-4 space-y-3 shadow-lg ${s.glow}`}>
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] font-bold text-slate-400 tracking-wider uppercase">
+              Canlı Önizleme {preview && preview !== selected ? "· (henüz kaydedilmedi)" : ""}
+            </div>
+            <span className={`text-[10px] mono font-bold px-2 py-0.5 rounded ${s.bg15} ${s.txt} border ${s.bd}`}>
+              {active.toUpperCase()}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Primary button */}
+            <button type="button" tabIndex={-1}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold text-white ${s.bg} hover:opacity-90 shadow-md ${s.glow}`}>
+              <Sparkles className="w-4 h-4" /> Kaydet
+            </button>
+            {/* Secondary button */}
+            <button type="button" tabIndex={-1}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold border ${s.bd} ${s.bg15} ${s.txt} hover:opacity-90`}>
+              <Star className="w-4 h-4" /> İkincil
+            </button>
+            {/* Badge */}
+            <span className={`inline-flex items-center gap-1 text-[11px] mono font-bold px-2 py-1 rounded border ${s.bd} ${s.bg15} ${s.txt}`}>
+              <Check className="w-3 h-3" /> Rozet
+            </span>
+            {/* Chip / tab active */}
+            <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-semibold ${s.bd} ${s.bg15} ${s.txt} shadow-md`}>
+              Aktif Sekme
+            </span>
+          </div>
+          {/* Text link + progress */}
+          <div className="flex items-center gap-4 text-xs">
+            <a className={`${s.txt} hover:underline font-semibold cursor-default`}>Bağlantı örneği</a>
+            <div className="flex-1 h-2 rounded-full bg-slate-800 overflow-hidden">
+              <div className={`h-full ${s.bg}`} style={{ width: "64%" }}></div>
+            </div>
+            <span className={`mono text-[10px] ${s.txt}`}>64%</span>
+          </div>
+        </div>
+
+        <p className="text-[11px] text-slate-500">
+          Renk üzerine gelince canlı önizleme değişir. Tıklayarak kalıcı seçim yapın; sunucuya kaydedilir ve panel her yenilendiğinde bu renk hatırlanır.
         </p>
+      </CardBody>
+    </Card>
+  );
+}
+
+// v43.91 — Trusted IPs (foreign-IP alarm muafiyeti)
+export function TrustedIPsCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["trusted-ips"], queryFn: () => api.trustedIpsList(), staleTime: 30_000 });
+  const items = q.data?.items || [];
+  const [ip, setIp] = useState("");
+  const [label, setLabel] = useState("");
+
+  const addMut = useMutation({
+    mutationFn: () => api.trustedIpsAdd(ip.trim(), label.trim()),
+    onSuccess: () => {
+      setIp(""); setLabel("");
+      qc.invalidateQueries({ queryKey: ["trusted-ips"] });
+      toast.success("Güvenilir IP eklendi");
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Eklenemedi"),
+  });
+  const delMut = useMutation({
+    mutationFn: (i) => api.trustedIpsRemove(i),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["trusted-ips"] }); toast.success("IP kaldırıldı"); },
+  });
+
+  const validIp = ip.trim().length >= 3;
+
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-cyan-400" /> Güvenilir IP'ler (Foreign-IP Muafiyet)</span>}
+        subtitle="Buradaki IP'ler master key farklı IP'den kullanılsa bile alarm tetiklemez ve session kill'e düşmez."
+        right={<Badge tone="cyan">{items.length} IP</Badge>}
+      />
+      <CardBody className="space-y-3">
+        <div className="flex flex-col md:flex-row gap-2">
+          <input
+            data-testid="trusted-ip-input"
+            placeholder="Örn: 89.19.15.58"
+            value={ip}
+            onChange={(e) => setIp(e.target.value)}
+            className="flex-1 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono focus:border-cyan-500/50 focus:outline-none"
+          />
+          <input
+            data-testid="trusted-ip-label"
+            placeholder="Etiket (Ofis, VPN, Ev...)"
+            value={label}
+            onChange={(e) => setLabel(e.target.value.slice(0, 100))}
+            className="flex-1 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm focus:border-cyan-500/50 focus:outline-none"
+          />
+          <button
+            data-testid="trusted-ip-add"
+            type="button"
+            onClick={() => addMut.mutate()}
+            disabled={!validIp || addMut.isPending}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-cyan-500/40 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25 text-sm font-semibold disabled:opacity-50"
+          >
+            <Plus className="w-4 h-4" /> Ekle
+          </button>
+        </div>
+        {items.length === 0 ? (
+          <div className="text-xs text-slate-500 italic py-3 text-center">Henüz güvenilir IP yok.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {items.map(i => (
+              <div key={i.ip} data-testid={`trusted-ip-row-${i.ip}`}
+                className="flex items-center justify-between border border-slate-800 bg-slate-950 rounded-md px-3 py-2 hover:border-cyan-500/30">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold mono text-slate-100">{i.ip}</div>
+                  <div className="text-[10px] text-slate-500">
+                    {i.label && <>{i.label} · </>}Eklenme: {(i.added_at || "").slice(0, 19)}
+                  </div>
+                </div>
+                <button
+                  data-testid={`trusted-ip-del-${i.ip}`}
+                  type="button"
+                  onClick={() => { if (window.confirm(`${i.ip} güvenilir listeden kaldırılsın mı?`)) delMut.mutate(i.ip); }}
+                  className="p-1.5 rounded border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </CardBody>
     </Card>
   );

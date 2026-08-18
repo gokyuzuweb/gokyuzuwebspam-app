@@ -120,6 +120,25 @@ async def delete_schedule(sched_id: str, request: Request):
     return {"ok": True, "deleted": sched_id}
 
 
+@router.post("/{sched_id}/toggle")
+async def toggle_schedule(sched_id: str, request: Request):
+    """v43.91 — Pause/resume: active alanını flip'ler. Inactive olan loop tarafından atlanır."""
+    key = _requester_key(request)
+    if not key:
+        raise HTTPException(401, "Lisans anahtarı gerekli")
+    doc = await db.mail_report_schedules.find_one({"id": sched_id, "owner_license_key": key}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Zamanlama bulunamadı")
+    new_state = not bool(doc.get("active", True))
+    updates = {"active": new_state, "updated_at": _iso()}
+    if new_state:
+        # Yeniden aktifleştirirken next_run_at'i güncelle (geçmiş zaman ise ileri al)
+        nr = _next_run(doc.get("day_of_week"), doc.get("hour", 8), doc.get("minute", 0))
+        updates["next_run_at"] = nr.isoformat()
+    await db.mail_report_schedules.update_one({"id": sched_id}, {"$set": updates})
+    return {"ok": True, "id": sched_id, "active": new_state}
+
+
 @router.post("/{sched_id}/run-now")
 async def run_now(sched_id: str, request: Request):
     """Test için: zamanlamayı hemen çalıştır (email göndermeden dry-run)."""

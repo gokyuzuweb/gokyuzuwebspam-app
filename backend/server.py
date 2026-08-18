@@ -2312,6 +2312,57 @@ async def bayi_ip_enforce_put(payload: BayiIPEnforceIn, request: Request, licens
     return {"ok": True, "enabled": payload.enabled}
 
 
+# -- v43.91 Trusted IPs (foreign-IP alarm muafiyeti) --------------------------
+class TrustedIPIn(BaseModel):
+    ip: str = Field(..., min_length=3, max_length=64)
+    label: str = Field("", max_length=100)
+
+
+@api.get("/settings/trusted-ips")
+async def trusted_ips_list(request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    rows = await db.trusted_ips.find({"active": True}, {"_id": 0}).sort("added_at", -1).to_list(200)
+    return {"items": rows, "count": len(rows)}
+
+
+@api.post("/settings/trusted-ips")
+async def trusted_ips_add(payload: TrustedIPIn, request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    ip = payload.ip.strip()
+    if not ip:
+        raise HTTPException(400, "IP adresi boş olamaz")
+    doc = {
+        "id": str(uuid.uuid4()), "ip": ip, "label": (payload.label or "").strip()[:100],
+        "active": True, "added_at": _iso(), "added_by_ip": _client_ip(request),
+    }
+    await db.trusted_ips.update_one({"ip": ip}, {"$set": doc}, upsert=True)
+    # Bu IP kill listesinde varsa unblock et
+    try:
+        await db.killed_master_ips.update_one({"ip": ip}, {"$set": {"active": False, "unblocked_reason": "trusted_ip_added"}})
+    except Exception:
+        pass
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()), "action": "trusted_ip_added",
+        "actor_ip": _client_ip(request), "details": {"ip": ip, "label": doc["label"]},
+        "at": _iso(), "severity": "info",
+    })
+    return {"ok": True, "ip": ip}
+
+
+@api.delete("/settings/trusted-ips/{ip:path}")
+async def trusted_ips_remove(ip: str, request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    r = await db.trusted_ips.update_one({"ip": ip}, {"$set": {"active": False, "removed_at": _iso()}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "IP bulunamadı")
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()), "action": "trusted_ip_removed",
+        "actor_ip": _client_ip(request), "details": {"ip": ip},
+        "at": _iso(), "severity": "info",
+    })
+    return {"ok": True, "removed": ip}
+
+
 
 class IdleLockMeIn(BaseModel):
     enabled: Optional[bool] = None
@@ -3949,65 +4000,70 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                 )
             # v43.86 — Master IP alarm: Master key farklı IP'den geliyorsa Slack alert
             if MASTER_IP and MASTER_IP not in xff_chain:
+                # v43.91 — Trusted IP whitelist: alarm ve auto-kill'i atla
                 try:
-                    # Rate-limit: aynı IP için 15dk'da bir alert
-                    recent = await db.master_alerts.find_one({
-                        "type": "master_key_from_foreign_ip",
-                        "details.client_ip": client_ip,
-                        "created_at": {"$gte": (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()},
-                    })
-                    if not recent:
-                        alert = {
-                            "id": str(uuid.uuid4()),
-                            "type": "master_key_from_foreign_ip",
-                            "severity": "critical",
-                            "message": f"🚨 Master key farklı IP'den kullanıldı: {client_ip} (beklenen: {MASTER_IP})",
-                            "details": {
-                                "client_ip": client_ip, "expected_ip": MASTER_IP,
-                                "path": request.url.path,
-                                "user_agent": request.headers.get("user-agent", "")[:120],
-                                "xff": xff_chain,
-                            },
-                            "seen": False, "read": False,
-                            "created_at": _iso(),
-                        }
-                        await db.master_alerts.insert_one(alert)
-                        await db.audit_logs.insert_one({
-                            "id": str(uuid.uuid4()),
-                            "action": "master_key_foreign_ip",
-                            "actor_ip": client_ip,
-                            "details": alert["details"],
-                            "at": _iso(), "severity": "critical",
-                        })
-                        # v43.87 — Session Kill: bu IP'yi block listeye ekle → sonraki
-                        # istekleri hemen reddet (sıkı güvenlik)
-                        prot = await db.settings.find_one({"_key": "foreign_ip_auto_kill"},
-                                                            {"_id": 0}) or {}
-                        if prot.get("enabled", True):   # default açık — user kapatabilir
-                            await db.killed_master_ips.update_one(
-                                {"ip": client_ip},
-                                {"$set": {
-                                    "ip": client_ip,
-                                    "active": True,
-                                    "killed_at": _iso(),
-                                    "reason": "foreign_ip_master_key",
-                                    "user_agent": request.headers.get("user-agent", "")[:120],
-                                }},
-                                upsert=True,
-                            )
-                        # Slack async fire (reuse license alert pipeline)
-                        try:
-                            asyncio.create_task(_fire_license_alert({
-                                "hostname": "master-panel",
-                                "ip": client_ip,
-                                "license_key": license_key,
-                                "reason": "master_key_foreign_ip",
-                                "version": alert["message"],
-                            }))
-                        except Exception:
-                            pass
+                    trusted = await db.trusted_ips.find_one({"ip": client_ip, "active": True})
                 except Exception:
-                    pass
+                    trusted = None
+                if not trusted:
+                    try:
+                        # Rate-limit: aynı IP için 15dk'da bir alert
+                        recent = await db.master_alerts.find_one({
+                            "type": "master_key_from_foreign_ip",
+                            "details.client_ip": client_ip,
+                            "created_at": {"$gte": (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()},
+                        })
+                        if not recent:
+                            alert = {
+                                "id": str(uuid.uuid4()),
+                                "type": "master_key_from_foreign_ip",
+                                "severity": "critical",
+                                "message": f"🚨 Master key farklı IP'den kullanıldı: {client_ip} (beklenen: {MASTER_IP})",
+                                "details": {
+                                    "client_ip": client_ip, "expected_ip": MASTER_IP,
+                                    "path": request.url.path,
+                                    "user_agent": request.headers.get("user-agent", "")[:120],
+                                    "xff": xff_chain,
+                                },
+                                "seen": False, "read": False,
+                                "created_at": _iso(),
+                            }
+                            await db.master_alerts.insert_one(alert)
+                            await db.audit_logs.insert_one({
+                                "id": str(uuid.uuid4()),
+                                "action": "master_key_foreign_ip",
+                                "actor_ip": client_ip,
+                                "details": alert["details"],
+                                "at": _iso(), "severity": "critical",
+                            })
+                            # v43.87 — Session Kill: bu IP'yi block listeye ekle
+                            prot = await db.settings.find_one({"_key": "foreign_ip_auto_kill"},
+                                                                {"_id": 0}) or {}
+                            if prot.get("enabled", True):
+                                await db.killed_master_ips.update_one(
+                                    {"ip": client_ip},
+                                    {"$set": {
+                                        "ip": client_ip,
+                                        "active": True,
+                                        "killed_at": _iso(),
+                                        "reason": "foreign_ip_master_key",
+                                        "user_agent": request.headers.get("user-agent", "")[:120],
+                                    }},
+                                    upsert=True,
+                                )
+                            # Slack async fire (reuse license alert pipeline)
+                            try:
+                                asyncio.create_task(_fire_license_alert({
+                                    "hostname": "master-panel",
+                                    "ip": client_ip,
+                                    "license_key": license_key,
+                                    "reason": "master_key_foreign_ip",
+                                    "version": alert["message"],
+                                }))
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
         else:
             lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0})
             if lic and (

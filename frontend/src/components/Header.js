@@ -2,9 +2,41 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Clock, RefreshCw, Search, Sparkles, KeyRound, ShieldCheck, DownloadCloud, User2 } from "lucide-react";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import ThreatAlertBell from "@/components/ThreatAlertBell";
 import SlashCommandBar from "@/components/SlashCommandBar";
 import { ImpersonatePicker } from "@/components/Impersonate";
+
+// v43.91 — Pending PIN Approval floating badge (master-only)
+function PinPendingBadge() {
+  const nav = useNavigate();
+  const who = useQuery({ queryKey: ["whoami-header"], queryFn: () => api.whoami(), staleTime: 60_000 });
+  const isMaster = who.data?.is_master;
+  const q = useQuery({
+    queryKey: ["pin-approvals-pending"],
+    queryFn: () => api.pinApprovalPending(),
+    refetchInterval: 20_000,
+    enabled: !!isMaster,
+  });
+  const count = q.data?.count || 0;
+  if (!isMaster || count === 0) return null;
+  const go = () => {
+    try { localStorage.setItem("gws.settings.tab", "lock"); } catch {}
+    nav("/panel/settings");
+  };
+  return (
+    <button
+      data-testid="header-pin-pending-badge"
+      type="button"
+      onClick={go}
+      title={`${count} PIN değişiklik talebi onay bekliyor — tıklayın`}
+      className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono font-bold tracking-wide px-2.5 py-1 rounded-md border border-amber-500/60 bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 transition-all shrink-0 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.35)]"
+    >
+      <KeyRound className="w-3 h-3" />
+      <span>{count} PIN Bekliyor</span>
+    </button>
+  );
+}
 
 /**
  * v43.21 Header — modern glass with global Spotlight-style search input
@@ -231,6 +263,7 @@ function HeaderMain({ title }) {
       <GlobalSearch />
       <div className="flex items-center gap-3 shrink-0">
         <WelcomeChip />
+        <PinPendingBadge />
         <MasterModeToggle />
         <MasterUpdatePush />
         <div className="hidden xl:flex items-center gap-2 text-xs text-slate-400 mono">

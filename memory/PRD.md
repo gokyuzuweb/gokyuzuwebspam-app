@@ -14,6 +14,69 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 18, 2026 (Session 19, v43.92) — Trusted IPs + PIN Pending Badge + Theme Preview + Schedule Pause + Reports Tabs
+
+**KULLANICI İSTEĞİ:**
+1. Uzun modüllerde tab layout — Reports.js'i tab yap (Settings gibi)
+2. Killed IP Whitelist — trusted office/VPN IP'leri foreign-IP alarmından muaf
+3. Pending Onay Rozeti — Master paneline PIN talep badge'i (headerda floating)
+4. Tema Önizleme — Renk picker'ında live buton/badge preview
+5. Zamanlama Duraklat — Schedule'lara pause/resume toggle
+
+**IMPLEMENTATION:**
+
+### 1. Reports.js Tab Layout (3 sekme)
+- Sticky tab bar altında sayfa: **Mail Aktivite** (fuchsia, Search) / **Zamanlanmış** (cyan, CalendarClock) / **Haftalık PDF** (indigo, FileText)
+- Tab seçimi `localStorage.gws.reports.tab` ile persist
+- Her tab'da özel sağ sidebar (rehber kartları)
+- Karışıklık çözüldü — 4 uzun kart artık 3 kategoride
+
+### 2. Trusted IPs (server.py + V4390Cards.js)
+- Yeni collection: `trusted_ips` {ip, label, active, added_at, added_by_ip}
+- Endpoint'ler (master-only):
+  - `GET /api/settings/trusted-ips` — active listesi
+  - `POST /api/settings/trusted-ips` {ip, label} — upsert + `killed_master_ips`'te varsa unblock
+  - `DELETE /api/settings/trusted-ips/{ip}` — soft-delete (active=false)
+- `_is_master` foreign-IP alarm bloğuna trusted lookup eklendi — `trusted_ips.active=true` bulunursa alarm/audit-log/session-kill/Slack pipeline ATLANIR
+- Audit: `trusted_ip_added|trusted_ip_removed`
+- Frontend `TrustedIPsCard` — Settings > Güvenlik tab'ına eklendi (IP + label input + Ekle + liste + trash)
+
+### 3. Pending PIN Approval Badge (Header.js)
+- Yeni `PinPendingBadge` component (master-only)
+- 20sn polling `/api/pin-approvals/pending` → count > 0 iken **animate-pulse amber chip** göster: "🔑 N PIN Bekliyor"
+- Click → `localStorage.gws.settings.tab = "lock"` + navigate to `/panel/settings`
+- Header layout: WelcomeChip → PinPendingBadge → MasterModeToggle
+
+### 4. UI Theme Live Preview (V4390Cards.js::UIThemeCard)
+- Yeni state `preview` — hover'da geçici seçim, mouseleave'de reset
+- Yeni Preview Panel:
+  - Primary "Kaydet" butonu (dolu renk + glow)
+  - "İkincil" outlined button
+  - "Rozet" badge + "Aktif Sekme" chip
+  - Bağlantı text link + progress bar 64%
+  - Header'da: "CANLI ÖNİZLEME · (henüz kaydedilmedi)" indicator preview !== selected iken
+- Tıklama = kaydet + apply (klasik davranış korundu, preview üstüne yazar)
+
+### 5. Schedule Pause/Resume (routes/report_schedules.py + Reports.js)
+- Yeni endpoint `POST /api/report-schedules/{id}/toggle` — active alanını flip'ler
+- Resume iken `next_run_at` yeniden hesaplanır (`_next_run`)
+- Background loop halihazırda `active: True` filter ile scan ediyordu — inactive'ler otomatik skip
+- Frontend row'a Pause/Play buton eklendi (amber/emerald tone)
+- Duraklatılmış satırlar `opacity-60` + "DURAKLATILDI" badge
+- API method: `api.reportScheduleToggle(id)`
+
+**Test edildi:**
+- Backend curl smoke: trusted IPs add/list/remove ✓, schedule toggle pause→resume→next_run recompute ✓
+- pytest v43_90 (6) + v43_91 (9) + v43_92 (4) = **19/19 PASS** ✓
+- Frontend screenshots:
+  - Header: "1 PIN Bekliyor" amber pulsing badge ✓
+  - Reports: 3-tab layout + Zamanlanmış sekmesinde schedule row (pause/dry-run/delete buttons) ✓
+  - Settings > Görünüm: Fuşya hover → tam preview panel (buton/rozet/chip/progress) ✓
+  - Settings > Güvenlik: Bayi IP Enforce + Trusted IPs (1.2.3.4 Office) + Master Protection + Rotation ✓
+
+**VERSION**: v43.91 → v43.92 — canlıya hazır sürüm
+
+
 ## Feb 18, 2026 (Session 19, v43.91) — 4 Feature Batch: IP Enforce + PIN Approval + UI Theme + Report Schedules + Settings Tabs
 
 **KULLANICI İSTEĞİ (4 backlog item + UX rework):**

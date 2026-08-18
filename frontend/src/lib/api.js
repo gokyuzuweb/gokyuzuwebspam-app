@@ -226,6 +226,7 @@ export const api = {
   reportScheduleCreate: (payload) => client.post("/report-schedules/", payload).then(r => r.data),
   reportScheduleDelete: (id) => client.delete(`/report-schedules/${id}`).then(r => r.data),
   reportScheduleRunNow: (id) => client.post(`/report-schedules/${id}/run-now`).then(r => r.data),
+  reportScheduleToggle: (id) => client.post(`/report-schedules/${id}/toggle`).then(r => r.data),
 
   // v43.90 — UI Theme (accent color)
   uiThemeGet: () => client.get("/settings/ui-theme/me").then(r => r.data),
@@ -234,6 +235,11 @@ export const api = {
   // v43.90 — Bayi IP Whitelist Enforce (master)
   bayiIpEnforceGet: () => client.get("/settings/bayi-ip-enforce").then(r => r.data),
   bayiIpEnforcePut: (enabled) => client.put("/settings/bayi-ip-enforce", { enabled }).then(r => r.data),
+
+  // v43.91 — Trusted IPs (foreign-IP alarm muafiyeti)
+  trustedIpsList: () => client.get("/settings/trusted-ips").then(r => r.data),
+  trustedIpsAdd: (ip, label) => client.post("/settings/trusted-ips", { ip, label }).then(r => r.data),
+  trustedIpsRemove: (ip) => client.delete(`/settings/trusted-ips/${encodeURIComponent(ip)}`).then(r => r.data),
 
   // v43.90 — PIN Approval Workflow
   pinApprovalRequest: (new_pin, reason) => client.post("/pin-approvals/request", { new_pin, reason }).then(r => r.data),
