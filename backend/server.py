@@ -3886,6 +3886,51 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
     if license_key:
         if MASTER_LICENSE_KEY and license_key == MASTER_LICENSE_KEY:
             key_match = True
+            # v43.86 — Master IP alarm: Master key farklı IP'den geliyorsa Slack alert
+            if MASTER_IP and MASTER_IP not in xff_chain:
+                try:
+                    # Rate-limit: aynı IP için 15dk'da bir alert
+                    recent = await db.master_alerts.find_one({
+                        "type": "master_key_from_foreign_ip",
+                        "details.client_ip": client_ip,
+                        "created_at": {"$gte": (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()},
+                    })
+                    if not recent:
+                        alert = {
+                            "id": str(uuid.uuid4()),
+                            "type": "master_key_from_foreign_ip",
+                            "severity": "critical",
+                            "message": f"🚨 Master key farklı IP'den kullanıldı: {client_ip} (beklenen: {MASTER_IP})",
+                            "details": {
+                                "client_ip": client_ip, "expected_ip": MASTER_IP,
+                                "path": request.url.path,
+                                "user_agent": request.headers.get("user-agent", "")[:120],
+                                "xff": xff_chain,
+                            },
+                            "seen": False, "read": False,
+                            "created_at": _iso(),
+                        }
+                        await db.master_alerts.insert_one(alert)
+                        await db.audit_logs.insert_one({
+                            "id": str(uuid.uuid4()),
+                            "action": "master_key_foreign_ip",
+                            "actor_ip": client_ip,
+                            "details": alert["details"],
+                            "at": _iso(), "severity": "critical",
+                        })
+                        # Slack async fire (reuse license alert pipeline)
+                        try:
+                            asyncio.create_task(_fire_license_alert({
+                                "hostname": "master-panel",
+                                "ip": client_ip,
+                                "license_key": license_key,
+                                "reason": "master_key_foreign_ip",
+                                "version": alert["message"],
+                            }))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
         else:
             lic = await db.licenses.find_one({"license_key": license_key}, {"_id": 0})
             if lic and (
@@ -5806,16 +5851,43 @@ async def licenses_delete(lid: str, request: Request):
         raise HTTPException(404, "Lisans bulunamadı")
     # v43.85 — Master license koruması: root hesap silinemez → sistem-kritik
     master_env = os.environ.get("MASTER_LICENSE_KEY", "")
-    if master_env and doc.get("license_key") == master_env:
-        raise HTTPException(
-            status_code=403,
-            detail="Master lisans korumalıdır — silinemez. Bu hesap sistem-kritik root hesabıdır (heartbeat, plan matrix, tenant scope). Silme yerine bayi lisanslarını yönetin.",
-        )
-    if doc.get("is_master"):
-        raise HTTPException(
-            status_code=403,
-            detail="Master lisans korumalıdır — silinemez (is_master=true bayrağı).",
-        )
+    is_master_lic = (master_env and doc.get("license_key") == master_env) or bool(doc.get("is_master"))
+    if is_master_lic:
+        # v43.86 — Silme koruması geçici kaldırılmış mı kontrol et (advanced flag)
+        prot = await db.settings.find_one({"_key": "master_protection"}, {"_id": 0}) or {}
+        # Otomatik expire — 5dk sonra tekrar aktif
+        disabled_until = prot.get("delete_protection_disabled_until")
+        active_bypass = False
+        if disabled_until:
+            try:
+                du = datetime.fromisoformat(disabled_until.replace("Z", "+00:00"))
+                active_bypass = du > datetime.now(timezone.utc)
+            except Exception:
+                pass
+        # Bypass yoksa 403
+        if not active_bypass:
+            # v43.86 — Lisans aksiyon logu (denenen ve reddedilen master delete)
+            await db.audit_logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "action": "master_license_delete_blocked",
+                "actor_ip": _client_ip(request),
+                "details": {"license_key": doc.get("license_key")},
+                "at": _iso(),
+                "severity": "warning",
+            })
+            raise HTTPException(
+                status_code=403,
+                detail="Master lisans korumalıdır — silinemez. Bu hesap sistem-kritik root hesabıdır (heartbeat, plan matrix, tenant scope). Geçici kaldırmak için Ayarlar → Master > Silme Koruması'nı devre dışı bırakın (5dk).",
+            )
+        # Bypass aktif — audit log ile devam et
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "master_license_delete_bypassed",
+            "actor_ip": _client_ip(request),
+            "details": {"license_key": doc.get("license_key")},
+            "at": _iso(),
+            "severity": "critical",
+        })
     # Silinen lisansı revoke listesine ekle → NS auto-license bunu tekrar
     # oluşturmaz (kullanıcı manuel sildikten sonra kalıcı olarak silinsin diye)
     ip_addrs = doc.get("ip_addresses") or []
@@ -5842,7 +5914,213 @@ async def licenses_delete(lid: str, request: Request):
             upsert=True,
         )
     r = await db.licenses.delete_one({"id": doc["id"]})
+    # v43.86 — Aksiyon logu (successful delete)
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": "license_deleted",
+        "actor_ip": _client_ip(request),
+        "details": {"license_key": doc.get("license_key"),
+                     "customer_name": doc.get("customer_name"),
+                     "plan": doc.get("plan"),
+                     "was_master": bool(is_master_lic)},
+        "at": _iso(),
+        "severity": "critical" if is_master_lic else "info",
+    })
     return {"deleted": True, "revoked": True, "license_key": doc.get("license_key")}
+
+
+# v43.86 — Silme Koruması Yönetimi (advanced user için geçici bypass)
+class MasterProtectionIn(BaseModel):
+    disable_minutes: int = Field(5, ge=1, le=60)   # kaç dakika bypass aktif kalacak
+    confirm_1: bool = False
+    confirm_2: bool = False
+    reason: Optional[str] = ""
+
+
+@api.get("/settings/master-protection")
+async def master_protection_get(request: Request):
+    """Silme koruması durumu — kalan bypass süresi ve son değişim."""
+    await _require_master(request, None)
+    doc = await db.settings.find_one({"_key": "master_protection"}, {"_id": 0}) or {}
+    now = datetime.now(timezone.utc)
+    active_bypass = False
+    remaining_seconds = 0
+    du = doc.get("delete_protection_disabled_until")
+    if du:
+        try:
+            end = datetime.fromisoformat(du.replace("Z", "+00:00"))
+            if end > now:
+                active_bypass = True
+                remaining_seconds = int((end - now).total_seconds())
+        except Exception:
+            pass
+    return {
+        "protection_active": not active_bypass,
+        "bypass_active": active_bypass,
+        "bypass_remaining_seconds": remaining_seconds,
+        "last_disabled_by_ip": doc.get("last_disabled_by_ip"),
+        "last_disabled_at": doc.get("last_disabled_at"),
+        "last_reason": doc.get("last_reason"),
+    }
+
+
+@api.post("/settings/master-protection/disable")
+async def master_protection_disable(payload: MasterProtectionIn, request: Request):
+    """Silme korumasını GEÇİCİ olarak kaldır (advanced). 2-adım onay zorunlu."""
+    await _require_master(request, None)
+    if not (payload.confirm_1 and payload.confirm_2):
+        raise HTTPException(400, "İki onay adımı da gerekli (confirm_1 + confirm_2)")
+    until = (datetime.now(timezone.utc) + timedelta(minutes=payload.disable_minutes)).isoformat()
+    await db.settings.update_one(
+        {"_key": "master_protection"},
+        {"$set": {
+            "_key": "master_protection",
+            "delete_protection_disabled_until": until,
+            "last_disabled_by_ip": _client_ip(request),
+            "last_disabled_at": _iso(),
+            "last_reason": (payload.reason or "").strip()[:200],
+        }},
+        upsert=True,
+    )
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": "master_protection_disabled",
+        "actor_ip": _client_ip(request),
+        "details": {"minutes": payload.disable_minutes, "reason": payload.reason},
+        "at": _iso(),
+        "severity": "critical",
+    })
+    return {"ok": True, "bypass_until": until, "minutes": payload.disable_minutes}
+
+
+@api.post("/settings/master-protection/enable")
+async def master_protection_enable(request: Request):
+    """Silme korumasını hemen tekrar etkinleştir."""
+    await _require_master(request, None)
+    await db.settings.update_one(
+        {"_key": "master_protection"},
+        {"$unset": {"delete_protection_disabled_until": ""},
+         "$set": {"last_enabled_by_ip": _client_ip(request), "last_enabled_at": _iso()}},
+        upsert=True,
+    )
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": "master_protection_enabled",
+        "actor_ip": _client_ip(request),
+        "at": _iso(), "severity": "info",
+    })
+    return {"ok": True}
+
+
+# v43.86 — Master Key Rotation Wizard
+class MasterRotateStep1In(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=200)
+
+
+@api.post("/settings/master-rotate/generate")
+async def master_rotate_generate(payload: MasterRotateStep1In, request: Request):
+    """Adım 1: Yeni master key adayı üret (henüz DB'ye yazılmaz)."""
+    await _require_master(request, None)
+    new_key = "MS-" + uuid.uuid4().hex.upper()[:24]
+    # Adayı geçici sakla (10dk TTL — advanced flag)
+    await db.settings.update_one(
+        {"_key": "master_rotate_candidate"},
+        {"$set": {
+            "_key": "master_rotate_candidate",
+            "candidate_key": new_key,
+            "generated_at": _iso(),
+            "generated_by_ip": _client_ip(request),
+            "reason": payload.reason,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        }},
+        upsert=True,
+    )
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": "master_rotate_candidate_generated",
+        "actor_ip": _client_ip(request),
+        "details": {"candidate_preview": new_key[:16] + "…", "reason": payload.reason},
+        "at": _iso(), "severity": "warning",
+    })
+    return {
+        "ok": True,
+        "new_candidate_key": new_key,
+        "next_steps": [
+            "1. Bu yeni key'i güvenli bir yere kopyalayın (bir kez gösterilir)",
+            "2. Sunucunuzda /app/backend/.env → MASTER_LICENSE_KEY değerini bu yeni key ile değiştirin",
+            "3. Backend'i yeniden başlatın: sudo supervisorctl restart backend",
+            "4. Bu panelde 'Rotation'ı Tamamla' butonuna basın (eski key revoke edilecek)",
+        ],
+        "expires_in_minutes": 10,
+    }
+
+
+@api.post("/settings/master-rotate/complete")
+async def master_rotate_complete(request: Request):
+    """Adım 2: Env güncellenmiş olduğunu doğrula ve eski key'i revoke et."""
+    await _require_master(request, None)
+    cand = await db.settings.find_one({"_key": "master_rotate_candidate"}, {"_id": 0}) or {}
+    new_key = cand.get("candidate_key")
+    if not new_key:
+        raise HTTPException(404, "Rotation adayı yok — önce 'generate' adımını çalıştırın")
+    # Env değişmiş mi?
+    current_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    if current_env != new_key:
+        raise HTTPException(
+            status_code=412,
+            detail=f"MASTER_LICENSE_KEY env değişkeni yeni key ile eşleşmiyor. Mevcut env: {current_env[:16]}… — Beklenen: {new_key[:16]}… (Backend restart edildi mi?)"
+        )
+    # Eski key'i revoke et + yeni key'i licenses'a is_master ile yaz
+    old_key = None
+    # (Not: current_env zaten new_key olduğu için "eski" ne? Bu wizard adım-adım kullanılırken
+    #  önceki master key request header'ından geldiği için önce header'a bakalım)
+    hdr_key = (request.headers.get("X-Old-Master-Key") or "").strip()
+    if hdr_key and hdr_key.startswith("MS-") and hdr_key != new_key:
+        old_key = hdr_key
+        await db.revoked_licenses.update_one(
+            {"license_key": old_key},
+            {"$set": {"license_key": old_key, "revoked_at": _iso(),
+                       "reason": "master_rotation", "revoked_by_ip": _client_ip(request)}},
+            upsert=True,
+        )
+        # is_master bayrağını eskiden kaldır
+        await db.licenses.update_one({"license_key": old_key},
+                                       {"$unset": {"is_master": ""},
+                                        "$set": {"active": False,
+                                                  "rotated_out_at": _iso()}})
+    # Yeni key'e is_master atanmış master license var mı kontrol/oluştur
+    await db.licenses.update_one(
+        {"license_key": new_key},
+        {"$set": {"license_key": new_key, "is_master": True, "active": True,
+                   "plan": "enterprise", "customer_name": "GökyüzüWebSpam Master",
+                   "customer_email": "master@gokyuzuhosting.com",
+                   "max_domains": 10000,
+                   "valid_until": "2030-12-31T23:59:59+00:00",
+                   "subscription_expires_at": "2030-12-31T23:59:59+00:00",
+                   "rotated_in_at": _iso()},
+         "$setOnInsert": {"id": str(uuid.uuid4()),
+                            "created_at": _iso(), "ip_addresses": []}},
+        upsert=True,
+    )
+    # Candidate'ı temizle
+    await db.settings.delete_one({"_key": "master_rotate_candidate"})
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": "master_rotate_completed",
+        "actor_ip": _client_ip(request),
+        "details": {"old_key_preview": (old_key or "")[:16] + ("…" if old_key else "unknown"),
+                     "new_key_preview": new_key[:16] + "…"},
+        "at": _iso(), "severity": "critical",
+    })
+    return {"ok": True, "old_key_revoked": bool(old_key), "new_master_key_preview": new_key[:16] + "…"}
+
+
+@api.post("/settings/master-rotate/cancel")
+async def master_rotate_cancel(request: Request):
+    """Rotation adayını iptal et."""
+    await _require_master(request, None)
+    r = await db.settings.delete_one({"_key": "master_rotate_candidate"})
+    return {"ok": True, "cancelled": r.deleted_count > 0}
 
 
 @api.post("/licenses/{lid}/update")
@@ -5879,6 +6157,17 @@ async def licenses_toggle_active(lid: str, request: Request, license_key: Option
             )
     new_active = not doc.get("active", True)
     await db.licenses.update_one({"id": lid}, {"$set": {"active": new_active}})
+    # v43.86 — Aksiyon logu (toggle active)
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "action": "license_toggle_active",
+        "actor_ip": _client_ip(request),
+        "details": {"license_key": doc.get("license_key"),
+                     "customer_name": doc.get("customer_name"),
+                     "old_active": doc.get("active"),
+                     "new_active": new_active},
+        "at": _iso(), "severity": "info",
+    })
     await db.logs.insert_one(ActivityLog(
         source="license", level="info",
         message=f"Lisans {lid[:8]}… → {'aktif' if new_active else 'pasif'}",

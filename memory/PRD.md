@@ -14,6 +14,61 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 18, v43.86) — Master Protection Bypass + Rotation Wizard + Foreign IP Alarm + License Audit Log
+
+**KULLANICI İSTEKLERİ (4 Next Action Item):**
+1. Silme İzni Toggle — Ayarlar > Master silme koruması geçici bypass (2-adım confirm)
+2. Master Key Değiştir Wizard — Step-by-step key rotation
+3. Lisans Aksiyon Logu — Her silme/askı/toggle audit_logs'a
+4. Master IP Alarm — Farklı IP'den master key kullanılırsa Slack alert
+
+**IMPLEMENTATION (Backend-first, UI kartları backlog):**
+
+### 1. Silme Koruması Geçici Bypass (server.py)
+- Yeni collection settings key: `master_protection.delete_protection_disabled_until` (ISO ts)
+- `licenses_delete` guard artık `active_bypass` kontrolü yapar → süre içindeyse silme geçer + `master_license_delete_bypassed` audit (severity=critical)
+- Bloke edilen deneme audit'e düşer: `master_license_delete_blocked` (severity=warning)
+- Yeni endpoint'ler (master-only):
+  - `GET /settings/master-protection` → status + remaining_seconds
+  - `POST /settings/master-protection/disable` → `disable_minutes` (1-60), `confirm_1: true`, `confirm_2: true`, `reason` gerekli → bypass_until dönüşü
+  - `POST /settings/master-protection/enable` → hemen re-enable
+
+### 2. Master Key Rotation Wizard (server.py)
+- 3-adım flow:
+  - `POST /settings/master-rotate/generate` (body `{reason}`) → yeni `MS-XXXX...` candidate üretir, `settings.master_rotate_candidate`'a 10dk TTL ile yazar + 4-madde next_steps talimatı döndürür (env update + restart adımları)
+  - `POST /settings/master-rotate/complete` → env değişkeni yeni key'e eşit değilse 412, eşitse eski key'i revoke eder + `X-Old-Master-Key` header'daki old key'i deactive eder + yeni key'i licenses'a `is_master: True` ile upsert eder
+  - `POST /settings/master-rotate/cancel` → candidate sil
+- Her adım audit'e düşer (severity=warning/critical)
+
+### 3. Lisans Aksiyon Logu (server.py)
+- `licenses_delete` → `license_deleted` audit (was_master=true ise severity=critical, aksi info)
+- `licenses_toggle_active` → `license_toggle_active` audit (old_active + new_active detay)
+- Master bloke/bypass ayrı audit action isimleri (`master_license_delete_blocked`, `master_license_delete_bypassed`)
+- Rotation audit action'ları: `master_rotate_candidate_generated`, `master_rotate_completed`, `master_protection_disabled/enabled`
+
+### 4. Master Foreign IP Alarm (server.py `_require_master`)
+- Master key doğrulandığında `MASTER_IP` env ile xff_chain karşılaştırılır
+- Farklı IP'den geliyorsa (`MASTER_IP not in xff_chain`):
+  - `master_alerts` collection'a `type: master_key_from_foreign_ip` insert (severity=critical)
+  - `audit_logs` action=`master_key_foreign_ip` (path, user_agent, xff detay)
+  - Rate-limit: aynı client_ip için 15dk'da bir alert (spam önleme)
+  - Slack fire: `asyncio.create_task(_fire_license_alert(...))` mevcut pipeline yeniden kullanıldı
+
+**Test edildi (tests/test_v43_86_protection_rotation.py — 8/8 pytest PASS %100):**
+- master-protection GET default protection_active=True ✓
+- Disable iki confirm gerektirir (400 without) ✓
+- 2-confirm sonrası bypass aktif + master delete geçer + audit ✓
+- audit_logs'a `master_protection_disabled` + `license_deleted` yazılır ✓
+- Foreign IP (77.77.77.77) master key kullanınca `master_alerts` insert + critical severity ✓
+- Rotate generate: candidate key üretir + 4-madde next_steps ✓
+- Complete env update olmadan → 412 Precondition Failed ✓
+- Cancel rotation → candidate silinir ✓
+- Regression 70/70 hala PASS (v43.78..85) ✓
+
+**Not**: Backend endpoints tamamı hazır ve test edildi. Frontend UI kartları (`MasterProtectionCard` + `MasterRotationWizard` Settings.js'e) backlog'da — bu backend altyapı üzerine kolayca eklenir.
+
+
+
 ## Feb 17, 2026 (Session 18, v43.85) — 🐛 KRİTİK BUG FIX: Master License Silme Koruması
 
 **KULLANICI ŞİKAYETİ:**
