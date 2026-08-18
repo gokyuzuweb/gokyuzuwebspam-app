@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Palette, ShieldCheck, KeyRound, Check, X, Clock, Send, Trash2, Plus, ShieldAlert, Star, Sparkles } from "lucide-react";
+import { Palette, ShieldCheck, KeyRound, Check, X, Clock, Send, Trash2, Plus, ShieldAlert, Star, Sparkles, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -260,6 +260,29 @@ export function TrustedIPsCard() {
             }`}
           >
             <Sparkles className="w-4 h-4" /> Toplu İçe Aktar
+          </button>
+          <button
+            data-testid="trusted-ip-export"
+            type="button"
+            onClick={async () => {
+              try {
+                const res = await api.trustedIpsExportCsv();
+                const blob = new Blob([res.data], { type: "text/csv;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `trusted-ips-${new Date().toISOString().slice(0,10)}.csv`;
+                document.body.appendChild(a); a.click(); a.remove();
+                URL.revokeObjectURL(url);
+                toast.success("CSV indirildi");
+              } catch (e) {
+                toast.error(e?.response?.data?.detail || "İndirme başarısız");
+              }
+            }}
+            disabled={items.length === 0}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 text-sm font-semibold disabled:opacity-40"
+          >
+            <Download className="w-4 h-4" /> Excel/CSV
           </button>
         </div>
 

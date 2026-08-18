@@ -14,6 +14,61 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 18, 2026 (Session 19, v43.95) — Schedule Last-Test + Kanban Drag Polish + CSV Export + MasterLive Tabs
+
+**KULLANICI İSTEĞİ:**
+1. Zamanlama Son Test Raporu — Row içinde last_run status inline göster
+2. Kanban Sürükle-Bırak — Havale kartlarını Onaylandı → sürükle
+3. Trusted IP CSV Dışa Aktar — "Excel'e İndir" tek tıkla backup
+4. Master Live Tab Yap — Mile-long dashboard'u tab'lara böl
+
+**IMPLEMENTATION:**
+
+### 1. Schedule Last-Test Status (Reports.js)
+- Row alt satırına yeni "Son:" metadata
+- Status chip'leri: TEST OK (fuchsia), OK (emerald), FAIL (rose)
+- Timestamp mono format
+- last_run_error varsa truncate + full text title tooltip
+- data-testid: `schedule-last-run-{id}`
+
+### 2. Kanban Drag Visual Polish (PaymentsAdmin.js::OrdersKanban)
+- Yeni state `dragOverCol` — hangi sütun üzerinde
+- `isValidTarget(colKey)` — geçerli hedef mi kontrolü
+- Border-2 + gradient tone (paid → emerald glow ring, failed → rose glow ring)
+- Invalid target → opacity-50 hint
+- Hover'da "Buraya bırak → ONAYLA/REDDET" 10px badge sütun başlığı altında
+- Drag edilen kart: opacity-40 + scale-95 + rotate-1 (görsel geribildirim)
+- Instruction: "Sürükle-bırak: kartı **Onaylandı** veya **Başarısız** sütununa taşı"
+
+### 3. Trusted IP CSV Export (server.py + V4390Cards.js)
+- Yeni endpoint `GET /api/settings/trusted-ips/export.csv` — text/csv + Content-Disposition attachment
+- Header row: `ip,country_code,label,added_at,added_by_ip,added_via`
+- Country code her satırda `_ip_to_country` ile enrich
+- Frontend `V4390Cards.js`:
+  - `api.trustedIpsExportCsv()` — axios blob response
+  - "Excel/CSV" emerald button (Download icon), items 0 iken disabled
+  - Blob → auto download `trusted-ips-YYYY-MM-DD.csv`
+
+### 4. MasterLive Tab Layout (pages/MasterLive.js)
+- 3 sekme: **Genel Bakış** (indigo, LayoutDashboard) / **Tüm Bayiler (N)** (emerald, List) / **Kırmızı Durum · N** (rose, AlertTriangle)
+- Genel Bakış: 6 KPI stat cards + kırmızı bayi hızlı bakış (top 6 red ResellerCards)
+- Tüm Bayiler: filter card + full grid
+- Kırmızı Durum: filter card + sadece red health bayiler + "🟢 Tüm bayiler yeşil" empty state
+- `localStorage.gws.ml.tab` persist
+
+**Test edildi:**
+- pytest v43_90..v43_95 = **29/29 PASS** ✓
+- CSV export: text/csv content-type, Content-Disposition attachment, 5 satır Datacenter IP'ler + FR/CN country codes ✓
+- Screenshots:
+  - MasterLive Genel Bakış: 6 stat + "68 bayi kırmızı hızlı bakış" ✓
+  - MasterLive Tüm Bayiler: emerald tab + full grid (68 bayi) ✓
+  - Reports Schedule: "Excel/CSV" button, mail button, sonraki: 2026-08-25 08:00 ✓
+  - Trusted IPs: 3-button toolbar (Ekle / Toplu İçe Aktar / Excel/CSV emerald) ✓
+
+**VERSION**: v43.94 → v43.95 — canlıya hazır sürüm
+
+---
+
 ## Feb 18, 2026 (Session 19, v43.94) — PaymentsAdmin/BounceDigest Tabs + Trusted IP Flags + Real Test Email
 
 **KULLANICI İSTEĞİ:**

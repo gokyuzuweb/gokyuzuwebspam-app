@@ -1024,13 +1024,24 @@ const KANBAN_COLUMNS = [
 
 function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
   const [dragOid, setDragOid] = useState(null);
+  const [dragOverCol, setDragOverCol] = useState(null);   // v43.95 — visual drop feedback
   const columns = KANBAN_COLUMNS.map((col) => ({
     ...col,
     items: orders.filter((o) => col.statuses.includes(o.status)),
   }));
 
+  // Bir kartın hangi hedef sütunlara "düşebileceğini" belirler
+  const isValidTarget = (colKey) => {
+    if (!dragOid) return false;
+    const order = orders.find((o) => o.merchant_oid === dragOid);
+    if (!order) return false;
+    const movable = ["notified_by_user", "awaiting_transfer", "pending"];
+    return movable.includes(order.status) && (colKey === "paid" || colKey === "failed");
+  };
+
   const handleDrop = (targetKey, e) => {
     e.preventDefault();
+    setDragOverCol(null);
     if (!dragOid) return;
     const order = orders.find((o) => o.merchant_oid === dragOid);
     setDragOid(null);
@@ -1050,7 +1061,7 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs text-slate-400">
           <LayoutGrid className="w-4 h-4 text-indigo-400"/>
-          <span>Sürükle-bırak: kartı 'Onaylandı' veya 'Başarısız' sütununa taşı</span>
+          <span>Sürükle-bırak: kartı <span className="text-emerald-300 font-semibold">Onaylandı</span> veya <span className="text-rose-300 font-semibold">Başarısız</span> sütununa taşı</span>
         </div>
         <button onClick={onRefetch}
                 className="text-[10px] text-slate-500 hover:text-slate-300 inline-flex items-center gap-1"
@@ -1059,16 +1070,35 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
         </button>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        {columns.map((col) => (
+        {columns.map((col) => {
+          const isDragging = !!dragOid;
+          const isTargetable = isValidTarget(col.key);
+          const isHovered = dragOverCol === col.key;
+          const borderClass = isHovered && isTargetable
+            ? (col.key === "paid" ? "border-emerald-400 bg-emerald-500/10 shadow-lg shadow-emerald-500/20 ring-2 ring-emerald-500/40"
+                : col.key === "failed" ? "border-rose-400 bg-rose-500/10 shadow-lg shadow-rose-500/20 ring-2 ring-rose-500/40"
+                : col.color)
+            : isDragging && !isTargetable
+              ? "border-slate-800 bg-slate-950/40 opacity-50"
+              : col.color;
+          return (
           <div key={col.key}
-               onDragOver={(e) => e.preventDefault()}
+               onDragOver={(e) => { e.preventDefault(); if (dragOverCol !== col.key) setDragOverCol(col.key); }}
+               onDragLeave={() => { if (dragOverCol === col.key) setDragOverCol(null); }}
                onDrop={(e) => handleDrop(col.key, e)}
-               className={`rounded-lg border p-2 min-h-[60vh] ${col.color}`}
+               className={`rounded-lg border-2 p-2 min-h-[60vh] transition-all ${borderClass}`}
                data-testid={`kanban-col-${col.key}`}>
             <div className="flex items-center justify-between mb-2 px-1">
               <div className="text-xs font-semibold text-slate-200">{col.title}</div>
               <span className="text-[10px] mono text-slate-500">{col.items.length}</span>
             </div>
+            {isHovered && isTargetable && (
+              <div className={`text-[10px] text-center py-1 rounded mb-2 font-bold ${
+                col.key === "paid" ? "bg-emerald-500/20 text-emerald-200" : "bg-rose-500/20 text-rose-200"
+              }`}>
+                Buraya bırak → {col.key === "paid" ? "ONAYLA" : "REDDET"}
+              </div>
+            )}
             <div className="space-y-1.5">
               {col.items.length === 0 ? (
                 <div className="text-center text-[10px] text-slate-600 py-4">boş</div>
@@ -1076,9 +1106,9 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
                 <div key={o.merchant_oid}
                      draggable
                      onDragStart={() => setDragOid(o.merchant_oid)}
-                     onDragEnd={() => setDragOid(null)}
-                     className={`p-2 rounded border bg-slate-900/80 border-slate-800 text-[10px] cursor-move transition-opacity ${
-                       dragOid === o.merchant_oid ? "opacity-50" : "hover:border-indigo-500/40"
+                     onDragEnd={() => { setDragOid(null); setDragOverCol(null); }}
+                     className={`p-2 rounded border bg-slate-900/80 border-slate-800 text-[10px] cursor-move transition-all ${
+                       dragOid === o.merchant_oid ? "opacity-40 scale-95 rotate-1" : "hover:border-indigo-500/40 hover:shadow-md"
                      }`}
                      data-testid={`kanban-card-${o.merchant_oid}`}>
                   <div className="flex items-center gap-1 mb-0.5">
@@ -1102,7 +1132,7 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
               )}
             </div>
           </div>
-        ))}
+        );})}
       </div>
     </div>
   );

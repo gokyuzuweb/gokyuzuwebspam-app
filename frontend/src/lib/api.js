@@ -239,6 +239,10 @@ export const api = {
 
   // v43.91 — Trusted IPs (foreign-IP alarm muafiyeti)
   trustedIpsList: () => client.get("/settings/trusted-ips").then(r => r.data),
+  trustedIpsExportCsv: async () => {
+    const res = await client.get("/settings/trusted-ips/export.csv", { responseType: "blob" });
+    return res;
+  },
   trustedIpsAdd: (ip, label) => client.post("/settings/trusted-ips", { ip, label }).then(r => r.data),
   trustedIpsBulkAdd: (text, label) => client.post("/settings/trusted-ips/bulk", { text, label }).then(r => r.data),
   trustedIpsRemove: (ip) => client.delete(`/settings/trusted-ips/${encodeURIComponent(ip)}`).then(r => r.data),

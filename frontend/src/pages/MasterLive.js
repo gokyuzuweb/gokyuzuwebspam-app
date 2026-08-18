@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Activity, Users2, ShieldAlert, Search, RefreshCw, ArrowRight,
-  Circle, TrendingUp, ChevronRight, Zap, Loader2,
+  Circle, TrendingUp, ChevronRight, Zap, Loader2, LayoutDashboard, List, AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge, StatCard } from "@/components/ui-primitives";
@@ -36,6 +36,8 @@ export default function MasterLive() {
   const [q, setQ] = useState("");
   const [onlineOnly, setOnlineOnly] = useState(false);
   const [pingWatchList, setPingWatchList] = useState(null); // ping sonrası izlenen license'lar
+  const [tab, setTab] = useState(() => localStorage.getItem("gws.ml.tab") || "all");
+  const chooseTab = (id) => { setTab(id); try { localStorage.setItem("gws.ml.tab", id); } catch {} };
   const qc = useQueryClient();
 
   const live = useQuery({
@@ -139,6 +141,32 @@ export default function MasterLive() {
         </div>
       </div>
 
+      {/* v43.95 — Tab Bar (Genel Bakış / Tüm Bayiler / Kırmızı Durum) */}
+      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3 sticky top-14 bg-slate-950/80 backdrop-blur z-10" data-testid="ml-tabs">
+        {[
+          { k: "overview", l: "Genel Bakış", Icon: LayoutDashboard, tone: "indigo"  },
+          { k: "all",      l: `Tüm Bayiler (${rows.length})`, Icon: List, tone: "emerald" },
+          { k: "red",      l: `Kırmızı Durum${redCount ? ` · ${redCount}` : ""}`, Icon: AlertTriangle, tone: "rose" },
+        ].map(({ k, l, Icon, tone }) => {
+          const tones = {
+            indigo:  "border-indigo-500/50 bg-indigo-500/15 text-indigo-200",
+            emerald: "border-emerald-500/50 bg-emerald-500/15 text-emerald-200",
+            rose:    "border-rose-500/50 bg-rose-500/15 text-rose-200",
+          };
+          const active = tab === k;
+          return (
+            <button key={k} type="button" onClick={() => chooseTab(k)}
+              data-testid={`ml-tab-${k}`}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                active ? tones[tone] + " shadow-md" : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+              }`}>
+              <Icon className="w-4 h-4" />
+              {l}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Ping watch banner — hangi bayiler izleniyor */}
       {pingWatchList && (
         <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 flex items-center gap-2 text-xs text-emerald-100" data-testid="ml-ping-watch">
@@ -153,7 +181,8 @@ export default function MasterLive() {
         </div>
       )}
 
-      {/* Aggregate stats */}
+      {/* Aggregate stats — always visible on overview */}
+      {tab === "overview" && (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard label="Bayi" value={rows.length} icon={Users2} testid="ml-stat-resellers" />
         <StatCard label="Çevrim İçi" value={live.data?.online_count || 0} icon={Circle} tone="emerald" testid="ml-stat-online" />
@@ -162,8 +191,25 @@ export default function MasterLive() {
         <StatCard label="Virüs" value={totals.virus.toLocaleString("tr-TR")} icon={ShieldAlert} tone="rose" testid="ml-stat-virus" />
         <StatCard label="İhlal" value={totals.violations.toLocaleString("tr-TR")} icon={ShieldAlert} tone="amber" testid="ml-stat-violations" />
       </div>
+      )}
 
-      {/* Filters */}
+      {/* Overview quick-red-preview */}
+      {tab === "overview" && redCount > 0 && (
+        <Card>
+          <CardHeader
+            title={<span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-rose-400"/> {redCount} bayi kırmızı — hızlı bakış</span>}
+            subtitle="Detay için 'Kırmızı Durum' sekmesine geçin"
+          />
+          <CardBody className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {rows.filter(r => r.health === "red").slice(0, 6).map(r => (
+              <ResellerCard key={r.id} r={r} hours={hours} />
+            ))}
+          </CardBody>
+        </Card>
+      )}
+
+      {/* Filters — visible on all/red */}
+      {(tab === "all" || tab === "red") && (
       <Card>
         <CardBody className="flex flex-wrap items-center gap-3 py-3">
           <div className="relative flex-1 min-w-[220px]">
@@ -191,22 +237,31 @@ export default function MasterLive() {
           </span>
         </CardBody>
       </Card>
+      )}
 
-      {/* Side-by-side cards */}
-      {live.isLoading ? (
+      {/* Side-by-side cards — filtered by tab */}
+      {(tab === "all" || tab === "red") && (
+      <>{live.isLoading ? (
         <div className="text-center py-16 text-slate-500 text-sm">Yükleniyor…</div>
-      ) : filtered.length === 0 ? (
-        <Card>
-          <CardBody className="py-16 text-center text-slate-500">
-            {rows.length === 0 ? "Henüz kayıtlı bayi yok" : "Filtreye uyan bayi bulunamadı"}
-          </CardBody>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {filtered.map((r) => (
-            <ResellerCard key={r.id} r={r} hours={hours} />
-          ))}
-        </div>
+      ) : (() => {
+        const tabFiltered = tab === "red" ? filtered.filter(r => r.health === "red") : filtered;
+        if (tabFiltered.length === 0) {
+          return (
+            <Card>
+              <CardBody className="py-16 text-center text-slate-500">
+                {tab === "red" ? "🟢 Tüm bayiler yeşil — kırmızı durumdaki bayi yok." : (rows.length === 0 ? "Henüz kayıtlı bayi yok" : "Filtreye uyan bayi bulunamadı")}
+              </CardBody>
+            </Card>
+          );
+        }
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {tabFiltered.map((r) => (
+              <ResellerCard key={r.id} r={r} hours={hours} />
+            ))}
+          </div>
+        );
+      })()}</>
       )}
     </div>
   );

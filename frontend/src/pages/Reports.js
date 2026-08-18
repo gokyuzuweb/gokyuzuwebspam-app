@@ -114,6 +114,33 @@ function ScheduledReportsCard() {
                     · sonraki: {(s.next_run_at || "").slice(0, 16).replace("T", " ")}
                     {s.run_count > 0 && <> · {s.run_count} çalıştı</>}
                   </div>
+                  {/* v43.95 — Son test raporu satırı */}
+                  {s.last_run_at && (
+                    <div className="text-[10px] mono mt-1 flex items-center gap-1.5 flex-wrap" data-testid={`schedule-last-run-${s.id}`}>
+                      <span className="text-slate-500">Son:</span>
+                      {s.last_run_status === "test_ok" && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/30">
+                          ✉️ TEST OK
+                        </span>
+                      )}
+                      {s.last_run_status === "ok" && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                          ✓ OK
+                        </span>
+                      )}
+                      {s.last_run_status === "fail" && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/15 text-rose-300 border border-rose-500/30" title={s.last_run_error || ""}>
+                          ✗ FAIL
+                        </span>
+                      )}
+                      <span className="text-slate-400">{(s.last_run_at || "").slice(0, 16).replace("T", " ")} UTC</span>
+                      {s.last_run_error && (
+                        <span className="text-rose-400 truncate max-w-[280px]" title={s.last_run_error}>
+                          · {s.last_run_error.slice(0, 60)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button

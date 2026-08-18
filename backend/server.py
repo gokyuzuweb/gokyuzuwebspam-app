@@ -2335,6 +2335,38 @@ async def trusted_ips_list(request: Request, license_key: Optional[str] = None):
     return {"items": rows, "count": len(rows)}
 
 
+@api.get("/settings/trusted-ips/export.csv")
+async def trusted_ips_export_csv(request: Request, license_key: Optional[str] = None):
+    """v43.95 — Trusted IP listesini CSV olarak indir."""
+    await _require_master(request, license_key)
+    rows = await db.trusted_ips.find({"active": True}, {"_id": 0}).sort("added_at", -1).to_list(2000)
+    try:
+        from routes.security_adv import _ip_to_country
+    except Exception:
+        _ip_to_country = lambda x: ""   # noqa
+    import io as _io, csv as _csv
+    buf = _io.StringIO()
+    w = _csv.writer(buf, quoting=_csv.QUOTE_MINIMAL)
+    w.writerow(["ip", "country_code", "label", "added_at", "added_by_ip", "added_via"])
+    for r in rows:
+        try:
+            cc = (_ip_to_country(r.get("ip") or "") or "").upper()
+        except Exception:
+            cc = ""
+        w.writerow([
+            r.get("ip", ""), cc, r.get("label", ""),
+            r.get("added_at", ""), r.get("added_by_ip", ""), r.get("added_via", ""),
+        ])
+    from fastapi.responses import Response as _Response
+    return _Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="trusted-ips-{datetime.now(timezone.utc).strftime("%Y%m%d")}.csv"'
+        },
+    )
+
+
 @api.post("/settings/trusted-ips")
 async def trusted_ips_add(payload: TrustedIPIn, request: Request, license_key: Optional[str] = None):
     await _require_master(request, license_key)
