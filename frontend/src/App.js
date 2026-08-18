@@ -297,10 +297,10 @@ function Sidebar() {
                 type="button"
                 onClick={() => toggleGroup(g.key)}
                 data-testid={`nav-group-toggle-${g.key}`}
-                className={`w-full px-2.5 py-2 mb-1 flex items-center gap-2 rounded-md text-[11px] uppercase tracking-[0.14em] font-black select-none transition-all duration-200 group ${
+                className={`w-full px-2.5 py-2 mb-1 flex items-center gap-2 rounded-md text-[11.5px] uppercase tracking-[0.16em] font-black select-none transition-all duration-200 group ${
                   isCollapsed
-                    ? `text-slate-400 hover:text-slate-100 hover:bg-slate-800/40 border border-transparent ${tone.hoverBorder}`
-                    : `${tone.text} bg-gradient-to-r ${tone.grad} via-slate-900/30 to-transparent border ${tone.border} shadow-sm`
+                    ? `text-slate-300 hover:text-white hover:bg-slate-800/60 border border-transparent ${tone.hoverBorder}`
+                    : `${tone.text} bg-gradient-to-r ${tone.grad} via-slate-900/30 to-transparent border ${tone.border} shadow-md shadow-black/40 drop-shadow-[0_0_4px_rgba(255,255,255,0.05)]`
                 }`}
                 title={isCollapsed ? "Aç" : "Kapat"}
               >
@@ -324,25 +324,25 @@ function Sidebar() {
                       data-testid={n.testid}
                       title={n.locked ? "Bu modül paketinizde bulunmuyor — tıklayınca üst plan seçenekleri açılır" : undefined}
                       className={({ isActive }) =>
-                        `group relative flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition-all duration-150 ${
+                        `group relative flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-semibold transition-all duration-150 ${
                           n.locked
                             ? "text-slate-500 hover:text-amber-300 hover:bg-amber-500/5 border border-transparent hover:border-amber-500/20"
                             : isActive
-                              ? `bg-gradient-to-r ${tone.grad} to-transparent ${tone.text} border ${tone.border} shadow-sm`
-                              : `text-slate-400 hover:text-slate-100 ${tone.hoverBg} border border-transparent ${tone.hoverBorder}`
+                              ? `bg-gradient-to-r ${tone.grad} to-transparent ${tone.text} border ${tone.border} shadow-md shadow-black/30 font-bold`
+                              : `text-slate-300 hover:text-white ${tone.hoverBg} border border-transparent ${tone.hoverBorder} hover:font-bold`
                         }`
                       }
                     >
                       {({ isActive }) => (
                         <>
                           {isActive && !n.locked && <span className={`absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r ${tone.barBg}`} />}
-                          <n.icon className={`w-3.5 h-3.5 shrink-0 ${
+                          <n.icon className={`w-4 h-4 shrink-0 ${
                             n.locked
                               ? "text-slate-600 group-hover:text-amber-400"
                               : isActive
-                                ? tone.icon
-                                : "text-slate-500 group-hover:text-slate-200"
-                          }`} strokeWidth={1.75} />
+                                ? `${tone.icon} drop-shadow-[0_0_4px_currentColor]`
+                                : "text-slate-400 group-hover:text-white"
+                          }`} strokeWidth={2.25} />
                           <span className={`flex-1 truncate ${n.locked ? "opacity-70" : ""}`}>{n.label || t(`nav.${n.key}`)}</span>
                           {n.locked && (
                             <Lock
@@ -371,11 +371,11 @@ function Sidebar() {
         })}
         {ungrouped.length > 0 && (
           <div className="pt-3">
-            <div className="px-3 mb-1 text-[9.5px] uppercase tracking-[0.2em] font-bold text-slate-600 select-none">Diğer</div>
+            <div className="px-3 mb-1 text-[10px] uppercase tracking-[0.2em] font-black text-slate-400 select-none">Diğer</div>
             {ungrouped.map((n) => (
               <NavLink key={n.to} to={n.to} end={n.end} data-testid={n.testid}
-                className={({ isActive }) => `flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] ${isActive ? "bg-indigo-500/10 text-indigo-300" : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50"}`}>
-                <n.icon className="w-3.5 h-3.5" strokeWidth={1.75} />
+                className={({ isActive }) => `flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-semibold ${isActive ? "bg-indigo-500/20 text-indigo-200 font-bold border border-indigo-500/40 shadow-md shadow-black/30" : "text-slate-300 hover:text-white hover:bg-slate-800/50 border border-transparent"}`}>
+                <n.icon className="w-4 h-4" strokeWidth={2.25} />
                 <span className="flex-1 truncate">{n.label || t(`nav.${n.key}`)}</span>
               </NavLink>
             ))}

@@ -88,7 +88,7 @@ function MasterModeToggle() {
         data-testid="header-master-active"
         onClick={deactivate}
         title={`Master modu aktif — ${masterIp ? `IP: ${masterIp}` : ""} — kapatmak için tıklayın`}
-        className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono tracking-wide px-2 py-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-all shrink-0"
+        className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono font-bold tracking-wide px-2.5 py-1 rounded-md border border-emerald-500/60 bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30 transition-all shrink-0 shadow-[0_0_10px_rgba(16,185,129,0.35)]"
       >
         <ShieldCheck className="w-3 h-3" />
         <span>MASTER</span>
@@ -102,7 +102,7 @@ function MasterModeToggle() {
       data-testid="header-master-activate"
       onClick={activate}
       title="Yazma işlemleri (toggle, düzenleme, upload) için master lisans gerekli"
-      className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono tracking-wide px-2 py-1 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 hover:border-amber-500/60 transition-all shrink-0 animate-pulse"
+      className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono font-bold tracking-wide px-2.5 py-1 rounded-md border border-amber-500/60 bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 hover:border-amber-500/80 transition-all shrink-0 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.35)]"
     >
       <KeyRound className="w-3 h-3" />
       <span>Master Aktif Et</span>
@@ -127,7 +127,7 @@ function MasterUpdatePush() {
       onClick={push}
       data-testid="header-server-update-btn"
       title="Master'a bağlı tüm bayi WHM sunucularına 'gws-update çalıştır' sinyali gönderir"
-      className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono tracking-wide px-2 py-1 rounded-md border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 transition-all shrink-0"
+      className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono font-bold tracking-wide px-2.5 py-1 rounded-md border border-sky-500/60 bg-sky-500/20 text-sky-200 hover:bg-sky-500/30 transition-all shrink-0 shadow-[0_0_10px_rgba(14,165,233,0.35)]"
     >
       <DownloadCloud className="w-3 h-3" />
       <span>Sunucumu Güncelle</span>
@@ -159,8 +159,8 @@ function HeaderMain({ title }) {
   return (
     <header data-testid="app-header" className="sticky top-0 z-30 h-14 border-b border-slate-800 bg-gradient-to-b from-slate-900/95 to-slate-950/90 backdrop-blur px-4 md:px-6 flex items-center justify-between gap-4">
       <div className="flex items-center gap-3 shrink-0 min-w-0">
-        <h1 className="text-lg font-semibold tracking-tight text-slate-100 truncate">{title}</h1>
-        <span className="hidden sm:inline text-[10px] mono tracking-widest text-slate-500 uppercase border border-slate-800 rounded px-1.5 py-0.5 shrink-0">
+        <h1 data-testid="header-page-title" className="text-xl font-black tracking-tight bg-gradient-to-r from-indigo-300 via-fuchsia-300 to-rose-300 bg-clip-text text-transparent truncate drop-shadow-[0_0_6px_rgba(99,102,241,0.35)]">{title}</h1>
+        <span className="hidden sm:inline text-[10px] mono tracking-widest font-bold text-indigo-200 uppercase border border-indigo-500/50 bg-indigo-500/10 rounded px-1.5 py-0.5 shrink-0 shadow-[0_0_8px_rgba(99,102,241,0.25)]">
           WHM PLUGIN
         </span>
         {version && (
@@ -168,7 +168,7 @@ function HeaderMain({ title }) {
             href="/panel/version-publish"
             data-testid="header-version-chip"
             title={`Panel sürümü: ${version} — sürüm notları için tıkla`}
-            className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono tracking-wide px-2 py-1 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 hover:border-indigo-500/50 transition-all shrink-0"
+            className="hidden md:inline-flex items-center gap-1.5 text-[11px] mono font-bold tracking-wide px-2 py-1 rounded-md border border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-200 hover:bg-fuchsia-500/25 hover:border-fuchsia-500/70 transition-all shrink-0 shadow-[0_0_10px_rgba(217,70,239,0.3)]"
           >
             <Sparkles className="w-3 h-3" />
             <span>{version}</span>
@@ -195,12 +195,12 @@ function HeaderMain({ title }) {
         <SlashCommandBar />
         <ThreatAlertBell />
         <div data-testid="engine-status" className="flex items-center gap-2 text-xs">
-          <span className="relative inline-flex w-2 h-2">
-            <span className={`absolute inset-0 rounded-full ${dot.split(" ")[0]}`}></span>
+          <span className="relative inline-flex w-2.5 h-2.5">
+            <span className={`absolute inset-0 rounded-full ${dot.split(" ")[0]} shadow-[0_0_8px_currentColor]`}></span>
             <span className={`pulse-dot ${dot.split(" ")[1]}`}></span>
           </span>
-          <span className="hidden sm:inline mono uppercase tracking-widest text-slate-400">Motor {status}</span>
-          <span className="mono text-slate-500">{active}/{total}</span>
+          <span className="hidden sm:inline mono uppercase tracking-widest font-bold text-slate-200">Motor {status}</span>
+          <span className="mono font-bold text-emerald-300">{active}/{total}</span>
         </div>
       </div>
     </header>

@@ -14,6 +14,69 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 18, v43.87-88) — Foreign IP Session Kill + Master Protection UI + Rotation Wizard + Audit Filtreleri + Canlı Header
+
+**KULLANICI İSTEKLERİ:**
+1. Foreign IP Session Kill (backend + UI) — farklı IP'den master key kullanılırsa session'ı öldür
+2. Master Protection UI — bypass toggle + 2-confirm modal + countdown
+3. Rotation Wizard UI — step-by-step key rotation
+4. Audit Sayfası Filtre — grup filtresi + severity chip renk kodlaması
+5. Header canlılaştırma — başlıklar ve menüler daha canlı ve kalın
+
+**IMPLEMENTATION:**
+
+### v43.87 — Foreign IP Session Kill (server.py + Settings.js)
+- `_require_master` içinde `killed_master_ips.active=True` kontrolü — bloke IP'den master key hit ederse 403 "Session güvenliği" mesajı
+- Foreign IP alarm sonrası `foreign_ip_auto_kill.enabled` (default: true) ise IP otomatik `killed_master_ips`'a upsert (`active=true`, `reason=foreign_ip_master_key`)
+- Yeni endpoint'ler: `GET /settings/killed-master-ips`, `POST toggle-auto`, `POST {ip}/unblock`
+- Frontend `KilledIpsCard` — auto-kill toggle + IP listesi + tek tık unblock
+
+### v43.87 — Master Protection UI (Settings.js `MasterProtectionCard`)
+- Bypass durum badge (AKTIF/BYPASS) + kalan süre countdown (bypass sırasında 5sn refetch)
+- "Devre Dışı Bırak" butonu → 2-confirm modal: minutes (1-60) + reason (min 3char) + 2 checkbox onay
+- "Şimdi Yeniden Etkinleştir" (bypass aktifken)
+- Last disabled bilgisi: IP + zaman + sebep
+
+### v43.87 — Rotation Wizard UI (Settings.js `MasterRotationCard`)
+- 4-adım stepper (Adım 1/4 badge):
+  - Adım 1: sebep girişi + "Yeni Master Key Üret"
+  - Adım 2: yeni key gösterimi (select-all + 📋 kopyala) + 4-madde next_steps talimatı + "Env Güncelledim" veya İptal
+  - Adım 3: eski key input + "Rotation'ı Tamamla" → env doğrulama (localstorage'dan otomatik prefill)
+  - Adım 4: ✅ başarı ekranı
+
+### v43.87 — Audit Sayfası (AuditLog.js)
+- 12 yeni action label + tone haritalaması (license_deleted, master_*, killed_ip_*, foreign_ip_*, protection_*)
+- Grup filtre chip'leri: Tümü / 🔐 Master (amber) / 🔑 Lisans (cyan) / 💳 Ödeme (emerald) / ⚙ Sistem (fuchsia)
+- Severity renk kodu: rose (critical), amber (warning), cyan (info) — border-left-4 kalın renk barı
+- CRIT/WARN pill badge action label yanında (kritik olaylar için)
+
+### v43.88 — Canlı Header ve Menü Tipografisi
+- **Sayfa başlığı**: text-lg → **text-xl font-black** + indigo→fuchsia→rose gradient text + drop-shadow indigo glow
+- **WHM PLUGIN chip**: font-bold indigo border-500/50 bg + shadow indigo neon
+- **Version chip (v43.88)**: font-bold fuchsia neon shadow
+- **MASTER chip / Sunucumu Güncelle / Motor Aktif**: font-bold + emerald/amber/sky neon shadows + 20% bg opacity (10 → 20)
+- **Sidebar grup başlıkları**: font-black + tracking-[0.16em] + shadow-md
+- **Sidebar aktif nav**: font-bold + shadow-md + `hover:font-bold` transition
+- **Sidebar ungrouped "Diğer"**: font-black uppercase daha koyu
+- **Icon'lar**: `strokeWidth={1.75} → 2.25` (daha kalın) + `w-3.5 → w-4` (biraz daha büyük)
+- **Active icon**: drop-shadow tone color glow
+
+**Test edildi (backend endpoints canlı):**
+- Foreign IP kilit → auto-block + 2. istekte 403 ✓
+- Killed IPs GET + toggle-auto + unblock ✓
+- Master protection GET/disable(2-confirm)/enable ✓
+- Rotate generate/complete(412)/cancel ✓
+- Regression 70/70 (v43.78..86) hala PASS ✓
+
+**Preview smoke:**
+- Sidebar: "İZLEME" (fuchsia gradient, font-black), "Kontrol Paneli" aktif (indigo shadow), diğer öğeler font-semibold ✓
+- Header: gradient title, WHM PLUGIN neon, v43.88 fuchsia glow, MASTER emerald neon, Motor Aktif bold ✓
+- Sistem bildirimleri: gerçek zamanlı foreign IP alarm'ları görünüyor (55.55.55.55, 66.66.66.66, 77.77.77.77, 104.198.214.223) ✓
+
+
+
+
+
 ## Feb 17, 2026 (Session 18, v43.86) — Master Protection Bypass + Rotation Wizard + Foreign IP Alarm + License Audit Log
 
 **KULLANICI İSTEKLERİ (4 Next Action Item):**

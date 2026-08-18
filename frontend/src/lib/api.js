@@ -586,6 +586,18 @@ export const api = {
   idleLockMeSet: (payload) => client.put("/settings/idle-lock/me", payload).then(r => r.data),
   idleLockVerifyPin: (pin) => client.post("/settings/idle-lock/verify-pin", { pin }).then(r => r.data),
 
+  // v43.86/87 — Master Protection + Rotation + Killed IPs
+  masterProtectionGet: () => client.get("/settings/master-protection").then(r => r.data),
+  masterProtectionDisable: (payload) => client.post("/settings/master-protection/disable", payload).then(r => r.data),
+  masterProtectionEnable: () => client.post("/settings/master-protection/enable").then(r => r.data),
+  masterRotateGenerate: (reason) => client.post("/settings/master-rotate/generate", { reason }).then(r => r.data),
+  masterRotateComplete: (oldKey) => client.post("/settings/master-rotate/complete", null,
+    { headers: oldKey ? { "X-Old-Master-Key": oldKey } : {} }).then(r => r.data),
+  masterRotateCancel: () => client.post("/settings/master-rotate/cancel").then(r => r.data),
+  killedIpsList: () => client.get("/settings/killed-master-ips").then(r => r.data),
+  killedIpsToggleAuto: (enabled) => client.post("/settings/killed-master-ips/toggle-auto", { enabled }).then(r => r.data),
+  killedIpsUnblock: (ip) => client.post(`/settings/killed-master-ips/${encodeURIComponent(ip)}/unblock`).then(r => r.data),
+
   // Docs Media upload
   docsMediaList: (moduleKey = null) =>
     client.get("/mailscanner/docs/media", { params: moduleKey ? { module_key: moduleKey } : {} }).then(r => r.data),

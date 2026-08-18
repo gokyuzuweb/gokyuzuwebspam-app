@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages, Server, ShieldCheck, Zap } from "lucide-react";
+import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages, Server, ShieldCheck, ShieldAlert, RefreshCw, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import StripeConfigCard from "@/components/StripeConfigCard";
@@ -355,6 +355,304 @@ function IdleLockPersonalCard() {
   );
 }
 
+// v43.86 — Master Protection Card (silme koruması bypass)
+function MasterProtectionCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["master-protection"], queryFn: () => api.masterProtectionGet(),
+                       refetchInterval: (data) => data?.bypass_active ? 5000 : false, staleTime: 4000 });
+  const [minutes, setMinutes] = useState(5);
+  const [reason, setReason] = useState("");
+  const [c1, setC1] = useState(false);
+  const [c2, setC2] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const disable = useMutation({
+    mutationFn: () => api.masterProtectionDisable({ disable_minutes: minutes, confirm_1: c1, confirm_2: c2, reason }),
+    onSuccess: () => { toast.success(`Koruma ${minutes} dakika devre dışı`); setModalOpen(false); setC1(false); setC2(false); setReason("");
+                       qc.invalidateQueries({ queryKey: ["master-protection"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Devre dışı bırakılamadı"),
+  });
+  const enable = useMutation({
+    mutationFn: () => api.masterProtectionEnable(),
+    onSuccess: () => { toast.success("Koruma tekrar etkin"); qc.invalidateQueries({ queryKey: ["master-protection"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Etkinleştirilemedi"),
+  });
+  const active = q.data?.protection_active;
+  const rem = q.data?.bypass_remaining_seconds || 0;
+  return (
+    <>
+    <Card>
+      <CardHeader title={<span className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-emerald-400" /> Master Silme Koruması <Badge tone={active ? "success" : "danger"}>{active ? "AKTIF" : "BYPASS"}</Badge></span>}
+        subtitle="Master lisansın silme koruması. Devre dışı bırakırsanız 5-60 dakika süreyle master lisans silinebilir." />
+      <CardBody className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-slate-200">Durum</div>
+            <div className="text-xs text-slate-500 mt-0.5">
+              {active
+                ? "Master lisans silinemez, askıya alınamaz (default: güvenli)"
+                : `⚠ Bypass aktif — kalan süre: ${Math.floor(rem / 60)}dk ${rem % 60}sn`}
+            </div>
+            {q.data?.last_disabled_at && (
+              <div className="text-[10px] text-slate-500 mt-1">
+                Son devre dışı: {q.data.last_disabled_at.slice(0, 19)} · IP: {q.data.last_disabled_by_ip} · Sebep: {q.data.last_reason || "-"}
+              </div>
+            )}
+          </div>
+          {active
+            ? <button data-testid="mp-disable-open" onClick={() => setModalOpen(true)}
+                className="px-3 py-2 rounded-md text-sm border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20">
+                Devre Dışı Bırak
+              </button>
+            : <button data-testid="mp-enable" onClick={() => enable.mutate()}
+                className="px-3 py-2 rounded-md text-sm border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20">
+                Şimdi Yeniden Etkinleştir
+              </button>}
+        </div>
+      </CardBody>
+    </Card>
+    {modalOpen && (
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center backdrop-blur-md bg-slate-950/85 p-6" data-testid="mp-modal">
+        <div className="w-full max-w-md rounded-2xl border border-rose-500/40 bg-gradient-to-br from-slate-900 to-slate-950 p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldAlert className="w-5 h-5 text-rose-400" />
+            <div className="text-slate-100 font-semibold">Silme Koruması Bypass</div>
+          </div>
+          <div className="text-xs text-rose-200/80 mb-4 leading-relaxed">
+            ⚠ <b>Kritik güvenlik uyarısı.</b> Bu işlem master lisansın silinmesine izin verir. Master silinirse tüm heartbeat/plan matrix/tenant scope çöker. Yalnızca acil rotation için kullanın.
+          </div>
+          <label className="block mb-3">
+            <span className="text-[11px] uppercase tracking-widest text-slate-500">Süre (dakika)</span>
+            <input type="number" min={1} max={60} value={minutes} data-testid="mp-minutes"
+              onChange={(e) => setMinutes(Math.max(1, Math.min(60, parseInt(e.target.value || "5"))))}
+              className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm mono" />
+          </label>
+          <label className="block mb-3">
+            <span className="text-[11px] uppercase tracking-widest text-slate-500">Sebep (min 3 karakter)</span>
+            <input type="text" value={reason} data-testid="mp-reason"
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Ör: annual rotation, IP göç, disaster recovery"
+              className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm" />
+          </label>
+          <label className="flex items-start gap-2 mb-2 cursor-pointer">
+            <input type="checkbox" checked={c1} data-testid="mp-confirm-1"
+              onChange={(e) => setC1(e.target.checked)}
+              className="mt-0.5 rounded border-slate-600 bg-slate-950" />
+            <span className="text-xs text-slate-300">Bu işlemin master lisansı silinebilir hale getirdiğini anlıyorum.</span>
+          </label>
+          <label className="flex items-start gap-2 mb-4 cursor-pointer">
+            <input type="checkbox" checked={c2} data-testid="mp-confirm-2"
+              onChange={(e) => setC2(e.target.checked)}
+              className="mt-0.5 rounded border-slate-600 bg-slate-950" />
+            <span className="text-xs text-slate-300">Master silinirse tüm bayi heartbeat'lerinin durabileceğini ve tam sistem restart gerekebileceğini anlıyorum.</span>
+          </label>
+          <div className="flex gap-2">
+            <button data-testid="mp-cancel" onClick={() => { setModalOpen(false); setC1(false); setC2(false); }}
+              className="flex-1 px-3 py-2 rounded-md text-sm border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800">
+              İptal
+            </button>
+            <button data-testid="mp-confirm-disable"
+              disabled={!c1 || !c2 || reason.trim().length < 3 || disable.isPending}
+              onClick={() => disable.mutate()}
+              className="flex-1 px-3 py-2 rounded-md text-sm border border-rose-500/40 bg-rose-500 text-white font-semibold hover:bg-rose-600 disabled:opacity-40">
+              {disable.isPending ? "Uygulanıyor…" : "Devre Dışı Bırak"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
+  );
+}
+
+
+// v43.86 — Master Key Rotation Wizard
+function MasterRotationCard() {
+  const qc = useQueryClient();
+  const [step, setStep] = useState(1);
+  const [reason, setReason] = useState("");
+  const [newKey, setNewKey] = useState("");
+  const [nextSteps, setNextSteps] = useState([]);
+  const [oldKey, setOldKey] = useState(() => {
+    if (typeof window !== "undefined")
+      return localStorage.getItem("gws.master_license") || "";
+    return "";
+  });
+  const gen = useMutation({
+    mutationFn: () => api.masterRotateGenerate(reason),
+    onSuccess: (d) => { setNewKey(d.new_candidate_key); setNextSteps(d.next_steps || []); setStep(2);
+                        toast.success("Yeni master key üretildi — talimatları uygulayın"); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Üretilemedi"),
+  });
+  const complete = useMutation({
+    mutationFn: () => api.masterRotateComplete(oldKey),
+    onSuccess: () => { toast.success("Rotation tamamlandı — eski key revoke edildi"); setStep(4); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Tamamlanamadı"),
+  });
+  const cancel = useMutation({
+    mutationFn: () => api.masterRotateCancel(),
+    onSuccess: () => { toast.info("Rotation iptal edildi"); setStep(1); setNewKey(""); setNextSteps([]); },
+  });
+
+  return (
+    <Card>
+      <CardHeader title={<span className="flex items-center gap-2"><RefreshCw className="w-4 h-4 text-indigo-400" /> Master Key Rotation <Badge tone="warning">Adım {step}/4</Badge></span>}
+        subtitle="Master lisans anahtarını güvenle döndürün. 3 adım: üret → env güncelle → tamamla." />
+      <CardBody className="space-y-3">
+        {step === 1 && (
+          <div className="space-y-3">
+            <div className="text-xs text-slate-400">
+              <b>Adım 1:</b> Yeni master key adayı üretilecek. Henüz sistem değişmez — sadece candidate hazırlanır.
+            </div>
+            <label className="block">
+              <span className="text-[11px] uppercase tracking-widest text-slate-500">Rotation sebebi (min 3 karakter)</span>
+              <input type="text" value={reason} data-testid="mr-reason"
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Ör: annual rotation, güvenlik incident, IP göç"
+                className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm" />
+            </label>
+            <button data-testid="mr-generate"
+              disabled={reason.trim().length < 3 || gen.isPending}
+              onClick={() => gen.mutate()}
+              className="w-full px-3 py-2 rounded-md text-sm border border-indigo-500/40 bg-indigo-500 text-white font-semibold hover:bg-indigo-600 disabled:opacity-40">
+              {gen.isPending ? "Üretiliyor…" : "Yeni Master Key Üret"}
+            </button>
+          </div>
+        )}
+        {step === 2 && (
+          <div className="space-y-3">
+            <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/40 rounded p-2">
+              <b>⚠ Bu key sadece bir kez gösterilir</b> — güvenli bir yere kopyalayın!
+            </div>
+            <div className="p-3 bg-slate-950 border border-indigo-500/40 rounded-md">
+              <div className="text-[10px] uppercase text-slate-500 mb-1">YENI MASTER KEY</div>
+              <div className="mono text-emerald-300 break-all text-sm select-all" data-testid="mr-newkey">{newKey}</div>
+            </div>
+            <button data-testid="mr-copy"
+              onClick={() => { navigator.clipboard.writeText(newKey); toast.success("Kopyalandı"); }}
+              className="w-full px-3 py-1.5 rounded-md text-xs border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800">
+              📋 Kopyala
+            </button>
+            <div className="text-xs text-slate-400 space-y-1 border-l-2 border-indigo-500/40 pl-3">
+              {nextSteps.map((s, i) => (<div key={i} className="text-[11px]">{s}</div>))}
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button data-testid="mr-cancel"
+                onClick={() => cancel.mutate()}
+                className="flex-1 px-3 py-2 rounded-md text-sm border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800">
+                İptal
+              </button>
+              <button data-testid="mr-go-step3"
+                onClick={() => setStep(3)}
+                className="flex-1 px-3 py-2 rounded-md text-sm border border-emerald-500/40 bg-emerald-500 text-white font-semibold hover:bg-emerald-600">
+                Env Güncelledim
+              </button>
+            </div>
+          </div>
+        )}
+        {step === 3 && (
+          <div className="space-y-3">
+            <div className="text-xs text-slate-400">
+              <b>Adım 3:</b> Env güncellendi ve backend yeniden başlatıldıysa <b>Rotation'ı Tamamla</b>'ya basın. Sistem env değişkenini doğrulayıp eski key'i revoke edecek.
+            </div>
+            <label className="block">
+              <span className="text-[11px] uppercase tracking-widest text-slate-500">Eski Master Key (revoke için)</span>
+              <input type="password" value={oldKey} data-testid="mr-oldkey"
+                onChange={(e) => setOldKey(e.target.value)}
+                placeholder="MS-..."
+                className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm mono" />
+            </label>
+            <div className="flex gap-2">
+              <button data-testid="mr-back-step2"
+                onClick={() => setStep(2)}
+                className="px-3 py-2 rounded-md text-sm border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800">
+                ← Geri
+              </button>
+              <button data-testid="mr-complete"
+                disabled={complete.isPending || !oldKey.startsWith("MS-")}
+                onClick={() => complete.mutate()}
+                className="flex-1 px-3 py-2 rounded-md text-sm border border-rose-500/40 bg-rose-500 text-white font-semibold hover:bg-rose-600 disabled:opacity-40">
+                {complete.isPending ? "Doğrulanıyor…" : "Rotation'ı Tamamla"}
+              </button>
+            </div>
+          </div>
+        )}
+        {step === 4 && (
+          <div className="text-center py-6 space-y-2">
+            <div className="text-4xl">✅</div>
+            <div className="text-emerald-300 font-semibold">Rotation Tamamlandı</div>
+            <div className="text-xs text-slate-400">Eski key revoke edildi, yeni key aktif. Localstorage'ınızı da yeni key ile güncellemeyi unutmayın.</div>
+            <button onClick={() => { setStep(1); setReason(""); setNewKey(""); setNextSteps([]); }}
+              className="mt-3 px-3 py-1.5 rounded-md text-xs border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800">
+              Yeni Rotation Başlat
+            </button>
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+
+// v43.87 — Foreign IP Session Kill yönetimi
+function KilledIpsCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["killed-ips"], queryFn: () => api.killedIpsList(), staleTime: 15_000 });
+  const toggleAuto = useMutation({
+    mutationFn: (enabled) => api.killedIpsToggleAuto(enabled),
+    onSuccess: (d) => { toast.success(`Auto-kill ${d.auto_kill_enabled ? "AÇIK" : "KAPALI"}`);
+                       qc.invalidateQueries({ queryKey: ["killed-ips"] }); },
+  });
+  const unblock = useMutation({
+    mutationFn: (ip) => api.killedIpsUnblock(ip),
+    onSuccess: () => { toast.success("IP unblocked"); qc.invalidateQueries({ queryKey: ["killed-ips"] }); },
+  });
+  const items = q.data?.items || [];
+  const activeCount = q.data?.total_active || 0;
+  return (
+    <Card>
+      <CardHeader title={<span className="flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-rose-400" /> Foreign IP Session Kill <Badge tone="danger">{activeCount} aktif</Badge></span>}
+        subtitle="Master key farklı IP'den kullanılırsa o IP otomatik blocklistedendi. Uzak session takeover'ı önler." />
+      <CardBody className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-slate-200">Otomatik Session-Kill</div>
+            <div className="text-xs text-slate-500 mt-0.5">Farklı IP algılanınca hemen bloke et</div>
+          </div>
+          <button
+            data-testid="ki-toggle-auto"
+            onClick={() => toggleAuto.mutate(!q.data?.auto_kill_enabled)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${q.data?.auto_kill_enabled ? "bg-emerald-500/70" : "bg-slate-700"}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${q.data?.auto_kill_enabled ? "translate-x-6" : "translate-x-1"}`} />
+          </button>
+        </div>
+        {items.length > 0 ? (
+          <div className="space-y-1 max-h-52 overflow-y-auto">
+            {items.slice(0, 15).map((it) => (
+              <div key={it.ip} data-testid={`ki-row-${it.ip}`}
+                className={`flex items-center justify-between p-2 rounded border ${it.active ? "border-rose-500/30 bg-rose-500/5" : "border-slate-700 bg-slate-900/50"}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="mono text-xs text-slate-200 truncate">{it.ip}</div>
+                  <div className="text-[10px] text-slate-500 truncate">{it.killed_at?.slice(0,19)} · {it.reason}</div>
+                </div>
+                {it.active
+                  ? <button data-testid={`ki-unblock-${it.ip}`} onClick={() => unblock.mutate(it.ip)}
+                      className="text-[10px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 whitespace-nowrap">
+                      Kaldır
+                    </button>
+                  : <Badge tone="success">unblocked</Badge>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-xs text-slate-500 text-center py-4">Blocklistedeki IP yok — güvenli.</div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+
 function Row({ title, hint, children, testid }) {
   return (
     <div data-testid={testid} className="flex items-start justify-between gap-6 py-4 border-b border-slate-800 last:border-0">
@@ -652,6 +950,11 @@ export default function SettingsPage() {
 
         {/* v43.77 — Slash Command Aliases */}
         <SlashAliasesConfigCard />
+
+        {/* v43.86/87 — Master Protection + Rotation + Foreign IP Kill */}
+        <MasterProtectionCard />
+        <MasterRotationCard />
+        <KilledIpsCard />
       </div>
 
       <div className="col-span-12 lg:col-span-4 space-y-4">

@@ -3886,6 +3886,13 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
     if license_key:
         if MASTER_LICENSE_KEY and license_key == MASTER_LICENSE_KEY:
             key_match = True
+            # v43.87 — Session Kill: bu IP daha önce foreign-IP alarmında blockleistelendiyse hemen 403
+            killed = await db.killed_master_ips.find_one({"ip": client_ip, "active": True})
+            if killed:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Bu IP ({client_ip}) master session güvenliği nedeniyle blocklistedendi. Kaldırmak için: Ayarlar → Master → Blocked IP's."
+                )
             # v43.86 — Master IP alarm: Master key farklı IP'den geliyorsa Slack alert
             if MASTER_IP and MASTER_IP not in xff_chain:
                 try:
@@ -3918,6 +3925,22 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                             "details": alert["details"],
                             "at": _iso(), "severity": "critical",
                         })
+                        # v43.87 — Session Kill: bu IP'yi block listeye ekle → sonraki
+                        # istekleri hemen reddet (sıkı güvenlik)
+                        prot = await db.settings.find_one({"_key": "foreign_ip_auto_kill"},
+                                                            {"_id": 0}) or {}
+                        if prot.get("enabled", True):   # default açık — user kapatabilir
+                            await db.killed_master_ips.update_one(
+                                {"ip": client_ip},
+                                {"$set": {
+                                    "ip": client_ip,
+                                    "active": True,
+                                    "killed_at": _iso(),
+                                    "reason": "foreign_ip_master_key",
+                                    "user_agent": request.headers.get("user-agent", "")[:120],
+                                }},
+                                upsert=True,
+                            )
                         # Slack async fire (reuse license alert pipeline)
                         try:
                             asyncio.create_task(_fire_license_alert({
@@ -6121,6 +6144,57 @@ async def master_rotate_cancel(request: Request):
     await _require_master(request, None)
     r = await db.settings.delete_one({"_key": "master_rotate_candidate"})
     return {"ok": True, "cancelled": r.deleted_count > 0}
+
+
+# v43.87 — Foreign IP Session Kill Management
+@api.get("/settings/killed-master-ips")
+async def killed_ips_list(request: Request):
+    """Blocklistedeki IP'lerin listesi."""
+    await _require_master(request, None)
+    docs = await db.killed_master_ips.find({}, {"_id": 0}).sort("killed_at", -1).limit(200).to_list(200)
+    setting = await db.settings.find_one({"_key": "foreign_ip_auto_kill"}, {"_id": 0}) or {}
+    return {
+        "auto_kill_enabled": setting.get("enabled", True),
+        "items": docs,
+        "total_active": sum(1 for d in docs if d.get("active")),
+    }
+
+
+class KilledIpToggleIn(BaseModel):
+    enabled: bool
+
+
+@api.post("/settings/killed-master-ips/toggle-auto")
+async def killed_ips_toggle_auto(payload: KilledIpToggleIn, request: Request):
+    """Otomatik session-kill özelliğini aç/kapat (default: açık)."""
+    await _require_master(request, None)
+    await db.settings.update_one(
+        {"_key": "foreign_ip_auto_kill"},
+        {"$set": {"_key": "foreign_ip_auto_kill", "enabled": bool(payload.enabled),
+                   "updated_at": _iso(), "updated_by_ip": _client_ip(request)}},
+        upsert=True,
+    )
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()), "action": "foreign_ip_auto_kill_toggled",
+        "actor_ip": _client_ip(request), "details": {"enabled": payload.enabled},
+        "at": _iso(), "severity": "warning",
+    })
+    return {"ok": True, "auto_kill_enabled": bool(payload.enabled)}
+
+
+@api.post("/settings/killed-master-ips/{ip}/unblock")
+async def killed_ips_unblock(ip: str, request: Request):
+    """Belirli bir IP'yi block listeden kaldır."""
+    await _require_master(request, None)
+    r = await db.killed_master_ips.update_one({"ip": ip}, {"$set": {"active": False,
+                                                                        "unblocked_at": _iso(),
+                                                                        "unblocked_by_ip": _client_ip(request)}})
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()), "action": "killed_ip_unblocked",
+        "actor_ip": _client_ip(request), "details": {"ip": ip},
+        "at": _iso(), "severity": "warning",
+    })
+    return {"ok": True, "modified": r.modified_count}
 
 
 @api.post("/licenses/{lid}/update")
