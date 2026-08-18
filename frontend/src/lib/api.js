@@ -221,6 +221,26 @@ export const api = {
     return res;
   },
 
+  // v43.90 — Report Schedules (scheduled mail delivery)
+  reportSchedulesList: () => client.get("/report-schedules/").then(r => r.data),
+  reportScheduleCreate: (payload) => client.post("/report-schedules/", payload).then(r => r.data),
+  reportScheduleDelete: (id) => client.delete(`/report-schedules/${id}`).then(r => r.data),
+  reportScheduleRunNow: (id) => client.post(`/report-schedules/${id}/run-now`).then(r => r.data),
+
+  // v43.90 — UI Theme (accent color)
+  uiThemeGet: () => client.get("/settings/ui-theme/me").then(r => r.data),
+  uiThemePut: (accent_color) => client.put("/settings/ui-theme/me", { accent_color }).then(r => r.data),
+
+  // v43.90 — Bayi IP Whitelist Enforce (master)
+  bayiIpEnforceGet: () => client.get("/settings/bayi-ip-enforce").then(r => r.data),
+  bayiIpEnforcePut: (enabled) => client.put("/settings/bayi-ip-enforce", { enabled }).then(r => r.data),
+
+  // v43.90 — PIN Approval Workflow
+  pinApprovalRequest: (new_pin, reason) => client.post("/pin-approvals/request", { new_pin, reason }).then(r => r.data),
+  pinApprovalMyList: () => client.get("/pin-approvals/my").then(r => r.data),
+  pinApprovalPending: () => client.get("/pin-approvals/pending").then(r => r.data),
+  pinApprovalDecide: (id, decision, note) => client.post(`/pin-approvals/${id}/decide`, { decision, note }).then(r => r.data),
+
   scanAI: (payload) => llmClient.post("/scan/ai", payload).then(r => r.data),
 
   // Version

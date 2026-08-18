@@ -14,6 +14,82 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 18, 2026 (Session 19, v43.91) — 4 Feature Batch: IP Enforce + PIN Approval + UI Theme + Report Schedules + Settings Tabs
+
+**KULLANICI İSTEĞİ (4 backlog item + UX rework):**
+1. Bayi IP Whitelist Enforce — panel API'leri sadece `license.ip_addresses` içindekilerden çağrılabilsin
+2. PIN Approval Workflow — bayi PIN değişikliği talebi master onay kuyruğuna düşsün
+3. UI Theme Selector — 5 accent renk (indigo/fuchsia/emerald/cyan/rose) picker
+4. Scheduled Mail Reports — advanced raporlar custom gün/saat'te email ile teslim
+5. Settings sayfasını **Tab layout**'a çevir — karışıklık çözümü
+
+**IMPLEMENTATION:**
+
+### 1. Bayi IP Whitelist Enforce (server.py — yeni middleware)
+- Yeni middleware `bayi_ip_whitelist_enforce` (demo_write_guard'dan ÖNCE mount edildi)
+- Master anahtarı ile gelen istekler → bypass
+- Setting `bayi_ip_whitelist_enforce.enabled` (default False, master toggle'lı)
+- Public/plugin/heartbeat prefix'leri (`/api/plugin/`, `/api/license/`, `/api/heartbeat`, `/api/events/ingest`, `/api/payments/`, vb.) → skip
+- Bayi lisansı bulunur → `ip_addresses` boşsa bypass, doluysa client IP eşleşmesi kontrolü
+- Bloke → `audit_logs.action=bayi_ip_whitelist_blocked` severity=warning + HTTP 403 code=BAYI_IP_NOT_WHITELISTED
+- Endpoint'ler: `GET/PUT /api/settings/bayi-ip-enforce` (master-only)
+
+### 2. PIN Approval Workflow (routes/pin_approvals.py — YENİ MODÜL)
+- Collection: `pin_change_requests` {id, bayi_license_key, new_pin_hash+salt (PBKDF2 200k), reason, status: pending|approved|rejected, requested_at, requested_ip, decided_at, decided_by_ip, decision_note}
+- Endpoint'ler:
+  - `POST /api/pin-approvals/request` (bayi) — new PIN + reason → duplicate pending → 409
+  - `GET /api/pin-approvals/my` (bayi) — kendi son 20 talebi
+  - `GET /api/pin-approvals/pending` (master) — bekleyen tüm talepler + customer_name enrichment
+  - `POST /api/pin-approvals/{id}/decide` (master) — approve|reject + note → approved ise `idle_lock_user_settings`'e PIN uygulanır
+- Master'a `master_alerts.type=pin_change_request` push, bayi'ye `notifications_inbox.type=pin_change_decision` push
+- Audit: `pin_change_approved|rejected` severity info/warning
+- Prefix `/api/pin-approvals/request` ve `/api/pin-approvals/my` demo_write_guard allow list'te
+
+### 3. UI Theme (server.py — /api/settings/ui-theme/me GET+PUT)
+- Per-owner setting (master → `__master__`, bayi → kendi key)
+- Model: `UIThemeIn.accent_color: Literal["indigo","fuchsia","emerald","cyan","rose"]`
+- Frontend `V4390Cards.js::UIThemeCard`: 5 renkli swatch chip + `applyAccentColor()` CSS variable set + localStorage cache
+- `App.js` mount'ta `--gws-accent-rgb` var'ı erken uygulanır (localStorage → sunucudan fetch)
+
+### 4. Scheduled Mail Reports (routes/report_schedules.py — YENİ MODÜL)
+- Collection: `mail_report_schedules` {owner_license_key, email, recipient, direction, days, format, day_of_week (0-6 haftalık, null günlük), hour, minute, active, next_run_at, last_run_at, run_count}
+- Endpoint'ler:
+  - `GET /api/report-schedules/` (list mine)
+  - `POST /api/report-schedules/` (create — max 20 aktif per bayi)
+  - `DELETE /api/report-schedules/{id}`
+  - `POST /api/report-schedules/{id}/run-now` — dry-run (email göndermez, sadece rapor üretir + boyut döner)
+- Background loop `_report_schedule_loop` her 5 dk `next_run_at <= now` olan schedule'ları çalıştırır
+- `_execute_schedule` — `_collect_events` + `_build_report_pdf/_build_report_xlsx` (routes/reports.py'den import) + `_send_email` with attachment (TypeError fallback plain body)
+- `_next_run()` helper — daily vs weekly weekday hesaplama
+
+### 5. Settings Tab Layout Refactor (pages/Settings.js)
+- Yeni `SettingsTabs` component + 5 tab: **Genel** (Sliders) · **Görünüm** (Palette) · **Güvenlik** (ShieldCheck) · **Kilit & PIN** (KeyRound) · **Entegrasyonlar** (Plug)
+- Sticky tab bar altında (top-14) + tone renkli aktif state
+- Tab seçimi `localStorage.gws.settings.tab` ile persist
+- Yerleşim:
+  - **Genel**: Dil + LogSource + Eşikler + Motorlar + Giden + (sağ sütun) Karantina retention + Bildirim sıklığı + Kaydet
+  - **Görünüm**: UIThemeCard
+  - **Güvenlik**: BayiIPEnforceCard + MasterProtection + Rotation + KilledIps
+  - **Kilit & PIN**: IdleLockConfig + IdleLockPersonal + PinChangeRequest (bayi form) + PinApprovalMasterQueue (master widget)
+  - **Entegrasyonlar**: StripeConfig + SlashAliases
+
+### 6. Reports.js — ScheduledReportsCard added
+- Yeni kart advanced report kartının altında
+- Mevcut zamanlamalar liste (email→recipient · gün/saat · direction · days · format · next_run)
+- Play (dry-run) + Trash (delete) butonları her satırda
+- "+Yeni Zamanlama" butonu form açar: email + recipient + direction + format + days + day_of_week (Her gün veya haftalık) + hour + minute
+
+**Test edildi (backend curl smoke + pytest):**
+- 6/6 pytest v43_90 (whoami, mail-activity) PASS ✓
+- 9/9 pytest v43_91 (ui-theme, ip-enforce, pin-approval flow, schedules CRUD) PASS ✓
+- IP enforce enable → wrong IP → 403 BAYI_IP_NOT_WHITELISTED, whitelist IP → 200 (curl doğrulandı)
+- PIN request pending → master pending list görür → approve → status=approved → 2. karar → 400
+- Schedule create → list → run-now dry-run OK + delete ✓
+- Frontend screenshots: 5 tab (Genel/Görünüm/Güvenlik/Kilit&PIN/Entegrasyonlar) hepsi düzgün render + Reports'ta ScheduledReportsCard "Salı 08:00 UTC · both · son 30g · PDF" ✓
+
+**VERSION**: v43.90 → v43.91
+
+
 ## Feb 18, 2026 (Session 19, v43.90) — Reports Advanced UI + Header Personalize
 
 **KULLANICI İSTEĞİ (P0 devamı):**

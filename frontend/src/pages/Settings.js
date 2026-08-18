@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages, Server, ShieldCheck, ShieldAlert, RefreshCw, Zap } from "lucide-react";
+import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages, Server, ShieldCheck, ShieldAlert, RefreshCw, Zap, Palette, KeyRound, Plug } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import StripeConfigCard from "@/components/StripeConfigCard";
 import SlashAliasesConfigCard from "@/components/SlashAliasesConfigCard";
+import { UIThemeCard, BayiIPEnforceCard, PinChangeRequestCard, PinApprovalMasterQueue } from "@/components/V4390Cards";
 import { api } from "@/lib/api";
 import { useI18n, useT } from "@/i18n";
 
@@ -799,8 +800,128 @@ export default function SettingsPage() {
 
   const patch = (k, v) => setState((s) => ({ ...s, [k]: v }));
 
+  return <SettingsTabs state={state} patch={patch} langs={langs} uiLang={uiLang} setUiLang={setUiLang} save={save} t={t} />;
+}
+
+// v43.90 — Tab-based Settings layout (karışıklık çözümü)
+function SettingsTabs({ state, patch, langs, uiLang, setUiLang, save, t }) {
+  const [tab, setTab] = useState(() => localStorage.getItem("gws.settings.tab") || "general");
+  const chooseTab = (id) => { setTab(id); try { localStorage.setItem("gws.settings.tab", id); } catch {} };
+
+  const TABS = [
+    { id: "general",     label: "Genel",           Icon: Sliders,     tone: "indigo" },
+    { id: "appearance",  label: "Görünüm",         Icon: Palette,     tone: "fuchsia" },
+    { id: "security",    label: "Güvenlik",        Icon: ShieldCheck, tone: "emerald" },
+    { id: "lock",        label: "Kilit & PIN",     Icon: KeyRound,    tone: "amber" },
+    { id: "integrations",label: "Entegrasyonlar",  Icon: Plug,        tone: "cyan" },
+  ];
+
+  const tones = {
+    indigo:  "border-indigo-500/50 bg-indigo-500/15 text-indigo-200",
+    fuchsia: "border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-200",
+    emerald: "border-emerald-500/50 bg-emerald-500/15 text-emerald-200",
+    amber:   "border-amber-500/50 bg-amber-500/15 text-amber-200",
+    cyan:    "border-cyan-500/50 bg-cyan-500/15 text-cyan-200",
+  };
+
   return (
-    <div className="p-6 grid grid-cols-12 gap-6">
+    <div className="p-6 space-y-4">
+      {/* Tab Bar */}
+      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3 sticky top-14 bg-slate-950/80 backdrop-blur z-10" data-testid="settings-tabs">
+        {TABS.map(({ id, label, Icon, tone }) => {
+          const active = tab === id;
+          return (
+            <button
+              key={id}
+              data-testid={`settings-tab-${id}`}
+              type="button"
+              onClick={() => chooseTab(id)}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                active ? tones[tone] + " shadow-md" : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab Content */}
+      {tab === "general" && <GeneralTab state={state} patch={patch} langs={langs} uiLang={uiLang} setUiLang={setUiLang} save={save} t={t} />}
+      {tab === "appearance" && (
+        <div className="grid grid-cols-12 gap-6">
+          <div className="col-span-12 lg:col-span-8"><UIThemeCard /></div>
+          <div className="col-span-12 lg:col-span-4">
+            <Card>
+              <CardBody className="text-xs text-slate-500 space-y-2">
+                <div className="flex items-center gap-2 text-slate-400"><Palette className="w-3.5 h-3.5" /> Görünüm ayarları anında uygulanır.</div>
+                <div className="text-slate-500">Vurgu rengi butonlar, aktif menü öğeleri ve öne çıkan chip'lerde kullanılır.</div>
+              </CardBody>
+            </Card>
+          </div>
+        </div>
+      )}
+      {tab === "security" && (
+        <div className="grid grid-cols-12 gap-6">
+          <div className="col-span-12 lg:col-span-8 space-y-4">
+            <BayiIPEnforceCard />
+            <MasterProtectionCard />
+            <MasterRotationCard />
+            <KilledIpsCard />
+          </div>
+          <div className="col-span-12 lg:col-span-4">
+            <Card>
+              <CardBody className="text-xs text-slate-500 space-y-2">
+                <div className="flex items-center gap-2 text-slate-400"><ShieldCheck className="w-3.5 h-3.5" /> Master güvenlik kontrolleri</div>
+                <div className="text-slate-500">Bu bölüm master silme koruması, key rotasyon, foreign IP session kill ve bayi IP whitelist zorlaması içerir.</div>
+              </CardBody>
+            </Card>
+          </div>
+        </div>
+      )}
+      {tab === "lock" && (
+        <div className="grid grid-cols-12 gap-6">
+          <div className="col-span-12 lg:col-span-8 space-y-4">
+            <IdleLockConfigCard />
+            <IdleLockPersonalCard />
+            <PinChangeRequestCard />
+            <PinApprovalMasterQueue />
+          </div>
+          <div className="col-span-12 lg:col-span-4">
+            <Card>
+              <CardBody className="text-xs text-slate-500 space-y-2">
+                <div className="flex items-center gap-2 text-slate-400"><KeyRound className="w-3.5 h-3.5" /> Kilit & PIN yönetimi</div>
+                <div className="text-slate-500">Otomatik kilit süresi, PIN oluşturma ve master onay akışı burada yönetilir.</div>
+              </CardBody>
+            </Card>
+          </div>
+        </div>
+      )}
+      {tab === "integrations" && (
+        <div className="grid grid-cols-12 gap-6">
+          <div className="col-span-12 lg:col-span-8 space-y-4">
+            <StripeConfigCard />
+            <SlashAliasesConfigCard />
+          </div>
+          <div className="col-span-12 lg:col-span-4">
+            <Card>
+              <CardBody className="text-xs text-slate-500 space-y-2">
+                <div className="flex items-center gap-2 text-slate-400"><Plug className="w-3.5 h-3.5" /> Entegrasyonlar</div>
+                <div className="text-slate-500">Stripe ödeme anahtarı ve slash-command kısayolları burada tanımlanır.</div>
+              </CardBody>
+            </Card>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// v43.90 — GENEL sekmesi (dil, LogSource, eşikler, motorlar, giden, karantina, notif)
+function GeneralTab({ state, patch, langs, uiLang, setUiLang, save, t }) {
+  return (
+    <div className="grid grid-cols-12 gap-6">
       <div className="col-span-12 lg:col-span-8 space-y-4">
         <Card>
           <CardHeader
@@ -829,9 +950,7 @@ export default function SettingsPage() {
                 </button>
               ))}
             </div>
-            <div className="text-[11px] text-slate-500">
-              {t("settings.ui_lang_hint")}
-            </div>
+            <div className="text-[11px] text-slate-500">{t("settings.ui_lang_hint")}</div>
           </CardBody>
         </Card>
 
@@ -874,8 +993,7 @@ export default function SettingsPage() {
             subtitle={t("settings.engines_sub")}
           />
           <CardBody className="space-y-1">
-            <Row title={t("settings.active_engine")} hint={t("settings.active_engine_hint")}
-                 testid="row-active-engine">
+            <Row title={t("settings.active_engine")} hint={t("settings.active_engine_hint")} testid="row-active-engine">
               <select value={state.active_engine} onChange={(e) => patch("active_engine", e.target.value)}
                 data-testid="active-engine"
                 className="bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm">
@@ -883,33 +1001,25 @@ export default function SettingsPage() {
                 <option value="rspamd">Rspamd</option>
               </select>
             </Row>
-            <Row title={t("settings.bayes")} hint={t("settings.bayes_hint")}
-                 testid="row-bayes">
+            <Row title={t("settings.bayes")} hint={t("settings.bayes_hint")} testid="row-bayes">
               <Toggle checked={state.bayes_learning} onChange={(v) => patch("bayes_learning", v)} testid="toggle-bayes" />
             </Row>
             <Row title={<span className="flex items-center gap-2">{t("settings.ai_row")} <Badge tone="brand">{t("settings.new")}</Badge></span>}
-                 hint={t("settings.ai_hint")}
-                 testid="row-ai">
+                 hint={t("settings.ai_hint")} testid="row-ai">
               <Toggle checked={state.ai_classification} onChange={(v) => patch("ai_classification", v)} testid="toggle-ai" />
             </Row>
             {state.ai_classification && (
-              <Row title={t("settings.ai_model_row")}
-                   hint={t("settings.ai_model_hint")}
-                   testid="row-ai-model">
-                <select
-                  data-testid="ai-model"
-                  value={state.ai_model}
+              <Row title={t("settings.ai_model_row")} hint={t("settings.ai_model_hint")} testid="row-ai-model">
+                <select data-testid="ai-model" value={state.ai_model}
                   onChange={(e) => patch("ai_model", e.target.value)}
-                  className="bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm"
-                >
+                  className="bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm">
                   <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
                   <option value="gpt-5.2">GPT-5.2</option>
                   <option value="gemini-3-flash">Gemini 3 Flash</option>
                 </select>
               </Row>
             )}
-            <Row title={t("settings.tls")} hint={t("settings.tls_hint")}
-                 testid="row-tls">
+            <Row title={t("settings.tls")} hint={t("settings.tls_hint")} testid="row-tls">
               <Toggle checked={state.tls_enforce} onChange={(v) => patch("tls_enforce", v)} testid="toggle-tls" />
             </Row>
           </CardBody>
@@ -921,15 +1031,10 @@ export default function SettingsPage() {
             subtitle={t("settings.outbound_sub")}
           />
           <CardBody className="space-y-1">
-            <Row title={t("settings.outbound_block")}
-                 hint={t("settings.outbound_block_hint")}
-                 testid="row-outbound-block">
-              <Toggle checked={state.outbound_block_enabled} onChange={(v) => patch("outbound_block_enabled", v)}
-                      testid="toggle-outbound" />
+            <Row title={t("settings.outbound_block")} hint={t("settings.outbound_block_hint")} testid="row-outbound-block">
+              <Toggle checked={state.outbound_block_enabled} onChange={(v) => patch("outbound_block_enabled", v)} testid="toggle-outbound" />
             </Row>
-            <Row title={t("settings.outbound_limit")}
-                 hint={t("settings.outbound_limit_hint")}
-                 testid="row-outbound-limit">
+            <Row title={t("settings.outbound_limit")} hint={t("settings.outbound_limit_hint")} testid="row-outbound-limit">
               <input type="number" min="10" max="10000"
                 data-testid="outbound-limit"
                 value={state.outbound_limit_per_hour}
@@ -938,23 +1043,6 @@ export default function SettingsPage() {
             </Row>
           </CardBody>
         </Card>
-
-        {/* Stripe API Key - master only */}
-        <StripeConfigCard />
-
-        {/* v43.72 — İdle Auto-Lock master ayarı */}
-        <IdleLockConfigCard />
-
-        {/* v43.81 — Kişisel Otomatik Kilit + PIN (per-user, tüm bayilere görünür) */}
-        <IdleLockPersonalCard />
-
-        {/* v43.77 — Slash Command Aliases */}
-        <SlashAliasesConfigCard />
-
-        {/* v43.86/87 — Master Protection + Rotation + Foreign IP Kill */}
-        <MasterProtectionCard />
-        <MasterRotationCard />
-        <KilledIpsCard />
       </div>
 
       <div className="col-span-12 lg:col-span-4 space-y-4">
@@ -963,9 +1051,7 @@ export default function SettingsPage() {
             title={<span className="flex items-center gap-2"><Clock className="w-4 h-4 text-indigo-400" /> {t("settings.quarantine_title")}</span>}
           />
           <CardBody className="space-y-1">
-            <Row title={t("settings.retention")}
-                 hint={t("settings.retention_hint")}
-                 testid="row-retention">
+            <Row title={t("settings.retention")} hint={t("settings.retention_hint")} testid="row-retention">
               <div className="flex items-center gap-2">
                 <input type="number" min="1" max="90"
                   data-testid="quarantine-days"
@@ -983,9 +1069,7 @@ export default function SettingsPage() {
             title={<span className="flex items-center gap-2"><Bell className="w-4 h-4 text-indigo-400" /> {t("settings.notif_title")}</span>}
           />
           <CardBody className="space-y-1">
-            <Row title={t("settings.report_freq")}
-                 hint={t("settings.report_freq_hint")}
-                 testid="row-report-freq">
+            <Row title={t("settings.report_freq")} hint={t("settings.report_freq_hint")} testid="row-report-freq">
               <select value={state.report_frequency} onChange={(e) => patch("report_frequency", e.target.value)}
                 data-testid="report-frequency"
                 className="bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm">

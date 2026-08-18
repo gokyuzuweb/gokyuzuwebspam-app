@@ -1,13 +1,244 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   FileText, Download, Send, Mail, Clock, Search, FileSpreadsheet, Loader2,
-  ArrowUpRight, ArrowDownLeft, ArrowLeftRight,
+  ArrowUpRight, ArrowDownLeft, ArrowLeftRight, CalendarClock, Trash2, Play, Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { useT } from "@/i18n";
+
+// v43.90 — Scheduled Mail Reports (list + create + delete + run-now)
+function ScheduledReportsCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["report-schedules"], queryFn: () => api.reportSchedulesList(), refetchInterval: 30_000 });
+  const items = q.data?.items || [];
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({
+    email: "", recipient: "", direction: "both", days: 30, format: "pdf",
+    day_of_week: "", hour: 8, minute: 0,
+  });
+
+  const createMut = useMutation({
+    mutationFn: () => {
+      const payload = {
+        ...form,
+        day_of_week: form.day_of_week === "" ? null : Number(form.day_of_week),
+        days: Number(form.days), hour: Number(form.hour), minute: Number(form.minute),
+      };
+      return api.reportScheduleCreate(payload);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["report-schedules"] });
+      setShowForm(false);
+      setForm({ email: "", recipient: "", direction: "both", days: 30, format: "pdf", day_of_week: "", hour: 8, minute: 0 });
+      toast.success("Zamanlama oluşturuldu");
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Oluşturulamadı"),
+  });
+
+  const delMut = useMutation({
+    mutationFn: (id) => api.reportScheduleDelete(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["report-schedules"] }); toast.success("Zamanlama silindi"); },
+  });
+
+  const runMut = useMutation({
+    mutationFn: (id) => api.reportScheduleRunNow(id),
+    onSuccess: (d) => {
+      const r = d?.result || {};
+      toast.success(`Dry-run: ${r.sent_total ?? 0} gönderilen, ${r.received_total ?? 0} gelen (${r.content_bytes} B)`);
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Çalıştırılamadı"),
+  });
+
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
+  const recipientValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.recipient.trim());
+  const canCreate = emailValid && recipientValid;
+
+  const DOW = ["Ptesi", "Salı", "Çrş", "Prş", "Cuma", "Cmt", "Pazar"];
+
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-cyan-400" /> Zamanlanmış Mail Raporları</span>}
+        subtitle="Belirlediğiniz gün ve saatte rapor otomatik olarak email ile teslim edilir."
+        right={<Badge tone="cyan">v43.90</Badge>}
+      />
+      <CardBody className="space-y-3">
+        {/* Existing schedules */}
+        {items.length > 0 && (
+          <div className="space-y-1.5">
+            {items.map(s => (
+              <div key={s.id} data-testid={`schedule-${s.id}`}
+                className="flex items-center justify-between gap-3 border border-slate-800 bg-slate-950/60 rounded-md px-3 py-2 hover:border-slate-700">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-slate-100 truncate">
+                    {s.email} <span className="text-slate-500 text-xs">→</span> <span className="text-cyan-300 text-xs mono">{s.recipient}</span>
+                  </div>
+                  <div className="text-[10px] mono text-slate-500 mt-0.5">
+                    {s.day_of_week === null ? "Her gün" : DOW[s.day_of_week]} · {String(s.hour).padStart(2,"0")}:{String(s.minute).padStart(2,"0")} UTC
+                    · {s.direction} · son {s.days}g · {s.format.toUpperCase()}
+                    · sonraki: {(s.next_run_at || "").slice(0, 16).replace("T", " ")}
+                    {s.run_count > 0 && <> · {s.run_count} çalıştı</>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    data-testid={`schedule-run-${s.id}`}
+                    type="button"
+                    onClick={() => runMut.mutate(s.id)}
+                    disabled={runMut.isPending}
+                    title="Şimdi çalıştır (dry-run, email göndermez)"
+                    className="p-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    data-testid={`schedule-delete-${s.id}`}
+                    type="button"
+                    onClick={() => { if (window.confirm("Bu zamanlama silinsin mi?")) delMut.mutate(s.id); }}
+                    title="Sil"
+                    className="p-1.5 rounded border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {items.length === 0 && !showForm && (
+          <div className="text-xs text-slate-500 italic py-2">Zamanlanmış rapor yok.</div>
+        )}
+
+        {/* Add form */}
+        {!showForm ? (
+          <button
+            data-testid="schedule-add-btn"
+            type="button"
+            onClick={() => setShowForm(true)}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-cyan-500/40 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25 text-sm font-semibold"
+          >
+            <Plus className="w-4 h-4" /> Yeni Zamanlama
+          </button>
+        ) : (
+          <div className="border border-cyan-500/30 bg-cyan-500/5 rounded-md p-3 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Rapor Konusu Email</label>
+                <input
+                  data-testid="schedule-email"
+                  type="email"
+                  placeholder="musteri@sunucu.com"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono focus:border-cyan-500/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Rapor Alıcı</label>
+                <input
+                  data-testid="schedule-recipient"
+                  type="email"
+                  placeholder="admin@sunucu.com"
+                  value={form.recipient}
+                  onChange={(e) => setForm({ ...form, recipient: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono focus:border-cyan-500/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Yön</label>
+                <select
+                  data-testid="schedule-direction"
+                  value={form.direction}
+                  onChange={(e) => setForm({ ...form, direction: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm"
+                >
+                  <option value="both">Her ikisi</option>
+                  <option value="sent">Gönderilen</option>
+                  <option value="received">Gelen</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Format</label>
+                <select
+                  data-testid="schedule-format"
+                  value={form.format}
+                  onChange={(e) => setForm({ ...form, format: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm"
+                >
+                  <option value="pdf">PDF</option>
+                  <option value="xlsx">Excel (XLSX)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Kapsam (gün)</label>
+                <input
+                  data-testid="schedule-days"
+                  type="number" min={1} max={365}
+                  value={form.days}
+                  onChange={(e) => setForm({ ...form, days: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Sıklık</label>
+                <select
+                  data-testid="schedule-dow"
+                  value={form.day_of_week}
+                  onChange={(e) => setForm({ ...form, day_of_week: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm"
+                >
+                  <option value="">Her gün</option>
+                  {DOW.map((d, i) => <option key={i} value={i}>{d} (haftalık)</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Saat (UTC)</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    data-testid="schedule-hour"
+                    type="number" min={0} max={23}
+                    value={form.hour}
+                    onChange={(e) => setForm({ ...form, hour: e.target.value })}
+                    className="w-16 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right"
+                  />
+                  <span className="text-slate-500">:</span>
+                  <input
+                    data-testid="schedule-minute"
+                    type="number" min={0} max={59}
+                    value={form.minute}
+                    onChange={(e) => setForm({ ...form, minute: e.target.value })}
+                    className="w-16 bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono text-right"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                className="px-3 py-1.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 text-sm"
+              >
+                Vazgeç
+              </button>
+              <button
+                data-testid="schedule-save"
+                type="button"
+                onClick={() => createMut.mutate()}
+                disabled={!canCreate || createMut.isPending}
+                className="inline-flex items-center gap-2 px-4 py-1.5 rounded border border-cyan-500/40 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25 text-sm font-semibold disabled:opacity-50"
+              >
+                <CalendarClock className="w-4 h-4" /> {createMut.isPending ? "Kaydediliyor..." : "Zamanla"}
+              </button>
+            </div>
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
 
 // v43.90 — Gelişmiş Mail Aktivite Raporu (POST /api/reports/mail-activity)
 function AdvancedMailReportCard() {
@@ -255,6 +486,9 @@ export default function Reports() {
       <div className="col-span-12 lg:col-span-8 space-y-4">
         {/* v43.90 — Gelişmiş Mail Aktivite Raporu (en üstte, öncelikli) */}
         <AdvancedMailReportCard />
+
+        {/* v43.90 — Zamanlanmış Mail Raporları */}
+        <ScheduledReportsCard />
 
         <Card>
           <CardHeader

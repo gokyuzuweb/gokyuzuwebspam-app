@@ -767,6 +767,13 @@ async def _startup() -> None:
     except Exception as _ex:
         log.warning("bounce digest loop not scheduled: %s", _ex)
 
+    # v43.90 — Zamanlanmış mail aktivite rapor teslimatı (her 5 dk kontrol eder)
+    try:
+        from routes.report_schedules import _report_schedule_loop as _rsl
+        asyncio.create_task(_rsl())
+    except Exception as _ex:
+        log.warning("report_schedule_loop not scheduled: %s", _ex)
+
 
 async def _daily_violations_cleanup_task():
     """7 günden eski license_violations kayıtlarını her gece sil. İlk çalıştırma
@@ -2257,6 +2264,53 @@ def _resolve_lock_owner(request: Request, license_key_qs: Optional[str] = None) 
     if lk:
         return lk
     return "__anon__"
+
+
+# -- v43.90 UI Theme (per-owner accent color) ---------------------------------
+class UIThemeIn(BaseModel):
+    accent_color: Literal["indigo", "fuchsia", "emerald", "cyan", "rose"] = "indigo"
+
+
+@api.get("/settings/ui-theme/me")
+async def ui_theme_get(request: Request, license_key: Optional[str] = None):
+    owner = _resolve_lock_owner(request, license_key)
+    doc = await db.ui_theme_settings.find_one({"owner": owner}, {"_id": 0}) or {}
+    return {"owner": owner, "accent_color": doc.get("accent_color", "indigo")}
+
+
+@api.put("/settings/ui-theme/me")
+async def ui_theme_put(payload: UIThemeIn, request: Request, license_key: Optional[str] = None):
+    owner = _resolve_lock_owner(request, license_key)
+    await db.ui_theme_settings.update_one(
+        {"owner": owner},
+        {"$set": {"owner": owner, "accent_color": payload.accent_color, "updated_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True, "owner": owner, "accent_color": payload.accent_color}
+
+
+# -- v43.90 Bayi IP Whitelist Enforce settings --------------------------------
+class BayiIPEnforceIn(BaseModel):
+    enabled: bool = False
+
+
+@api.get("/settings/bayi-ip-enforce")
+async def bayi_ip_enforce_get(request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    doc = await db.settings.find_one({"_key": "bayi_ip_whitelist_enforce"}, {"_id": 0}) or {}
+    return {"enabled": bool(doc.get("enabled", False))}
+
+
+@api.put("/settings/bayi-ip-enforce")
+async def bayi_ip_enforce_put(payload: BayiIPEnforceIn, request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    await db.settings.update_one(
+        {"_key": "bayi_ip_whitelist_enforce"},
+        {"$set": {"_key": "bayi_ip_whitelist_enforce", "enabled": payload.enabled, "updated_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True, "enabled": payload.enabled}
+
 
 
 class IdleLockMeIn(BaseModel):
@@ -11353,7 +11407,11 @@ from routes.live_diagnostic import router as _live_diag_router  # noqa: E402
 from routes.remote_admin import router as _remote_admin_router  # noqa: E402
 from routes.reseller_branding import router as _reseller_branding_router  # noqa: E402
 from routes.reports import router as _reports_router  # noqa: E402 v43.89
+from routes.pin_approvals import router as _pin_approvals_router  # noqa: E402 v43.90
+from routes.report_schedules import router as _report_schedules_router, _report_schedule_loop  # noqa: E402 v43.90
 app.include_router(_reports_router, prefix="/api")
+app.include_router(_pin_approvals_router, prefix="/api")
+app.include_router(_report_schedules_router, prefix="/api")
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
@@ -11425,7 +11483,108 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/landing/ab-impression", # v43.12 anonim A/B variant sayaç
     "/api/landing/ab-conversion", # v43.13 anonim A/B conversion tracker
     "/api/notifications/badge",   # v43.12 client achievement unlock notification
+    "/api/pin-approvals/request", # v43.90 bayi PIN change request (per-bayi guard'lı)
+    "/api/pin-approvals/my",      # v43.90 bayi kendi taleplerini görür
 )
+
+
+@app.middleware("http")
+async def bayi_ip_whitelist_enforce(request: Request, call_next):
+    """v43.90 — Bayi IP Whitelist Enforce.
+
+    Master ayarında `bayi_ip_whitelist_enforce.enabled=true` iken, X-Master-Key
+    (veya X-License-Key) ile gelen istekleri, lisansın `ip_addresses` listesine
+    karşı doğrular. Whitelist boşsa bypass (henüz kısıtlama yok). Master anahtarı
+    ile gelen istekler her zaman geçer. Uygulanmayan yollar (public, plugin
+    heartbeat, license/*, plugin/*) atlanır.
+    """
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    # Public/plugin/license akışları enforcement dışıdır
+    _SKIP_PREFIXES = (
+        "/api/plugin/", "/api/license/", "/api/reseller/", "/api/heartbeat",
+        "/api/events/ingest", "/api/events/ingest-batch", "/api/events/action",
+        "/api/events/complete-action", "/api/events/pending-actions/",
+        "/api/events/logtail-heartbeat", "/api/mail/ingest",
+        "/api/outbound/exim-log-push", "/api/outbound/backfill-ack",
+        "/api/live-diagnostic/report-install", "/api/threat/report",
+        "/api/blacklist/", "/api/plan/features", "/api/analytics/plan-event",
+        "/api/audit/idle-lock-event", "/api/reseller-branding/",
+        "/api/landing/", "/api/notifications/badge",
+        "/api/admin/master-unlock", "/api/admin/master-logout",
+        "/api/payments/", "/api/smart-pos/", "/api/checkout/",
+        "/api/auth/", "/api/shop", "/api/invoices/",
+    )
+    for p in _SKIP_PREFIXES:
+        if path.startswith(p):
+            return await call_next(request)
+
+    hdr = request.headers
+    provided_key = (hdr.get("x-master-key") or hdr.get("x-license-key") or "").strip()
+    if not provided_key:
+        return await call_next(request)
+    # Master anahtar → geç
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    if master_env and provided_key == master_env:
+        return await call_next(request)
+
+    # Setting kontrol
+    try:
+        cfg = await db.settings.find_one({"_key": "bayi_ip_whitelist_enforce"}, {"_id": 0})
+    except Exception:
+        cfg = None
+    if not cfg or not cfg.get("enabled"):
+        return await call_next(request)
+
+    # Lisansı bul
+    try:
+        lic = await db.licenses.find_one({"license_key": provided_key},
+                                          {"_id": 0, "ip_addresses": 1, "license_key": 1})
+    except Exception:
+        lic = None
+    if not lic:
+        return await call_next(request)
+    allowed = lic.get("ip_addresses") or []
+    if not allowed:
+        return await call_next(request)   # whitelist boş → kısıtlama yok
+
+    # Client IP
+    client_ip = ""
+    try:
+        xff = hdr.get("x-forwarded-for", "")
+        client_ip = (xff.split(",")[0].strip() if xff else "") or (request.client.host if request.client else "")
+    except Exception:
+        pass
+    if client_ip and client_ip in allowed:
+        return await call_next(request)
+
+    # Bloke: audit + 403
+    try:
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "bayi_ip_whitelist_blocked",
+            "actor_ip": client_ip,
+            "details": {
+                "license_key": provided_key, "attempted_path": path,
+                "method": request.method, "allowed_ips": allowed[:5],
+                "user_agent": (hdr.get("user-agent", "") or "")[:120],
+            },
+            "at": datetime.now(timezone.utc).isoformat(),
+            "severity": "warning",
+        })
+    except Exception:
+        pass
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=403,
+        content={
+            "detail": f"IP {client_ip} lisansın yetkili IP listesinde değil",
+            "code": "BAYI_IP_NOT_WHITELISTED",
+            "allowed_count": len(allowed),
+            "client_ip": client_ip,
+        },
+    )
 
 
 @app.middleware("http")

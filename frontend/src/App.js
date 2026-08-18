@@ -487,6 +487,26 @@ function Shell() {
 }
 
 export default function App() {
+  // v43.90 — Apply persisted accent color as early as possible (before any UI paint)
+  React.useEffect(() => {
+    try {
+      const cached = localStorage.getItem("gws.ui.accent") || "indigo";
+      const map = { indigo: "99 102 241", fuchsia: "217 70 239", emerald: "16 185 129", cyan: "6 182 212", rose: "244 63 94" };
+      document.documentElement.style.setProperty("--gws-accent-rgb", map[cached] || map.indigo);
+      document.documentElement.setAttribute("data-accent", cached);
+      // Sunucudan güncel değeri de çek (localStorage stale olabilir)
+      import("@/lib/api").then(({ api }) => {
+        api.uiThemeGet().then(d => {
+          if (d?.accent_color && d.accent_color !== cached) {
+            document.documentElement.style.setProperty("--gws-accent-rgb", map[d.accent_color] || map.indigo);
+            document.documentElement.setAttribute("data-accent", d.accent_color);
+            localStorage.setItem("gws.ui.accent", d.accent_color);
+          }
+        }).catch(() => {});
+      });
+    } catch {}
+  }, []);
+
   // v43.19 — Iframe detection + parent auto-resize + compact layout
   // WHM CGI (mailshield.cgi) SPA'yı iframe olarak yükler. Panel içeriği
   // uzun (~1500px) olduğu için kullanıcı DIŞ WHM sayfasını aşağı kaydırıyor.
