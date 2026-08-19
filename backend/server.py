@@ -4087,6 +4087,21 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
     xff_chain = request.headers.get("x-forwarded-for", "") + "," + client_ip
     ip_match = bool(MASTER_IP and MASTER_IP in xff_chain)
 
+    # v43.98 — WHM cPanel iframe trust: Referer/Origin :2087 içeriyorsa güvenli iframe say
+    referer = (request.headers.get("referer") or "").lower()
+    origin = (request.headers.get("origin") or "").lower()
+    _whm_host = f"{MASTER_IP}:2087" if MASTER_IP else ":2087"
+    _whm_hostname = os.environ.get("MASTER_HOSTNAME", "gokyuzuhosting.com").lower()
+    is_whm_iframe = (
+        (":2087" in referer and (MASTER_IP or "").lower() in referer)
+        or (":2087" in origin and (MASTER_IP or "").lower() in origin)
+        or (":2087" in referer and _whm_hostname in referer)
+        or (":2087" in origin and _whm_hostname in origin)
+    )
+    # WHM iframe → IP eşleşmesi gerekmeden master gibi davran
+    if is_whm_iframe:
+        ip_match = True
+
     key_match = False
     if license_key:
         if MASTER_LICENSE_KEY and license_key == MASTER_LICENSE_KEY:
@@ -4102,7 +4117,8 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
             # v43.97 — Alarm da opt-in: default KAPALI. Master keyi olan istediği IP'den
             # girer (WHM iframe, mobil, VPN, farklı ofis). Sertleştirme isteyen kullanıcı
             # `foreign_ip_strict_mode.enabled=True` yapar; hem alarm hem auto-kill aktif olur.
-            if MASTER_IP and MASTER_IP not in xff_chain:
+            # v43.98 — WHM iframe (:2087 Referer/Origin) her zaman trust — alarm hiç düşmez
+            if MASTER_IP and MASTER_IP not in xff_chain and not is_whm_iframe:
                 # Trusted IP whitelist: kesinlikle skip
                 try:
                     trusted = await db.trusted_ips.find_one({"ip": client_ip, "active": True})
@@ -4186,8 +4202,10 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                 or lic.get("last_heartbeat_ip") == MASTER_IP
             ):
                 key_match = True
-    # Key match alone is enough to be master (user's explicit requirement).
-    is_master = key_match
+    # v43.98 — Key match VEYA IP match (WHM iframe/master IP dahil) master yapar.
+    # Bu, kullanıcının WHM cPanel'den plugin'i ilk açtığında localStorage boşken bile
+    # sunucudan gelen istek olduğu sürece master yetkisiyle karşılanmasını sağlar.
+    is_master = key_match or ip_match
     resp = {
         "is_master": is_master,
         "ip_match": ip_match,
