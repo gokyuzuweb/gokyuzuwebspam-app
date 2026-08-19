@@ -1,30 +1,21 @@
 /**
- * Kurulum Rehberi — 8 adım interaktif · v43.99.11
- * · Video embed (YouTube + MP4) per step
+ * Kurulum Rehberi — 8 adım interaktif · v43.99.13
+ * · Video embed (YouTube + MP4) per step — Master panelden URL'leri düzenler
  * · Multi-language PDF (TR/EN/AR)
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { client } from "@/lib/api";
+import { useIsMaster } from "@/hooks/useIsMaster";
 import {
   Rocket, CheckCircle2, Circle, Copy, Download, Mail, Terminal,
   Server, Globe, Users, Shield, Bell, AlertTriangle, ExternalLink,
-  Clock, ChevronRight, HelpCircle, FileText, Video, Play,
+  Clock, ChevronRight, HelpCircle, FileText, Video, Play, Settings2, Save, X,
 } from "lucide-react";
 import { toast } from "sonner";
 
-// v43.99.11 — Video URL'leri buradan yönetilir.
-// Boş bırakırsanız placeholder gösterilir. YouTube veya MP4 URL desteklenir.
-// Örnek: youtube: "https://www.youtube.com/embed/VIDEO_ID"
-//        mp4:     "https://cdn.example.com/videos/step1.mp4"
-const STEP_VIDEOS = {
-  1: { youtube: "", mp4: "" },
-  2: { youtube: "", mp4: "" },
-  3: { youtube: "", mp4: "" },
-  4: { youtube: "", mp4: "" },
-  5: { youtube: "", mp4: "" },
-  6: { youtube: "", mp4: "" },
-  7: { youtube: "", mp4: "" },
-  8: { youtube: "", mp4: "" },
-};
+// v43.99.13 — Video URL'leri DB'den çekilir. Master panelde `install-videos`
+// endpoint üzerinden düzenler. Şablon: { "1": {youtube: "", mp4: ""}, ... }
 
 const STEPS = [
   {
@@ -253,9 +244,9 @@ function CodeBlock({ code, label }) {
   );
 }
 
-// v43.99.11 — Adım videosu: YouTube embed, MP4 veya placeholder
-function VideoEmbed({ stepId }) {
-  const v = STEP_VIDEOS[stepId] || {};
+// v43.99.13 — Adım videosu: YouTube embed, MP4 veya placeholder. URL'ler prop olarak gelir.
+function VideoEmbed({ stepId, videos }) {
+  const v = videos?.[String(stepId)] || {};
   const hasYT = !!v.youtube;
   const hasMP4 = !!v.mp4;
   const has = hasYT || hasMP4;
@@ -302,9 +293,7 @@ function VideoEmbed({ stepId }) {
               Bu adım için 30 saniyelik screen recording burada gösterilecek.
               <br />
               <span className="text-slate-600 italic">
-                Yönetici: <code className="mono text-slate-400">STEP_VIDEOS[{stepId}]</code>{" "}
-                → <code className="mono text-slate-400">youtube</code>/
-                <code className="mono text-slate-400">mp4</code> URL girin.
+                Master: sayfa başındaki <b>Video URL'lerini Yönet</b> butonu ile ekleyebilirsiniz.
               </span>
             </div>
           </div>
@@ -344,11 +333,22 @@ const COLOR = {
 };
 
 export default function InstallationGuide() {
+  const { isMaster } = useIsMaster();
+  const qc = useQueryClient();
   const [completed, setCompleted] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem("gws.install_done") || "[]")); }
     catch { return new Set(); }
   });
   const [active, setActive] = useState(1);
+  const [videoEditor, setVideoEditor] = useState(false);
+
+  // v43.99.13 — Video URL'lerini DB'den çek (herkes okuyabilir)
+  const videosQ = useQuery({
+    queryKey: ["install-videos"],
+    queryFn: () => client.get("/install-videos").then(r => r.data),
+    staleTime: 60_000,
+  });
+  const videos = videosQ.data?.videos || {};
 
   const toggle = (id) => {
     setCompleted(prev => {
@@ -375,6 +375,16 @@ export default function InstallationGuide() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {isMaster && (
+            <button
+              onClick={() => setVideoEditor(true)}
+              data-testid="video-editor-open"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-fuchsia-500/40 bg-fuchsia-500/10 hover:bg-fuchsia-500/20 text-fuchsia-200 text-xs font-semibold transition-colors"
+            >
+              <Video className="w-3.5 h-3.5" />
+              Video URL'lerini Yönet
+            </button>
+          )}
           <div className="inline-flex rounded border border-slate-700 overflow-hidden" data-testid="pdf-lang-selector">
             <span className="px-2 py-2 text-[10px] uppercase font-bold tracking-wider text-slate-500 bg-slate-900/60 border-r border-slate-700 self-center">PDF</span>
             {[
@@ -495,8 +505,8 @@ export default function InstallationGuide() {
                 </div>
                 <div className="p-5 space-y-4">
                   <div className="text-[14px] text-slate-300 leading-relaxed">{s.intro}</div>
-                  {/* v43.99.11 — Video kurulum rehberi (30 sn ekran kaydı) */}
-                  <VideoEmbed stepId={s.id} />
+                  {/* v43.99.13 — Video kurulum rehberi (30 sn ekran kaydı) */}
+                  <VideoEmbed stepId={s.id} videos={videos} />
                   {s.content}
                   {/* Navigation */}
                   <div className="flex items-center justify-between pt-4 border-t border-slate-800">
@@ -546,6 +556,136 @@ export default function InstallationGuide() {
               </a>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* v43.99.13 — Master için Video URL Editor Modal */}
+      {videoEditor && isMaster && (
+        <VideoEditorModal videos={videos} onClose={() => setVideoEditor(false)} onSaved={() => qc.invalidateQueries({ queryKey: ["install-videos"] })} />
+      )}
+    </div>
+  );
+}
+
+
+// v43.99.13 — 8 kurulum adımı için YouTube + MP4 URL'lerini düzenleyen modal
+function VideoEditorModal({ videos, onClose, onSaved }) {
+  const [draft, setDraft] = useState(() => {
+    const d = {};
+    for (let i = 1; i <= 8; i++) {
+      const v = videos?.[String(i)] || {};
+      d[i] = { youtube: v.youtube || "", mp4: v.mp4 || "" };
+    }
+    return d;
+  });
+
+  const saveMut = useMutation({
+    mutationFn: () => {
+      const videos_out = {};
+      for (let i = 1; i <= 8; i++) {
+        videos_out[String(i)] = {
+          youtube: draft[i].youtube.trim(),
+          mp4: draft[i].mp4.trim(),
+        };
+      }
+      return client.put("/install-videos", { videos: videos_out }).then(r => r.data);
+    },
+    onSuccess: () => {
+      toast.success("✓ Video URL'leri kaydedildi. Herkes anında yeni videoları görecek.");
+      onSaved && onSaved();
+      onClose();
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Kaydedilemedi"),
+  });
+
+  const STEP_LABELS = {
+    1: "Satın Alma E-postasını Kontrol Et",
+    2: "SSH ile Sunucuya Bağlan",
+    3: "Docker Kur",
+    4: "GökyüzüWebSpam Kur",
+    5: "WHM'de MailShield'a Tıkla",
+    6: "cPanel Hesaplarını Gör",
+    7: "Motorları Test Et",
+    8: "Bildirim Kanallarını Bağla",
+  };
+
+  return (
+    <div
+      data-testid="video-editor-modal"
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-slate-900 border border-slate-700 rounded-lg my-6 max-w-3xl w-full"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-800">
+          <div>
+            <h2 className="text-slate-100 font-bold text-lg flex items-center gap-2">
+              <Video className="w-5 h-5 text-fuchsia-400" /> Video URL'lerini Yönet
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Her adım için YouTube veya MP4 URL girin. YouTube: <code className="mono text-slate-400">youtube.com/watch?v=…</code> otomatik <code className="mono text-slate-400">/embed/…</code> formatına çevrilir. Her ikisi de dolu ise YouTube öncelik alır.
+            </p>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+          {[1,2,3,4,5,6,7,8].map(i => (
+            <div key={i} data-testid={`video-editor-step-${i}`} className="border border-slate-800 rounded-lg p-3 bg-slate-950/40">
+              <div className="text-[11px] uppercase tracking-wider text-slate-500 font-bold mb-2">
+                Adım {i} · {STEP_LABELS[i]}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1 font-semibold">
+                    YouTube URL (watch veya embed link)
+                  </label>
+                  <input
+                    data-testid={`video-editor-youtube-${i}`}
+                    value={draft[i].youtube}
+                    onChange={(e) => setDraft(p => ({ ...p, [i]: { ...p[i], youtube: e.target.value } }))}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs mono text-slate-200 focus:border-rose-500/40 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1 font-semibold">
+                    MP4 URL (direkt dosya linki)
+                  </label>
+                  <input
+                    data-testid={`video-editor-mp4-${i}`}
+                    value={draft[i].mp4}
+                    onChange={(e) => setDraft(p => ({ ...p, [i]: { ...p[i], mp4: e.target.value } }))}
+                    placeholder="https://cdn.example.com/step1.mp4"
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs mono text-slate-200 focus:border-emerald-500/40 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-800">
+          <button
+            onClick={onClose}
+            data-testid="video-editor-cancel"
+            className="px-4 py-2 rounded border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-sm font-semibold"
+          >
+            İptal
+          </button>
+          <button
+            onClick={() => saveMut.mutate()}
+            disabled={saveMut.isPending}
+            data-testid="video-editor-save"
+            className="px-4 py-2 rounded bg-fuchsia-500/15 border border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/25 text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5"
+          >
+            <Save className="w-3.5 h-3.5" />
+            {saveMut.isPending ? "Kaydediliyor..." : "Kaydet"}
+          </button>
         </div>
       </div>
     </div>

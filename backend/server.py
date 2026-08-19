@@ -11687,12 +11687,14 @@ from routes.report_schedules import router as _report_schedules_router, _report_
 from routes.master_2fa import router as _master_2fa_router  # noqa: E402 v43.99
 from routes.advanced_threat import router as _advanced_threat_router  # noqa: E402 v43.99.6
 from routes.auto_backup import router as _auto_backup_router, start_scheduler as _start_backup_scheduler  # noqa: E402 v43.99.11
+from routes.install_videos import router as _install_videos_router  # noqa: E402 v43.99.13
 app.include_router(_reports_router, prefix="/api")
 app.include_router(_pin_approvals_router, prefix="/api")
 app.include_router(_report_schedules_router, prefix="/api")
 app.include_router(_master_2fa_router, prefix="/api")
 app.include_router(_advanced_threat_router, prefix="/api")
 app.include_router(_auto_backup_router, prefix="/api")
+app.include_router(_install_videos_router, prefix="/api")
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")

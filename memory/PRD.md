@@ -14,6 +14,40 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 19, 2026 (Session 21, v43.99.13) — 4-Feature Bundle: PDF Görseller · Video Config · Fuzzy Search · Docs Deeplink
+
+**IMPLEMENTATION:**
+
+1. **PDF'e Görseller (ReportLab Drawing primitives)**:
+   - `scripts/generate_install_guide.py` içine 4 yeni helper: `whm_plugin_mockup()`, `architecture_diagram()`, `step_progress_visual()`, `engine_pie_chart()`.
+   - WHM plugin ekran mockup'ı: WHM header + sol menü + Plugins bölümündeki MailShield ikonu + "TIKLA!" ok işareti.
+   - Sistem mimari diyagramı: İnternet → Nginx → Backend/Frontend/MongoDB + Exim Milter bağlantısı.
+   - 8-adım renkli mini roadmap (adım numaralı circles + labels).
+   - Diyagramlar "Başlamadan Önce" bölümünden sonra, WHM adımının içinde WHM mockup'ı yerleştirildi.
+   - PDF boyutu TR: 87KB → 88KB, AR: 76KB → 123KB (görsellerle).
+
+2. **Video URL Yönetici Config** (kullanıcı URL'leri henüz göndermediği için UI):
+   - Backend: `routes/install_videos.py` yeni router — GET (herkes) + PUT (Master only). YouTube URL'lerini otomatik `watch?v=X` → `embed/X` formatına çevirir.
+   - Frontend: `InstallationGuide.js` içine `VideoEditorModal` bileşeni — 8 adım × 2 alan (YouTube + MP4). Master için header'da "Video URL'lerini Yönet" butonu.
+   - DB'de `settings._key='install_videos'` altında saklanır. Herkes anlık günceli görür.
+
+3. **Docs Fuzzy Search (Fuse.js)**:
+   - `yarn add fuse.js` (v7.5.0).
+   - `Docs.js`'te 5 alanlı weighted arama (label 0.5 · what 0.3 · features 0.15 · how 0.05 · cat 0.1), threshold 0.35.
+   - Eski select yerine tıklanabilir chip kategori filtresi (`data-testid="docs-chip-*"`) + count badge.
+   - Arama giriş kutusu genişletildi, clear (X) butonu eklendi, placeholder örneklerle.
+
+4. **Docs Modül → Sayfa Deeplink**:
+   - `MODULE_ROUTES` mapping tablosu (46 modül → panel yolları).
+   - Her kartta "Şimdi Aç →" butonu (46 testid: `docs-open-{key}`).
+   - Buton event.stopPropagation ile detay drawer'ı açmaz, direkt route'a gider.
+
+**Test:** Frontend smoke → 15 kategori chip, 46 "Şimdi Aç" butonu, arama "webhook"→4 kart, Video Editor modal 8 adım × 2 input alanı ✓. PDF üretimi: TR/EN/AR 3'ü de görsellerle 200 OK ✓.
+
+**VERSION:** v43.99.12 → v43.99.13
+
+
+
 ## Feb 19, 2026 (Session 21, v43.99.12) — Modül Dokümantasyonu Genişletildi + PDF Endpoint Sağlamlaştırıldı
 
 **KULLANICI TALEBİ 1:** "Kurulum Rehberi kısmında pdf indir henüz hazırlanmadı yazıyor"

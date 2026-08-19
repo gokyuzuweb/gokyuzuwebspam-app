@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Fuse from "fuse.js";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
@@ -7,7 +8,7 @@ import {
   BookOpen, Filter, Bug, Globe2, Inbox, Mail, ArrowUpRight, Bell, BellRing,
   Cpu, Wrench, Radar, Terminal, Users, PackageOpen, Settings2, Key, Beaker,
   ShieldCheck, Brain, Server, LinkIcon, UserX, Activity, X, Search, Sparkles,
-  Play, Volume2,
+  Play, Volume2, ExternalLink,
 } from "lucide-react";
 
 const MODULES = [
@@ -760,6 +761,57 @@ const MODULES = [
 
 const CATEGORIES = [...new Set(MODULES.map(m => m.cat))];
 
+// v43.99.13 — Modül anahtarı → panel içi route eşleştirmesi
+// "Şimdi Aç" butonu için kullanılır.
+const MODULE_ROUTES = {
+  dashboard: "/panel",
+  mailscanner: "/panel/mailscanner",
+  security: "/panel/security",
+  quarantine: "/panel/quarantine",
+  geoblocking: "/panel/security",  // Security içinde Coğrafi tab
+  queue: "/panel",  // Dashboard'da Kuyruk kartı
+  ai: "/panel/mailscanner",
+  alerts: "/panel/alerts",
+  compliance: "/panel/reports",
+  engines: "/panel/engines",
+  rules: "/panel/rules",
+  lists: "/panel/lists",
+  threat_intel: "/panel/threat-intel",
+  threat_defense: "/panel/threat-defense",
+  blacklist: "/panel/blacklist",
+  bounce_digest: "/panel/bounce-digest",
+  outbound: "/panel/outbound",
+  notifications: "/panel/notifications",
+  reports: "/panel/reports",
+  mail_health: "/panel/mail-health",
+  live_diagnostic: "/panel/live-diagnostic",
+  plugin_health: "/panel/plugin-health",
+  users: "/panel/users",
+  whitelist_history: "/panel/whitelist-history",
+  marketplace: "/panel/marketplace",
+  licenses: "/panel/licenses",
+  master_live: "/panel/master-live",
+  payments_admin: "/panel/payments-admin",
+  resellers_admin: "/panel/resellers-admin",
+  plan_analytics: "/panel/plan-analytics",
+  plan_config: "/panel/plan-config",
+  audit_log: "/panel/audit-log",
+  remote_admin: "/panel/remote-admin",
+  version_publish: "/panel/version-publish",
+  wake_history: "/panel/wake-history",
+  landing_cms: "/panel/landing-cms",
+  email_templates: "/panel/email-templates",
+  my_server: "/panel/my-server",
+  smtp_settings: "/panel/smtp-settings",
+  reseller_branding: "/panel/reseller-branding",
+  custom_domain: "/panel/custom-domain",
+  subscription: "/panel/subscription",
+  install_guide: "/panel/install-guide",
+  maintenance: "/panel/maintenance",
+  logs: "/panel/logs",
+  settings: "/panel/settings",
+};
+
 const TONE_MAP = {
   sky: "text-sky-300 bg-sky-500/10 border-sky-500/40",
   indigo: "text-indigo-300 bg-indigo-500/10 border-indigo-500/40",
@@ -775,54 +827,127 @@ export default function Docs() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
 
-  const filtered = MODULES.filter(m => {
-    if (category !== "all" && m.cat !== category) return false;
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return m.label.toLowerCase().includes(q) || m.what.toLowerCase().includes(q);
-  });
+  // v43.99.13 — Fuse.js fuzzy search (label + what + features + how'da arama)
+  const fuse = useMemo(() => new Fuse(MODULES, {
+    keys: [
+      { name: "label",    weight: 0.5 },
+      { name: "what",     weight: 0.3 },
+      { name: "features", weight: 0.15 },
+      { name: "how",      weight: 0.05 },
+      { name: "cat",      weight: 0.1 },
+    ],
+    threshold: 0.35,    // 0.0 = strict, 1.0 = anything
+    ignoreLocation: true,
+    minMatchCharLength: 2,
+  }), []);
+
+  const filtered = useMemo(() => {
+    let list = MODULES;
+    if (search.trim().length >= 2) {
+      list = fuse.search(search.trim()).map(r => r.item);
+    }
+    if (category !== "all") {
+      list = list.filter(m => m.cat === category);
+    }
+    return list;
+  }, [search, category, fuse]);
+
+  // Kategoriye göre modül sayısı (chip'lerde göstermek için)
+  const catCounts = useMemo(() => {
+    const c = { all: MODULES.length };
+    MODULES.forEach(m => { c[m.cat] = (c[m.cat] || 0) + 1; });
+    return c;
+  }, []);
 
   return (
     <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-slate-100 text-lg font-semibold flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-indigo-400"/> Modül Dokümantasyonu
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">{MODULES.length} modül · kart tıkla → detaylı kullanım kılavuzu</p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {MODULES.length} modül · {filtered.length !== MODULES.length && `${filtered.length} sonuç · `}
+            fuzzy arama · kart tıkla → detay
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-500"/>
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Ara..." data-testid="docs-search"
-                   className="pl-8 pr-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-slate-100 w-48"/>
-          </div>
-          <select value={category} onChange={e => setCategory(e.target.value)} data-testid="docs-category"
-                  className="px-2 py-2 bg-slate-800 border border-slate-700 rounded text-sm">
-            <option value="all">Tüm Kategoriler</option>
-            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+        <div className="relative">
+          <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500"/>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Ara: 'karantina', 'webhook', 'ssl'..."
+            data-testid="docs-search"
+            className="pl-9 pr-9 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-100 w-80 focus:border-indigo-500/50 focus:outline-none"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              data-testid="docs-search-clear"
+              className="absolute right-2 top-2.5 text-slate-500 hover:text-slate-300"
+            >
+              <X className="w-4 h-4"/>
+            </button>
+          )}
         </div>
+      </div>
+
+      {/* v43.99.13 — Kategori chip filtresi */}
+      <div className="flex flex-wrap gap-1.5" data-testid="docs-category-chips">
+        {[["all", "Tümü"], ...CATEGORIES.map(c => [c, c])].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setCategory(key)}
+            data-testid={`docs-chip-${key}`}
+            className={`text-[11px] px-3 py-1 rounded-full border transition-all font-semibold ${
+              category === key
+                ? "border-indigo-500 bg-indigo-500/20 text-indigo-200"
+                : "border-slate-700 bg-slate-900/60 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+            }`}
+          >
+            {label}
+            <span className="ml-1.5 text-[10px] opacity-70">{catCounts[key] || 0}</span>
+          </button>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="docs-grid">
         {filtered.map(m => (
-          <button
-            key={m.key} onClick={() => setActive(m)}
+          <div
+            key={m.key}
             data-testid={m.testid}
-            className={`text-left border rounded-lg p-4 transition-all hover:-translate-y-0.5 hover:shadow-lg ${TONE_MAP[m.tone]}`}
+            className={`border rounded-lg p-4 transition-all hover:-translate-y-0.5 hover:shadow-lg group ${TONE_MAP[m.tone]}`}
           >
-            <div className="flex items-start justify-between">
-              <m.Icon className="w-6 h-6 opacity-80"/>
-              <span className="text-[10px] mono uppercase tracking-widest opacity-70">{m.cat}</span>
-            </div>
-            <div className="mt-3 text-base font-semibold">{m.label}</div>
-            <div className="text-[11px] opacity-80 mt-1 line-clamp-2">{m.what}</div>
-            <div className="text-[10px] opacity-60 mt-2">{m.features.length} özellik · nasıl kullanılır +</div>
-          </button>
+            <button
+              onClick={() => setActive(m)}
+              className="text-left w-full"
+            >
+              <div className="flex items-start justify-between">
+                <m.Icon className="w-6 h-6 opacity-80"/>
+                <span className="text-[10px] mono uppercase tracking-widest opacity-70">{m.cat}</span>
+              </div>
+              <div className="mt-3 text-base font-semibold">{m.label}</div>
+              <div className="text-[11px] opacity-80 mt-1 line-clamp-2">{m.what}</div>
+              <div className="text-[10px] opacity-60 mt-2">{m.features.length} özellik · nasıl kullanılır +</div>
+            </button>
+            {MODULE_ROUTES[m.key] && (
+              <a
+                href={MODULE_ROUTES[m.key]}
+                data-testid={`docs-open-${m.key}`}
+                onClick={(e) => e.stopPropagation()}
+                className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-md border border-current opacity-70 hover:opacity-100 transition-opacity"
+              >
+                <ExternalLink className="w-3 h-3" />
+                Şimdi Aç →
+              </a>
+            )}
+          </div>
         ))}
         {filtered.length === 0 && (
-          <div className="col-span-3 text-center py-12 text-slate-500 text-sm">Sonuç yok</div>
+          <div className="col-span-3 text-center py-12 text-slate-500 text-sm">
+            <Search className="w-8 h-8 mx-auto mb-2 opacity-30" />
+            "{search}" için sonuç yok — farklı bir terim deneyin
+          </div>
         )}
       </div>
 

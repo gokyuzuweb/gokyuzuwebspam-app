@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Kurulum Rehberi PDF — Multi-Language (TR / EN / AR)
-v43.99.9 · Step-by-step · Beginner friendly
+v43.99.13 · Step-by-step · Beginner friendly · With illustrations
 Usage: python3 generate_install_guide.py [tr|en|ar]
 """
 import os
@@ -9,13 +9,15 @@ import sys
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.lib.colors import HexColor, white
-from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_JUSTIFY
+from reportlab.lib.units import cm, mm
+from reportlab.lib.colors import HexColor, white, Color
+from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_JUSTIFY, TA_CENTER
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle,
-    Preformatted,
+    Preformatted, Flowable,
 )
+from reportlab.graphics.shapes import Drawing, Rect, Circle, String, Line, Polygon, Group
+from reportlab.graphics.charts.piecharts import Pie
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
@@ -750,6 +752,175 @@ I18N = {
 }
 
 
+
+# ═══════════════════════════════════════════════════════════════
+# v43.99.13 — İLUSTRASYONLAR (ReportLab Drawing primitives)
+# ═══════════════════════════════════════════════════════════════
+
+def whm_plugin_mockup(width=16*cm, height=7.5*cm):
+    """WHM Plugins bölümünde MailShield ikonunun nasıl görüneceğinin illustration'ı."""
+    d = Drawing(width, height)
+    # Ana pencere kutusu (WHM UI benzeri)
+    d.add(Rect(0, 0, width, height, fillColor=HexColor("#F1F5F9"), strokeColor=HexColor("#94A3B8"), strokeWidth=1))
+    # Üst bar (WHM header)
+    d.add(Rect(0, height - 0.7*cm, width, 0.7*cm, fillColor=HexColor("#1E293B"), strokeColor=None))
+    d.add(String(0.3*cm, height - 0.45*cm, "WHM · WebHost Manager", fontName=FONT_LATIN_BOLD, fontSize=9, fillColor=white))
+    d.add(String(width - 2.5*cm, height - 0.45*cm, "root@server.com", fontName=FONT_LATIN, fontSize=8, fillColor=HexColor("#94A3B8")))
+    # Sol menü (nav)
+    d.add(Rect(0, 0, 3*cm, height - 0.7*cm, fillColor=HexColor("#E2E8F0"), strokeColor=None))
+    menu_items = ["Home", "Server Config", "Networking", "Security", "Software", "Plugins"]
+    for i, mi in enumerate(menu_items):
+        y = height - 1.2*cm - i*0.7*cm
+        bg = HexColor("#CBD5E1") if mi == "Plugins" else None
+        if bg:
+            d.add(Rect(0, y - 0.1*cm, 3*cm, 0.55*cm, fillColor=bg, strokeColor=None))
+        d.add(String(0.3*cm, y, mi, fontName=FONT_LATIN_BOLD if mi == "Plugins" else FONT_LATIN, fontSize=9, fillColor=HexColor("#1E293B")))
+    # Ana içerik: "Plugins" başlığı
+    d.add(String(3.3*cm, height - 1.2*cm, "Plugins", fontName=FONT_LATIN_BOLD, fontSize=14, fillColor=HexColor("#0F172A")))
+    d.add(Line(3.3*cm, height - 1.4*cm, width - 0.3*cm, height - 1.4*cm, strokeColor=HexColor("#CBD5E1"), strokeWidth=0.5))
+    # MailShield ikon kartı (highlighted)
+    card_x, card_y = 3.5*cm, height - 4.5*cm
+    d.add(Rect(card_x, card_y, 3.2*cm, 2.5*cm, fillColor=white, strokeColor=HexColor("#4338CA"), strokeWidth=2))
+    # Kalkan ikonu (basit)
+    shield_cx, shield_cy = card_x + 1.6*cm, card_y + 1.7*cm
+    d.add(Polygon(
+        [shield_cx - 0.7*cm, shield_cy + 0.5*cm,
+         shield_cx + 0.7*cm, shield_cy + 0.5*cm,
+         shield_cx + 0.7*cm, shield_cy - 0.2*cm,
+         shield_cx, shield_cy - 0.8*cm,
+         shield_cx - 0.7*cm, shield_cy - 0.2*cm],
+        fillColor=HexColor("#4338CA"), strokeColor=None
+    ))
+    d.add(String(shield_cx, shield_cy + 0.05*cm, "✓", fontName=FONT_LATIN_BOLD, fontSize=18, fillColor=white, textAnchor="middle"))
+    # Metin
+    d.add(String(card_x + 1.6*cm, card_y + 0.55*cm, "MailShield", fontName=FONT_LATIN_BOLD, fontSize=10, fillColor=HexColor("#0F172A"), textAnchor="middle"))
+    d.add(String(card_x + 1.6*cm, card_y + 0.25*cm, "GökyüzüWebSpam", fontName=FONT_LATIN, fontSize=7, fillColor=HexColor("#64748B"), textAnchor="middle"))
+    # Ok işareti (bu tıklanacak)
+    ax = card_x + 3.5*cm
+    ay = card_y + 1.25*cm
+    d.add(Polygon(
+        [ax, ay - 0.3*cm, ax + 0.6*cm, ay, ax, ay + 0.3*cm],
+        fillColor=HexColor("#EF4444"), strokeColor=None
+    ))
+    d.add(String(ax + 0.75*cm, ay - 0.1*cm, "TIKLA!", fontName=FONT_LATIN_BOLD, fontSize=9, fillColor=HexColor("#EF4444")))
+    # Diğer boş ikonlar
+    for i, name in enumerate(["CSF", "cPanel", "PHP"]):
+        cx = card_x + 4.5*cm + i*3*cm
+        d.add(Rect(cx, card_y, 2.5*cm, 2.5*cm, fillColor=white, strokeColor=HexColor("#CBD5E1"), strokeWidth=1))
+        d.add(Circle(cx + 1.25*cm, card_y + 1.7*cm, 0.5*cm, fillColor=HexColor("#E2E8F0"), strokeColor=None))
+        d.add(String(cx + 1.25*cm, card_y + 0.4*cm, name, fontName=FONT_LATIN, fontSize=9, fillColor=HexColor("#64748B"), textAnchor="middle"))
+    return d
+
+
+def architecture_diagram(width=16*cm, height=8*cm):
+    """Sistem mimari diyagramı: İnternet → Nginx → Backend/Frontend/MongoDB + Exim milter."""
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, fillColor=HexColor("#0F172A"), strokeColor=HexColor("#334155"), strokeWidth=1))
+
+    # ÜST: İnternet bulutu
+    cloud_x, cloud_y = width/2 - 1.8*cm, height - 1.6*cm
+    d.add(Rect(cloud_x, cloud_y, 3.6*cm, 1*cm, rx=0.5*cm, ry=0.5*cm,
+               fillColor=HexColor("#334155"), strokeColor=HexColor("#64748B"), strokeWidth=1))
+    d.add(String(width/2, cloud_y + 0.35*cm, "🌐 İnternet / Gelen Mail",
+                 fontName=FONT_LATIN_BOLD, fontSize=10, fillColor=white, textAnchor="middle"))
+
+    # Ok: bulut → nginx
+    d.add(Line(width/2, cloud_y, width/2, cloud_y - 0.6*cm,
+               strokeColor=HexColor("#94A3B8"), strokeWidth=1.5))
+    d.add(Polygon([width/2 - 0.15*cm, cloud_y - 0.6*cm,
+                   width/2 + 0.15*cm, cloud_y - 0.6*cm,
+                   width/2, cloud_y - 0.9*cm],
+                  fillColor=HexColor("#94A3B8"), strokeColor=None))
+
+    # NGINX (reverse proxy)
+    nx, ny = width/2 - 2*cm, height - 3.5*cm
+    d.add(Rect(nx, ny, 4*cm, 0.9*cm, fillColor=HexColor("#0EA5E9"), strokeColor=None))
+    d.add(String(width/2, ny + 0.35*cm, "Nginx Reverse Proxy · SSL",
+                 fontName=FONT_LATIN_BOLD, fontSize=9, fillColor=white, textAnchor="middle"))
+
+    # 3 dallanma çizgileri
+    branch_y = ny - 0.4*cm
+    d.add(Line(width/2, ny, width/2, branch_y, strokeColor=HexColor("#94A3B8"), strokeWidth=1))
+    d.add(Line(3*cm, branch_y, width - 3*cm, branch_y, strokeColor=HexColor("#94A3B8"), strokeWidth=1))
+    for x in [3*cm, width/2, width - 3*cm]:
+        d.add(Line(x, branch_y, x, branch_y - 0.5*cm, strokeColor=HexColor("#94A3B8"), strokeWidth=1))
+
+    # 3 servis: Backend · Frontend · MongoDB
+    services = [
+        (2*cm, "Backend", "FastAPI · :8001", HexColor("#22C55E")),
+        (width/2 - 2*cm, "Frontend", "React SPA", HexColor("#8B5CF6")),
+        (width - 4*cm, "MongoDB", "port :27017", HexColor("#F59E0B")),
+    ]
+    for sx, title, sub, color in services:
+        d.add(Rect(sx, branch_y - 2*cm, 4*cm, 1.4*cm, fillColor=color, strokeColor=None))
+        d.add(String(sx + 2*cm, branch_y - 0.8*cm, title,
+                     fontName=FONT_LATIN_BOLD, fontSize=10, fillColor=white, textAnchor="middle"))
+        d.add(String(sx + 2*cm, branch_y - 1.3*cm, sub,
+                     fontName=FONT_LATIN, fontSize=8, fillColor=white, textAnchor="middle"))
+
+    # ALT: Exim Milter (yan bileşen)
+    ey = 0.4*cm
+    d.add(Rect(width/2 - 3.5*cm, ey, 7*cm, 0.9*cm, fillColor=HexColor("#DC2626"), strokeColor=None))
+    d.add(String(width/2, ey + 0.35*cm, "Exim Milter · smtp_milters=inet:127.0.0.1:8891",
+                 fontName=FONT_LATIN_BOLD, fontSize=8, fillColor=white, textAnchor="middle"))
+    # Backend → Milter oku
+    d.add(Line(2*cm + 2*cm, branch_y - 2*cm, 2*cm + 2*cm, ey + 0.9*cm,
+               strokeColor=HexColor("#22C55E"), strokeWidth=1, strokeDashArray=[2, 2]))
+
+    # Başlık
+    d.add(String(0.4*cm, height - 0.4*cm, "GökyüzüWebSpam · Sistem Mimarisi",
+                 fontName=FONT_LATIN_BOLD, fontSize=8, fillColor=HexColor("#94A3B8")))
+    return d
+
+
+def step_progress_visual(width=16*cm, height=2*cm):
+    """8 adım için renkli sıralı görsel (mini roadmap)."""
+    d = Drawing(width, height)
+    step_labels = ["E-mail", "SSH", "Docker", "Kurulum", "WHM", "Users", "Test", "Alerts"]
+    step_colors = [HexColor("#E11D48"), HexColor("#4338CA"), HexColor("#06B6D4"),
+                   HexColor("#059669"), HexColor("#0EA5E9"), HexColor("#F59E0B"),
+                   HexColor("#8B5CF6"), HexColor("#EA580C")]
+    gap = width / 8
+    for i, (lbl, col) in enumerate(zip(step_labels, step_colors)):
+        cx = gap * (i + 0.5)
+        # Bağlantı çizgisi
+        if i > 0:
+            d.add(Line(gap * (i - 0.5) + 0.4*cm, height/2,
+                       cx - 0.4*cm, height/2,
+                       strokeColor=HexColor("#CBD5E1"), strokeWidth=1))
+        # Yuvarlak
+        d.add(Circle(cx, height/2, 0.4*cm, fillColor=col, strokeColor=None))
+        d.add(String(cx, height/2 - 0.1*cm, str(i + 1),
+                     fontName=FONT_LATIN_BOLD, fontSize=10, fillColor=white, textAnchor="middle"))
+        # Label
+        d.add(String(cx, 0.1*cm, lbl,
+                     fontName=FONT_LATIN, fontSize=7, fillColor=HexColor("#64748B"), textAnchor="middle"))
+    return d
+
+
+def engine_pie_chart(width=8*cm, height=6*cm):
+    """Motor dağılımı pasta grafiği (7 motor ~= eşit)."""
+    d = Drawing(width, height)
+    pie = Pie()
+    pie.x = 1.5*cm
+    pie.y = 0.5*cm
+    pie.width = 5*cm
+    pie.height = 5*cm
+    pie.data = [15, 15, 15, 15, 15, 15, 10]
+    pie.labels = ["SpamAssassin", "ClamAV", "DCC/Razor", "RBL", "SPF/DKIM", "Bayes", "AI"]
+    pie.slices.strokeColor = white
+    pie.slices.strokeWidth = 1
+    colors_ = [HexColor("#4338CA"), HexColor("#059669"), HexColor("#F59E0B"),
+               HexColor("#E11D48"), HexColor("#0EA5E9"), HexColor("#8B5CF6"),
+               HexColor("#EA580C")]
+    for i, c in enumerate(colors_):
+        pie.slices[i].fillColor = c
+    d.add(pie)
+    return d
+
+
+
+
 # ---------- Text helper (shape Arabic + basic HTML entity escape) ----------
 def T(text, lang):
     """Return text ready for reportlab paragraph. Handles Arabic shaping."""
@@ -853,6 +1024,16 @@ def build(lang="tr", out_path=None):
         story.append(Spacer(1, 0.1*cm))
     story.append(Spacer(1, 0.3*cm))
     story.append(warn_box(L["pre_warn"]))
+    story.append(Spacer(1, 0.5*cm))
+
+    # v43.99.13 — Sistem mimarisi diyagramı
+    story.append(Paragraph(T({"tr": "Sistem Mimarisi", "en": "System Architecture", "ar": "معمارية النظام"}[lang], lang), h2))
+    story.append(architecture_diagram())
+    story.append(Spacer(1, 0.4*cm))
+
+    # 8 adım roadmap
+    story.append(Paragraph(T({"tr": "Kurulum Yol Haritası", "en": "Installation Roadmap", "ar": "خارطة طريق التثبيت"}[lang], lang), h2))
+    story.append(step_progress_visual())
     story.append(PageBreak())
 
     # ---- STEPS ----
@@ -901,6 +1082,15 @@ def build(lang="tr", out_path=None):
             ]))
             story.append(tbl)
             story.append(Spacer(1, 0.3*cm))
+
+        # v43.99.13 — Adım özel ilüstrasyonlar
+        if idx == 5:
+            # WHM Plugin ekran mockup
+            story.append(Spacer(1, 0.3*cm))
+            story.append(Paragraph(T({"tr": "WHM'de MailShield böyle görünür:",
+                                       "en": "MailShield appears like this in WHM:",
+                                       "ar": "هكذا يظهر MailShield في WHM:"}[lang], lang), body))
+            story.append(whm_plugin_mockup())
 
         if "ok" in st:
             story.append(Spacer(1, 0.15*cm))
