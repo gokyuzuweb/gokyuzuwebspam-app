@@ -14,6 +14,32 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 19, 2026 (Session 21, v43.99.15) — PDF Boş Açılıyor Fix (Docker Path Bug)
+
+**KULLANICI RAPORU:** "Kurulum Rehberi PDF İNDİR BOŞ ACILIYOR"
+
+**KÖK NEDEN 1:** `deployment/Dockerfile.backend` sadece `backend/` klasörünü container'a kopyalıyor. Backend `server.py::install_guide_pdf` `/app/scripts/generate_install_guide.py` yolunu arıyordu — Docker container'da bu yol YOK. Sadece preview'de (repo direkt mount) çalışıyordu.
+
+**KÖK NEDEN 2:** `module_report_pdf` `subprocess.run(["python3", ...])` çağırıyordu. Docker'da `python3` sistem python'a gidiyor ve `reportlab` yüklü değil (sadece backend venv'inde). `ModuleNotFoundError: No module named 'reportlab'` hatasıyla exit code 1 dönüyordu.
+
+**FIX** (3 katmanlı savunma):
+
+1. **Script'i backend içine kopya**: `cp /app/scripts/generate_install_guide.py /app/backend/scripts/` (aynısı `generate_module_report.py` için de). Dockerfile.backend `COPY . /app/backend` yaptığı için scripts artık image'a dahil.
+
+2. **Backend'de fallback path resolver**: `install_guide_pdf` ve `module_report_pdf` artık iki yolu deneyor: `/app/scripts` → `/app/backend/scripts`. Bulunca oradan çalıştırır. Bulamazsa error detail'de denenen yolları döner.
+
+3. **Docker volume ek güvence**: `deployment/docker-compose.yml`'a `- ../scripts:/app/scripts:ro` volume mount eklendi. Böylece rebuild yapmadan da `docker compose restart backend` yeterli olur.
+
+4. **`sys.executable` fix**: `module_report_pdf` artık `subprocess.run([sys.executable, ...])` kullanıyor — venv Python'ı (reportlab yüklü olan) çalıştırır. Ayrıca `capture_output=True` ile subprocess hatasını HTTP response'unda detay olarak döner (debugging için).
+
+5. **Yazma dizini tespiti**: PDF çıktı yolu `/app`, `/app/backend`, `/tmp` arasında ilk writable olanı seçer (Docker read-only fs'lerde robust).
+
+**Test:** Preview'de 3 dil TR/EN/AR install-guide + module-report → HTTP 200, `%PDF` magic, boyutlar makul (~90-125KB) ✓.
+
+**VERSION:** v43.99.14 → v43.99.15
+
+
+
 ## Feb 19, 2026 (Session 21, v43.99.15) — Modül Docs Tam Kaplama (46 → 62)
 
 **KULLANICI TALEBİ:** "Modül Dokümantasyonu TÜM MODÜLLERİ EKLEMEMİŞSİN EKLE."

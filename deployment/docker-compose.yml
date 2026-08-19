@@ -38,6 +38,7 @@ services:
     volumes:
       - ../backend:/app/backend
       - ../whm-plugin:/app/whm-plugin:ro
+      - ../scripts:/app/scripts:ro
       - ./data/uploads:/app/backend/uploads
       # v43.22.2 — Exim spool read-only mount: eski maillerin body'sini spool'dan okumak için
       - /var/spool/exim:/var/spool/exim:ro

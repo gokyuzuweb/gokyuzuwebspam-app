@@ -8819,16 +8819,34 @@ echo ""
 async def module_report_pdf():
     """Detaylı modül tanıtım PDF'ini indir."""
     from fastapi.responses import FileResponse
-    import os
-    pdf_path = "/app/GokyuzuWebSpam-Modul-Tanitim-v43.99.pdf"
-    if not os.path.exists(pdf_path):
-        # Fallback: canlı üret
+    import os as _os
+    import sys as _sys
+    # v43.99.15 — Robust path (hem repo hem container)
+    candidate_dirs = ["/app/scripts", "/app/backend/scripts"]
+    script_dir = next((cd for cd in candidate_dirs
+                       if _os.path.exists(_os.path.join(cd, "generate_module_report.py"))), None)
+    out_dirs = ["/app", "/app/backend", "/tmp"]
+    out_dir = next((d for d in out_dirs if _os.access(d, _os.W_OK)), "/tmp")
+    pdf_path = f"{out_dir}/GokyuzuWebSpam-Modul-Tanitim-v43.99.pdf"
+    if not _os.path.exists(pdf_path):
+        if not script_dir:
+            raise HTTPException(status_code=500, detail=f"Modul rapor script yok. Denenen: {candidate_dirs}")
         try:
             import subprocess
-            subprocess.run(["python3", "/app/scripts/generate_module_report.py"],
-                          check=True, timeout=60)
-        except Exception:
-            raise HTTPException(status_code=500, detail="PDF henüz hazırlanmadı")
+            # v43.99.15 — sys.executable kullan (venv python'u); "python3" sistem python'a giderse reportlab olmayabilir
+            result = subprocess.run(
+                [_sys.executable, _os.path.join(script_dir, "generate_module_report.py")],
+                check=False, timeout=60, cwd=out_dir, capture_output=True,
+            )
+            if result.returncode != 0:
+                err_out = (result.stderr.decode(errors="replace") or result.stdout.decode(errors="replace"))[:400]
+                raise HTTPException(status_code=500, detail=f"PDF üretilemedi (exit {result.returncode}): {err_out}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"PDF üretilemedi: {str(e)[:150]}")
+    if not _os.path.exists(pdf_path):
+        raise HTTPException(status_code=500, detail="PDF dosya oluşmadı")
     return FileResponse(
         pdf_path,
         media_type="application/pdf",
@@ -8837,7 +8855,7 @@ async def module_report_pdf():
     )
 
 
-# v43.99.12 — Kurulum Rehberi PDF (multi-language: tr | en | ar) + in-process build
+# v43.99.15 — Kurulum Rehberi PDF (multi-language: tr | en | ar) + robust path
 @api.get("/tools/install-guide.pdf")
 async def install_guide_pdf(lang: str = "tr", force: bool = False):
     """cPanel/WHM sunucusuna kurulum rehberi PDF'i (Türkçe/İngilizce/Arapça).
@@ -8851,15 +8869,29 @@ async def install_guide_pdf(lang: str = "tr", force: bool = False):
         lang = "tr"
     suffix = {"tr": "", "en": "-EN", "ar": "-AR"}[lang]
 
-    # Docker'da /app/scripts, kaynak repoda /app/scripts — her ikisinde de aynı
-    scripts_dir = "/app/scripts"
-    if scripts_dir not in _sys.path:
-        _sys.path.insert(0, scripts_dir)
+    # v43.99.15 — Fallback path: hem repo kökündeki /app/scripts, hem de container'daki
+    # /app/backend/scripts dene (Dockerfile.backend backend klasörünü kopyaladığı için scripts orada)
+    candidate_dirs = ["/app/scripts", "/app/backend/scripts"]
+    script_dir = None
+    for cd in candidate_dirs:
+        if _os.path.exists(_os.path.join(cd, "generate_install_guide.py")):
+            script_dir = cd
+            break
+    if script_dir and script_dir not in _sys.path:
+        _sys.path.insert(0, script_dir)
 
-    pdf_path = f"/app/GokyuzuWebSpam-Kurulum-Rehberi-v43.99{suffix}.pdf"
+    # PDF çıktı yolu: /app/backend altında writable olan bir yer olsun (Docker read-only fs'lerde)
+    out_dirs = ["/app", "/app/backend", "/tmp"]
+    out_dir = next((d for d in out_dirs if _os.access(d, _os.W_OK)), "/tmp")
+    pdf_path = f"{out_dir}/GokyuzuWebSpam-Kurulum-Rehberi-v43.99{suffix}.pdf"
 
     if force or not _os.path.exists(pdf_path):
-        # In-process build (subprocess yerine — Docker'da PATH sorunu olmasın)
+        if not script_dir:
+            raise HTTPException(
+                status_code=500,
+                detail=(f"PDF üretici script bulunamadı. Denenen yollar: {candidate_dirs}. "
+                        "Docker container'da /app/backend/scripts/generate_install_guide.py olmalı.")
+            )
         try:
             import importlib
             if "generate_install_guide" in _sys.modules:
