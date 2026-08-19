@@ -258,6 +258,7 @@ export const api = {
   pinApprovalRequest: (new_pin, reason) => client.post("/pin-approvals/request", { new_pin, reason }).then(r => r.data),
   pinApprovalMyList: () => client.get("/pin-approvals/my").then(r => r.data),
   pinApprovalPending: () => client.get("/pin-approvals/pending").then(r => r.data),
+  pinApprovalAll: (status) => client.get("/pin-approvals/all", { params: status ? { status } : {} }).then(r => r.data), // v43.99.11
   pinApprovalDecide: (id, decision, note) => client.post(`/pin-approvals/${id}/decide`, { decision, note }).then(r => r.data),
 
   // v43.99.10 — Master PIN Yönetimi (aktif kullanıcı/bayı PIN durumu)

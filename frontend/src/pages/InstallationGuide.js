@@ -1,14 +1,30 @@
 /**
- * Kurulum Rehberi — 8 adım interaktif
- * v43.99.8 · x firmasına cPanel sunucusuna kurulum
+ * Kurulum Rehberi — 8 adım interaktif · v43.99.11
+ * · Video embed (YouTube + MP4) per step
+ * · Multi-language PDF (TR/EN/AR)
  */
 import { useState } from "react";
 import {
   Rocket, CheckCircle2, Circle, Copy, Download, Mail, Terminal,
   Server, Globe, Users, Shield, Bell, AlertTriangle, ExternalLink,
-  Clock, ChevronRight, HelpCircle, FileText,
+  Clock, ChevronRight, HelpCircle, FileText, Video, Play,
 } from "lucide-react";
 import { toast } from "sonner";
+
+// v43.99.11 — Video URL'leri buradan yönetilir.
+// Boş bırakırsanız placeholder gösterilir. YouTube veya MP4 URL desteklenir.
+// Örnek: youtube: "https://www.youtube.com/embed/VIDEO_ID"
+//        mp4:     "https://cdn.example.com/videos/step1.mp4"
+const STEP_VIDEOS = {
+  1: { youtube: "", mp4: "" },
+  2: { youtube: "", mp4: "" },
+  3: { youtube: "", mp4: "" },
+  4: { youtube: "", mp4: "" },
+  5: { youtube: "", mp4: "" },
+  6: { youtube: "", mp4: "" },
+  7: { youtube: "", mp4: "" },
+  8: { youtube: "", mp4: "" },
+};
 
 const STEPS = [
   {
@@ -237,6 +253,67 @@ function CodeBlock({ code, label }) {
   );
 }
 
+// v43.99.11 — Adım videosu: YouTube embed, MP4 veya placeholder
+function VideoEmbed({ stepId }) {
+  const v = STEP_VIDEOS[stepId] || {};
+  const hasYT = !!v.youtube;
+  const hasMP4 = !!v.mp4;
+  const has = hasYT || hasMP4;
+  return (
+    <div
+      data-testid={`step-video-${stepId}`}
+      className="rounded-lg border border-slate-800 bg-slate-950/60 overflow-hidden"
+    >
+      <div className="px-3 py-2 bg-slate-900/60 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+          <Video className="w-3.5 h-3.5 text-rose-400" />
+          Adım {stepId} · Video Rehber (30 sn)
+        </div>
+        {has && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">
+            {hasYT ? "YouTube" : "MP4"}
+          </span>
+        )}
+      </div>
+      <div className="aspect-video bg-slate-950 flex items-center justify-center">
+        {hasYT ? (
+          <iframe
+            src={v.youtube}
+            title={`Adım ${stepId} Video Rehber`}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            className="w-full h-full border-0"
+          />
+        ) : hasMP4 ? (
+          <video
+            controls preload="metadata"
+            className="w-full h-full"
+            src={v.mp4}
+          >
+            Tarayıcınız video etiketini desteklemiyor.
+          </video>
+        ) : (
+          <div className="text-center px-4 py-8 max-w-md">
+            <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-slate-900 border-2 border-dashed border-slate-700 flex items-center justify-center">
+              <Play className="w-6 h-6 text-slate-600" />
+            </div>
+            <div className="text-[13px] font-semibold text-slate-300">Video eklenecek</div>
+            <div className="text-[11px] text-slate-500 mt-1">
+              Bu adım için 30 saniyelik screen recording burada gösterilecek.
+              <br />
+              <span className="text-slate-600 italic">
+                Yönetici: <code className="mono text-slate-400">STEP_VIDEOS[{stepId}]</code>{" "}
+                → <code className="mono text-slate-400">youtube</code>/
+                <code className="mono text-slate-400">mp4</code> URL girin.
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function WarnBox({ children }) {
   return (
     <div className="border border-amber-500/40 bg-amber-500/10 rounded p-3 flex items-start gap-2">
@@ -297,15 +374,29 @@ export default function InstallationGuide() {
             8 adımda cPanel/WHM sunucunuza GökyüzüWebSpam kurulumu · Aptala anlatır gibi
           </p>
         </div>
-        <a
-          href="/api/tools/install-guide.pdf"
-          target="_blank" rel="noreferrer"
-          data-testid="download-install-pdf"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-sm font-semibold hover:bg-emerald-500/25 transition-colors"
-        >
-          <Download className="w-4 h-4" />
-          PDF İndir
-        </a>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="inline-flex rounded border border-slate-700 overflow-hidden" data-testid="pdf-lang-selector">
+            <span className="px-2 py-2 text-[10px] uppercase font-bold tracking-wider text-slate-500 bg-slate-900/60 border-r border-slate-700 self-center">PDF</span>
+            {[
+              { lang: "tr", label: "Türkçe",   flag: "🇹🇷" },
+              { lang: "en", label: "English",  flag: "🇬🇧" },
+              { lang: "ar", label: "العربية", flag: "🇸🇦" },
+            ].map(o => (
+              <a
+                key={o.lang}
+                href={`/api/tools/install-guide.pdf?lang=${o.lang}`}
+                target="_blank" rel="noreferrer"
+                data-testid={`download-install-pdf-${o.lang}`}
+                className="px-3 py-2 text-xs font-semibold text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/25 border-r border-slate-700 last:border-r-0 transition-colors inline-flex items-center gap-1.5"
+                title={`PDF · ${o.label}`}
+              >
+                <span>{o.flag}</span>
+                <span className="hidden sm:inline">{o.label}</span>
+                <Download className="w-3.5 h-3.5" />
+              </a>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Progress */}
@@ -404,6 +495,8 @@ export default function InstallationGuide() {
                 </div>
                 <div className="p-5 space-y-4">
                   <div className="text-[14px] text-slate-300 leading-relaxed">{s.intro}</div>
+                  {/* v43.99.11 — Video kurulum rehberi (30 sn ekran kaydı) */}
+                  <VideoEmbed stepId={s.id} />
                   {s.content}
                   {/* Navigation */}
                   <div className="flex items-center justify-between pt-4 border-t border-slate-800">
@@ -441,10 +534,18 @@ export default function InstallationGuide() {
               Kurulum sırasında takıldığınızda <b>destek@gokyuzuhosting.com</b> adresine yazın. Ekran görüntüsü + hata log'u ile birlikte gönderin, 24 saat içinde geri döneriz.
             </div>
           </div>
-          <a href="/api/tools/install-guide.pdf" target="_blank" rel="noreferrer"
-             className="text-[12px] text-indigo-300 hover:text-indigo-200 flex items-center gap-1 whitespace-nowrap">
-            <FileText className="w-3.5 h-3.5" /> PDF Rehber
-          </a>
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            {["tr", "en", "ar"].map(lang => (
+              <a
+                key={lang}
+                href={`/api/tools/install-guide.pdf?lang=${lang}`}
+                target="_blank" rel="noreferrer"
+                className="text-[11px] uppercase font-bold text-indigo-300 hover:text-indigo-200 flex items-center gap-1 px-2 py-1 rounded border border-indigo-500/30 hover:bg-indigo-500/10"
+              >
+                <FileText className="w-3 h-3" /> {lang.toUpperCase()}
+              </a>
+            ))}
+          </div>
         </div>
       </div>
     </div>

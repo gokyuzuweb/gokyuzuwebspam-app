@@ -774,6 +774,13 @@ async def _startup() -> None:
     except Exception as _ex:
         log.warning("report_schedule_loop not scheduled: %s", _ex)
 
+    # v43.99.11 — Haftalık otomatik DB snapshot
+    try:
+        from routes.auto_backup import start_scheduler as _sbs
+        _sbs()
+    except Exception as _ex:
+        log.warning("auto_backup scheduler not started: %s", _ex)
+
 
 async def _daily_violations_cleanup_task():
     """7 günden eski license_violations kayıtlarını her gece sil. İlk çalıştırma
@@ -3236,7 +3243,15 @@ async def notifications_get():
 
 
 @api.put("/notifications")
-async def notifications_put(settings: NotificationSettings):
+async def notifications_put(settings: NotificationSettings, request: Request):
+    # v43.99.11 — 2FA enforce (webhook URL değişiklikleri hassas)
+    try:
+        from routes.master_2fa import require_2fa_verified
+        await require_2fa_verified(request)
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     await db.settings.update_one(
         {"_key": "notifications"},
         {"$set": {**settings.model_dump(), "_key": "notifications"}},
@@ -6299,6 +6314,14 @@ class MasterRotateStep1In(BaseModel):
 async def master_rotate_generate(payload: MasterRotateStep1In, request: Request):
     """Adım 1: Yeni master key adayı üret (henüz DB'ye yazılmaz)."""
     await _require_master(request, None)
+    # v43.99.11 — 2FA enforce (aktifse doğrulanmış cookie zorunlu)
+    try:
+        from routes.master_2fa import require_2fa_verified
+        await require_2fa_verified(request)
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     new_key = "MS-" + uuid.uuid4().hex.upper()[:24]
     # Adayı geçici sakla (10dk TTL — advanced flag)
     await db.settings.update_one(
@@ -6337,6 +6360,14 @@ async def master_rotate_generate(payload: MasterRotateStep1In, request: Request)
 async def master_rotate_complete(request: Request):
     """Adım 2: Env güncellenmiş olduğunu doğrula ve eski key'i revoke et."""
     await _require_master(request, None)
+    # v43.99.11 — 2FA enforce
+    try:
+        from routes.master_2fa import require_2fa_verified
+        await require_2fa_verified(request)
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     cand = await db.settings.find_one({"_key": "master_rotate_candidate"}, {"_id": 0}) or {}
     new_key = cand.get("candidate_key")
     if not new_key:
@@ -8806,24 +8837,36 @@ async def module_report_pdf():
     )
 
 
-# v43.99.8 — Kurulum Rehberi PDF (public download)
+# v43.99.11 — Kurulum Rehberi PDF (multi-language: tr | en | ar)
 @api.get("/tools/install-guide.pdf")
-async def install_guide_pdf():
-    """cPanel/WHM sunucusuna kurulum rehberi PDF'i."""
+async def install_guide_pdf(lang: str = "tr"):
+    """cPanel/WHM sunucusuna kurulum rehberi PDF'i (Türkçe/İngilizce/Arapça)."""
     from fastapi.responses import FileResponse
-    import os
-    pdf_path = "/app/GokyuzuWebSpam-Kurulum-Rehberi-v43.99.pdf"
-    if not os.path.exists(pdf_path):
+    import os as _os
+    if lang not in ("tr", "en", "ar"):
+        lang = "tr"
+    suffix = {"tr": "", "en": "-EN", "ar": "-AR"}[lang]
+    pdf_path = f"/app/GokyuzuWebSpam-Kurulum-Rehberi-v43.99{suffix}.pdf"
+    if not _os.path.exists(pdf_path):
         try:
             import subprocess
-            subprocess.run(["python3", "/app/scripts/generate_install_guide.py"],
-                          check=True, timeout=60)
-        except Exception:
-            raise HTTPException(status_code=500, detail="Kurulum PDF'i henüz hazırlanmadı")
+            subprocess.run(
+                ["python3", "/app/scripts/generate_install_guide.py", lang],
+                check=True, timeout=90
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Kurulum PDF'i hazırlanamadı: {str(e)[:120]}")
+    if not _os.path.exists(pdf_path):
+        raise HTTPException(status_code=500, detail="Kurulum PDF'i üretilemedi")
+    fname_map = {
+        "tr": "GokyuzuWebSpam-Kurulum-Rehberi-TR.pdf",
+        "en": "GokyuzuWebSpam-Install-Guide-EN.pdf",
+        "ar": "GokyuzuWebSpam-Install-Guide-AR.pdf",
+    }
     return FileResponse(
         pdf_path,
         media_type="application/pdf",
-        filename="GokyuzuWebSpam-Kurulum-Rehberi.pdf",
+        filename=fname_map[lang],
         headers={"Cache-Control": "public, max-age=3600"},
     )
 
@@ -11625,11 +11668,13 @@ from routes.pin_approvals import router as _pin_approvals_router  # noqa: E402 v
 from routes.report_schedules import router as _report_schedules_router, _report_schedule_loop  # noqa: E402 v43.90
 from routes.master_2fa import router as _master_2fa_router  # noqa: E402 v43.99
 from routes.advanced_threat import router as _advanced_threat_router  # noqa: E402 v43.99.6
+from routes.auto_backup import router as _auto_backup_router, start_scheduler as _start_backup_scheduler  # noqa: E402 v43.99.11
 app.include_router(_reports_router, prefix="/api")
 app.include_router(_pin_approvals_router, prefix="/api")
 app.include_router(_report_schedules_router, prefix="/api")
 app.include_router(_master_2fa_router, prefix="/api")
 app.include_router(_advanced_threat_router, prefix="/api")
+app.include_router(_auto_backup_router, prefix="/api")
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")

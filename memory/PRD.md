@@ -14,6 +14,53 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 19, 2026 (Session 21, v43.99.11) — Backlog Sweep: 4 Feature Bundle
+
+**KULLANICI İSTEĞİ:** Tüm 4 backlog kalemi (Video Kurulum · Çoklu Dil PDF · 2FA Enforce · Haftalık Yedek) + PIN Geçmiş Detayları.
+
+**IMPLEMENTATION:**
+
+1. **Video Kurulum Rehberi** (`pages/InstallationGuide.js`):
+   - `STEP_VIDEOS` konfigürasyonu (adım id → `{youtube, mp4}`), YouTube iframe embed + MP4 `<video controls>` desteği (kullanıcı isteği: her ikisi).
+   - Boş URL'ler için "Video eklenecek" placeholder + yönetici hint'i (STEP_VIDEOS[N] → youtube/mp4).
+   - `VideoEmbed` bileşeni step detail görünümünde intro'dan sonra mount edilir.
+
+2. **Multi-Language PDF** (`scripts/generate_install_guide.py` tamamen refactor edildi):
+   - `build(lang, out_path)` fonksiyonu. TR/EN/AR translation sözlükleri.
+   - Arapça için: `arabic-reshaper` + `python-bidi` + `NotoNaskhArabic` fontu (RTL layout otomatik).
+   - Backend endpoint: `GET /api/tools/install-guide.pdf?lang=tr|en|ar` (dil bazlı cache).
+   - Frontend header'da bayrak + label ile dil seçici (data-testid: `download-install-pdf-{lang}`).
+
+3. **2FA Kritik Endpoint Zorunluluğu** (`server.py`):
+   - `master_rotate_generate`, `master_rotate_complete`: 2FA aktifse cookie zorunlu.
+   - `notifications_put` (webhook URL değişikliği): 2FA enforce.
+   - `require_2fa_verified` helper zaten routes/master_2fa.py'de mevcut (v43.99'da eklenmişti); artık lisans delete + master rotation + webhook edit endpoint'lerinde çağrılıyor.
+
+4. **Otomatik Haftalık Yedek** (`routes/auto_backup.py` yeni):
+   - `/api/backups/snapshot` — hemen snapshot al (Master).
+   - `/api/backups/list` — mevcut snapshot'lar.
+   - `/api/backups/download/{filename}` — .json.gz indir.
+   - `/api/backups/restore/{filename}?dry_run=true|false&collections=…` — geri yükle (2FA + Master enforce).
+   - `/api/backups/{filename}` DELETE.
+   - Scheduler: `start_scheduler()` startup hook'undan çağrılır; her 24 saatte bir uyanır, son snapshot 7 günden eskiyse yenisini alır. Retention: son 8 snapshot.
+   - Kritik koleksiyonlar: settings, licenses, idle_lock_user_configs, trusted_ips, pin_change_requests, notifications_inbox, engines, rules, lists, payments, webhooks…
+
+5. **PIN Değişiklik Geçmiş Detayları** (ek talep):
+   - Backend: `GET /pin-approvals/all?status=…` — enriched history (customer_name, plan, IP, UA, hash prefix, pin_length, decision_note).
+   - `pin_change_requests` şemasına `new_pin_length` eklendi (güvenli meta).
+   - Frontend: `PinApprovalHistory` bileşeni (V4390Cards.js) tablo görünümü, expand-on-click detay satırı, filtre (all/pending/approved/rejected).
+   - GÜVENLİK: PIN'in kendisi PBKDF2 hash'li — plaintext dönmez. Sadece uzunluk + hash prefix + tam audit trail.
+
+**TEST:**
+- Curl testleri: TR/EN/AR PDF üretimi (200 OK, %PDF-1.4 magic bytes) ✓
+- Backup snapshot: 2868 doc, 109.4 KB, retention doğru ✓
+- PIN talep → onay → verify_pin PASS ✓
+- Frontend smoke: install-guide sayfasında `pdf-lang-selector`, TR/EN/AR butonlar, `step-video-1` mount edildi ✓
+
+**VERSION:** v43.99.10 → v43.99.11
+
+
+
 ## Feb 19, 2026 (Session 21, v43.99.10) — PIN Approval Fix + Admin PIN Management
 
 **KULLANICI RAPORU:**

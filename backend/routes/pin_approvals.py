@@ -77,6 +77,7 @@ async def request_pin_change(payload: PinChangeRequestIn, request: Request):
         "bayi_license_key": key,
         "new_pin_hash": _hash_pin(payload.new_pin, salt),
         "new_pin_salt": salt,
+        "new_pin_length": len(payload.new_pin),  # v43.99.11 — güvenli meta (master için)
         "reason": (payload.reason or "").strip()[:200],
         "status": "pending",
         "requested_at": _iso(),
@@ -137,6 +138,50 @@ async def list_pending(request: Request):
         except Exception:
             pass
     return {"items": rows, "count": len(rows)}
+
+
+@router.get("/all")
+async def list_all_requests(request: Request, status: Optional[str] = None, limit: int = 200):
+    """v43.99.11 — Master: tüm PIN değişiklik geçmişini kim/nereden/ne zaman ile
+    zenginleştirilmiş şekilde listeler.
+    Filtre: `?status=pending|approved|rejected|cancelled_by_master_reset|superseded_by_master`
+    """
+    if not _is_master(request):
+        raise HTTPException(403, "Sadece master yetkilendirilmiştir")
+    q = {}
+    if status:
+        q["status"] = status
+    lim = max(1, min(limit, 500))
+    # NOT: PIN hash'ini plaintext olarak ASLA dönmüyoruz. Ama hash prefix + salt prefix
+    # göndererek Master'ın kayıt eşleştirme yapabilmesini sağlıyoruz.
+    rows = await db.pin_change_requests.find(q).sort("requested_at", -1).limit(lim).to_list(lim)
+    out = []
+    for r in rows:
+        r.pop("_id", None)
+        pin_hash = r.pop("new_pin_hash", "") or ""
+        r.pop("new_pin_salt", None)
+        # Bayi bilgisi zenginleştirme
+        try:
+            lic = await db.licenses.find_one(
+                {"license_key": r.get("bayi_license_key", "")},
+                {"_id": 0, "customer_name": 1, "customer_email": 1, "plan": 1,
+                 "ip_addresses": 1, "is_master": 1, "status": 1}
+            )
+            if lic:
+                r["customer_name"] = lic.get("customer_name")
+                r["customer_email"] = lic.get("customer_email")
+                r["plan"] = lic.get("plan")
+                r["license_status"] = lic.get("status")
+                r["ip_addresses"] = lic.get("ip_addresses", [])
+                r["is_master_row"] = bool(lic.get("is_master"))
+        except Exception:
+            pass
+        # PIN'in kendisi ASLA dönmez; sadece güvenli meta:
+        r["pin_hash_preview"] = (pin_hash[:12] + "…") if pin_hash else None
+        r["pin_length"] = r.get("new_pin_length")  # kayıtlıysa uzunluk (integer)
+        out.append(r)
+    return {"items": out, "count": len(out), "filter_status": status}
+
 
 
 class PinDecisionIn(BaseModel):
