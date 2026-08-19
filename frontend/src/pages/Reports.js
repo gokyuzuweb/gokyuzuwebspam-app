@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   FileText, Download, Send, Mail, Clock, Search, FileSpreadsheet, Loader2,
-  ArrowUpRight, ArrowDownLeft, ArrowLeftRight, CalendarClock, Trash2, Play, Plus, Pause,
+  ArrowUpRight, ArrowDownLeft, ArrowLeftRight, CalendarClock, Trash2, Play, Plus, Pause, History, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
@@ -15,6 +15,7 @@ function ScheduledReportsCard() {
   const q = useQuery({ queryKey: ["report-schedules"], queryFn: () => api.reportSchedulesList(), refetchInterval: 30_000 });
   const items = q.data?.items || [];
   const [showForm, setShowForm] = useState(false);
+  const [expandedHistory, setExpandedHistory] = useState({});   // v43.99 — schedule id → open?
   const [form, setForm] = useState({
     email: "", recipient: "", direction: "both", days: 30, format: "pdf",
     day_of_week: "", hour: 8, minute: 0,
@@ -95,7 +96,8 @@ function ScheduledReportsCard() {
         {items.length > 0 && (
           <div className="space-y-1.5">
             {items.map(s => (
-              <div key={s.id} data-testid={`schedule-${s.id}`}
+              <div key={s.id} className="space-y-1">
+              <div data-testid={`schedule-${s.id}`}
                 className={`flex items-center justify-between gap-3 border rounded-md px-3 py-2 hover:border-slate-700 ${
                   s.active === false ? "border-slate-800 bg-slate-950/30 opacity-60" : "border-slate-800 bg-slate-950/60"
                 }`}>
@@ -144,6 +146,17 @@ function ScheduledReportsCard() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
+                    data-testid={`schedule-history-${s.id}`}
+                    type="button"
+                    onClick={() => setExpandedHistory({ ...expandedHistory, [s.id]: !expandedHistory[s.id] })}
+                    title={`Test geçmişi (${(s.test_history || []).length})`}
+                    className={`p-1.5 rounded border text-slate-300 hover:bg-slate-800 ${
+                      expandedHistory[s.id] ? "border-indigo-500/50 bg-indigo-500/15 text-indigo-200" : "border-slate-700 bg-slate-900"
+                    }`}
+                  >
+                    {expandedHistory[s.id] ? <ChevronDown className="w-3.5 h-3.5" /> : <History className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
                     data-testid={`schedule-toggle-${s.id}`}
                     type="button"
                     onClick={() => toggleMut.mutate(s.id)}
@@ -187,6 +200,36 @@ function ScheduledReportsCard() {
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
+              </div>
+              {/* v43.99 — Test history drawer */}
+              {expandedHistory[s.id] && (
+                <div data-testid={`schedule-history-panel-${s.id}`} className="border border-indigo-500/20 bg-indigo-500/5 rounded-md p-2 mt-1 ml-4 space-y-1">
+                  <div className="text-[10px] font-bold text-indigo-300 flex items-center gap-1.5 mb-1">
+                    <History className="w-3 h-3" /> Son 5 Test Gönderim
+                  </div>
+                  {(s.test_history || []).length === 0 ? (
+                    <div className="text-[10px] text-slate-500 italic py-1">Henüz test gönderilmedi. Mail ikonuna basarak gerçek test tetikleyin.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {[...(s.test_history || [])].reverse().map((h, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[10px] mono border-b border-indigo-500/10 pb-1 last:border-b-0">
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-bold text-[9px] ${
+                            h.ok ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                                 : "bg-rose-500/15 text-rose-300 border border-rose-500/30"
+                          }`}>
+                            {h.ok ? "✓ OK" : "✗ FAIL"}
+                          </span>
+                          <span className="text-slate-400">{(h.at || "").slice(0, 16).replace("T", " ")}</span>
+                          {h.sent_via && <span className="text-slate-500">· {h.sent_via}</span>}
+                          {h.ok && <span className="text-cyan-300">· ↑{h.sent_total} ↓{h.received_total}</span>}
+                          {h.content_bytes > 0 && <span className="text-slate-500">· {(h.content_bytes/1024).toFixed(1)}KB</span>}
+                          {h.error && <span className="text-rose-400 truncate max-w-[240px]" title={h.error}>· {h.error.slice(0, 60)}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               </div>
             ))}
           </div>

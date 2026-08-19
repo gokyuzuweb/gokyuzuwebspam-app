@@ -237,6 +237,13 @@ export const api = {
   bayiIpEnforceGet: () => client.get("/settings/bayi-ip-enforce").then(r => r.data),
   bayiIpEnforcePut: (enabled) => client.put("/settings/bayi-ip-enforce", { enabled }).then(r => r.data),
 
+  // v43.99 — Master 2FA
+  master2FAStatus: () => client.get("/master/2fa/status", { withCredentials: true }).then(r => r.data),
+  master2FASetupInit: () => client.post("/master/2fa/setup-init").then(r => r.data),
+  master2FAEnable: (secret, code) => client.post("/master/2fa/enable", { secret, code }).then(r => r.data),
+  master2FAVerify: (code) => client.post("/master/2fa/verify", { code }, { withCredentials: true }).then(r => r.data),
+  master2FADisable: (code) => client.post("/master/2fa/disable", { code }, { withCredentials: true }).then(r => r.data),
+
   // v43.91 — Trusted IPs (foreign-IP alarm muafiyeti)
   trustedIpsList: () => client.get("/settings/trusted-ips").then(r => r.data),
   trustedIpsExportCsv: async () => {

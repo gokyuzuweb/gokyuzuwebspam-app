@@ -91,6 +91,7 @@ pyflakes==3.4.0
 Pygments==2.20.0
 PyJWT==2.13.0
 pymongo==4.6.3
+PyOTP==2.10.0
 pyparsing==3.3.2
 pypdf==6.14.2
 pytest==9.1.1
@@ -102,6 +103,7 @@ python-multipart==0.0.32
 pytokens==0.4.1
 pywebpush==2.3.0
 PyYAML==6.0.3
+qrcode==8.2
 redis==8.1.0
 referencing==0.37.0
 regex==2026.7.19
@@ -134,3 +136,4 @@ wcwidth==0.8.2
 websockets==16.1.1
 yarl==1.24.5
 zipp==4.1.0
+pyotp==2.10.0

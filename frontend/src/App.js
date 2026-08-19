@@ -508,10 +508,20 @@ export default function App() {
               localStorage.setItem("gws.master_license", who.master_key);
               localStorage.setItem("gws.event_license", who.master_key);
               localStorage.setItem("gws.license.dismissed", "1");
-              // Yeni master keyi yüklendi — sayfa yenilenmeden mode switch olsun
+              // v43.99 — Auto-activate welcome toast (only first time)
+              const shownAuto = localStorage.getItem("gws.master.auto_activate_toast_shown");
+              if (!shownAuto) {
+                import("sonner").then(({ toast }) => {
+                  toast.success("Master oturumu otomatik başlatıldı ✓", {
+                    description: "WHM/master sunucu tanındı. Bir daha lisans girmenize gerek yok — panel açıldığında otomatik olarak master modunda karşılayacağız.",
+                    duration: 8000,
+                  });
+                });
+                try { localStorage.setItem("gws.master.auto_activate_toast_shown", "1"); } catch {}
+              }
               window.dispatchEvent(new CustomEvent("gws:master-auto-activated", { detail: who }));
               // Bir kere daha yenile ki React Query'ler yeni header ile fetch etsin
-              setTimeout(() => { try { window.location.reload(); } catch {} }, 400);
+              setTimeout(() => { try { window.location.reload(); } catch {} }, 900);
             }
           }
         }).catch(() => {});
@@ -525,6 +535,22 @@ export default function App() {
         }).catch(() => {});
       });
     } catch {}
+  }, []);
+
+  // v43.99 — Track last visited panel path for "Kaldığın Yerden Devam Et"
+  React.useEffect(() => {
+    const track = () => {
+      try {
+        const p = window.location.pathname;
+        if (p.startsWith("/panel/") && p !== "/panel/dashboard") {
+          localStorage.setItem("gws.last_visited", p);
+          localStorage.setItem("gws.last_visited_at", new Date().toISOString());
+        }
+      } catch {}
+    };
+    track();
+    window.addEventListener("popstate", track);
+    return () => window.removeEventListener("popstate", track);
   }, []);
 
   // v43.19 — Iframe detection + parent auto-resize + compact layout

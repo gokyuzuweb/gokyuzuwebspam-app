@@ -14,6 +14,7 @@ import { useT } from "@/i18n";
 import LiveMailEvents from "@/components/LiveMailEvents";
 import ModuleFooter from "@/components/ModuleFooter";
 import MultiServerRibbon from "@/components/MultiServerRibbon";
+import { ResumeSessionCard } from "@/components/V4399Cards";
 import HealthScore from "@/components/HealthScore";
 import ComplianceSnapshot from "@/components/ComplianceSnapshot";
 import OnboardingWizard from "@/components/OnboardingWizard";
@@ -192,11 +193,14 @@ export default function Dashboard() {
 
       {/* Health tab */}
       {show("health") && (
-        <div className="grid grid-cols-12 gap-4">
+        <>
+          <ResumeSessionCard />
+          <div className="grid grid-cols-12 gap-4">
           <div className="col-span-12 md:col-span-4"><HealthScore/></div>
           <div className="col-span-12 md:col-span-8"><MultiServerRibbon licenseKey={LICKEY()}/></div>
           <div className="col-span-12"><ComplianceSnapshot licenseKey={LICKEY()}/></div>
         </div>
+        </>
       )}
 
       {/* Live tab */}

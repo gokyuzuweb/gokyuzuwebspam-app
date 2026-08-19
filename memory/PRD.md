@@ -14,6 +14,23 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 18, 2026 (Session 19, v43.99) — Master 2FA + Auto-Activate Toast + Test History + Deep Link
+
+**KULLANICI İSTEĞİ:** 2FA, welcome toast, test history drawer, resume-last-visited
+
+**IMPLEMENTATION:**
+- **Master 2FA (routes/master_2fa.py)**: pyotp+qrcode ile TOTP setup/enable/verify/disable + 10 backup code, 8sa verify token cookie. Endpoint'ler: setup-init, enable, verify, status, disable. Google Authenticator/Authy/1Password uyumlu.
+- **Auto-Activate Toast**: İlk defa auto-master detect edildiğinde 8sn welcome toast (localStorage flag `gws.master.auto_activate_toast_shown` ile bir kere gösterilir).
+- **Schedule Test History Drawer**: `send_test` endpoint'i test_history array'e push eder ($slice: -5). Frontend row altında History icon toggle → son 5 test (OK/FAIL chip + timestamp + sent_via + counts + KB + error tooltip).
+- **cPanel Deep Link**: App.js popstate tracker → localStorage last_visited + at. Dashboard'da `ResumeSessionCard` chip → kullanıcı farklı sayfaya gitmişse "Kaldığın yerden devam et →" indigo chip.
+
+**Test:** pytest v43_90..v43_99 = **31/31 PASS** ✓. Backend 2FA end-to-end (setup+enable+verify+backup+disable) + master-only guard doğrulandı. Frontend screenshots: 2FA card, setup wizard (QR+secret+code), history drawer, dashboard v43.99 ✓.
+
+**VERSION**: v43.98 → v43.99 (canlıya hazır)
+
+---
+
+
 ## Feb 18, 2026 (Session 19, v43.95) — Schedule Last-Test + Kanban Drag Polish + CSV Export + MasterLive Tabs
 
 **KULLANICI İSTEĞİ:**
