@@ -14,6 +14,39 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 19, 2026 (Session 21, v43.99.14) — Docs Detail Drawer Tabs + PDF Genişletme
+
+**IMPLEMENTATION:**
+
+1. **PDF Görsel Genişletme** (`scripts/generate_install_guide.py`):
+   - Yeni `cli_terminal_mock()` helper — macOS-tarzı terminal window, 3 renk buton (kırmızı/sarı/yeşil), ANSI-renkli komut çıktısı satırları ($, [+], [✓], >>>, 🎉 satırları).
+   - Adım 4 (Kurulum Script) — build sonrası CLI terminal mockup mount edildi (Adım başlığından sonra).
+   - Adım 7 (Motor Testi) — `engine_pie_chart(16cm, 6cm)` mount edildi (7 motor renkli pasta grafiği).
+   - Adım 5 (WHM) — mevcut `whm_plugin_mockup()` mount devam.
+
+2. **Docs Detail Drawer — 4 Sekmeli Tab Sistemi** (`pages/Docs.js`):
+   - 4 tab: `Genel Bakış` (mevcut what/features/how + walkthrough + media + narration) · `Video Eğitimi` · `Sık Sorulan` · `AI Sohbet` (mevcut chat taşındı).
+   - Modül değiştiğinde `useEffect` ile tab "overview"'a resetlenir.
+   - Sticky tab bar (drawer scroll'unda üstte kalır).
+
+3. **DocsVideoTab bileşeni**:
+   - `MODULE_VIDEOS` map'inde bir modül için embed URL varsa iframe içinde göster.
+   - Boşsa: elegant placeholder + "YouTube'da '{modül adı}' ara" butonu (dinamik search URL).
+   - `install_guide` özel: emerald renkli kart + "Kurulum Rehberini Aç" deeplink butonu.
+
+4. **DocsFaqTab bileşeni**:
+   - `MODULE_FAQS[key]` (modüle özel — 9 modül için detaylı FAQ'lar) + `GENERIC_FAQS` (3 genel soru tüm modüllerde).
+   - Accordion tarzı: sadece açık olan gösterilir, diğerleri collapsed.
+   - "Bu modüle özel" indigo etiket + "Cevabı bulamadıysanız AI Sohbet" CTA.
+
+5. **Overview tab'ında yeni CTA**: Modül route'u varsa "{modül adı} sayfasını aç →" indigo buton drawer'ın alt kısmında.
+
+**Test:** MailScanner drawer'ı açıldı → 4 tab render edildi → FAQ tab'ında 7 accordion item (3 spesifik + 3 genel + 1 CTA) doğru çalıştı ✓ · PDF TR 88KB, CLI mockup + pie chart mount ✓.
+
+**VERSION:** v43.99.13 → v43.99.14
+
+
+
 ## Feb 19, 2026 (Session 21, v43.99.13) — 4-Feature Bundle: PDF Görseller · Video Config · Fuzzy Search · Docs Deeplink
 
 **IMPLEMENTATION:**

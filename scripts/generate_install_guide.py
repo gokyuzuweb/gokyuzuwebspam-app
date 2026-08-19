@@ -919,6 +919,60 @@ def engine_pie_chart(width=8*cm, height=6*cm):
     return d
 
 
+def cli_terminal_mock(width=16*cm, height=8*cm):
+    """v43.99.14 — Kurulum script'inin CLI çıktısını gösteren terminal mockup."""
+    d = Drawing(width, height)
+    # Terminal window frame
+    d.add(Rect(0, 0, width, height, fillColor=HexColor("#0F172A"), strokeColor=HexColor("#334155"), strokeWidth=1))
+    # macOS-style top bar
+    d.add(Rect(0, height - 0.6*cm, width, 0.6*cm, fillColor=HexColor("#1E293B"), strokeColor=None))
+    # 3 pencere butonu (kırmızı/sarı/yeşil)
+    for i, col in enumerate([HexColor("#EF4444"), HexColor("#EAB308"), HexColor("#22C55E")]):
+        d.add(Circle(0.3*cm + i*0.5*cm, height - 0.3*cm, 0.15*cm, fillColor=col, strokeColor=None))
+    d.add(String(width/2, height - 0.4*cm, "root@server:~ — bash",
+                 fontName=FONT_MONO, fontSize=8, fillColor=HexColor("#94A3B8"), textAnchor="middle"))
+
+    # Terminal içeriği (satırlar)
+    lines = [
+        ("$ ", "#22C55E", "bash /root/install.sh", "#F1F5F9"),
+        ("", None, "", None),
+        ("[+] ", "#22C55E", "Docker kontrol ediliyor... OK (24.0.7)", "#CBD5E1"),
+        ("[+] ", "#22C55E", "MongoDB container başlatılıyor... OK", "#CBD5E1"),
+        ("[+] ", "#22C55E", "Backend build ediliyor... [45%]", "#CBD5E1"),
+        ("[+] ", "#22C55E", "Frontend build ediliyor... [78%]", "#CBD5E1"),
+        (">>> ", "#F59E0B", "Lisans anahtarinizi girin: ", "#F1F5F9"),
+        ("    ", None, "MS-XXXXXXXXXXXXXXXXXXXXXX", "#22C55E"),
+        (">>> ", "#F59E0B", "Panel domain: ", "#F1F5F9"),
+        ("    ", None, "panel.firmaniz.com", "#22C55E"),
+        (">>> ", "#F59E0B", "SSL sertifikasi (E/H): ", "#F1F5F9"),
+        ("    ", None, "E", "#22C55E"),
+        ("", None, "", None),
+        ("[✓] ", "#22C55E", "Nginx + Let's Encrypt SSL kuruldu", "#CBD5E1"),
+        ("[✓] ", "#22C55E", "WHM plugin /usr/local/cpanel/whostmgr/... kuruldu", "#CBD5E1"),
+        ("[✓] ", "#22C55E", "Exim milter entegrasyonu tamamlandi", "#CBD5E1"),
+        ("", None, "", None),
+        ("🎉 ", None, "Kurulum basarili! WHM > MailShield ikonuna tiklayin.", "#22C55E"),
+    ]
+
+    line_h = 0.35*cm
+    y = height - 1.0*cm
+    for prefix, prefix_color, text, text_color in lines:
+        if prefix:
+            d.add(String(0.3*cm, y, prefix,
+                         fontName=FONT_MONO, fontSize=8,
+                         fillColor=HexColor(prefix_color) if prefix_color else HexColor("#94A3B8")))
+        if text:
+            offset = 0.3*cm + len(prefix) * 0.15*cm
+            d.add(String(offset, y, text,
+                         fontName=FONT_MONO, fontSize=8,
+                         fillColor=HexColor(text_color) if text_color else HexColor("#CBD5E1")))
+        y -= line_h
+        if y < 0.3*cm:
+            break
+
+    return d
+
+
 
 
 # ---------- Text helper (shape Arabic + basic HTML entity escape) ----------
@@ -1083,7 +1137,14 @@ def build(lang="tr", out_path=None):
             story.append(tbl)
             story.append(Spacer(1, 0.3*cm))
 
-        # v43.99.13 — Adım özel ilüstrasyonlar
+        # v43.99.13/14 — Adım özel ilüstrasyonlar
+        if idx == 4:
+            # Kurulum CLI mockup — Adım 4
+            story.append(Spacer(1, 0.3*cm))
+            story.append(Paragraph(T({"tr": "Kurulum script çıktısı:",
+                                       "en": "Installation script output:",
+                                       "ar": "مخرج سكربت التثبيت:"}[lang], lang), body))
+            story.append(cli_terminal_mock())
         if idx == 5:
             # WHM Plugin ekran mockup
             story.append(Spacer(1, 0.3*cm))
@@ -1091,6 +1152,13 @@ def build(lang="tr", out_path=None):
                                        "en": "MailShield appears like this in WHM:",
                                        "ar": "هكذا يظهر MailShield في WHM:"}[lang], lang), body))
             story.append(whm_plugin_mockup())
+        if idx == 7:
+            # Engine dağılımı pie chart — Adım 7
+            story.append(Spacer(1, 0.3*cm))
+            story.append(Paragraph(T({"tr": "Aktif motor dağılımı:",
+                                       "en": "Active engine distribution:",
+                                       "ar": "توزيع المحركات النشطة:"}[lang], lang), body))
+            story.append(engine_pie_chart(width=16*cm, height=6*cm))
 
         if "ok" in st:
             story.append(Spacer(1, 0.15*cm))

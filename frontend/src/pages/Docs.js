@@ -8,7 +8,7 @@ import {
   BookOpen, Filter, Bug, Globe2, Inbox, Mail, ArrowUpRight, Bell, BellRing,
   Cpu, Wrench, Radar, Terminal, Users, PackageOpen, Settings2, Key, Beaker,
   ShieldCheck, Brain, Server, LinkIcon, UserX, Activity, X, Search, Sparkles,
-  Play, Volume2, ExternalLink,
+  Play, Volume2, ExternalLink, HelpCircle, Rocket,
 } from "lucide-react";
 
 const MODULES = [
@@ -812,6 +812,62 @@ const MODULE_ROUTES = {
   settings: "/panel/settings",
 };
 
+// v43.99.14 — Modül bazlı Sık Sorulan Sorular (FAQ) haritası
+const GENERIC_FAQS = [
+  {
+    q: "Ayarlarımı kaydettim ama etkilemedi, neden?",
+    a: "Değişiklikler backend daemon tarafından her 30 saniyede bir yenilenir. 1 dakika bekleyin veya WHM'de 'MailShield Restart' butonuna basın.",
+  },
+  {
+    q: "Bu modülü Bayı'lara açık/kapalı yapabilir miyim?",
+    a: "Master → Plan Modülleri (Plan Config) sayfasından her modülü plan bazında (starter/pro/enterprise) toggle edebilirsiniz.",
+  },
+  {
+    q: "Değişikliklerin denetim izi nerede?",
+    a: "Master → Master Audit Log sayfasında tüm kritik işlemler filtrelenebilir tabloda listelenir (aksiyon türü, aktör IP, tarih, JSON payload).",
+  },
+];
+
+const MODULE_FAQS = {
+  dashboard: [
+    { q: "Kartlardaki sayılar canlı mı, ne sıklıkla güncelleniyor?", a: "Metrikler her 15 saniyede bir otomatik yenilenir. Sağ üstteki refresh ikonuna basarak manuel de tetikleyebilirsiniz." },
+    { q: "'Kuyrukta Bekleyen' kartına tıklayınca ne oluyor?", a: "Exim kuyruk modalı açılır — donmuş/bekleyen tüm mailleri toplu sil/ilet/dondur/döndür işlemleriyle yönetebilirsiniz." },
+  ],
+  mailscanner: [
+    { q: "Bayes trainer'ı ne zaman kullanmalıyım?", a: "En az 5000 token toplayana kadar 'training' modunda tutun. Spam örnekleri 'Learn as Spam', temiz mailler 'Learn as Ham' ile besleyin. Sistem 8-10 gün sonra %95+ isabetli olur." },
+    { q: "AI Sistem Analizi ücretli mi?", a: "Claude modeli kullanıyor — Emergent LLM key üzerinden çalışır. Her analiz ~$0.03 tüketir; ayda 50-100 kez analiz yapabilirsiniz." },
+    { q: "URL Rewrite hangi durumda mail'i bozar?", a: "Kısaltılmış URL'ler (bit.ly gibi) 2x kısaltma yapıldığında karışabilir. Genelde sorun olmaz; olursa Ayarlar → URL Koruma toggle kapatın." },
+  ],
+  security: [
+    { q: "Exploit tarama sunucumu yavaşlatır mı?", a: "İlk tam tarama 5-8 dakika sürebilir (1500+ dosya). Sonraki taramalar sadece değişen dosyalara odaklanır ve 30 sn'de biter. IO priority 'low' ayarlanmış." },
+    { q: "BEC dedektörü %100 doğru mu?", a: "Heuristic tabanlı — false positive oranı ~%2-4. Şüpheli mail geldiğinde karantinaya alınır, siz onaylarsınız. Zaman içinde whitelist ile geliştirilir." },
+  ],
+  quarantine: [
+    { q: "Karantinada mail kaç gün saklanır?", a: "Varsayılan 90 gün (Ayarlar → Retention'dan değiştirilebilir). Sonra otomatik silinir; delete audit log'a düşer." },
+    { q: "Release ettiğim mail spam sayılmaz mı?", a: "Release kullanıcının inbox'ına gönderir + gönderen domain'i 30 gün whitelist'e alır. Aynı domain'den bir daha mail gelirse otomatik geçer." },
+  ],
+  threat_defense: [
+    { q: "28 modül tek tek mi çalıştırılıyor?", a: "Her modül bağımsız. Bir modülün formunu doldurup 'Çalıştır'a basınca sadece o endpoint tetiklenir. Toplu 'Hepsini Test Et' butonu yok — hedefli teşhis için." },
+    { q: "Sonuçlar cache'leniyor mu?", a: "Aynı input için 5 dakika cache. Farklı input her seferinde yeni sorgu." },
+  ],
+  licenses: [
+    { q: "Lisans anahtarını kaybedersem?", a: "Master paneli → Lisanslar → 'Rotate' butonu → eski revoke olur, yeni oluşur + otomatik e-posta gider." },
+    { q: "Bir IP'yi birden fazla lisansa bağlayabilir miyim?", a: "Hayır. Her IP tek bir lisansa bağlanır (multi-tenant izolasyon). Aynı sunucuda çoklu domain için IP alias veya reseller sub-license kullanın." },
+  ],
+  maintenance: [
+    { q: "Weekly backup'lar nereye kaydediliyor?", a: "/app/backups/ klasörüne .json.gz olarak. Retention 8 snapshot (yaklaşık 2 ay). Master paneli → DB Bakım → Backup sekmesinden indirebilirsiniz." },
+    { q: "Restore ile kritik veriyi kaybederim mi?", a: "Her zaman dry_run=true ile başlayın! Gerçek restore mevcut collection'ları TAMAMEN siler ve snapshot'tan doldurur. 2FA aktifse doğrulanmış cookie zorunludur." },
+  ],
+  settings: [
+    { q: "2FA'yı aktifleştirdim ama giremiyorum?", a: "Backup code'larınızdan biri ile giriş yapın (2FA setup sırasında verilen 10 kod). Yoksa /app/backend/.env → MASTER_2FA_ENABLED=false ile bypass'lı bakım moduna geçin." },
+    { q: "Kilit ekranı PIN'imi unuttum, nasıl sıfırlarım?", a: "Master için: Ayarlar → Kilit & PIN → 'Force Reset PIN' (v43.99.9+). Bayı için: Master → Kullanıcı PIN Yönetimi → o kullanıcının satırında 'SIFIRLA'." },
+  ],
+  install_guide: [
+    { q: "Video eğitim gözükmüyor?", a: "Master paneli → Kurulum Rehberi → 'Video URL'lerini Yönet' butonundan 8 adım için YouTube veya MP4 URL'i girin. DB'ye kaydedilir, herkes anında görür." },
+    { q: "PDF hangi dillerde?", a: "Türkçe (varsayılan), English (?lang=en), العربية (?lang=ar). Sağ üstteki bayraklı butonlarla indirebilirsiniz." },
+  ],
+};
+
 const TONE_MAP = {
   sky: "text-sky-300 bg-sky-500/10 border-sky-500/40",
   indigo: "text-indigo-300 bg-indigo-500/10 border-indigo-500/40",
@@ -824,8 +880,12 @@ const TONE_MAP = {
 
 export default function Docs() {
   const [active, setActive] = useState(null);
+  const [activeTab, setActiveTab] = useState("overview"); // v43.99.14
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
+
+  // Modül değiştiğinde tab'ı sıfırla
+  useEffect(() => { setActiveTab("overview"); }, [active?.key]);
 
   // v43.99.13 — Fuse.js fuzzy search (label + what + features + how'da arama)
   const fuse = useMemo(() => new Fuse(MODULES, {
@@ -968,37 +1028,79 @@ export default function Docs() {
               <button onClick={() => setActive(null)} data-testid="docs-close"
                       className="p-2 rounded hover:bg-slate-800 text-slate-400"><X className="w-4 h-4"/></button>
             </div>
-            <div className="p-5 space-y-5">
-              {/* Video-style Animated Walkthrough */}
-              <AnimatedWalkthrough module_key={active.key} tone={active.tone}/>
-              {/* User uploaded media gallery + AI illustration */}
-              <MediaGallery moduleKey={active.key} tone={active.tone} moduleLabel={active.label}/>
-              {/* AI Ask - Chat with module */}
-              <AiModuleChat module={active}/>
-              {/* AI Sesli Kılavuz */}
-              <AiNarration module={active}/>
 
-              <section>
-                <h3 className="text-slate-100 font-semibold text-sm mb-2">Ne yapar?</h3>
-                <p className="text-slate-300 text-sm leading-relaxed">{active.what}</p>
-              </section>
-              <section>
-                <h3 className="text-slate-100 font-semibold text-sm mb-2">Öne çıkan özellikler</h3>
-                <ul className="text-slate-300 text-sm space-y-1.5">
-                  {active.features.map((f, i) => (
-                    <li key={i} className="flex gap-2 items-start">
-                      <span className="text-indigo-400 mt-1">▸</span>
-                      <span>{f}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-              <section>
-                <h3 className="text-slate-100 font-semibold text-sm mb-2">Nasıl kullanılır?</h3>
-                <ol className="text-slate-300 text-sm space-y-1.5 list-decimal list-inside">
-                  {active.how.map((h, i) => <li key={i}>{h}</li>)}
-                </ol>
-              </section>
+            {/* v43.99.14 — Sekme (tab) navigasyonu */}
+            <div className="flex gap-1 px-5 pt-3 border-b border-slate-800 sticky top-[68px] bg-slate-900 z-10" data-testid="docs-tabs">
+              {[
+                { id: "overview", label: "Genel Bakış", Icon: BookOpen },
+                { id: "video",    label: "Video Eğitimi", Icon: Play },
+                { id: "faq",      label: "Sık Sorulan", Icon: HelpCircle },
+                { id: "ai",       label: "AI Sohbet", Icon: Brain },
+              ].map(t => (
+                <button
+                  key={t.id}
+                  data-testid={`docs-tab-${t.id}`}
+                  onClick={() => setActiveTab(t.id)}
+                  className={`px-3 py-2 text-xs font-semibold border-b-2 transition-colors inline-flex items-center gap-1.5 ${
+                    activeTab === t.id
+                      ? "text-indigo-300 border-indigo-500"
+                      : "text-slate-400 border-transparent hover:text-slate-200"
+                  }`}
+                >
+                  <t.Icon className="w-3.5 h-3.5" />
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="p-5 space-y-5">
+              {activeTab === "overview" && (<>
+                {/* Video-style Animated Walkthrough */}
+                <AnimatedWalkthrough module_key={active.key} tone={active.tone}/>
+                {/* User uploaded media gallery + AI illustration */}
+                <MediaGallery moduleKey={active.key} tone={active.tone} moduleLabel={active.label}/>
+                {/* AI Sesli Kılavuz */}
+                <AiNarration module={active}/>
+
+                <section>
+                  <h3 className="text-slate-100 font-semibold text-sm mb-2">Ne yapar?</h3>
+                  <p className="text-slate-300 text-sm leading-relaxed">{active.what}</p>
+                </section>
+                <section>
+                  <h3 className="text-slate-100 font-semibold text-sm mb-2">Öne çıkan özellikler</h3>
+                  <ul className="text-slate-300 text-sm space-y-1.5">
+                    {active.features.map((f, i) => (
+                      <li key={i} className="flex gap-2 items-start">
+                        <span className="text-indigo-400 mt-1">▸</span>
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+                <section>
+                  <h3 className="text-slate-100 font-semibold text-sm mb-2">Nasıl kullanılır?</h3>
+                  <ol className="text-slate-300 text-sm space-y-1.5 list-decimal list-inside">
+                    {active.how.map((h, i) => <li key={i}>{h}</li>)}
+                  </ol>
+                </section>
+                {MODULE_ROUTES[active.key] && (
+                  <a
+                    href={MODULE_ROUTES[active.key]}
+                    data-testid={`docs-drawer-open-${active.key}`}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-indigo-500 bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/25 text-sm font-bold"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    {active.label} sayfasını aç →
+                  </a>
+                )}
+              </>)}
+
+              {activeTab === "video" && <DocsVideoTab module={active} />}
+
+              {activeTab === "faq" && <DocsFaqTab module={active} />}
+
+              {activeTab === "ai" && <AiModuleChat module={active}/>}
+
               <div className="pt-2 border-t border-slate-800 text-[11px] text-slate-500 flex items-center justify-between">
                 <span>Modül anahtarı: <span className="mono text-slate-400">{active.key}</span></span>
                 <span>Kategori: <Badge>{active.cat}</Badge></span>
@@ -1508,3 +1610,155 @@ function AiModuleChat({ module }) {
     </div>
   );
 }
+
+
+// v43.99.14 — "Video Eğitimi" sekmesi
+function DocsVideoTab({ module }) {
+  const configured = MODULE_VIDEOS[module.key];
+  const isInstallGuide = module.key === "install_guide";
+  const ytSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
+    "GökyüzüWebSpam " + module.label + " nasıl kullanılır"
+  )}`;
+
+  return (
+    <div className="space-y-4" data-testid="docs-video-tab">
+      {/* Configured video */}
+      {configured ? (
+        <div className="rounded-lg overflow-hidden border border-slate-800 bg-slate-950">
+          <div className="aspect-video bg-black">
+            <iframe
+              src={configured}
+              title={`${module.label} eğitim videosu`}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              className="w-full h-full border-0"
+            />
+          </div>
+          <div className="px-4 py-2 text-[11px] text-slate-500 border-t border-slate-800">
+            📺 Resmi eğitim videosu
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed border-slate-700 bg-slate-950/50 p-8 text-center">
+          <Play className="w-12 h-12 mx-auto text-slate-600 mb-3" />
+          <div className="text-sm text-slate-300 font-semibold mb-1">
+            "{module.label}" için resmi video henüz eklenmedi
+          </div>
+          <div className="text-[12px] text-slate-500 mb-4">
+            Master, YouTube veya MP4 URL'i eklediğinde burada gösterilir.
+          </div>
+          <a
+            href={ytSearchUrl}
+            target="_blank" rel="noreferrer"
+            data-testid="docs-video-yt-search"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-xs font-semibold"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            YouTube'da "{module.label}" ara
+          </a>
+        </div>
+      )}
+
+      {/* Install Guide için özel: 8 adımın videolarını göster */}
+      {isInstallGuide && (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4">
+          <div className="text-sm font-bold text-emerald-300 flex items-center gap-2 mb-2">
+            <Rocket className="w-4 h-4" />
+            8 Adım Kurulum Videoları
+          </div>
+          <p className="text-[12px] text-slate-300 mb-3">
+            Kurulum Rehberi sayfasında her adımın altında 30 saniyelik ekran kaydı vardır.
+            Master, "Video URL'lerini Yönet" butonu ile bu videoları yönetir.
+          </p>
+          <a
+            href="/panel/install-guide"
+            data-testid="docs-video-install-open"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-500 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 text-xs font-bold"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Kurulum Rehberini Aç
+          </a>
+        </div>
+      )}
+
+      {/* Yardım kartı */}
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 flex items-start gap-3">
+        <HelpCircle className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0" />
+        <div className="text-[12px] text-slate-400 leading-relaxed">
+          Video eğitimi bulamadınız mı? <b>AI Sohbet</b> sekmesinden Claude'a modülle ilgili sorularınızı sorabilirsiniz — anında Türkçe kılavuz üretir.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// v43.99.14 — "Sık Sorulan Sorular (FAQ)" sekmesi
+function DocsFaqTab({ module }) {
+  const specific = MODULE_FAQS[module.key] || [];
+  const all = [...specific, ...GENERIC_FAQS];
+  const [openIdx, setOpenIdx] = useState(0);
+
+  return (
+    <div className="space-y-2" data-testid="docs-faq-tab">
+      <div className="text-[11px] text-slate-500 mb-3">
+        {specific.length > 0
+          ? `${specific.length} modül-özel + ${GENERIC_FAQS.length} genel soru`
+          : `${GENERIC_FAQS.length} genel soru`
+        }
+      </div>
+      {all.map((f, i) => {
+        const open = openIdx === i;
+        const isSpecific = i < specific.length;
+        return (
+          <div
+            key={i}
+            data-testid={`docs-faq-${i}`}
+            className={`border rounded-lg overflow-hidden transition-all ${
+              open
+                ? "border-indigo-500/40 bg-indigo-500/5"
+                : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
+            }`}
+          >
+            <button
+              onClick={() => setOpenIdx(open ? -1 : i)}
+              className="w-full text-left px-4 py-3 flex items-start justify-between gap-3"
+            >
+              <div className="flex items-start gap-2">
+                <HelpCircle className={`w-4 h-4 mt-0.5 shrink-0 ${
+                  isSpecific ? "text-indigo-400" : "text-slate-500"
+                }`} />
+                <div>
+                  <div className="text-sm font-semibold text-slate-100">{f.q}</div>
+                  {isSpecific && (
+                    <div className="text-[10px] text-indigo-400 mt-0.5 font-bold uppercase tracking-wider">
+                      Bu modüle özel
+                    </div>
+                  )}
+                </div>
+              </div>
+              <span className={`text-slate-400 text-lg transform transition-transform shrink-0 ${
+                open ? "rotate-45" : ""
+              }`}>+</span>
+            </button>
+            {open && (
+              <div className="px-4 pb-3 pt-1 text-[13px] text-slate-300 leading-relaxed border-t border-slate-800/60">
+                {f.a}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Yeni soru ekleme bilgi kartı */}
+      <div className="mt-4 rounded-lg border border-dashed border-slate-700 bg-slate-900/30 p-3 text-center">
+        <div className="text-[11px] text-slate-500 mb-1">
+          Cevabını bulamadığınız bir soru mu var?
+        </div>
+        <div className="text-[12px] text-slate-300">
+          <b>AI Sohbet</b> sekmesine geçin — Claude size 5 saniyede özel cevap üretir.
+        </div>
+      </div>
+    </div>
+  );
+}
+
