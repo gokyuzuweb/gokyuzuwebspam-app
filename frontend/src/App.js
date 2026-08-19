@@ -17,6 +17,26 @@ import PushToastBridge from "@/components/PushToastBridge";
 import BayiEventBridge from "@/components/BayiEventBridge";
 import { useIsMaster } from "@/hooks/useIsMaster";
 import { api } from "@/lib/api";
+
+// v43.99.1 — Synchronously capture ?master_key=... before React renders,
+// so useIsMaster() hook picks up the key on the very first whoami call.
+// This eliminates the race condition where whoami fires with an empty
+// localStorage → is_master:false gets cached → sidebar hides master items.
+try {
+  if (typeof window !== "undefined" && window.location?.search) {
+    const _p = new URLSearchParams(window.location.search);
+    const _mk = _p.get("master_key");
+    if (_mk && _mk.startsWith("MS-")) {
+      localStorage.setItem("gws.event_license", _mk);
+      localStorage.setItem("gws.master_license", _mk);
+      localStorage.setItem("gws.license.dismissed", "1");
+      _p.delete("master_key");
+      const _clean = window.location.pathname + (_p.toString() ? "?" + _p.toString() : "") + window.location.hash;
+      window.history.replaceState({}, "", _clean);
+    }
+  }
+} catch (_) {}
+
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import Quarantine from "@/pages/Quarantine";
@@ -565,11 +585,20 @@ export default function App() {
       const params = new URLSearchParams(window.location.search);
       const mk = params.get("master_key");
       if (mk && mk.startsWith("MS-")) {
+        const wasEmpty = !localStorage.getItem("gws.event_license");
         localStorage.setItem("gws.event_license", mk);
         localStorage.setItem("gws.master_license", mk);
+        localStorage.setItem("gws.license.dismissed", "1");
         params.delete("master_key");
         const cleanUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "") + window.location.hash;
         window.history.replaceState({}, "", cleanUrl);
+        // v43.99.1 — Race condition fix: whoami zaten empty localStorage ile çağrıldı,
+        // is_master:false cache'lendi. Master key set edildi → sayfayı yenile ki
+        // sidebar tam master menü ile render olsun (Ayarlar, Lisans Yönetimi vs).
+        if (wasEmpty) {
+          setTimeout(() => { try { window.location.reload(); } catch (_) {} }, 100);
+          return;
+        }
       }
 
       // v43.35 — Preview otomatik master activation: kullanıcı manuel key girmesin diye
