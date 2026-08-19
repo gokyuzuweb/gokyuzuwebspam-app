@@ -26,18 +26,21 @@ my $public = $ENV{MAILSHIELD_PUBLIC} // 'https://panel.gokyuzuhosting.com';
 # olarak geçilerek tarayıcı localStorage'ına yazılır (master otomatik tanıma).
 my $master_key = $ENV{MAILSHIELD_MASTER_KEY} // '';
 if (!$master_key) {
-    # backend.env'den otomatik oku (fallback)
-    my $env_file = '/opt/gokyuzuwebspam-app/deployment/backend.env';
-    if (open my $fh, '<', $env_file) {
-        while (my $line = <$fh>) {
-            chomp $line;
-            if ($line =~ /^MASTER_LICENSE_KEY\s*=\s*(.+?)\s*$/) {
-                $master_key = $1;
-                $master_key =~ s/^["']|["']$//g;
-                last;
+    # backend.env'den otomatik oku (fallback) — 2 lokasyon: deployment/ VE backend/
+    for my $env_file ('/opt/gokyuzuwebspam-app/backend/.env',
+                      '/opt/gokyuzuwebspam-app/deployment/backend.env') {
+        last if $master_key;
+        if (open my $fh, '<', $env_file) {
+            while (my $line = <$fh>) {
+                chomp $line;
+                if ($line =~ /^MASTER_LICENSE_KEY\s*=\s*(.+?)\s*$/) {
+                    $master_key = $1;
+                    $master_key =~ s/^["']|["']$//g;
+                    last;
+                }
             }
+            close $fh;
         }
-        close $fh;
     }
 }
 my $pinfo  = $ENV{PATH_INFO} // '';
