@@ -341,6 +341,7 @@ export default function InstallationGuide() {
   });
   const [active, setActive] = useState(1);
   const [videoEditor, setVideoEditor] = useState(false);
+  const [screenshotMgr, setScreenshotMgr] = useState(false);  // v43.99.18
 
   // v43.99.13 — Video URL'lerini DB'den çek (herkes okuyabilir)
   const videosQ = useQuery({
@@ -383,6 +384,16 @@ export default function InstallationGuide() {
             >
               <Video className="w-3.5 h-3.5" />
               Video URL'lerini Yönet
+            </button>
+          )}
+          {isMaster && (
+            <button
+              onClick={() => setScreenshotMgr(true)}
+              data-testid="screenshot-mgr-open"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-cyan-500/40 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-200 text-xs font-semibold transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              PDF Ekran Görüntülerini Yönet
             </button>
           )}
           <div className="inline-flex rounded border border-slate-700 overflow-hidden" data-testid="pdf-lang-selector">
@@ -563,6 +574,179 @@ export default function InstallationGuide() {
       {videoEditor && isMaster && (
         <VideoEditorModal videos={videos} onClose={() => setVideoEditor(false)} onSaved={() => qc.invalidateQueries({ queryKey: ["install-videos"] })} />
       )}
+
+      {/* v43.99.18 — Master için PDF Ekran Görüntüsü Yöneticisi */}
+      {screenshotMgr && isMaster && (
+        <ScreenshotManagerModal onClose={() => setScreenshotMgr(false)} />
+      )}
+    </div>
+  );
+}
+
+
+// v43.99.18 — PDF için ekran görüntüsü yükleme yöneticisi (8 adım)
+function ScreenshotManagerModal({ onClose }) {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ["install-screenshots"],
+    queryFn: () => client.get("/install-screenshots").then(r => r.data),
+    staleTime: 10_000,
+  });
+
+  const uploadMut = useMutation({
+    mutationFn: async ({ stepId, file }) => {
+      const fd = new FormData();
+      fd.append("step_id", String(stepId));
+      fd.append("file", file);
+      return client.post("/install-screenshots/upload", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      }).then(r => r.data);
+    },
+    onSuccess: (_d, v) => {
+      toast.success(`✓ Adım ${v.stepId} · ${_d.size_kb} KB yüklendi`);
+      qc.invalidateQueries({ queryKey: ["install-screenshots"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Yüklenemedi"),
+  });
+
+  const delMut = useMutation({
+    mutationFn: (stepId) => client.delete(`/install-screenshots/${stepId}`).then(r => r.data),
+    onSuccess: (_d, stepId) => {
+      toast.success(`✓ Adım ${stepId} ekran görüntüsü silindi`);
+      qc.invalidateQueries({ queryKey: ["install-screenshots"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Silinemedi"),
+  });
+
+  const STEP_LABELS = {
+    1: "Satın Alma E-postası (opsiyonel)",
+    2: "SSH Terminal (opsiyonel)",
+    3: "Docker Kurulum (opsiyonel)",
+    4: "GökyüzüWebSpam Script Çıktısı (mockup yerine)",
+    5: "WHM Plugins → MailShield (mockup yerine)",
+    6: "Panel Kullanıcılar Ekranı (opsiyonel)",
+    7: "Motorlar Sekmesi (pie chart yerine)",
+    8: "Bildirim Ayarları (opsiyonel)",
+  };
+
+  const uploaded = q.data?.screenshots || {};
+
+  return (
+    <div
+      data-testid="screenshot-mgr-modal"
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-slate-900 border border-slate-700 rounded-lg my-6 max-w-3xl w-full"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-800">
+          <div>
+            <h2 className="text-slate-100 font-bold text-lg">PDF Ekran Görüntülerini Yönet</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              8 adım için WHM/panel ekran görüntüsü yükleyin. PDF üretiminde mockup yerine gerçek görüntü kullanılır.
+              Max 5 MB · PNG/JPG/WEBP · Değişiklikler PDF cache'ini otomatik geçersiz kılar.
+            </p>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+          {[1,2,3,4,5,6,7,8].map(i => {
+            const u = uploaded[String(i)];
+            return (
+              <div key={i} data-testid={`screenshot-step-${i}`} className="border border-slate-800 rounded-lg p-3 bg-slate-950/40">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
+                      u ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                        : "bg-slate-800 text-slate-500 border border-slate-700"
+                    }`}>{i}</div>
+                    <div className="min-w-0">
+                      <div className="text-[13px] text-slate-100 font-semibold truncate">{STEP_LABELS[i]}</div>
+                      {u ? (
+                        <div className="text-[11px] text-emerald-400 mono truncate">
+                          ✓ {u.url.split("/").pop()} · {u.size_kb} KB
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-slate-500 italic">Henüz yüklenmedi — mockup kullanılıyor</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {u && (
+                      <>
+                        <a
+                          href={u.url}
+                          target="_blank" rel="noreferrer"
+                          data-testid={`screenshot-view-${i}`}
+                          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold"
+                          title="Görüntüle"
+                        >
+                          BAK
+                        </a>
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Adım ${i} ekran görüntüsünü sil?`))
+                              delMut.mutate(i);
+                          }}
+                          data-testid={`screenshot-delete-${i}`}
+                          className="px-2 py-1 rounded bg-rose-500/15 border border-rose-500/40 text-rose-300 hover:bg-rose-500/25 text-[10px] font-bold"
+                          disabled={delMut.isPending}
+                        >
+                          SİL
+                        </button>
+                      </>
+                    )}
+                    <label
+                      data-testid={`screenshot-upload-${i}`}
+                      className="px-3 py-1 rounded bg-cyan-500/15 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/25 text-[10px] font-bold cursor-pointer inline-flex items-center gap-1"
+                    >
+                      {u ? "DEĞİŞTİR" : "YÜKLE"}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) uploadMut.mutate({ stepId: i, file });
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="px-5 py-4 border-t border-slate-800 flex items-center justify-between">
+          <div className="text-[11px] text-slate-500">
+            <b>{Object.keys(uploaded).length}/8</b> ekran görüntüsü yüklendi
+          </div>
+          <div className="flex gap-2">
+            <a
+              href="/api/tools/install-guide.pdf?lang=tr&force=true"
+              target="_blank" rel="noreferrer"
+              data-testid="screenshot-preview-pdf"
+              className="px-4 py-2 rounded bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/25 text-sm font-semibold inline-flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              PDF'i Yeniden Üret & Önizle
+            </a>
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-sm font-semibold"
+            >
+              Kapat
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

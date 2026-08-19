@@ -14,6 +14,39 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 19, 2026 (Session 21, v43.99.18) — PDF Screenshot Manager + OBS Kayıt Rehberi
+
+**KULLANICI İSTEĞİ:** 
+1. PDF Ekran Görüntüleri: Panel içinde "Görsel Yönet" sayfası oluştur — kullanıcı upload edip PDF otomatik güncellensin
+2. Tanıtım Videosu: Detaylı OBS Studio kayıt rehberi
+
+**IMPLEMENTATION:**
+
+**Task 1 — PDF Screenshot Manager:**
+- Backend `routes/install_screenshots.py`:
+  - `GET /api/install-screenshots` — 8 adım için yüklenmiş görüntüleri listeler
+  - `GET /api/install-screenshots/file/{step_id}` — dosyayı serve eder (public, 5 dk cache)
+  - `POST /api/install-screenshots/upload` — multipart upload (Master, max 5 MB, PNG/JPG/WEBP)
+  - `DELETE /api/install-screenshots/{step_id}` — silme (Master)
+  - Upload ve delete PDF cache'ini otomatik geçersiz kılar
+- `generate_install_guide.py`: Her adım için `/app/uploads/install_screenshots/step-{N}.{ext}` kontrol eder, varsa `reportlab.platypus.Image` ile PDF'e gömer (16cm × 9cm proportional), yoksa mockup fallback
+- Frontend `InstallationGuide.js`: Master için header'da "📷 PDF Ekran Görüntülerini Yönet" butonu → `ScreenshotManagerModal` (8 adım × YÜKLE/DEĞİŞTİR/BAK/SİL, sayaç, "PDF'i Yeniden Üret & Önizle" butonu)
+
+**Task 2 — OBS Kayıt Rehberi + Kayıt Modu:**
+- `PromoVideo.js`:
+  - Üst-sol'a 2 yeni buton: "📹 OBS Kayıt Rehberi" + "🔴 Kayıt Modu (UI Gizle)"
+  - **Kayıt Modu**: `recordMode` state; aktifken watermark + kontrol barı + progress dots + tüm chrome gizlenir → sadece pure animation kalır
+  - ESC tuşu ile çıkış + sol-üst köşede küçük opacity-20 "esc" tag'i
+  - **OBS Rehberi Modal**: 5 kutu adım (ADIM 0 kurulum, ADIM 1 yeni sahne + kaynak, ADIM 2 çıktı ayarları, ADIM 3 kayıt, ADIM 4 YouTube upload) + İpuçları kutusu. URL otomatik `window.location.origin` ile doldurulur. Modal'dan "🔴 Kayıt Modu Başlat" ile tek tıkla geçiş.
+
+**Test:**
+- Backend: Screenshot upload/list/serve/delete PASS ✓, PDF regenerate (screenshot dahil) 92.7 KB ✓
+- Frontend: `screenshot-mgr-modal` (8 step + 8 upload button + counter), `obs-guide-modal` (5 adım detaylı + Start Record) ✓
+
+**VERSION:** v43.99.17 → v43.99.18
+
+
+
 ## Feb 19, 2026 (Session 21, v43.99.16) — Sistem Tanıtım Videosu
 
 **KULLANICI TALEBİ:** "TANITIM VİDEOSUNU HAZIRLA SİSTEMİN"

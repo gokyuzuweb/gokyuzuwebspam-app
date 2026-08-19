@@ -1137,28 +1137,47 @@ def build(lang="tr", out_path=None):
             story.append(tbl)
             story.append(Spacer(1, 0.3*cm))
 
-        # v43.99.13/14 — Adım özel ilüstrasyonlar
-        if idx == 4:
-            # Kurulum CLI mockup — Adım 4
-            story.append(Spacer(1, 0.3*cm))
-            story.append(Paragraph(T({"tr": "Kurulum script çıktısı:",
-                                       "en": "Installation script output:",
-                                       "ar": "مخرج سكربت التثبيت:"}[lang], lang), body))
-            story.append(cli_terminal_mock())
-        if idx == 5:
-            # WHM Plugin ekran mockup
-            story.append(Spacer(1, 0.3*cm))
-            story.append(Paragraph(T({"tr": "WHM'de MailShield böyle görünür:",
-                                       "en": "MailShield appears like this in WHM:",
-                                       "ar": "هكذا يظهر MailShield في WHM:"}[lang], lang), body))
-            story.append(whm_plugin_mockup())
-        if idx == 7:
-            # Engine dağılımı pie chart — Adım 7
-            story.append(Spacer(1, 0.3*cm))
-            story.append(Paragraph(T({"tr": "Aktif motor dağılımı:",
-                                       "en": "Active engine distribution:",
-                                       "ar": "توزيع المحركات النشطة:"}[lang], lang), body))
-            story.append(engine_pie_chart(width=16*cm, height=6*cm))
+        # v43.99.13/14/18 — Adım özel ilüstrasyonlar
+        # Master yüklediyse gerçek ekran görüntüsü, yoksa ReportLab mockup
+        import os as _os_step
+        uploaded_dir = "/app/uploads/install_screenshots"
+        screenshot_path = None
+        for _ext in ("png", "jpg", "jpeg", "webp"):
+            _p = f"{uploaded_dir}/step-{idx}.{_ext}"
+            if _os_step.path.exists(_p):
+                screenshot_path = _p
+                break
+
+        if screenshot_path:
+            from reportlab.platypus import Image as _RLImage
+            try:
+                _img = _RLImage(screenshot_path, width=16*cm, height=9*cm, kind="proportional")
+                story.append(Spacer(1, 0.3*cm))
+                story.append(Paragraph(T({"tr": "Ekran görüntüsü:",
+                                           "en": "Screenshot:",
+                                           "ar": "لقطة شاشة:"}[lang], lang), body))
+                story.append(_img)
+            except Exception:
+                pass
+        else:
+            if idx == 4:
+                story.append(Spacer(1, 0.3*cm))
+                story.append(Paragraph(T({"tr": "Kurulum script çıktısı:",
+                                           "en": "Installation script output:",
+                                           "ar": "مخرج سكربت التثبيت:"}[lang], lang), body))
+                story.append(cli_terminal_mock())
+            if idx == 5:
+                story.append(Spacer(1, 0.3*cm))
+                story.append(Paragraph(T({"tr": "WHM'de MailShield böyle görünür:",
+                                           "en": "MailShield appears like this in WHM:",
+                                           "ar": "هكذا يظهر MailShield في WHM:"}[lang], lang), body))
+                story.append(whm_plugin_mockup())
+            if idx == 7:
+                story.append(Spacer(1, 0.3*cm))
+                story.append(Paragraph(T({"tr": "Aktif motor dağılımı:",
+                                           "en": "Active engine distribution:",
+                                           "ar": "توزيع المحركات النشطة:"}[lang], lang), body))
+                story.append(engine_pie_chart(width=16*cm, height=6*cm))
 
         if "ok" in st:
             story.append(Spacer(1, 0.15*cm))

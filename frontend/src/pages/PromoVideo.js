@@ -604,6 +604,8 @@ export default function PromoVideo() {
   const [progress, setProgress] = useState(0);  // 0-100
   const [fullscreen, setFullscreen] = useState(false);
   const [audio, setAudio] = useState(false);
+  const [recordMode, setRecordMode] = useState(false); // v43.99.18 — Kayıt Modu (UI gizle)
+  const [obsGuide, setObsGuide] = useState(false);
   const containerRef = useRef(null);
   const startTimeRef = useRef(Date.now());
   const rafRef = useRef(null);
@@ -672,6 +674,16 @@ export default function PromoVideo() {
       }
     };
   }, [audio]);
+
+  // v43.99.18 — ESC ile kayıt modundan çıkış
+  useEffect(() => {
+    if (!recordMode) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setRecordMode(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [recordMode]);
 
   const restart = () => {
     setSceneIdx(0);
@@ -753,12 +765,53 @@ export default function PromoVideo() {
       </AnimatePresence>
 
       {/* Watermark */}
-      <div className="absolute top-4 right-4 flex items-center gap-2 text-white/40 text-[10px] uppercase tracking-widest font-bold">
-        <Shield className="w-3 h-3" />
-        GökyüzüWebSpam · v43.99
-      </div>
+      {!recordMode && (
+        <div className="absolute top-4 right-4 flex items-center gap-2 text-white/40 text-[10px] uppercase tracking-widest font-bold">
+          <Shield className="w-3 h-3" />
+          GökyüzüWebSpam · v43.99
+        </div>
+      )}
+
+      {/* v43.99.18 — Kayıt Modu üst-sol butonları (sadece kayıt modunda değilken görünür) */}
+      {!recordMode && (
+        <div className="absolute top-4 left-4 flex items-center gap-2 z-30">
+          <button
+            onClick={() => setObsGuide(true)}
+            data-testid="promo-obs-guide"
+            className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold inline-flex items-center gap-1.5 backdrop-blur"
+          >
+            📹 OBS Kayıt Rehberi
+          </button>
+          <button
+            onClick={() => {
+              setRecordMode(true);
+              setSceneIdx(0);
+              setProgress(0);
+              setPlaying(true);
+              startTimeRef.current = Date.now();
+              toast.success("🎬 Kayıt Modu · UI gizlendi. Ekranı OBS ile kaydedin (~90 sn)");
+            }}
+            data-testid="promo-record-mode"
+            className="px-3 py-1.5 rounded-md bg-rose-500/80 hover:bg-rose-500 text-white text-[11px] font-bold inline-flex items-center gap-1.5 backdrop-blur"
+          >
+            🔴 Kayıt Modu (UI Gizle)
+          </button>
+        </div>
+      )}
+
+      {/* Kayıt modu aktifken sadece küçük Exit butonu */}
+      {recordMode && (
+        <button
+          onClick={() => setRecordMode(false)}
+          className="absolute top-2 left-2 z-30 opacity-20 hover:opacity-100 transition-opacity px-2 py-1 rounded bg-black/40 text-white/60 text-[10px]"
+          title="Kayıt modundan çık"
+        >
+          esc
+        </button>
+      )}
 
       {/* Bottom controls */}
+      {!recordMode && (
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-6 pb-4 pt-8">
         {/* Progress bar (total video) */}
         <div className="mb-3">
@@ -840,6 +893,118 @@ export default function PromoVideo() {
         {/* Kayıt Rehberi (küçük yardım metni) */}
         <div className="text-center text-[10px] text-white/40 mt-2">
           💡 MP4/YouTube upload için: OBS Studio veya ekran kaydı yazılımı ile bu sayfayı tam ekran modda kaydedin (~90 sn)
+        </div>
+      </div>
+      )}
+
+      {/* v43.99.18 — OBS Rehber Modal */}
+      {obsGuide && !recordMode && (
+        <ObsRecordingGuide onClose={() => setObsGuide(false)} onStartRecordMode={() => {
+          setObsGuide(false);
+          setRecordMode(true);
+          setSceneIdx(0);
+          setProgress(0);
+          setPlaying(true);
+          startTimeRef.current = Date.now();
+        }} />
+      )}
+    </div>
+  );
+}
+
+
+// v43.99.18 — OBS Studio kayıt rehberi modal
+function ObsRecordingGuide({ onClose, onStartRecordMode }) {
+  return (
+    <div
+      data-testid="obs-guide-modal"
+      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-start justify-center p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-slate-900 border border-slate-700 rounded-lg my-4 max-w-2xl w-full text-slate-100"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-800">
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <span className="text-rose-400">📹</span> OBS Studio · Kayıt Rehberi
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">90 saniye</span>
+          </h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-2xl leading-none">×</button>
+        </div>
+        <div className="p-5 space-y-4 text-sm max-h-[75vh] overflow-y-auto">
+
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+            <div className="text-emerald-300 font-bold text-xs uppercase tracking-wider mb-2">ADIM 0 · Kurulum</div>
+            <div className="text-slate-300 text-[13px] mb-2">
+              OBS Studio ücretsiz — <a href="https://obsproject.com/download" target="_blank" rel="noreferrer" className="text-emerald-300 underline">obsproject.com/download</a> (Windows/macOS/Linux)
+            </div>
+          </div>
+
+          <div>
+            <div className="text-slate-400 font-bold text-xs uppercase tracking-wider mb-2">ADIM 1 · Yeni Sahne + Kaynak</div>
+            <ol className="space-y-1 text-[13px] text-slate-300 list-decimal ml-5">
+              <li>OBS aç → <b>Sahne</b> panelinde + · "Tanıtım Video Kayıt"</li>
+              <li><b>Kaynaklar</b> + · <b>Tarayıcı Kaynağı</b> seç (macOS: "Pencere Yakalama" da olur)</li>
+              <li>URL: <code className="mono text-emerald-300 text-[12px]">{window.location.origin}/panel/tanitim</code></li>
+              <li>Genişlik: <b>1920</b> · Yükseklik: <b>1080</b> · FPS: <b>30</b></li>
+              <li>"Sahne aktif olduğunda kaynağı yeniden yükle" ✓</li>
+            </ol>
+          </div>
+
+          <div>
+            <div className="text-slate-400 font-bold text-xs uppercase tracking-wider mb-2">ADIM 2 · Çıktı Ayarları</div>
+            <ol className="space-y-1 text-[13px] text-slate-300 list-decimal ml-5">
+              <li><b>Ayarlar → Çıktı</b>: Format = <code className="mono text-cyan-300">MP4</code></li>
+              <li>Video Bitrate: <b>6000-8000 Kbps</b> (YouTube 1080p için)</li>
+              <li>Encoder: <b>NVENC</b> (Nvidia) veya <b>x264</b> (CPU) · Preset: <b>Quality</b></li>
+              <li><b>Video</b>: Base + Output Resolution = <b>1920x1080</b> · Common FPS = <b>30</b></li>
+            </ol>
+          </div>
+
+          <div>
+            <div className="text-slate-400 font-bold text-xs uppercase tracking-wider mb-2">ADIM 3 · Kayıt</div>
+            <ol className="space-y-1 text-[13px] text-slate-300 list-decimal ml-5">
+              <li>Aşağıdaki <b>"🔴 Kayıt Modu Başlat"</b> butonuna basın — UI tamamen gizlenir</li>
+              <li>OBS'de <b>Kayıt Başlat</b> butonuna basın</li>
+              <li>Animasyon otomatik akar (~90 sn), 10. sahne bitince kayıtı durdurun</li>
+              <li>OBS → <b>Dosya → Kayıtları Göster</b> — MP4 hazır</li>
+            </ol>
+          </div>
+
+          <div>
+            <div className="text-slate-400 font-bold text-xs uppercase tracking-wider mb-2">ADIM 4 · YouTube'a Yükle</div>
+            <ol className="space-y-1 text-[13px] text-slate-300 list-decimal ml-5">
+              <li>YouTube → Video Yükle · MP4'ü seç · Başlık: "GökyüzüWebSpam · Sistem Tanıtımı"</li>
+              <li>Yayınla · Linki kopyala (örn: <code className="mono text-cyan-300 text-[11px]">https://youtu.be/XYZ</code>)</li>
+              <li>Panel → Kurulum Rehberi → "Video URL'lerini Yönet" → 8 adımdan uygun olanlara yapıştır</li>
+            </ol>
+          </div>
+
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+            <div className="text-amber-300 font-bold text-xs uppercase tracking-wider mb-1">💡 İpuçları</div>
+            <ul className="text-[12px] text-slate-300 space-y-1 list-disc ml-4">
+              <li>Ekran kaydı öncesi <b>Ambient Ses</b> butonuna basıp WebAudio synth çalışırken kaydedin (isteğe bağlı)</li>
+              <li>Alternatif kayıt yazılımları: <b>ScreenPal</b>, <b>Camtasia</b>, <b>Loom</b> (macOS Cmd+Shift+5 de olur)</li>
+              <li>Post-production için: iMovie, Kdenlive, DaVinci Resolve — logo intro/outro ekleyebilirsiniz</li>
+            </ul>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-sm font-semibold"
+            >
+              İptal
+            </button>
+            <button
+              onClick={onStartRecordMode}
+              data-testid="obs-guide-start-record"
+              className="px-4 py-2 rounded bg-rose-500 hover:bg-rose-600 text-white text-sm font-bold inline-flex items-center gap-1.5"
+            >
+              🔴 Kayıt Modu Başlat
+            </button>
+          </div>
         </div>
       </div>
     </div>
