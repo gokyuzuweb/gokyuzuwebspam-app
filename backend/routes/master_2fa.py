@@ -249,3 +249,17 @@ async def disable_2fa(payload: DisableIn, request: Request, response: Response):
         "actor_ip": _client_ip(request), "at": _iso(), "severity": "warning",
     })
     return {"ok": True}
+
+
+# v43.100 — 2FA enforce helper for sensitive operations
+async def require_2fa_verified(request: Request) -> None:
+    """Master 2FA aktifse verify cookie (gws_2fa_ok) zorunlu. Aktif değilse geçer."""
+    cfg = await db.settings.find_one({"_key": SETTING_KEY}, {"_id": 0}) or {}
+    if not cfg.get("enabled"):
+        return   # 2FA kapalı → koruma yok
+    tok = request.cookies.get("gws_2fa_ok")
+    if not tok:
+        raise HTTPException(423, "Bu işlem için 2FA doğrulaması gerekli — Ayarlar > Güvenlik'ten kodu girin")
+    row = await db.settings.find_one({"_key": f"master_2fa_token:{tok}"}, {"_id": 0})
+    if not row or row.get("valid_until", "") <= _iso():
+        raise HTTPException(423, "2FA oturumu süresi doldu — yeniden doğrulayın")

@@ -6144,6 +6144,14 @@ async def licenses_update(lid: str, payload: LicenseIn):
 
 @api.delete("/licenses/{lid}")
 async def licenses_delete(lid: str, request: Request):
+    # v43.100 — 2FA enforce (aktifse cookie zorunlu)
+    try:
+        from routes.master_2fa import require_2fa_verified
+        await require_2fa_verified(request)
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     # id ile dene, bulamazsa license_key olarak dene (eski seed'ler id-siz olabilir)
     doc = await db.licenses.find_one({"id": lid}, {"_id": 0})
     if not doc:
