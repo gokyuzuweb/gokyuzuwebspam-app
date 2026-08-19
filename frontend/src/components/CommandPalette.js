@@ -6,7 +6,7 @@ import {
   Command as CommandIcon, Search, Activity, Filter, HeartPulse, Globe,
   Bug, Inbox, ListChecks, Radar, Wrench, Cpu, ArrowUpRight, Bell, BellRing,
   FileText, Key, DollarSign, Users, Terminal, Settings2, HardDrive, BookOpen,
-  Palette, Server, Sparkles, PackageOpen, History, Mail, ArrowRight, Clock,
+  Palette, Server, Sparkles, PackageOpen, History, Mail, ArrowRight, Clock, Play,
 } from "lucide-react";
 
 /**
@@ -51,6 +51,7 @@ const ITEMS = [
   { path: "/panel/landing-cms",       icon: Palette,      title: "Landing CMS",        keywords: "landing cms tema light dark" },
   { path: "/panel/install",           icon: PackageOpen,  title: "Kurulum",            keywords: "install wizard" },
   { path: "/panel/docs",              icon: BookOpen,     title: "Dokümantasyon",      keywords: "docs help" },
+  { path: "/panel/tanitim",           icon: Play,         title: "Tanıtım Videosu",    keywords: "promo video demo pitch sunum" },
 ];
 
 /**

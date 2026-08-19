@@ -69,6 +69,7 @@ import Docs from "@/pages/Docs";
 import ThreatIntel from "@/pages/ThreatIntel";
 import ThreatDefenseCenter from "@/pages/ThreatDefenseCenter";
 import InstallationGuide from "@/pages/InstallationGuide";
+import PromoVideo from "@/pages/PromoVideo";  // v43.99.16 — Sistem Tanıtım Videosu
 import MailHealth from "@/pages/MailHealth";
 import Maintenance from "@/pages/Maintenance";
 import PaymentsAdmin from "@/pages/PaymentsAdmin";
@@ -464,6 +465,8 @@ function Shell() {
             <Route path="/threat-intel" element={PG(ThreatIntel, "threat_intel", "Tehdit Zekası")} />
             <Route path="/threat-defense" element={PG(ThreatDefenseCenter, "threat_defense", "Threat Defense")} />
             <Route path="/install-guide" element={PG(InstallationGuide, "install_guide", "Kurulum Rehberi")} />
+            <Route path="/tanitim" element={PG(PromoVideo, "promo_video", "Sistem Tanıtım Videosu")} />
+            <Route path="/promo" element={<Navigate to="/panel/tanitim" replace />} />
             <Route path="/mail-health" element={PG(MailHealth, "mail_health", "Mail Sağlık")} />
             <Route path="/maintenance" element={MO(Maintenance, "DB Bakım")} />
             <Route path="/payments-admin" element={MO(PaymentsAdmin, "Ödeme Yönetim Panosu")} />

@@ -1013,6 +1013,24 @@ const MODULES = [
     ],
     testid: "docs-module-bayi-ip",
   },
+  {
+    key: "promo_video", cat: "Bayi", label: "Sistem Tanıtım Videosu", Icon: Play, tone: "fuchsia",
+    what: "10 sahnelik ~90 saniyelik otomatik ilerleyen interaktif tanıtım — logo, sorun, çözüm, motor akışı, threat defense grid, master/bayı topolojisi, istatistikler, 3 komutlu kurulum, fiyat, CTA. OBS ile ekran kaydı alınıp MP4/YouTube'a yüklenebilir.",
+    features: [
+      "10 sahne — her biri farklı animasyon konsepti (logo, stat grid, terminal, topology, pie…)",
+      "Otomatik ilerleme + duraklat/devam + baştan başlat + sahne noktalarına atlama",
+      "Tam ekran modu (F veya butondan)",
+      "WebAudio ambient ses toggle",
+      "Sosyal paylaşım (Web Share API + clipboard fallback)",
+      "Ekran kaydı için hazır — hiçbir kontrol video kayıt sırasında görünmez (opacity 0 opsiyonu var)",
+    ],
+    how: [
+      "Panel → Tanıtım Videosu → otomatik başlar",
+      "OBS Studio ile bu sayfayı tam ekran modda seçip 90 saniye kaydedin → MP4",
+      "YouTube'a yükleyip video URL'ini Kurulum Rehberi 'Video URL'lerini Yönet'ten girin",
+    ],
+    testid: "docs-module-promo-video",
+  },
 ];
 
 
@@ -1084,6 +1102,7 @@ const MODULE_ROUTES = {
   onboarding_wizard: "/panel/settings",  // hoşgeldin — tekrar başlatma menüsünden
   webhooks: "/panel/settings?tab=integration",
   bayi_ip_enforce: "/panel/settings?tab=advanced",
+  promo_video: "/panel/tanitim",  // v43.99.16
 };
 
 // v43.99.14 — Modül bazlı Sık Sorulan Sorular (FAQ) haritası

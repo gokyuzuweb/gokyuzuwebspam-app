@@ -14,6 +14,49 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 19, 2026 (Session 21, v43.99.16) — Sistem Tanıtım Videosu
+
+**KULLANICI TALEBİ:** "TANITIM VİDEOSUNU HAZIRLA SİSTEMİN"
+
+**IMPLEMENTATION** (`pages/PromoVideo.js` — 700+ satır):
+
+**10 sahnelik ~90 saniyelik interaktif tanıtım** (framer-motion ile):
+1. **Logo** — 5sn — Marka açılışı, kalkan ikonu spring animasyonu
+2. **Problem** — 8sn — Spam istatistikleri (4 kart, %84 spam, $20.5M zarar)
+3. **Solution** — 7sn — Ana özet + 4 feature bullet
+4. **Engine Flow** — 9sn — 7 katmanlı mail analiz akışı + final verdict
+5. **Threat Grid** — 8sn — 28 threat modülü staggered popup
+6. **Topology** — 8sn — MASTER → 5 Bayi → 50 cPanel grid
+7. **Big Stats** — 7sn — 6 dev rakam (99.94% catch rate vs.)
+8. **Install** — 8sn — 3-satır terminal mockup + result
+9. **Pricing** — 8sn — 3 plan kartı (Starter/PRO/Enterprise)
+10. **CTA** — 7sn — Rocket + gokyuzuhosting.com button
+
+**Player Kontrolleri**:
+- Otomatik ilerleme + progress bar + sahne dot navigation
+- Play/Pause (space), Restart, Tam Ekran (F11 gibi), Ambient WebAudio ses toggle, Sosyal paylaşım (Web Share API)
+- Watermark: "GökyüzüWebSpam · v43.99" sağ üstte
+- Kayıt rehberi: "OBS Studio ile bu sayfayı tam ekran modda kaydedin"
+
+**Route** (`App.js`):
+- `/panel/tanitim` — ana route
+- `/panel/promo` — redirect alias
+
+**Discoverability**:
+- `CommandPalette.js`: Cmd+K → "tanıtım" veya "promo" → jump
+- `Docs.js`: Yeni Bayi modülü "Sistem Tanıtım Videosu" (docs-module-promo-video)
+
+**Test:** 
+- `/panel/tanitim` → promo-video component render ✓
+- Sahne 1 (logo) + Sahne 5 (threat grid 28 modül) doğru animasyonlarla açıldı ✓
+- 6 kontrol butonu ve 10 sahne noktası hepsi mevcut ✓
+
+**Not**: Bu bir gerçek video (MP4) değil, framer-motion animasyon sunumu. Kullanıcı OBS/Camtasia ile tam ekran modda 90 sn kaydederek gerçek MP4/YouTube upload'a hazır dosya elde edebilir.
+
+**VERSION:** v43.99.15 → v43.99.16
+
+
+
 ## Feb 19, 2026 (Session 21, v43.99.15) — PDF Boş Açılıyor Fix (Docker Path Bug)
 
 **KULLANICI RAPORU:** "Kurulum Rehberi PDF İNDİR BOŞ ACILIYOR"
