@@ -11597,10 +11597,12 @@ from routes.reports import router as _reports_router  # noqa: E402 v43.89
 from routes.pin_approvals import router as _pin_approvals_router  # noqa: E402 v43.90
 from routes.report_schedules import router as _report_schedules_router, _report_schedule_loop  # noqa: E402 v43.90
 from routes.master_2fa import router as _master_2fa_router  # noqa: E402 v43.99
+from routes.advanced_threat import router as _advanced_threat_router  # noqa: E402 v43.99.6
 app.include_router(_reports_router, prefix="/api")
 app.include_router(_pin_approvals_router, prefix="/api")
 app.include_router(_report_schedules_router, prefix="/api")
 app.include_router(_master_2fa_router, prefix="/api")
+app.include_router(_advanced_threat_router, prefix="/api")
 app.include_router(_analytics_router, prefix="/api")
 app.include_router(_plugin_router, prefix="/api")
 app.include_router(_reseller_router, prefix="/api")
