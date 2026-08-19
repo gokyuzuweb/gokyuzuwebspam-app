@@ -6,7 +6,7 @@ import {
   Activity, ShieldAlert, Inbox, ListChecks, Cpu, Settings2,
   Users, Terminal, PackageOpen, ArrowUpRight, GaugeCircle, Wrench,
   Bell, BellRing, FileText, Key, Radar, DollarSign, Home, Sparkles, SlidersHorizontal, Server, History, Mail,
-  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck, Palette, Store, MailX, Stethoscope, Lock, Shield,
+  Bug, Filter, BookOpen, Globe, HeartPulse, HardDrive, BadgeCheck, Palette, Store, MailX, Stethoscope, Lock, Shield, Rocket,
 } from "lucide-react";
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -68,6 +68,7 @@ import MailScanner from "@/pages/MailScanner";
 import Docs from "@/pages/Docs";
 import ThreatIntel from "@/pages/ThreatIntel";
 import ThreatDefenseCenter from "@/pages/ThreatDefenseCenter";
+import InstallationGuide from "@/pages/InstallationGuide";
 import MailHealth from "@/pages/MailHealth";
 import Maintenance from "@/pages/Maintenance";
 import PaymentsAdmin from "@/pages/PaymentsAdmin";
@@ -110,6 +111,7 @@ const NAV = [
   { to: "/panel/mail-health", key: "mail_health", icon: HeartPulse, testid: "nav-mail-health", label: "Mail Sağlık", group: "izleme", feature: "mail_health" },
   { to: "/panel/threat-intel", key: "threat_intel", icon: Globe, testid: "nav-threat-intel", label: "Tehdit Zekası", group: "izleme", feature: "threat_intel" },
   { to: "/panel/threat-defense", key: "threat_defense", icon: Shield, testid: "nav-threat-defense", label: "Threat Defense (28)", group: "koruma", feature: "threat_defense" },
+  { to: "/panel/install-guide", key: "install_guide", icon: Rocket, testid: "nav-install-guide", label: "Kurulum Rehberi", group: "sistem", feature: "install_guide" },
   { to: "/panel/marketplace", key: "marketplace", icon: Store, testid: "nav-marketplace", label: "İmza Marketplace", group: "koruma", feature: "marketplace" },
   { to: "/panel/bounce-digest", key: "bounce_digest", icon: MailX, testid: "nav-bounce-digest", label: "Bounce Digest", group: "izleme", feature: "bounce_digest" },
   { to: "/panel/live-diagnostic", key: "live_diagnostic", icon: Stethoscope, testid: "nav-live-diagnostic", label: "Canlı Sunucu Tanı", group: "sistem", feature: "live_diagnostic" },
@@ -461,6 +463,7 @@ function Shell() {
             <Route path="/mailscanner" element={PG(MailScanner, "mailscanner", "MailScanner")} />
             <Route path="/threat-intel" element={PG(ThreatIntel, "threat_intel", "Tehdit Zekası")} />
             <Route path="/threat-defense" element={PG(ThreatDefenseCenter, "threat_defense", "Threat Defense")} />
+            <Route path="/install-guide" element={PG(InstallationGuide, "install_guide", "Kurulum Rehberi")} />
             <Route path="/mail-health" element={PG(MailHealth, "mail_health", "Mail Sağlık")} />
             <Route path="/maintenance" element={MO(Maintenance, "DB Bakım")} />
             <Route path="/payments-admin" element={MO(PaymentsAdmin, "Ödeme Yönetim Panosu")} />

@@ -8803,6 +8803,30 @@ async def module_report_pdf():
     )
 
 
+# v43.99.8 — Kurulum Rehberi PDF (public download)
+@api.get("/tools/install-guide.pdf")
+async def install_guide_pdf():
+    """cPanel/WHM sunucusuna kurulum rehberi PDF'i."""
+    from fastapi.responses import FileResponse
+    import os
+    pdf_path = "/app/GokyuzuWebSpam-Kurulum-Rehberi-v43.99.pdf"
+    if not os.path.exists(pdf_path):
+        try:
+            import subprocess
+            subprocess.run(["python3", "/app/scripts/generate_install_guide.py"],
+                          check=True, timeout=60)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Kurulum PDF'i henüz hazırlanmadı")
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename="GokyuzuWebSpam-Kurulum-Rehberi.pdf",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+
+
 @api.get("/tools/install-simple-push.sh")
 async def install_simple_push_oneliner(license_key: str = "", panel_url: str = "",
                                          interval: int = 10):
