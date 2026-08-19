@@ -153,7 +153,610 @@ const MODULES = [
     ],
     testid: "docs-module-compliance",
   },
+
+  // ═══════════════════════════════════════════════════════════════
+  // v43.99.12 — GENİŞLETİLMİŞ MODÜL DOKÜMANTASYONU (35+ modül)
+  // ═══════════════════════════════════════════════════════════════
+
+  // --- MOTOR & KURAL ---
+  {
+    key: "engines", cat: "Motor", label: "Motorlar", Icon: Cpu, tone: "cyan",
+    what: "Aktif spam motorlarını yönet: SpamAssassin · Bayes · ClamAV · DCC/Razor/Pyzor · RBL/DNSBL · SPF/DKIM/DMARC · LLM AI Classifier. Her motor için toggle + threshold + son çalışma zamanı.",
+    features: [
+      "Motor kartı: yeşil (aktif) / sarı (opsiyonel) / kırmızı (hata)",
+      "SpamAssassin: threshold slider (0.0-15.0), varsayılan 5.0",
+      "Bayes: 5000+ token eğitim eşiği, learn-as-spam / learn-as-ham butonları",
+      "ClamAV: son güncelleme zamanı + freshclam manuel tetik",
+      "AI Classifier (Claude): opsiyonel, Emergent LLM key gerekir",
+      "Toplu 'Restart Engines' butonu → daemon yeniden başlar (WHM)",
+    ],
+    how: [
+      "Panelde Motorlar sayfası → her motor için Toggle veya Threshold değeri gir → Kaydet",
+      "Değişiklikler 30 sn içinde milter'a uygulanır — mail restart gerekmez",
+      "Engine hatası → Sağlık sekmesinde alarm + Slack/Discord webhook fire",
+    ],
+    testid: "docs-module-engines",
+  },
+  {
+    key: "rules", cat: "Motor", label: "Kural Editörü", Icon: Wrench, tone: "amber",
+    what: "SpamAssassin uyumlu özel spam kuralları — regex + hedef alan (subject/from/body/header/all) + skor. AI destekli kural önerisi + audit trail.",
+    features: [
+      "Regex tester — kural kaydetmeden önce canlı örnek maille test",
+      "AI Kural Önerisi (Claude): 'Türk fatura dolandırıcılığı' gibi tanım gir → 3 regex önerir",
+      "Kural gruplama: kategori bazlı klasörler (fatura/kripto/dating/vs)",
+      "Enable/Disable toggle: kuralı silmeden geçici kapat",
+      "History: kim ne zaman ekledi/değiştirdi (audit)",
+    ],
+    how: [
+      "Yeni Kural → Alan: 'body' · Pattern: `/tebrikler.*kazand[ıi]n/i` · Skor: 5.0 · Kaydet",
+      "AI Önerileri Kutusu → onayla → apply → 30 sn'de canlı",
+      "Regex hatası varsa kayıt yapılmaz, kırmızı uyarı gösterilir",
+    ],
+    testid: "docs-module-rules",
+  },
+  {
+    key: "lists", cat: "Motor", label: "Kara/Beyaz Liste", Icon: PackageOpen, tone: "rose",
+    what: "IP + Domain + E-posta bazlı whitelist/blacklist. TTL destekli (süresi dolunca otomatik silinir) + import/export CSV.",
+    features: [
+      "3 tür: IP (v4/v6/CIDR), Domain, Email",
+      "3 durum: allow, block, spam-only (block yapmadan skoru artır)",
+      "TTL: 1 saat / 1 gün / 30 gün / kalıcı",
+      "CSV import: 10.000 kayda kadar toplu ekleme",
+      "Yorum alanı: 'neden eklendi' notu",
+    ],
+    how: [
+      "Yeni → Tür: IP, Değer: 1.2.3.4/24, Aksiyon: block, TTL: 30 gün, Not: 'MailFrom brute'",
+      "Bulk import: sütun başlığı `value,action,ttl_hours,comment` olan CSV yükle",
+    ],
+    testid: "docs-module-lists",
+  },
+
+  // --- GÜVENLİK ---
+  {
+    key: "threat_intel", cat: "Güvenlik", label: "Tehdit Zekası", Icon: Radar, tone: "violet",
+    what: "Dış tehdit istihbarat feed'leri — URLHaus (kötü URL'ler), OpenPhish (phishing), Spamhaus DROP. Her 6 saatte bir otomatik senkron.",
+    features: [
+      "3 feed sync durumu: son çalışma, eklenen kayıt sayısı, hata sayacı",
+      "Manuel 'Şimdi Senkronize Et' butonu",
+      "Feed kaynağı ekle/çıkar (RSS/JSON URL desteği)",
+      "IOC tablosu: son 500 gösterge (URL/IP/hash) + first_seen, source",
+      "Bir IOC'yi manuel 'kara listeye ekle' → Lists modülüne push",
+    ],
+    how: [
+      "Feed sekmesi → 3 feed'den son çekim zamanı yeşil ise sağlıklı",
+      "IOC arama: URL parçası yaz → o parçayı içeren tüm feed kayıtları görünür",
+      "Her IOC satırında 'Bloklamaya Ekle' → Lists modülüne otomatik geçer",
+    ],
+    testid: "docs-module-threat-intel",
+  },
+  {
+    key: "threat_defense", cat: "Güvenlik", label: "Threat Defense Center", Icon: ShieldCheck, tone: "fuchsia",
+    what: "28 gelişmiş savunma modülü tek panoda: Phishing simülatör, BEC dedektörü, Marka Sahtekarlığı, DMARC izleme, Mail Continuity, AI Assistants, Dark Web izleme + daha fazlası.",
+    features: [
+      "28 endpoint'te bağımsız modül — her biri kendi form'u + result view'ı",
+      "Dinamik JSON→UI: her modülün yanıt formatı otomatik uygun görselle render edilir",
+      "Modül grupları: Phishing · BEC · Marka · DNS/Auth · Data Loss · Mail Flow · AI",
+      "Kategori filtresi + arama",
+      "Örnek payload gösterme (curl komut haline dönüştürme)",
+    ],
+    how: [
+      "Modül seç → sağdaki form → 'Çalıştır' → sonuç kartında verdict + score + öneriler",
+      "Örnek: Phishing URL Tester → URL yapıştır → phish score + benzer marka + red flag'ler",
+      "Sonuç JSON'ı 'Kopyala' butonu ile paylaşılabilir",
+    ],
+    testid: "docs-module-threat-defense",
+  },
+  {
+    key: "blacklist", cat: "Güvenlik", label: "IP Blacklist Çıkışı", Icon: UserX, tone: "rose",
+    what: "Sunucunun IP'sini kontrol et: Spamhaus, Barracuda, SORBS, UCEProtect, PSBL. Blacklist'ten çıkarma isteği (delist) formu.",
+    features: [
+      "6 blacklist paralel sorgulanır — max 10 sn",
+      "Listelendiği yer(ler) kırmızı + delist URL",
+      "Delist formu: kendi IP'nizden gönderim istatistiği + delist gerekçesi otomatik doldurulur",
+      "Historik: geçmişte listelendi mi + ne zaman çıkarıldı",
+      "PTR ve rDNS eşleşme kontrolü",
+    ],
+    how: [
+      "IP alanına sunucu IP'n yaz → 'Kontrol Et'",
+      "Kırmızı listede varsa → 'Delist İsteği' → forma tıkla → o blacklist'in resmi formuna yönlendirilir",
+    ],
+    testid: "docs-module-blacklist",
+  },
+  {
+    key: "bounce_digest", cat: "Güvenlik", label: "Bounce Digest", Icon: Mail, tone: "amber",
+    what: "Bounce (geri dönen mail) analiz motoru. Hard/soft bounce oranı, en çok bounce alan alan/kullanıcı, kara listeye düşme riski.",
+    features: [
+      "Bounce trend grafiği (son 24 saat / 7 gün / 30 gün)",
+      "Top offender: en fazla hard bounce üreten mail hesabı",
+      "Otomatik uyarı: kullanıcının hard bounce oranı %5'i aşarsa gönderim geçici duraklat",
+      "Slack/Discord bounce özeti (haftalık cron)",
+      "SMTP relay logdan bounce satırlarını otomatik parse eder",
+    ],
+    how: [
+      "Digest → Top Offender → kullanıcıya tıkla → geçmiş 100 bounce",
+      "Otomatik uyarı Ayarlar → Bounce Threshold'dan yönetilir (varsayılan %5)",
+    ],
+    testid: "docs-module-bounce-digest",
+  },
+
+  // --- İŞLEM ---
+  {
+    key: "outbound", cat: "İşlem", label: "Giden Posta", Icon: ArrowUpRight, tone: "sky",
+    what: "Sunucudan çıkan mailleri denetle: hız limiti, spam skoru, saatlik quota, IP hijyen skoru.",
+    features: [
+      "Kullanıcı başına saatlik/günlük limit (varsayılan 200/2000)",
+      "Giden mail skoru: 3+ ise geçici karantina → admin onayına",
+      "Blacklisted kelime tespiti: özel dictionary + varsayılan (viagra, kripto, dolandırıcı vb)",
+      "Real-time throttle: hesap limitin %80'ine ulaştığında yavaşlat",
+      "IP hijyen skoru: 0-100, 60 altı = uyarı",
+    ],
+    how: [
+      "Ayarlar → Giden E-posta Kontrolü toggle'ı",
+      "Kullanıcı başına saatlik limit alanı → 200 → Kaydet",
+      "Limit aşımı → kullanıcıya otomatik email + admin bildirimi",
+    ],
+    testid: "docs-module-outbound",
+  },
+
+  // --- BİLDİRİM ---
+  {
+    key: "notifications", cat: "Bildirim", label: "Bildirim Kutusu", Icon: Bell, tone: "cyan",
+    what: "Master + Bayı için birleşik inbox: sistem alarmları, PIN talepleri, ödeme onayları, güncelleme duyuruları, güvenlik alarmları.",
+    features: [
+      "Filtre: tümü / okunmamış / yıldızlı / kritik",
+      "Bildirim türü: info (mavi), warning (sarı), critical (kırmızı)",
+      "Toplu 'Okundu işaretle' + 'Sil'",
+      "Bildirim üzerine tıkla → ilgili sayfaya deep link",
+      "Sağ üst çan ikonu: okunmamış sayısı",
+    ],
+    how: [
+      "Çan simgesine tıkla → son 5 bildirim dropdown'da",
+      "Kutu sayfası → filtre + toplu işlem",
+      "'Sesli uyarı' ayarı (Ayarlar → Bildirimler) — yeni kritik bildirimde ping çalar",
+    ],
+    testid: "docs-module-notifications",
+  },
+  {
+    key: "reports", cat: "Rapor", label: "Raporlar", Icon: BookOpen, tone: "indigo",
+    what: "Zamanlanabilir mail aktivite raporları — günlük/haftalık/aylık özet + PDF/CSV export + otomatik e-posta teslimi.",
+    features: [
+      "3 preset: günlük · haftalık · aylık",
+      "Özel tarih aralığı seçici",
+      "Sütunlar: total, spam, virus, quarantined, blocked, delivered, top senders",
+      "Zamanlanmış raporlar: cron olarak master'a mail gönderilir",
+      "PDF görsel branded (Reseller Branding kullanıyor)",
+    ],
+    how: [
+      "Yeni Rapor → Aralık: Haftalık · Format: PDF · Hedef: benim@sirket.com · Cron: Pzt 09:00",
+      "Kaydet — sonraki cron çalışmasında mail gider",
+    ],
+    testid: "docs-module-reports",
+  },
+
+  // --- MAİL SAĞLIK & TANI ---
+  {
+    key: "mail_health", cat: "Sağlık", label: "Mail Sağlık", Icon: Activity, tone: "emerald",
+    what: "Tüm mail altyapısının canlı sağlık durumu: SMTP relay, Postfix/Exim daemon, MongoDB, DNS, SPF/DKIM/DMARC kayıtları.",
+    features: [
+      "6 kritik servis health check kartı",
+      "SPF/DKIM/DMARC otomatik testleri — kırık kayıt kırmızı",
+      "Son 24 saatte servis kesintisi zaman çizelgesi",
+      "Otomatik onarım butonları: 'DKIM yeniden imzala', 'Milter restart'",
+      "Bayı için kendi tenant'ının health durumu",
+    ],
+    how: [
+      "Dashboard'da Sağlık tab'ında özet + Detay için Mail Sağlık sayfasına git",
+      "Kırmızı kartın üstüne gel → nedeni + önerilen aksiyonu göster",
+    ],
+    testid: "docs-module-mail-health",
+  },
+  {
+    key: "live_diagnostic", cat: "Sağlık", label: "Canlı Sunucu Tanı", Icon: Terminal, tone: "amber",
+    what: "SSH'a girmeden sunucunuzda çalışan tanı komutları: exim mainlog tail, ps aux, netstat, memory, disk. Master'ın sunucusundan güvenli tunneled komut.",
+    features: [
+      "Preset komutlar: mail log, exim queue, disk, memory, netstat, systemctl status",
+      "Live tail: son 100 satır + auto-scroll",
+      "Filtre: 'error', 'reject', 'defer' gibi anahtar kelime",
+      "Snapshot alma: o anki çıktıyı save et → geçmiş",
+      "Sadece 'read-only' komutlar — write komutu yasak",
+    ],
+    how: [
+      "Bir preset seç → 'Çalıştır' → sağ panelde çıktı",
+      "Sonuç 'Snapshot Kaydet' ile geçmişe eklenir",
+    ],
+    testid: "docs-module-live-diagnostic",
+  },
+  {
+    key: "plugin_health", cat: "Sağlık", label: "Plugin Sağlığı", Icon: ShieldCheck, tone: "cyan",
+    what: "Master için tüm bayı sunucularının plugin durumunu tek ekranda görme: version, uptime, last-ping, mail queue derinliği.",
+    features: [
+      "Bayı bazlı sağlık matrisi: yeşil (sağlıklı) / sarı (yavaş) / kırmızı (offline)",
+      "Otomatik ping her 10 saniyede bir",
+      "'Herkese restart sinyali' toplu buton",
+      "Version drift: eski sürümdeki bayı sayısı + 'Toplu Güncelle' önerisi",
+    ],
+    how: [
+      "Master → Plugin Sağlığı → herhangi bir bayı satırına tıkla → detay drawer",
+      "'Toplu Güncelle' butonu → seçilen bayilere OTA update push",
+    ],
+    testid: "docs-module-plugin-health",
+  },
+
+  // --- KULLANICI ---
+  {
+    key: "users", cat: "Kullanıcı", label: "Kullanıcılar", Icon: Users, tone: "indigo",
+    what: "cPanel hesaplarını yönet: WHM daemon'dan otomatik sync + hesap bazlı istatistik (gönderim/karantina/spam catch oranı) + tekil ayarlar.",
+    features: [
+      "Otomatik sync (10 dk cron) veya manuel 'Şimdi Sync'",
+      "Hesap kartı: bugün gönderim, spam yakalama, karantinada, hijyen skoru",
+      "Hesap detayı: son 100 mail + geçerli policy + kişisel whitelist",
+      "Toplu 'sadece bu hesaplara kural uygula' seçimi",
+      "Ban/Unban: hesabın outbound mail'ini geçici durdur",
+    ],
+    how: [
+      "Kullanıcılar → Sync → tüm cPanel hesapları listelenir",
+      "Bir hesaba tıkla → policy düzenle veya banla",
+    ],
+    testid: "docs-module-users",
+  },
+  {
+    key: "whitelist_history", cat: "Kullanıcı", label: "Whitelist Geçmişi", Icon: BookOpen, tone: "emerald",
+    what: "Kim, ne zaman, hangi domain'i/IP'yi whitelist'e ekledi audit trail. Silinen kayıtları da gösterir (soft delete).",
+    features: [
+      "Filtre: kullanıcıya göre · aksiyon türüne göre · tarih aralığı",
+      "Bir domain'in geçmişi: ilk eklenme, kaç kez kaldırıldı, gerekçeler",
+      "Ters çevirme: 'Bu whitelist eylemini geri al' butonu",
+      "CSV export: uyumluluk denetimi için",
+    ],
+    how: [
+      "Sayfa açılır → son 100 whitelist aksiyonu listelenir",
+      "Arama kutusu → 'sirket.com' → o domain'in tüm eylemleri",
+    ],
+    testid: "docs-module-whitelist-history",
+  },
+  {
+    key: "marketplace", cat: "Kullanıcı", label: "İmza Marketplace", Icon: PackageOpen, tone: "violet",
+    what: "Topluluk katkılı SpamAssassin kural paketleri: 'Türk kripto scam v2', 'Fatura oltalama', 'Fake ödeme'. Master onayı sonrası kurulur.",
+    features: [
+      "Kategori: kripto · fatura · dating · SMS-spoofing · brand-impersonation",
+      "Her paket için: yayınlayan bayı, indirme sayısı, oy (⭐1-5), örnek regex sayısı",
+      "'Yayınla' butonu: bayılar kendi kurallarını topluluğa açabilir",
+      "Auto-update: bir pakete abone olursanız yeni versiyon otomatik gelir",
+    ],
+    how: [
+      "Marketplace → paketi seç → 'Yükle' → 30 sn'de aktif",
+      "Kendi paketini yayınla → başlık + kategori + regex listesi",
+    ],
+    testid: "docs-module-marketplace",
+  },
+
+  // --- MASTER YÖNETİM ---
+  {
+    key: "licenses", cat: "Master", label: "Lisans Yönetimi", Icon: Key, tone: "amber",
+    what: "Tüm satılan lisansları yönet: oluştur/uzat/iptal/rotate. IP-based binding + plan level (starter/pro/enterprise).",
+    features: [
+      "Grid: license_key, müşteri, plan, IP(ler), status, expires_at",
+      "Toplu 'Uzat 30 gün' seçimi",
+      "Yeni lisans oluştur: müşteri adı + email + plan + IP + süre + kaydet → e-mail otomatik",
+      "Rotate: lisans anahtarını yenile (eski revoke, yeni oluştur)",
+      "Search + filter: sadece aktif / süresi bitmiş / iptal",
+    ],
+    how: [
+      "Yeni → wizard: müşteri bilgi → plan → IP → süre → 'Oluştur ve E-mail Gönder'",
+      "Lisans satırında ⋮ → Uzat / Rotate / İptal",
+    ],
+    testid: "docs-module-licenses",
+  },
+  {
+    key: "master_live", cat: "Master", label: "Canlı Bayi Trafiği", Icon: Radar, tone: "fuchsia",
+    what: "Tüm bayilerin gerçek zamanlı mail trafiğini tek ekranda gör: dk/mail hız, spam oranı, aktif bağlantı, saldırı altı.",
+    features: [
+      "Bayi bazlı: son 5 dk gönderim, karantina, verdict dağılımı",
+      "Anomali tespiti: bir bayı olağandışı yükselirse kırmızıya döner",
+      "WebSocket bağlantısı — canlı akış",
+      "Filter: sadece kritik / sadece PRO plan / arama",
+    ],
+    how: [
+      "Master açar → tüm bayılar yeşil olarak listelenir",
+      "Kırmızı bayı → tıkla → detay drawer + acil eylem butonları",
+    ],
+    testid: "docs-module-master-live",
+  },
+  {
+    key: "payments_admin", cat: "Master", label: "Ödeme Yönetim Panosu", Icon: Key, tone: "emerald",
+    what: "Havale ve PayTR ödemelerini onayla/reddet. Onaylandığında lisans otomatik oluşturulur veya uzatılır.",
+    features: [
+      "Pending kuyruk: onay bekleyen sipariş listesi",
+      "Havale: dekont yükleme + admin note",
+      "PayTR: token doğrulama + refund",
+      "Toplu 'hepsini onayla' (sadece Havale)",
+      "Onaydan sonra otomatik: lisans oluştur, e-mail gönder, invoice PDF üret",
+    ],
+    how: [
+      "Kuyruk → satır → dekont resmine bak → 'Onayla' + note",
+      "Onay sonrası bayi otomatik e-mail alır",
+    ],
+    testid: "docs-module-payments-admin",
+  },
+  {
+    key: "resellers_admin", cat: "Master", label: "Bayi Yönetimi", Icon: Users, tone: "cyan",
+    what: "Bayı hesaplarını yönet: yeni bayı oluştur, sunucu bilgisi kaydet, plan değişikliği, uzak komut gönder.",
+    features: [
+      "Bayı listesi: isim, sunucu URL, plan, uptime, last-seen",
+      "Yeni bayi kayıt: temel bilgi + otomatik lisans + hoşgeldin maili",
+      "Sunucu bilgi güncelle: IP, panel URL, WHM erişim",
+      "Toplu mesaj: seçili bayılara notification push",
+      "Health matrix: her bayının plugin durumu",
+    ],
+    how: [
+      "Yeni Bayi → form → 'Oluştur' → 5 sn'de sistem hazır",
+      "Bayı → Uzak Yönetim → SSH-less komut çalıştır (whitelisted)",
+    ],
+    testid: "docs-module-resellers-admin",
+  },
+  {
+    key: "plan_analytics", cat: "Master", label: "Plan Analitiği", Icon: Activity, tone: "sky",
+    what: "Plan bazlı gelir + ARPU + churn + upsell fırsatları. Master için CFO dashboard'u.",
+    features: [
+      "MRR (aylık düzenli gelir) grafiği",
+      "Plan başına: aktif bayı, aylık gelir, ort. lisans süresi",
+      "Churn: son 30 günde iptal eden bayılar",
+      "Upsell candidate: starter'da olup pro'ya yükselebilecek bayılar",
+    ],
+    how: [
+      "Grafik zoom → tarih aralığı seç",
+      "Upsell list → satır → 'Öneri Gönder' → o bayıya kişisel yükseltme teklifi mail'i",
+    ],
+    testid: "docs-module-plan-analytics",
+  },
+  {
+    key: "plan_config", cat: "Master", label: "Plan Modülleri", Icon: Settings2, tone: "indigo",
+    what: "Her plana (starter/pro/enterprise) hangi modüllerin açık olduğunu düzenle. Toggle → bayı panelinde modül görünür/gizlenir.",
+    features: [
+      "3 plan sütunu, 40+ modül satırı",
+      "Kolayca toggle → 30 sn'de canlı yayınlanır",
+      "'Yeni modül ekle' → JSON key tanımla → tüm planlara dahil et",
+      "Kritik modül (master-only) korumalı — Bayı'ya açılamaz",
+    ],
+    how: [
+      "Grid → satır × plan → checkbox toggle",
+      "Kaydet → bayılar sayfayı yenilediğinde yeni modüller görünür",
+    ],
+    testid: "docs-module-plan-config",
+  },
+  {
+    key: "audit_log", cat: "Master", label: "Master Audit Log", Icon: BookOpen, tone: "rose",
+    what: "Sistem geneli tüm kritik işlemlerin denetim izi: kim ne zaman hangi lisansı sildi, PIN değiştirdi, master rotate yaptı.",
+    features: [
+      "Filtre: aksiyon türü · aktör IP · tarih",
+      "Severity: info · warning · critical",
+      "Full search: 'delete' geçen tüm loglar",
+      "CSV export uyumluluk için",
+      "Retention: 90 gün (config'de değiştirilebilir)",
+    ],
+    how: [
+      "Filtre daralt → 'severity=critical' → son 20 kritik olayı gör",
+      "Bir satıra tıkla → tam JSON payload + before/after",
+    ],
+    testid: "docs-module-audit-log",
+  },
+  {
+    key: "remote_admin", cat: "Master", label: "Bayı Uzak Yönetim", Icon: Terminal, tone: "amber",
+    what: "Master bayı sunucusuna SSH'sız komut gönderir: engine restart, cache temizle, log tail, whitelisted CLI komut.",
+    features: [
+      "Sadece whitelisted komut listesi (RCE yok)",
+      "Komut geçmişi: kim ne zaman ne çalıştırdı",
+      "Bayı onayı: 'yaklaşan komut' bildirim, bayı reject edebilir",
+      "SSH tunnel değil — bayının pluginine HTTPS ile push",
+    ],
+    how: [
+      "Bayı seç → komut seç ('milter-restart') → 'Gönder' → 30 sn'de sonuç",
+    ],
+    testid: "docs-module-remote-admin",
+  },
+  {
+    key: "version_publish", cat: "Master", label: "Sürüm Yayınla", Icon: Sparkles, tone: "emerald",
+    what: "Yeni versiyon çıktığında tüm bayılara OTA (over-the-air) push. Her bayı auto-update cron ile 6 saatte kontrol eder.",
+    features: [
+      "Yeni sürüm oluştur: version + changelog + severity (patch/minor/major)",
+      "Rollout %: %10 → %50 → %100 canary deployment",
+      "Rollback: sorun çıkarsa önceki sürüme geri döndür",
+      "Bayı health: kaç bayı başarılı update aldı",
+    ],
+    how: [
+      "Yeni Sürüm → version 43.99.13 · changelog markdown · rollout %10",
+      "24 saat izle → sağlıklıysa %100'e çıkar",
+    ],
+    testid: "docs-module-version-publish",
+  },
+  {
+    key: "wake_history", cat: "Master", label: "Ping Geçmişi", Icon: Radar, tone: "cyan",
+    what: "Master → Bayı ping izleme: her bayının son 24 saat uptime %'si + bağlanamama nedenleri.",
+    features: [
+      "Bayı bazlı uptime: yeşil (%99+), sarı (%95-99), kırmızı (<%95)",
+      "Kesinti nedenleri: timeout, 502, DNS, SSL",
+      "Bildirim: bir bayı 5 dk offline olursa Slack fire",
+    ],
+    how: [
+      "Grid → bayı → geçmiş 24 saat çizelge",
+    ],
+    testid: "docs-module-wake-history",
+  },
+  {
+    key: "landing_cms", cat: "Master", label: "Landing CMS", Icon: BookOpen, tone: "fuchsia",
+    what: "Ana web sitesinin (gokyuzuhosting.com) landing sayfa içeriğini panelden yönet: hero, features, pricing, testimonials.",
+    features: [
+      "WYSIWYG editör: markdown + preview",
+      "Bölüm bazlı toggle: hero on/off",
+      "Multi-language: TR/EN/AR versiyonları",
+      "SEO meta: title, description, OG image",
+      "Preview mode: yayınlamadan önce nasıl görüneceğini gör",
+    ],
+    how: [
+      "Bölüm seç → içeriği düzenle → 'Preview' → 'Yayınla' → 30 sn'de canlı",
+    ],
+    testid: "docs-module-landing-cms",
+  },
+  {
+    key: "email_templates", cat: "Master", label: "Mail Şablonları", Icon: Mail, tone: "amber",
+    what: "Sistem maillerinin (welcome, invoice, alert, PIN reset) HTML şablonlarını düzenle. Değişkenli.",
+    features: [
+      "12+ şablon: welcome, invoice, license-expiry, quarantine-digest, alert-critical, PIN-reset...",
+      "Değişkenler: {{customer_name}}, {{license_key}}, {{expires_at}}",
+      "Live preview: örnek data ile mail'in gerçek hali",
+      "Multi-language: her şablonun TR/EN/AR versiyonu",
+      "Test-send: kendinize gönder",
+    ],
+    how: [
+      "Şablon seç → düzenle → 'Test Send' → mail'i kontrol et → 'Kaydet'",
+    ],
+    testid: "docs-module-email-templates",
+  },
+
+  // --- BAYİ ---
+  {
+    key: "my_server", cat: "Bayi", label: "Sunucumu Bağla", Icon: Server, tone: "indigo",
+    what: "Bayı için: kendi cPanel/WHM sunucu bilgilerini plugin'e tanıt.",
+    features: [
+      "WHM URL + port (varsayılan 2087)",
+      "cPanel API token (whitelisted read-only)",
+      "Sunucu health check: connection test butonu",
+      "IP whitelist: hangi IP'lerden bağlantı kabul edilecek",
+    ],
+    how: [
+      "URL: https://sunucum.com:2087 → API token yapıştır → 'Bağla'",
+      "Yeşil ✓ → başarılı",
+    ],
+    testid: "docs-module-my-server",
+  },
+  {
+    key: "smtp_settings", cat: "Bayi", label: "SMTP Ayarları", Icon: Mail, tone: "cyan",
+    what: "Bildirim maillerinin gönderileceği SMTP hesabı: SendGrid, SES, Postfix, veya kendi cPanel SMTP.",
+    features: [
+      "Provider preset: SendGrid, AWS SES, Mailgun, Postfix, Custom",
+      "TLS/SSL/STARTTLS/None seçenekleri",
+      "Test-send: 'kendine test maili gönder' butonu",
+      "Fallback: primary başarısızsa secondary'ye geç",
+      "Rate limit: 100/dk gibi",
+    ],
+    how: [
+      "Provider: SendGrid → API key yapıştır → 'Test Send' → yeşil ✓",
+    ],
+    testid: "docs-module-smtp-settings",
+  },
+  {
+    key: "reseller_branding", cat: "Bayi", label: "Kendi Marka & Domain", Icon: Sparkles, tone: "fuchsia",
+    what: "White-label — panelinde kendi marka logunu, renk temanı, domain adını gösterirsin. Beyaz etiket satış için.",
+    features: [
+      "Logo yükle (SVG/PNG)",
+      "Renk teması: primary + accent",
+      "Panel başlığı, favicon, footer",
+      "Custom domain: panel.sirket.com → CNAME kurulumu rehberi",
+      "SSL: Let's Encrypt otomatik veya wildcard yükle",
+    ],
+    how: [
+      "Logo yükle + renkler seç → 'Preview' → 'Yayınla' → panel yenilenir",
+      "Custom domain: DNS'e CNAME ekle → panelde 'Doğrula' → SSL otomatik",
+    ],
+    testid: "docs-module-reseller-branding",
+  },
+  {
+    key: "custom_domain", cat: "Bayi", label: "Kendi Domain'im", Icon: Globe2, tone: "emerald",
+    what: "Panel URL'ini kendi domainine çevir (panel.sirketim.com). Reseller Branding'in DNS/SSL sub-modülü.",
+    features: [
+      "CNAME kurulum wizard",
+      "SSL: Let's Encrypt otomatik / wildcard sertifika yükle / self-signed",
+      "DNS propagation kontrol",
+      "Sub-path: panel.sirketim.com/mailguard",
+    ],
+    how: [
+      "Wizard step 1: domain gir → step 2: DNS ekle → step 3: doğrula → step 4: SSL",
+    ],
+    testid: "docs-module-custom-domain",
+  },
+  {
+    key: "subscription", cat: "Bayi", label: "Aboneliğim", Icon: Key, tone: "sky",
+    what: "Bayı için kendi abonelik durumu: plan, süresi, kullanım (mail/gün, kural sayısı), ödeme geçmişi, upgrade butonları.",
+    features: [
+      "Aktif plan kartı: adı, bitiş, otomatik yenileme",
+      "Kullanım metriği: quota progress bar'ları",
+      "Upgrade tekliflerine hızlı erişim",
+      "Ödeme geçmişi: fatura PDF indirme",
+      "İptal: 30-day money-back",
+    ],
+    how: [
+      "Upgrade → yeni plan seç → ödeme (Havale/PayTR/Stripe) → onayla",
+      "Fatura → satır → PDF indir",
+    ],
+    testid: "docs-module-subscription",
+  },
+
+  // --- SİSTEM ---
+  {
+    key: "install_guide", cat: "Sistem", label: "Kurulum Rehberi", Icon: Terminal, tone: "emerald",
+    what: "8 adımlı interaktif kurulum rehberi + PDF (TR/EN/AR) + adım başına video (30sn).",
+    features: [
+      "Progress bar: kaç adım tamamlandı",
+      "Her adım: intro + video embed + kod bloklarıyla komutlar + 'kopyala' butonu",
+      "PDF indir: 3 dilde (Türkçe/English/العربية)",
+      "'Tamamlandı olarak işaretle' → progress kaydı",
+      "Yardım: destek e-mail linki + FAQ",
+    ],
+    how: [
+      "Adım 1'den başla → intro oku → video izle → komutu kopyala → çalıştır → tamamlandı",
+      "PDF dil butonu → tıkla → indir",
+    ],
+    testid: "docs-module-install-guide",
+  },
+  {
+    key: "maintenance", cat: "Sistem", label: "DB Bakım", Icon: Wrench, tone: "amber",
+    what: "MongoDB koleksiyon boyutlarını izle + eski kayıtları temizle + haftalık backup + restore.",
+    features: [
+      "Koleksiyon grid: adı, doc sayısı, boyut, en eski/en yeni kayıt",
+      "Retention politika: mail_events 30 gün, quarantine 90 gün, audit 1 yıl",
+      "Manuel cleanup: 'sil şu tarihten eski'",
+      "Haftalık backup: /api/backups/list — 8 snapshot retention",
+      "Restore: dry-run + gerçek geri yükleme (2FA korumalı)",
+    ],
+    how: [
+      "Backup → 'Şimdi Snapshot Al' → dosya oluşur → indir/sakla",
+      "Restore → snapshot seç → dry-run → sonuç 'plan'ı kontrol et → gerçek restore",
+    ],
+    testid: "docs-module-maintenance",
+  },
+  {
+    key: "logs", cat: "Sistem", label: "Sistem Logları", Icon: BookOpen, tone: "slate",
+    what: "Backend uygulama logları: uvicorn, milter events, cron, integration errors. Filtre + arama.",
+    features: [
+      "Live tail: son 200 satır, auto-scroll",
+      "Filtre: level (info/warning/error) · source · date range",
+      "Search: substring match",
+      "Snapshot: kritik loglar için 'kaydet ve destek'e gönder'",
+    ],
+    how: [
+      "Filtre: level=error → son 24 saat errorlar",
+      "'Destek Gönder' → snapshot dahil ticket açar",
+    ],
+    testid: "docs-module-logs",
+  },
+  {
+    key: "settings", cat: "Sistem", label: "Global Ayarlar", Icon: Settings2, tone: "indigo",
+    what: "Sistem çapında yapılandırmaların merkezi: motor threshold'ları, bildirim kanalları, kilit & PIN, güvenlik, entegrasyon.",
+    features: [
+      "6 sekme: Genel · Motorlar · Kilit & PIN · Bildirim · Entegrasyon · Advanced",
+      "Kilit & PIN: Idle Auto-Lock, PIN Change Request akışı, Master 2FA, Kullanıcı PIN Yönetimi, PIN Değişiklik Geçmişi",
+      "Entegrasyon: SMTP, Slack, Discord, Telegram, SIEM, Webhook",
+      "Advanced: master rotation, master protection, trusted IPs, foreign IP strict mode",
+      "Her setting için audit trail",
+    ],
+    how: [
+      "Sekmeyi seç → değeri düzenle → 'Kaydet' → 30 sn'de canlı",
+      "Kritik ayarlar (2FA aktifse) OTP kodunu ister",
+    ],
+    testid: "docs-module-settings",
+  },
 ];
+
 
 const CATEGORIES = [...new Set(MODULES.map(m => m.cat))];
 

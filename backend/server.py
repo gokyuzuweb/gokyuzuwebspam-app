@@ -8837,27 +8837,45 @@ async def module_report_pdf():
     )
 
 
-# v43.99.11 — Kurulum Rehberi PDF (multi-language: tr | en | ar)
+# v43.99.12 — Kurulum Rehberi PDF (multi-language: tr | en | ar) + in-process build
 @api.get("/tools/install-guide.pdf")
-async def install_guide_pdf(lang: str = "tr"):
-    """cPanel/WHM sunucusuna kurulum rehberi PDF'i (Türkçe/İngilizce/Arapça)."""
+async def install_guide_pdf(lang: str = "tr", force: bool = False):
+    """cPanel/WHM sunucusuna kurulum rehberi PDF'i (Türkçe/İngilizce/Arapça).
+
+    force=true → mevcut cache PDF varsa bile yeniden üretir.
+    """
     from fastapi.responses import FileResponse
     import os as _os
+    import sys as _sys
     if lang not in ("tr", "en", "ar"):
         lang = "tr"
     suffix = {"tr": "", "en": "-EN", "ar": "-AR"}[lang]
+
+    # Docker'da /app/scripts, kaynak repoda /app/scripts — her ikisinde de aynı
+    scripts_dir = "/app/scripts"
+    if scripts_dir not in _sys.path:
+        _sys.path.insert(0, scripts_dir)
+
     pdf_path = f"/app/GokyuzuWebSpam-Kurulum-Rehberi-v43.99{suffix}.pdf"
-    if not _os.path.exists(pdf_path):
+
+    if force or not _os.path.exists(pdf_path):
+        # In-process build (subprocess yerine — Docker'da PATH sorunu olmasın)
         try:
-            import subprocess
-            subprocess.run(
-                ["python3", "/app/scripts/generate_install_guide.py", lang],
-                check=True, timeout=90
-            )
+            import importlib
+            if "generate_install_guide" in _sys.modules:
+                importlib.reload(_sys.modules["generate_install_guide"])
+            import generate_install_guide as _gig
+            _gig.build(lang, pdf_path)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Kurulum PDF'i hazırlanamadı: {str(e)[:120]}")
+            import traceback as _tb
+            err = f"{type(e).__name__}: {e}"
+            logging.error(f"[install-guide-pdf] {lang} build failed: {err}\n{_tb.format_exc()}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"PDF üretilemedi ({lang}): {err[:200]}"
+            )
     if not _os.path.exists(pdf_path):
-        raise HTTPException(status_code=500, detail="Kurulum PDF'i üretilemedi")
+        raise HTTPException(status_code=500, detail="Kurulum PDF'i üretilemedi (dosya oluşmadı)")
     fname_map = {
         "tr": "GokyuzuWebSpam-Kurulum-Rehberi-TR.pdf",
         "en": "GokyuzuWebSpam-Install-Guide-EN.pdf",

@@ -14,6 +14,22 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 19, 2026 (Session 21, v43.99.12) — Modül Dokümantasyonu Genişletildi + PDF Endpoint Sağlamlaştırıldı
+
+**KULLANICI TALEBİ 1:** "Kurulum Rehberi kısmında pdf indir henüz hazırlanmadı yazıyor"
+- **Kök neden:** Subprocess çağrısı (`python3 /app/scripts/generate_install_guide.py`) Docker container'da PATH/permission sorunuyla başarısız olabiliyordu.
+- **Fix:** `server.py::install_guide_pdf` artık subprocess yerine in-process `importlib.reload + gig.build(lang, out)` çağırıyor. Hata detayı log'a düşer ve HTTPException detail'inde döner.
+
+**KULLANICI TALEBİ 2:** "Modül Dokümantasyonu kısmını da doldur tüm modüller ile ilgili gerekli bilgileri ver"
+- **Yapılan:** `pages/Docs.js::MODULES` array'i 9 → **46 modül**e genişletildi. Her modül için detaylı `what` (ne yapar) · `features` (6-8 madde) · `how` (adım-adım kullanım) · testid.
+- **Kapsanan kategoriler:** Ana (1) · Motor (4: MailScanner, Motorlar, Kural Editörü, Kara/Beyaz Liste) · Güvenlik (7: Güvenlik Merkezi, Coğrafi, Threat Intel, Threat Defense, IP Blacklist, Bounce Digest, +eski) · İşlem (2) · AI (1) · Uyarı/Bildirim (2) · Rapor (2) · Sağlık (3: Mail Health, Live Diagnostic, Plugin Health) · Kullanıcı (3: Users, Whitelist History, Marketplace) · Master (11: Licenses, Master Live, Payments Admin, Resellers Admin, Plan Analytics, Plan Config, Audit Log, Remote Admin, Version Publish, Wake History, Landing CMS, Email Templates) · Bayı (5: My Server, SMTP, Reseller Branding, Custom Domain, Subscription) · Sistem (4: Install Guide, Maintenance, Logs, Settings).
+
+**Test:** Frontend smoke → `docs-module-*` testid'li 46 kart render edildi ✓
+
+**VERSION:** v43.99.11 → v43.99.12
+
+
+
 ## Feb 19, 2026 (Session 21, v43.99.11) — Backlog Sweep: 4 Feature Bundle
 
 **KULLANICI İSTEĞİ:** Tüm 4 backlog kalemi (Video Kurulum · Çoklu Dil PDF · 2FA Enforce · Haftalık Yedek) + PIN Geçmiş Detayları.
