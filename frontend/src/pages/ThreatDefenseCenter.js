@@ -10,6 +10,7 @@ import {
   Wand2, ScanSearch, Award, Building2, Mail, Archive, Zap, Map,
   FlaskConical, Smartphone, Chrome, Layers, Network, WifiOff,
   Loader2, X, Send, ExternalLink, Info, Link2, BookOpen,
+  CheckCircle2, XCircle, AlertCircle, Clock, MapPin, Hash, Users,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -83,7 +84,702 @@ async function callThreatApi(path, method = "GET", body = null) {
   return r.json();
 }
 
-// ---- 28 Module catalog ----
+// ---- Smart Result Renderer ----
+const VERDICT_STYLES = {
+  safe: { bg: "bg-emerald-500/15", border: "border-emerald-500/40", text: "text-emerald-300", icon: CheckCircle2, label: "GÜVENLİ" },
+  clean: { bg: "bg-emerald-500/15", border: "border-emerald-500/40", text: "text-emerald-300", icon: CheckCircle2, label: "TEMİZ" },
+  ok: { bg: "bg-emerald-500/15", border: "border-emerald-500/40", text: "text-emerald-300", icon: CheckCircle2, label: "OK" },
+  suspicious: { bg: "bg-amber-500/15", border: "border-amber-500/40", text: "text-amber-300", icon: AlertCircle, label: "ŞÜPHELİ" },
+  phishing: { bg: "bg-rose-500/15", border: "border-rose-500/40", text: "text-rose-300", icon: AlertTriangle, label: "PHISHING" },
+  malicious: { bg: "bg-rose-500/15", border: "border-rose-500/40", text: "text-rose-300", icon: XCircle, label: "KÖTÜCÜL" },
+  brand_impersonation: { bg: "bg-rose-500/15", border: "border-rose-500/40", text: "text-rose-300", icon: AlertTriangle, label: "MARKA TAKLİDİ" },
+  bec_attack: { bg: "bg-rose-500/15", border: "border-rose-500/40", text: "text-rose-300", icon: AlertTriangle, label: "BEC SALDIRISI" },
+  spam: { bg: "bg-orange-500/15", border: "border-orange-500/40", text: "text-orange-300", icon: XCircle, label: "SPAM" },
+  compromised: { bg: "bg-rose-500/15", border: "border-rose-500/40", text: "text-rose-300", icon: WifiOff, label: "ELE GEÇİRİLDİ" },
+  quarantine: { bg: "bg-amber-500/15", border: "border-amber-500/40", text: "text-amber-300", icon: Archive, label: "KARANTİNA" },
+  allow: { bg: "bg-emerald-500/15", border: "border-emerald-500/40", text: "text-emerald-300", icon: CheckCircle2, label: "İZİN VER" },
+  tag_suspicious: { bg: "bg-amber-500/15", border: "border-amber-500/40", text: "text-amber-300", icon: AlertCircle, label: "ETİKETLE" },
+};
+
+function Verdict({ value }) {
+  const key = String(value || "").toLowerCase();
+  const s = VERDICT_STYLES[key] || { bg: "bg-slate-500/15", border: "border-slate-500/40", text: "text-slate-300", icon: Info, label: String(value).toUpperCase() };
+  const Icon = s.icon;
+  return (
+    <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border ${s.bg} ${s.border} ${s.text} text-xs font-bold`}>
+      <Icon className="w-3.5 h-3.5" />
+      {s.label}
+    </div>
+  );
+}
+
+function ScoreBar({ score, max = 100 }) {
+  const pct = Math.max(0, Math.min(100, (score / max) * 100));
+  const color = score >= 70 ? "bg-rose-500" : score >= 40 ? "bg-amber-500" : "bg-emerald-500";
+  const textColor = score >= 70 ? "text-rose-300" : score >= 40 ? "text-amber-300" : "text-emerald-300";
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Skor</span>
+        <span className={`text-2xl font-black mono ${textColor}`}>{score}<span className="text-slate-500 text-sm">/{max}</span></span>
+      </div>
+      <div className="h-2 bg-slate-800 rounded overflow-hidden">
+        <div className={`h-full ${color} transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function StatRow({ label, value, color = "slate", mono = false }) {
+  const colorMap = { slate: "text-slate-200", emerald: "text-emerald-300", amber: "text-amber-300", rose: "text-rose-300", indigo: "text-indigo-300" };
+  return (
+    <div className="flex items-center justify-between py-1.5 border-b border-slate-800/60 last:border-0">
+      <span className="text-[12px] text-slate-400">{label}</span>
+      <span className={`text-[13px] ${mono ? "mono" : ""} font-semibold ${colorMap[color] || colorMap.slate}`}>{value}</span>
+    </div>
+  );
+}
+
+function BreakdownBars({ breakdown }) {
+  const entries = Object.entries(breakdown || {});
+  return (
+    <div className="space-y-2.5">
+      {entries.map(([k, v]) => {
+        const pct = Math.max(0, Math.min(100, Number(v) || 0));
+        const color = pct >= 70 ? "bg-emerald-500" : pct >= 40 ? "bg-amber-500" : "bg-rose-500";
+        return (
+          <div key={k} className="space-y-1">
+            <div className="flex items-baseline justify-between text-[11px]">
+              <span className="text-slate-400 uppercase tracking-wider font-semibold">{k}</span>
+              <span className="mono font-bold text-slate-200">{pct}</span>
+            </div>
+            <div className="h-1.5 bg-slate-800 rounded overflow-hidden">
+              <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ReasonsList({ items, tone = "amber" }) {
+  const toneMap = { amber: "text-amber-300", rose: "text-rose-300", emerald: "text-emerald-300", slate: "text-slate-300" };
+  const Icon = tone === "emerald" ? CheckCircle2 : tone === "rose" ? XCircle : AlertCircle;
+  return (
+    <ul className="space-y-1.5">
+      {(items || []).map((r, i) => (
+        <li key={i} className={`flex items-start gap-2 text-[13px] ${toneMap[tone]}`}>
+          <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>{r}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function KeyValueGrid({ data, cols = 2 }) {
+  const entries = Object.entries(data || {}).filter(([k, v]) => v !== null && v !== undefined && v !== "" && !Array.isArray(v) && typeof v !== "object");
+  if (!entries.length) return null;
+  return (
+    <div className={`grid grid-cols-1 sm:grid-cols-${cols} gap-2.5`}>
+      {entries.map(([k, v]) => (
+        <div key={k} className="bg-slate-900/40 border border-slate-800 rounded px-3 py-2">
+          <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-0.5">{k.replace(/_/g, " ")}</div>
+          <div className="text-[13px] text-slate-200 mono break-all">{String(v)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DataTable({ rows, columns }) {
+  if (!rows || !rows.length) return <div className="text-xs text-slate-500 italic py-4 text-center">Kayıt bulunamadı</div>;
+  const cols = columns || Object.keys(rows[0]).filter(k => typeof rows[0][k] !== "object");
+  return (
+    <div className="overflow-auto border border-slate-800 rounded">
+      <table className="w-full text-[12px]">
+        <thead className="bg-slate-900/60 border-b border-slate-800">
+          <tr>
+            {cols.map(c => (
+              <th key={c} className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">{c.replace(/_/g, " ")}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 20).map((r, i) => (
+            <tr key={i} className="border-b border-slate-800/60 hover:bg-slate-900/40">
+              {cols.map(c => (
+                <td key={c} className="px-3 py-2 text-slate-200 mono">
+                  {typeof r[c] === "boolean" ? (r[c] ? "✓" : "—") : (r[c] === null || r[c] === undefined ? "—" : String(r[c]))}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length > 20 && <div className="text-[10px] text-slate-500 text-center py-2">+{rows.length - 20} kayıt daha</div>}
+    </div>
+  );
+}
+
+function Section({ title, icon: Ico = Info, children }) {
+  return (
+    <div className="border border-slate-800 rounded-lg bg-slate-900/30">
+      <div className="px-3 py-2 border-b border-slate-800 text-[10px] uppercase tracking-wider text-slate-400 font-bold flex items-center gap-2">
+        <Ico className="w-3.5 h-3.5" />
+        {title}
+      </div>
+      <div className="p-3">{children}</div>
+    </div>
+  );
+}
+
+function ResultView({ data, modId }) {
+  if (!data) return null;
+  if (data.error) {
+    return (
+      <div className="border border-rose-500/40 bg-rose-500/10 rounded-lg p-4 text-rose-200 text-sm flex items-start gap-2">
+        <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+        <div>
+          <div className="font-bold mb-1">Hata</div>
+          <div className="text-rose-300 text-[13px]">{data.error}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Anti-Phishing: results array
+  if (modId === "anti-phishing" && Array.isArray(data.results)) {
+    return (
+      <div className="space-y-3">
+        {data.results.map((r, i) => (
+          <div key={i} className="border border-slate-800 rounded-lg p-4 space-y-3 bg-slate-900/30">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="text-[13px] text-slate-200 mono break-all flex-1 min-w-0">{r.url}</div>
+              <Verdict value={r.verdict} />
+            </div>
+            <ScoreBar score={r.score} />
+            <Section title="Tespit Nedenleri" icon={AlertCircle}>
+              <ReasonsList items={r.reasons} tone={r.score >= 60 ? "rose" : r.score >= 30 ? "amber" : "emerald"} />
+            </Section>
+            {r.homoglyph && r.homoglyph.distance <= 3 && (
+              <Section title="Homoglyph Benzerlik" icon={ScanSearch}>
+                <StatRow label="En benzer marka" value={r.homoglyph.most_similar} color="rose" mono />
+                <StatRow label="Uzaklık" value={r.homoglyph.distance} mono />
+                <StatRow label="Benzerlik" value={`%${r.homoglyph.similarity}`} color="rose" mono />
+              </Section>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // BEC / Brand: score + verdict + reasons + signals
+  if ((modId === "bec" || modId === "brand" || modId === "web-spam" || modId === "webshield") && data.verdict !== undefined) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <Verdict value={data.verdict} />
+          <div className="text-xs text-slate-400 mono">{data.checked_at?.slice(0, 19).replace("T", " ")}</div>
+        </div>
+        <ScoreBar score={data.score} />
+        {data.reasons && data.reasons.length > 0 && (
+          <Section title="Tespit Nedenleri" icon={AlertCircle}>
+            <ReasonsList items={data.reasons} tone={data.score >= 70 ? "rose" : data.score >= 40 ? "amber" : "emerald"} />
+          </Section>
+        )}
+        {data.signals && (
+          <Section title="Sinyal Detayları" icon={Hash}>
+            <KeyValueGrid data={data.signals} cols={3} />
+          </Section>
+        )}
+        {data.brand_hits && data.brand_hits.length > 0 && (
+          <Section title="Marka Eşleşmeleri" icon={Building2}>
+            <DataTable rows={data.brand_hits} />
+          </Section>
+        )}
+      </div>
+    );
+  }
+
+  // Mail Security Score & Domain Security
+  if (modId === "mail-score" || modId === "domain-security") {
+    const scoreData = modId === "domain-security" ? data.authentication : data;
+    if (scoreData && scoreData.total_score !== undefined) {
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Domain</div>
+              <div className="text-base font-bold text-slate-100 mono">{scoreData.domain}</div>
+            </div>
+            <ScoreBar score={scoreData.total_score} />
+          </div>
+          {scoreData.breakdown && (
+            <Section title="Kayıt Detayları" icon={Shield}>
+              <BreakdownBars breakdown={scoreData.breakdown} />
+            </Section>
+          )}
+          {scoreData.reasons && (
+            <Section title="Notlar" icon={Info}>
+              <ReasonsList items={scoreData.reasons} tone={scoreData.total_score >= 70 ? "emerald" : "amber"} />
+            </Section>
+          )}
+          {modId === "domain-security" && (
+            <>
+              {data.reputation && Object.keys(data.reputation).length > 0 && (
+                <Section title="İtibar" icon={Award}>
+                  <KeyValueGrid data={data.reputation} />
+                </Section>
+              )}
+              <Section title="Spam İstatistikleri" icon={TrendingUp}>
+                <StatRow label="Gelen spam" value={data.incoming_spam ?? 0} color="rose" mono />
+                <StatRow label="Giden spam" value={data.outgoing_spam ?? 0} color="amber" mono />
+              </Section>
+            </>
+          )}
+        </div>
+      );
+    }
+  }
+
+  // URL Deep Analysis
+  if (modId === "url-deep") {
+    return (
+      <div className="space-y-3">
+        <Section title="Genel Bilgi" icon={Globe}>
+          <StatRow label="URL" value={data.url} mono />
+          <StatRow label="Son URL" value={data.final_url} mono />
+          <StatRow label="HTTP durumu" value={data.status} color={data.status >= 200 && data.status < 300 ? "emerald" : "amber"} mono />
+          <StatRow label="IP" value={data.ip || "—"} mono />
+          <StatRow label="Ülke" value={data.country || "—"} />
+          <StatRow label="ASN" value={data.asn || "—"} mono />
+        </Section>
+        {data.features && (
+          <Section title="URL Özellikleri" icon={ScanSearch}>
+            <KeyValueGrid data={data.features} cols={3} />
+          </Section>
+        )}
+        {data.redirect_chain && data.redirect_chain.length > 0 && (
+          <Section title={`Yönlendirme Zinciri (${data.redirect_chain.length} adım)`} icon={RotateCcw}>
+            <DataTable rows={data.redirect_chain} />
+          </Section>
+        )}
+        {data.homoglyph && (
+          <Section title="Marka Benzerlik" icon={Building2}>
+            <StatRow label="En yakın" value={data.homoglyph.most_similar} color="amber" mono />
+            <StatRow label="Uzaklık" value={data.homoglyph.distance} mono />
+          </Section>
+        )}
+      </div>
+    );
+  }
+
+  // Attachment sandbox
+  if (modId === "sandbox-att") {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <Verdict value={data.verdict} />
+        </div>
+        <ScoreBar score={data.score} />
+        <Section title="Dosya" icon={Hash}>
+          <StatRow label="Ad" value={data.filename} mono />
+          <StatRow label="Uzantı" value={"." + data.extension} color="amber" mono />
+          <StatRow label="Boyut" value={`${(data.size / 1024).toFixed(1)} KB`} mono />
+          {data.sha256 && <StatRow label="SHA256" value={data.sha256.slice(0, 32) + "..."} mono />}
+        </Section>
+        <Section title="Nedenler" icon={AlertCircle}>
+          <ReasonsList items={data.reasons} tone={data.score >= 60 ? "rose" : data.score >= 30 ? "amber" : "emerald"} />
+        </Section>
+        {data.note && (
+          <div className="text-[11px] text-slate-500 italic border-l-2 border-slate-700 pl-3">{data.note}</div>
+        )}
+      </div>
+    );
+  }
+
+  // URL Sandbox — urlscan
+  if (modId === "sandbox-url" && Array.isArray(data.results)) {
+    return (
+      <div className="space-y-3">
+        <Section title="urlscan.io Sonuçları" icon={Chrome}>
+          <StatRow label="Domain" value={data.domain} mono />
+          <StatRow label="Toplam tarama" value={data.total ?? 0} mono />
+          <StatRow label="Sağlayıcı" value={data.provider || "urlscan.io"} />
+        </Section>
+        {data.results.length > 0 ? (
+          <Section title="Geçmiş Taramalar" icon={Clock}>
+            <DataTable rows={data.results.map(r => ({ url: r.url, time: r.time?.slice(0, 19) || "-", malicious: r.verdict }))} />
+          </Section>
+        ) : (
+          <div className="text-xs text-slate-500 italic text-center py-3">Bu domain için geçmiş tarama bulunmuyor.</div>
+        )}
+      </div>
+    );
+  }
+
+  // Email DNA
+  if (modId === "dna") {
+    return (
+      <div className="space-y-3">
+        <Section title="Fingerprint" icon={Fingerprint}>
+          <StatRow label="DNA" value={data.dna?.slice(0, 40) + "..."} mono color="indigo" />
+          <StatRow label="Benzer görülme" value={`${data.similar_seen ?? 0} kez`} color={data.similar_seen > 0 ? "amber" : "emerald"} mono />
+        </Section>
+        {data.components && (
+          <Section title="Bileşenler" icon={Hash}>
+            <KeyValueGrid data={{
+              "Subject Hash": data.components.subject?.slice(0, 16) + "...",
+              "Body Hash": data.components.body?.slice(0, 16) + "...",
+              "URL Hash": data.components.urls?.slice(0, 16) + "...",
+            }} cols={1} />
+          </Section>
+        )}
+        {data.note && <div className="text-[13px] text-slate-300 border-l-2 border-indigo-500 pl-3 italic">{data.note}</div>}
+      </div>
+    );
+  }
+
+  // Threat Intel IOCs
+  if (modId === "threat-intel" && (data.iocs || data.counts)) {
+    return (
+      <div className="space-y-3">
+        {data.counts && (
+          <Section title="IOC Sayaçları" icon={Radio}>
+            <KeyValueGrid data={data.counts} cols={5} />
+            <div className="mt-2 pt-2 border-t border-slate-800">
+              <StatRow label="Toplam" value={data.total ?? 0} color="fuchsia" mono />
+            </div>
+          </Section>
+        )}
+        {data.iocs && data.iocs.length > 0 && (
+          <Section title="Son IOC'lar" icon={Radio}>
+            <DataTable rows={data.iocs} />
+          </Section>
+        )}
+      </div>
+    );
+  }
+
+  // Reputation
+  if (modId === "reputation") {
+    return (
+      <div className="space-y-3">
+        {["sender", "domain", "ip"].map(k => data[k] && (
+          <Section key={k} title={k.toUpperCase()} icon={Award}>
+            {Object.entries(data[k]).map(([kk, vv]) => (
+              <StatRow key={kk} label={kk.replace(/_/g, " ")} value={vv} mono
+                       color={kk.includes("reputation") ? (vv >= 70 ? "emerald" : vv >= 40 ? "amber" : "rose") : "slate"} />
+            ))}
+          </Section>
+        ))}
+      </div>
+    );
+  }
+
+  // Compromise detection
+  if (modId === "compromise" && data.suspicious_accounts) {
+    return (
+      <div className="space-y-3">
+        <Section title={`Şüpheli Hesaplar (${data.suspicious_accounts.length})`} icon={WifiOff}>
+          {data.suspicious_accounts.length === 0
+            ? <div className="text-xs text-slate-500 italic text-center py-3">Son {data.window_hours} saatte şüpheli aktivite yok ✓</div>
+            : <DataTable rows={data.suspicious_accounts} />
+          }
+        </Section>
+      </div>
+    );
+  }
+
+  // Incidents
+  if (modId === "incidents" && data.incidents) {
+    return (
+      <div className="space-y-3">
+        <Section title={`Incident'lar (${data.incidents.length})`} icon={ShieldAlert}>
+          <DataTable rows={data.incidents.map(i => ({
+            id: i.id, type: i.threat_type, severity: i.severity, status: i.status,
+            messages: i.message_count, at: i.at?.slice(0, 19),
+          }))} />
+        </Section>
+      </div>
+    );
+  }
+  if (modId === "incidents" && data.id) {
+    // Yeni incident yaratıldı
+    return (
+      <Section title="Incident Oluşturuldu" icon={CheckCircle2}>
+        <StatRow label="ID" value={data.id} mono color="emerald" />
+        <StatRow label="Threat" value={data.threat_type} />
+        <StatRow label="Severity" value={data.severity} color="amber" />
+        <StatRow label="Status" value={data.status} color="emerald" />
+      </Section>
+    );
+  }
+
+  // Retroactive scan
+  if (modId === "retroactive") {
+    return (
+      <Section title="Geriye Dönük Tarama" icon={RotateCcw}>
+        <StatRow label="IOC" value={data.ioc} mono color="rose" />
+        <StatRow label="Türü" value={data.kind} />
+        <StatRow label="Gün" value={data.days} mono />
+        <StatRow label="Eşleşen mail" value={data.matched_mails ?? 0} mono color={data.matched_mails > 0 ? "rose" : "emerald"} />
+        {data.note && <div className="text-[13px] text-slate-300 mt-2 italic">{data.note}</div>}
+      </Section>
+    );
+  }
+
+  // AI Ask
+  if (modId === "ai-ask") {
+    return (
+      <div className="space-y-3">
+        <Section title="Soru" icon={Brain}>
+          <div className="text-[13px] text-slate-300">{data.question}</div>
+        </Section>
+        <Section title="AI Cevabı" icon={Brain}>
+          <div className="text-[13px] text-slate-200 whitespace-pre-wrap leading-relaxed">{data.answer}</div>
+          <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider">
+            Sağlayıcı: {data.provider}
+          </div>
+        </Section>
+      </div>
+    );
+  }
+
+  // AI Rule generator
+  if (modId === "ai-rule") {
+    return (
+      <div className="space-y-3">
+        <Section title="Prompt" icon={Wand2}>
+          <div className="text-[13px] text-slate-300">{data.prompt}</div>
+        </Section>
+        <Section title="Üretilen Kural" icon={Zap}>
+          <pre className="text-[12px] text-emerald-200 mono whitespace-pre-wrap">{typeof data.rule === "string" ? data.rule : JSON.stringify(data.rule, null, 2)}</pre>
+        </Section>
+        {data.note && <div className="text-[11px] text-amber-300 italic">⚠ {data.note}</div>}
+      </div>
+    );
+  }
+
+  // Global Search
+  if (modId === "search" && data.hits) {
+    const hits = Object.entries(data.hits);
+    return (
+      <div className="space-y-3">
+        <Section title={`Sonuçlar (${hits.length} kategori)`} icon={Search}>
+          {hits.length === 0
+            ? <div className="text-xs text-slate-500 italic text-center py-3">"{data.query}" için sonuç bulunamadı.</div>
+            : hits.map(([cat, h]) => (
+              <div key={cat} className="mb-3 last:mb-0">
+                <div className="text-[11px] text-indigo-300 uppercase tracking-wider font-bold mb-1.5">{cat} ({h.count})</div>
+                {h.sample && <DataTable rows={h.sample} />}
+              </div>
+            ))
+          }
+        </Section>
+      </div>
+    );
+  }
+
+  // Continuity
+  if (modId === "continuity") {
+    return (
+      <Section title="Kuyruk Durumu" icon={Mail}>
+        <StatRow label="Bekleyen" value={data.pending ?? 0} color="amber" mono />
+        <StatRow label="Yeniden gönderilen" value={data.replayed ?? 0} color="emerald" mono />
+      </Section>
+    );
+  }
+
+  // Archive
+  if (modId === "archive") {
+    return (
+      <div className="space-y-3">
+        <Section title={`Arşiv Sonuçları (${data.total ?? 0})`} icon={Archive}>
+          {(!data.items || data.items.length === 0)
+            ? <div className="text-xs text-slate-500 italic text-center py-3">Eşleşen mail yok.</div>
+            : <DataTable rows={data.items.map(i => ({
+                subject: i.subject_preview?.slice(0, 60), from: i.from, at: i.at?.slice(0, 19),
+              }))} />
+          }
+        </Section>
+      </div>
+    );
+  }
+
+  // SOAR rules
+  if (modId === "soar" && data.rules) {
+    return (
+      <Section title={`SOAR Kuralları (${data.rules.length})`} icon={Zap}>
+        {data.rules.length === 0
+          ? <div className="text-xs text-slate-500 italic text-center py-3">Henüz kural yok — ilk kuralı ekleyin.</div>
+          : <DataTable rows={data.rules.map(r => ({ name: r.name, enabled: r.enabled, hits: r.hit_count, at: r.at?.slice(0, 19) }))} />
+        }
+      </Section>
+    );
+  }
+
+  // Attack map
+  if (modId === "attack-map" && data.countries) {
+    return (
+      <Section title={`Ülke Bazlı Saldırılar (${data.window_hours}h)`} icon={Map}>
+        {data.countries.length === 0
+          ? <div className="text-xs text-slate-500 italic text-center py-3">Bu pencerede coğrafi veri yok.</div>
+          : (
+            <div className="space-y-2">
+              {data.countries.map((c, i) => (
+                <div key={i} className="flex items-center gap-3 py-1.5 border-b border-slate-800/50 last:border-0">
+                  <MapPin className="w-3.5 h-3.5 text-rose-400" />
+                  <div className="flex-1 text-[13px] text-slate-200 font-semibold">{c.country}</div>
+                  <div className="text-[13px] mono font-bold text-rose-300">{c.count}</div>
+                </div>
+              ))}
+            </div>
+          )
+        }
+      </Section>
+    );
+  }
+
+  // Mail simulator
+  if (modId === "simulator" && data.final_score !== undefined) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">Karar</div>
+            <Verdict value={data.action} />
+          </div>
+          <ScoreBar score={data.final_score} />
+        </div>
+        <Section title="Mail Bilgileri" icon={Mail}>
+          <StatRow label="From" value={data.from} mono />
+          <StatRow label="Subject" value={data.subject} />
+          <StatRow label="To" value={data.to} mono />
+        </Section>
+        <Section title="Motor Sonuçları" icon={Shield}>
+          <StatRow label="Phishing" value={data.phishing?.score ?? 0} color={data.phishing?.score >= 60 ? "rose" : "slate"} mono />
+          <StatRow label="BEC" value={data.bec?.score ?? 0} color={data.bec?.score >= 70 ? "rose" : "slate"} mono />
+          <StatRow label="Brand Impersonation" value={data.brand?.score ?? 0} color={data.brand?.score >= 60 ? "rose" : "slate"} mono />
+        </Section>
+        {data.why_blocked && data.why_blocked.length > 0 && (
+          <Section title="Neden Bloklandı" icon={AlertCircle}>
+            <ReasonsList items={data.why_blocked} tone="rose" />
+          </Section>
+        )}
+      </div>
+    );
+  }
+
+  // Mobile SOC
+  if (modId === "mobile-soc") {
+    return (
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          ["Kritik Incident", data.critical_incidents, "rose"],
+          ["Ele geçirilmiş", data.compromised_accounts, "amber"],
+          ["Phishing 24h", data.phishing_24h, "orange"],
+        ].map(([label, val, color]) => (
+          <div key={label} className="border border-slate-800 rounded-lg p-4 text-center bg-slate-900/40">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">{label}</div>
+            <div className={`text-3xl font-black mono text-${color}-300`}>{val ?? 0}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // WP Security
+  if (modId === "wp-security" && data.checks) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <StatRow label="Site" value={data.site} mono />
+          <ScoreBar score={data.risk_score} />
+        </div>
+        <Section title="Güvenlik Kontrolleri" icon={Shield}>
+          {Object.entries(data.checks).map(([k, v]) => (
+            <StatRow key={k} label={k.replace(/_/g, " ")}
+                     value={typeof v === "boolean" ? (v ? "✓ Açık" : "✗ Kapalı") : String(v)}
+                     color={typeof v === "boolean" ? (v ? (k.includes("expose") || k.includes("open") ? "rose" : "emerald") : "emerald") : "slate"} />
+          ))}
+        </Section>
+      </div>
+    );
+  }
+
+  // Multi-platform
+  if (modId === "multiplatform" && data.supported) {
+    return (
+      <Section title="Desteklenen Platformlar" icon={Network}>
+        <DataTable rows={data.supported} />
+        {data.note && <div className="text-[11px] text-slate-500 italic mt-2 pl-3 border-l-2 border-slate-700">{data.note}</div>}
+      </Section>
+    );
+  }
+
+  // Network stats
+  if (modId === "network" && (data.total_iocs !== undefined || data.urlhaus)) {
+    if (data.urlhaus) {
+      return (
+        <Section title="URLhaus Feed" icon={Radio}>
+          <StatRow label="IOC sayısı" value={data.urlhaus.count} mono color="fuchsia" />
+          <StatRow label="Yaş (saniye)" value={data.urlhaus.age_seconds} mono />
+          <StatRow label="Taze" value={data.urlhaus.fresh ? "✓" : "—"} color={data.urlhaus.fresh ? "emerald" : "amber"} />
+        </Section>
+      );
+    }
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          ["Toplam IOC", data.total_iocs, "fuchsia"],
+          ["Katkı Yapan Bayi", data.contributing_resellers, "emerald"],
+          ["Mail Fingerprint", data.mail_fingerprints, "cyan"],
+          ["Incident'lar", data.incidents_tracked, "rose"],
+        ].map(([label, val, color]) => (
+          <div key={label} className="border border-slate-800 rounded-lg p-4 bg-slate-900/40">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">{label}</div>
+            <div className={`text-2xl font-black mono text-${color}-300`}>{(val ?? 0).toLocaleString()}</div>
+          </div>
+        ))}
+        {data.note && (
+          <div className="col-span-2 text-[11px] text-slate-500 italic pl-3 border-l-2 border-slate-700 mt-2">{data.note}</div>
+        )}
+      </div>
+    );
+  }
+
+  // Feed refresh / status
+  if (data.ok !== undefined && data.urlhaus_hosts !== undefined) {
+    return (
+      <Section title="Feed Yenilendi" icon={CheckCircle2}>
+        <StatRow label="URLhaus host sayısı" value={data.urlhaus_hosts} color="emerald" mono />
+      </Section>
+    );
+  }
+
+  // Generic IOC add
+  if (data.ok && data.id) {
+    return (
+      <Section title="Eklendi" icon={CheckCircle2}>
+        <StatRow label="ID" value={data.id} mono color="emerald" />
+      </Section>
+    );
+  }
+
+  // Fallback — key/value
+  return (
+    <div className="space-y-3">
+      <Section title="Sonuç" icon={Info}>
+        <KeyValueGrid data={data} />
+      </Section>
+    </div>
+  );
+}
+
 // linkTo: sizin panelinizdeki mevcut sayfa (eşdeğer/tamamlayıcı modül)
 const MODULES = [
   {
@@ -841,9 +1537,9 @@ function ModuleDrawer({ mod, onClose }) {
             <Info className="w-3.5 h-3.5" />
             Sonuç
           </div>
-          <pre className="bg-slate-950/80 p-3 text-[11px] text-slate-200 mono overflow-auto max-h-[400px] whitespace-pre-wrap">
-{JSON.stringify(output, null, 2)}
-          </pre>
+          <div className="p-4 bg-slate-950/40">
+            <ResultView data={output} modId={mod.id} />
+          </div>
         </div>
       )}
     </div>
