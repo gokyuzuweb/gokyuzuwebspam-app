@@ -66,14 +66,14 @@ I18N = {
         "meta_title": "GokyuzuWebSpam - Kurulum Rehberi",
         "cover_title": "Kurulum Rehberi",
         "cover_sub": "cPanel/WHM sunucusuna GökyüzüWebSpam kurulumu",
-        "cover_badge": "APTALA ANLATIR GIBI · 8 ADIM",
+        "cover_badge": "KURUMSAL DAĞITIM · 8 ADIM",
         "cover_intro": [
-            "Bu belge, ürünü satın aldıktan sonra kendi",
-            "cPanel/WHM sunucunuza nasıl kuracağınızı adım adım anlatır.",
+            "Bu belge, GökyüzüWebSpam ürününü cPanel/WHM sunucunuza",
+            "adım adım entegre etmek için hazırlanmış resmi kurulum rehberidir.",
             "",
-            "Hedef kitle: Sunucu yöneticisi, teknik olmayan operatör",
-            "Süre: Toplam ~30 dakika (Docker kurulu ise 12 dakika)",
-            "Gerekli: SSH root erişimi, WHM login, satın alma sonrası e-posta",
+            "Hedef kitle: Sistem yöneticileri, BT operatörleri, sunucu yöneticileri",
+            "Süre: Toplam ~30 dakika (Docker mevcutsa 12 dakika)",
+            "Ön koşullar: SSH root erişimi, WHM oturum bilgileri, lisans e-postası",
         ],
         "date_label": "Rapor Tarihi",
         "support_line": "Destek: destek@gokyuzuhosting.com",
@@ -82,9 +82,9 @@ I18N = {
         "footer_page": "Sayfa",
         "pre_title": "Başlamadan Önce",
         "pre_intro": (
-            "Bu belge X firmasının sıfırdan GökyüzüWebSpam kurulumunu tamamlaması için hazırlanmıştır. "
-            "Her komut kopyalanıp yapıştırılabilir. Anlamadığınız yer olursa <b>destek@gokyuzuhosting.com</b> "
-            "adresine yazın, ekran görüntüsü ile birlikte gönderin."
+            "Bu belge, GökyüzüWebSpam kurulumunu profesyonel şekilde tamamlamanız için hazırlanmıştır. "
+            "Tüm komutlar kopyalanıp yapıştırılabilir formatta sunulmuştur. Kurulum sırasında oluşabilecek "
+            "sorunlar için <b>destek@gokyuzuhosting.com</b> adresine ekran görüntüsü ile birlikte iletiniz."
         ),
         "pre_need": "Elinizde olması gerekenler",
         "pre_items": [
@@ -307,14 +307,14 @@ I18N = {
         "meta_title": "GokyuzuWebSpam - Installation Guide",
         "cover_title": "Installation Guide",
         "cover_sub": "Deploy GokyuzuWebSpam on your cPanel/WHM server",
-        "cover_badge": "STEP-BY-STEP · 8 STEPS",
+        "cover_badge": "ENTERPRISE DEPLOYMENT · 8 STEPS",
         "cover_intro": [
-            "This document walks you through the full installation",
-            "of GokyuzuWebSpam on your own cPanel/WHM server after purchase.",
+            "This is the official installation guide for integrating",
+            "GokyuzuWebSpam into your cPanel/WHM server step by step.",
             "",
-            "Audience: Server administrators, non-technical operators",
+            "Audience: System administrators, IT operators, server engineers",
             "Duration: ~30 minutes total (12 minutes if Docker is preinstalled)",
-            "Required: SSH root access, WHM login, post-purchase email",
+            "Prerequisites: SSH root access, WHM credentials, license email",
         ],
         "date_label": "Report Date",
         "support_line": "Support: destek@gokyuzuhosting.com",
@@ -539,14 +539,14 @@ I18N = {
         "meta_title": "GokyuzuWebSpam - دليل التثبيت",
         "cover_title": "دليل التثبيت",
         "cover_sub": "تثبيت GokyuzuWebSpam على خادم cPanel/WHM",
-        "cover_badge": "خطوة بخطوة · ٨ خطوات",
+        "cover_badge": "النشر المؤسسي · ٨ خطوات",
         "cover_intro": [
-            "هذا المستند يشرح لك خطوة بخطوة",
-            "كيفية تثبيت GokyuzuWebSpam على خادم cPanel/WHM الخاص بك.",
+            "هذا هو الدليل الرسمي لتثبيت GokyuzuWebSpam",
+            "على خادم cPanel/WHM الخاص بك خطوة بخطوة.",
             "",
-            "الجمهور: مسؤول الخادم، مشغل غير تقني",
+            "الجمهور: مسؤولو النظام، مشغلو تكنولوجيا المعلومات، مهندسو الخوادم",
             "المدة: حوالي ٣٠ دقيقة (١٢ دقيقة إذا كان Docker مثبتاً)",
-            "المتطلبات: صلاحية root عبر SSH، بريد إلكتروني بعد الشراء",
+            "المتطلبات: صلاحية root عبر SSH، بيانات WHM، بريد الترخيص",
         ],
         "date_label": "تاريخ التقرير",
         "support_line": "الدعم: destek@gokyuzuhosting.com",
