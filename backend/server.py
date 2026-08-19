@@ -8779,6 +8779,30 @@ echo ""
 # doğruladı. Bu endpoint aynı script'i + systemd timer (her 10 saniye)
 # kurar. Eski daemon/cron temizlenir.
 # ============================================================================
+
+# v43.99.5 — Modül Tanıtım PDF'i (public download)
+@api.get("/tools/module-report.pdf")
+async def module_report_pdf():
+    """Detaylı modül tanıtım PDF'ini indir."""
+    from fastapi.responses import FileResponse
+    import os
+    pdf_path = "/app/GokyuzuWebSpam-Modul-Tanitim-v43.99.pdf"
+    if not os.path.exists(pdf_path):
+        # Fallback: canlı üret
+        try:
+            import subprocess
+            subprocess.run(["python3", "/app/scripts/generate_module_report.py"],
+                          check=True, timeout=60)
+        except Exception:
+            raise HTTPException(status_code=500, detail="PDF henüz hazırlanmadı")
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename="GokyuzuWebSpam-Modul-Tanitim-v43.99.pdf",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
 @api.get("/tools/install-simple-push.sh")
 async def install_simple_push_oneliner(license_key: str = "", panel_url: str = "",
                                          interval: int = 10):
