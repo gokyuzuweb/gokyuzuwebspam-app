@@ -36,14 +36,21 @@ function _getSessionKey() {
 }
 
 export default function IdleAutoLock() {
+  // v43.99.3 — Lisans yoksa kilit hiç devreye girmez.
+  // Sebep: LicenseGate zaten anonim ziyaretçileri lisans giriş ekranına yönlendiriyor.
+  // Kilit ekranı yalnızca aktif oturumu olan (lisans girmiş) kullanıcılar için mantıklı.
+  const hasLicense = typeof window !== "undefined"
+    && !!(localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license"));
+
   const cfg = useQuery({
     queryKey: ["idle-lock-me"],
     queryFn: () => api.idleLockMeGet(),
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
+    enabled: hasLicense,
   });
-  const enabled = cfg.data?.enabled ?? true;
+  const enabled = hasLicense && (cfg.data?.enabled ?? true);
   const minutes = Math.max(1, Math.min(1440, cfg.data?.minutes ?? 15));
   const warnSec = Math.max(0, Math.min(300, cfg.data?.warn_seconds ?? 30));
   const hasPin = Boolean(cfg.data?.has_pin);
@@ -57,8 +64,17 @@ export default function IdleAutoLock() {
 
   const [now, setNow] = useState(Date.now());
   // Persist: sayfa yenilendiğinde LS'de kilit varsa hemen locked başla
+  // v43.99.3 — Lisans yoksa kilit state'i temizle (yeni ziyaretçi kilit görmesin)
   const [locked, setLocked] = useState(() => {
     if (typeof window === "undefined") return false;
+    if (!hasLicense) {
+      try {
+        localStorage.removeItem(LS_LOCKED_AT);
+        localStorage.removeItem(LS_LOCKED_OWNER);
+        localStorage.removeItem(LS_LOCKED_IP);
+      } catch (_) {}
+      return false;
+    }
     const at = localStorage.getItem(LS_LOCKED_AT);
     return !!at;
   });
