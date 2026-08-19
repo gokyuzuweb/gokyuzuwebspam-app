@@ -4106,42 +4106,27 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
     if license_key:
         if MASTER_LICENSE_KEY and license_key == MASTER_LICENSE_KEY:
             key_match = True
-            # v43.87 — Session Kill: bu IP daha önce foreign-IP alarmında blockleistelendiyse hemen 403
-            killed = await db.killed_master_ips.find_one({"ip": client_ip, "active": True})
-            if killed:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Bu IP ({client_ip}) master session güvenliği nedeniyle blocklistedendi. Kaldırmak için: Ayarlar → Master → Blocked IP's."
-                )
-            # v43.86 — Master IP alarm: Master key farklı IP'den geliyorsa Slack alert
-            # v43.97 — Alarm da opt-in: default KAPALI. Master keyi olan istediği IP'den
-            # girer (WHM iframe, mobil, VPN, farklı ofis). Sertleştirme isteyen kullanıcı
-            # `foreign_ip_strict_mode.enabled=True` yapar; hem alarm hem auto-kill aktif olur.
-            # v43.98 — WHM iframe (:2087 Referer/Origin) her zaman trust — alarm hiç düşmez
+            # v43.99.2 — MİMARİ DEĞİŞİKLİK: Master key varsa IP'ye bakılmaz.
+            # Sebep: WHM iframe API çağrıları browser'dan gider (sunucudan değil),
+            # yani IP her zaman "yabancı" görünür. Dinamik IP, VPN, mobil kullanımı
+            # da IP kontrolünü işlevsiz yapıyor. WHM'e root olarak girebilmek zaten
+            # yeterli kanıttır. IP kontrolü/kill mekanizması KALDIRILDI.
+            # Yalnızca "notify-only" (Slack bildirimi) kalır; oturum HİÇBİR ZAMAN kesilmez.
             if MASTER_IP and MASTER_IP not in xff_chain and not is_whm_iframe:
-                # Trusted IP whitelist: kesinlikle skip
+                # Trusted IP whitelist'te ise bildirim de gitmez
                 try:
                     trusted = await db.trusted_ips.find_one({"ip": client_ip, "active": True})
                 except Exception:
                     trusted = None
-                # Alarm/kill'in aktif olması için EXPLICIT opt-in gerekli
+                # Opt-in bildirim ayarı — default kapalı, kullanıcı isterse açar
                 try:
-                    strict_prot = await db.settings.find_one({"_key": "foreign_ip_strict_mode"},
-                                                              {"_id": 0}) or {}
-                except Exception:
-                    strict_prot = {}
-                # Eski setting'i geriye dönük destekle (foreign_ip_auto_kill.enabled)
-                if not strict_prot.get("enabled"):
-                    try:
-                        legacy = await db.settings.find_one({"_key": "foreign_ip_auto_kill"},
+                    notify_cfg = await db.settings.find_one({"_key": "foreign_ip_notify"},
                                                              {"_id": 0}) or {}
-                        if legacy.get("enabled"):
-                            strict_prot = {"enabled": True}
-                    except Exception:
-                        pass
-                if not trusted and strict_prot.get("enabled") is True:
+                except Exception:
+                    notify_cfg = {}
+                if not trusted and notify_cfg.get("enabled") is True:
                     try:
-                        # Rate-limit: aynı IP için 15dk'da bir alert
+                        # Rate-limit: aynı IP için 15dk'da bir alert (spam engelleme)
                         recent = await db.master_alerts.find_one({
                             "type": "master_key_from_foreign_ip",
                             "details.client_ip": client_ip,
@@ -4151,8 +4136,8 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                             alert = {
                                 "id": str(uuid.uuid4()),
                                 "type": "master_key_from_foreign_ip",
-                                "severity": "critical",
-                                "message": f"🚨 Master key farklı IP'den kullanıldı: {client_ip} (beklenen: {MASTER_IP})",
+                                "severity": "info",  # v43.99.2 — critical değil, sadece bilgi
+                                "message": f"ℹ️ Master oturum farklı IP'den açıldı: {client_ip}",
                                 "details": {
                                     "client_ip": client_ip, "expected_ip": MASTER_IP,
                                     "path": request.url.path,
@@ -4163,32 +4148,13 @@ async def _is_master(request: Request, license_key: Optional[str]) -> dict:
                                 "created_at": _iso(),
                             }
                             await db.master_alerts.insert_one(alert)
-                            await db.audit_logs.insert_one({
-                                "id": str(uuid.uuid4()),
-                                "action": "master_key_foreign_ip",
-                                "actor_ip": client_ip,
-                                "details": alert["details"],
-                                "at": _iso(), "severity": "critical",
-                            })
-                            # Session Kill: bu IP'yi block listeye ekle (strict mode aktifken)
-                            await db.killed_master_ips.update_one(
-                                {"ip": client_ip},
-                                {"$set": {
-                                    "ip": client_ip,
-                                    "active": True,
-                                    "killed_at": _iso(),
-                                    "reason": "foreign_ip_strict_mode",
-                                    "user_agent": request.headers.get("user-agent", "")[:120],
-                                }},
-                                upsert=True,
-                            )
-                            # Slack async fire (reuse license alert pipeline)
+                            # Slack notify (yalnızca opt-in ile)
                             try:
                                 asyncio.create_task(_fire_license_alert({
                                     "hostname": "master-panel",
                                     "ip": client_ip,
                                     "license_key": license_key,
-                                    "reason": "master_key_foreign_ip",
+                                    "reason": "master_key_foreign_ip_notify",
                                     "version": alert["message"],
                                 }))
                             except Exception:
