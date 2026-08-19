@@ -756,6 +756,263 @@ const MODULES = [
     ],
     testid: "docs-module-settings",
   },
+
+  // ═══════════════════════════════════════════════════════════════
+  // v43.99.15 — SON EKLENENLER (public + wizard + tab-içi modüller)
+  // ═══════════════════════════════════════════════════════════════
+
+  {
+    key: "pricing", cat: "Bayi", label: "Fiyatlandırma", Icon: Sparkles, tone: "amber",
+    what: "3 plan (Starter · PRO · Enterprise) — özellik karşılaştırması + fiyat + 'Şimdi Al' butonları. Public görünür (satın alma öncesi) ve panel içinde yükseltme için de kullanılır.",
+    features: [
+      "3 sütunlu karşılaştırma: özellik satırı × plan sütunu (35+ özellik)",
+      "Aylık / yıllık toggle (yıllık %20 indirim)",
+      "'En Popüler' rozetli plan (PRO)",
+      "Şimdi al butonu → Havale / PayTR / Stripe seçim modalı",
+      "Kurumsal için 'Bize Ulaşın' CTA (özel fiyat)",
+    ],
+    how: [
+      "Public URL: /pricing veya panel içinde 'Aboneliğim' sekmesinden",
+      "Plan seç → 'Şimdi Al' → ödeme sağlayıcı seç → kayıt sonrası 5 dk'da lisans e-postası",
+    ],
+    testid: "docs-module-pricing",
+  },
+  {
+    key: "install", cat: "Bayi", label: "Kurulum Wizard", Icon: Terminal, tone: "cyan",
+    what: "Sunucumu Bağla wizard'ı: 4 adım — Domain gir → Lisans key doğrula → cPanel API token → Test bağlantı & aktive. Bayı ilk kez plugin kurarken kullanır.",
+    features: [
+      "4 adımlı progress bar + geri/ileri navigasyon",
+      "Otomatik plugin.json indirme linki",
+      "Docker Compose komutlarını kopyalanabilir kod bloklarında",
+      "Canlı bağlantı testi: adım 4'te sunucudan ping bekler",
+      "Video destek: Kurulum Rehberi sayfasına linkler",
+    ],
+    how: [
+      "Panel → Kurulum Wizard → 4 adımı sırayla tamamla → Testi geçince plugin aktif",
+      "Detaylı komutlar için 'Kurulum Rehberi' sayfasına yönlendirir",
+    ],
+    testid: "docs-module-install",
+  },
+  {
+    key: "shop", cat: "Bayi", label: "Mağaza (Shop)", Icon: PackageOpen, tone: "rose",
+    what: "Marketplace + Fiyatlandırma birleştirilmiş satın alma sayfası. Plan yükseltme, add-on satın alma, kredi bakiyesi, indirim kuponu.",
+    features: [
+      "3 sekme: Planlar · Eklentiler · Krediler",
+      "Sepete ekle + hızlı ödeme (PayTR / Stripe / Havale)",
+      "Sipariş geçmişi + fatura PDF indir",
+      "İndirim kuponu alanı ('LAUNCH20' → %20 indirim)",
+      "Otomatik yenileme toggle'ı",
+    ],
+    how: [
+      "Sepete Ekle → Sipariş Tamamla → Ödeme → Anında panel özellikleri açılır",
+      "Sipariş geçmişi satırında ⋮ → Fatura İndir",
+    ],
+    testid: "docs-module-shop",
+  },
+  {
+    key: "reseller", cat: "Bayi", label: "Bayi Programı", Icon: Users, tone: "violet",
+    what: "Reseller olmak isteyenler için başvuru sayfası — %30 komisyon, teknik destek, whitelabel branding. Onay sonrası bayı hesabı otomatik oluşturulur.",
+    features: [
+      "3 kademeli komisyon: Bronze (%20) · Silver (%25) · Gold (%30)",
+      "Başvuru formu: firma bilgi + IP block + tahmini bayı sayısı",
+      "Onay süresi: 24-48 saat",
+      "Onboarding: kabul edildikten sonra kişisel Slack kanalı + tekno-destek",
+    ],
+    how: [
+      "Bayi Programı → formu doldur → 'Başvur' → 24-48 saat içinde e-posta cevabı",
+      "Onaylandıysanız Bayi paneli otomatik oluşur",
+    ],
+    testid: "docs-module-reseller",
+  },
+  {
+    key: "havale", cat: "Bayi", label: "Havale ile Ödeme", Icon: Key, tone: "emerald",
+    what: "Banka havale/EFT ile ödeme sayfası — sipariş bilgi + IBAN + açıklama + dekont yükleme. Master onaylayınca lisans aktif olur.",
+    features: [
+      "Otomatik IBAN gösterme (7 farklı banka)",
+      "Sipariş bazlı unique açıklama kodu (misprint riski yok)",
+      "Dekont yükleme: PNG/JPG/PDF drag-drop",
+      "Bekleyen ödeme durum takibi: kuyrukta / master onayında / onaylandı",
+      "Master onayından sonra 5 dk'da lisans e-postası",
+    ],
+    how: [
+      "Sepete ekle → 'Havale ile Öde' → IBAN'a öde → Sayfaya dön → 'Dekont Yükle' → Bekle",
+    ],
+    testid: "docs-module-havale",
+  },
+
+  // --- KRİTİK GÜVENLİK & YAPILANDIRMA (Settings alt-modülleri, tab olarak açılır) ---
+  {
+    key: "idle_auto_lock", cat: "Sistem", label: "Idle Auto-Lock (Kilit Ekranı)", Icon: Key, tone: "amber",
+    what: "Panelde N dakika inaktif kalınırsa PIN sorgusuyla otomatik kilitlenir. Master hesabı brute-force koruması + progressive delay + admin bildirim.",
+    features: [
+      "Konfigüre edilebilir süre: 1-60 dakika (varsayılan 15)",
+      "PIN: 4-8 rakam, PBKDF2-SHA256 200k iter hash'li",
+      "Brute force koruma: 3 hatalı denemeden sonra 5 dakika kilit + Master alarm",
+      "Kilit ekranında Master için 'Force Reset PIN' butonu (v43.99.9+)",
+      "WHM iframe'de bypass (v43.99.8+) — cPanel ekosisteminden zaten auth'lı",
+    ],
+    how: [
+      "Ayarlar → Kilit & PIN → Süreyi ayarla → PIN belirle → Kaydet",
+      "Panel N dk sonra otomatik kilitlenir; PIN gir veya lisans key ile aç",
+    ],
+    testid: "docs-module-idle-lock",
+  },
+  {
+    key: "pin_management", cat: "Sistem", label: "Kullanıcı PIN Yönetimi", Icon: Key, tone: "fuchsia",
+    what: "Master tüm bayilerin PIN durumunu tabloda görür, sıfırlar veya yeni PIN atar. PIN'ler PBKDF2 hash'li saklanır — plaintext görülemez.",
+    features: [
+      "Tablo görünüm: kullanıcı adı, plan, IP, PIN durumu (Aktif/Yok/Kilitli), son değişim",
+      "Arama + filtre: PIN'i olan/olmayan/kilitli filtreleri",
+      "AYARLA butonu: Master direkt yeni PIN belirler (onay akışı bypass)",
+      "SIFIRLA butonu: PIN'i kaldırır, bayı yeniden koyabilir",
+      "AÇ butonu: kilitlenmiş kullanıcının kilidini açar",
+    ],
+    how: [
+      "Ayarlar → Kilit & PIN → 'Kullanıcı PIN Yönetimi' kartı → satırda AYARLA/SIFIRLA/AÇ",
+      "Yeni PIN atadığınızda bayıya güvenli kanal (telefon) ile iletin",
+    ],
+    testid: "docs-module-pin-management",
+  },
+  {
+    key: "pin_history", cat: "Sistem", label: "PIN Değişiklik Geçmişi", Icon: BookOpen, tone: "cyan",
+    what: "Tüm PIN değişiklik taleplerinin denetim izi: kim, ne zaman, hangi IP, hangi karar. Talep sebebi + master notu + PIN uzunluğu + hash prefix.",
+    features: [
+      "Filtre: durum (Beklemede/Onaylandı/Reddedildi)",
+      "Talep sahibi enrich: isim + e-mail + plan + kayıtlı IP",
+      "Satıra tıkla → expanded detay: talep sebebi + master notu + talep ID",
+      "Güvenlik: PIN plaintext ASLA gösterilmez, sadece uzunluk (●●●●●●) + hash ilk 12 hane",
+      "Retention: kalıcı (audit gereği)",
+    ],
+    how: [
+      "Ayarlar → Kilit & PIN → 'PIN Değişiklik Geçmişi' kartı → filtre + expand satır",
+    ],
+    testid: "docs-module-pin-history",
+  },
+  {
+    key: "master_2fa", cat: "Sistem", label: "Master 2FA (İki Adım)", Icon: ShieldCheck, tone: "emerald",
+    what: "Master hesabı için TOTP tabanlı iki-adımlı doğrulama. Google Authenticator, Authy, 1Password uyumlu. Backup code'lar dahil.",
+    features: [
+      "QR kod ile hızlı kurulum (Authenticator app tarama)",
+      "10 backup code (2FA cihazı kaybolursa)",
+      "Kritik endpoint'lerde zorunlu (lisans delete, master rotate, webhook edit)",
+      "Session bazlı doğrulama cookie (30 dk süre)",
+      "Devre dışı bırakma: mevcut TOTP kodu ile onay gerekli",
+    ],
+    how: [
+      "Ayarlar → 2FA → 'Aktifleştir' → QR kodu Authenticator'a ekle → 6 haneli kodu gir → 10 backup code'u sakla",
+    ],
+    testid: "docs-module-master-2fa",
+  },
+  {
+    key: "trusted_ips", cat: "Sistem", label: "Güvenilir IP'ler", Icon: Server, tone: "indigo",
+    what: "Master hesabına erişebilecek IP whitelist'i. Foreign IP strict mode aktifse: whitelist dışı IP'ler otomatik reddedilir + Slack alarm.",
+    features: [
+      "Ekle/Kaldır: tekil IP veya CIDR (192.168.1.0/24)",
+      "Not alanı: 'ev', 'ofis', 'yedek VPN' gibi etiketler",
+      "Foreign IP strict mode toggle (varsayılan kapalı — WHM'den erişilebilirlik için)",
+      "Otomatik ekleme: WHM iframe'den ilk giriş IP'sini önerir",
+      "Audit: kim ne zaman IP ekledi/sildi",
+    ],
+    how: [
+      "Ayarlar → Advanced → Trusted IPs → 'Yeni IP Ekle' → CIDR veya IP + not → Kaydet",
+      "Strict mode'u sadece tüm IP'lerinizi eklediğinizden emin olduktan sonra açın",
+    ],
+    testid: "docs-module-trusted-ips",
+  },
+  {
+    key: "master_rotate", cat: "Sistem", label: "Master Key Rotate", Icon: Key, tone: "rose",
+    what: "Master anahtarını 2-adımlı güvenli rotate: yeni aday oluştur → env'de değiştir → complete. Eski anahtar revoke, yeni aktif. 2FA aktifse doğrulama zorunlu.",
+    features: [
+      "Adım 1: 'Yeni Aday Oluştur' — DB'ye kaydedilmez, sadece gösterilir",
+      "Adım 2: Env'de MASTER_LICENSE_KEY güncelle + docker restart",
+      "Adım 3: 'Complete' butonu → yeni key aktif, eski geçersiz",
+      "2FA zorunlu (v43.99.11+)",
+      "Audit trail: rotate zaman/IP/kim",
+    ],
+    how: [
+      "Ayarlar → Advanced → Master Rotate → Adım 1'de yeni key'i not al",
+      "SSH'a gir → .env'de değiştir → docker compose restart backend",
+      "Panelde Adım 2 → 'Complete' → yeni ile devam et",
+    ],
+    testid: "docs-module-master-rotate",
+  },
+  {
+    key: "backups", cat: "Sistem", label: "Otomatik Yedekleme", Icon: PackageOpen, tone: "sky",
+    what: "Haftalık otomatik MongoDB snapshot. Master gerektiğinde geri yükleyebilir. 13 kritik koleksiyon, 8 snapshot retention.",
+    features: [
+      "Scheduler: 24 saatte 1 uyanır, son snapshot 7 günden eskiyse alır",
+      "Manuel 'Şimdi Snapshot Al' butonu",
+      "Restore: dry-run + gerçek geri yükleme (2FA zorunlu)",
+      "İndir .json.gz olarak (yerelinize sakla)",
+      "Kritik koleksiyonlar: settings, licenses, PIN, webhooks, engines, rules, lists, payments…",
+    ],
+    how: [
+      "Panel → DB Bakım → Yedekleme sekmesi → 'Şimdi Snapshot Al'",
+      "Geri yükle: snapshot seç → dry_run=true ile önce plan gör → dry_run=false ile gerçek restore",
+    ],
+    testid: "docs-module-backups",
+  },
+  {
+    key: "ui_theme", cat: "Bayi", label: "UI Kişiselleştirme", Icon: Sparkles, tone: "fuchsia",
+    what: "Panel görünümünü kişiselleştirin — ana renk, aksan rengi, font boyutu, koyu/açık tema. Reseller Branding'in tema alt-modülü.",
+    features: [
+      "8 hazır tema (Indigo Night, Rose Dawn, Ocean, Forest…)",
+      "Özel HEX renk seçici (primary + accent)",
+      "Font ölçek: compact / normal / large",
+      "Yuvarlak vs. sharp corners toggle",
+      "Preview → Yayınla akışı",
+    ],
+    how: [
+      "Ayarlar → Kişiselleştirme → tema kartı seç → 'Preview' → 'Yayınla'",
+    ],
+    testid: "docs-module-ui-theme",
+  },
+  {
+    key: "onboarding_wizard", cat: "Sistem", label: "Onboarding Wizard", Icon: Rocket, tone: "emerald",
+    what: "İlk kurulum sonrası çıkan hoşgeldin sihirbazı — 5 adımda temel yapılandırma: SMTP, whitelist, bildirim kanalları, test mail.",
+    features: [
+      "5 adım: SMTP → Whitelist → Bildirim → Test → Tamamla",
+      "Her adım skippable ama önerilir",
+      "'Sonra tamamla' → panel'de badge kalır",
+      "Tekrar açma: sağ üst menü → 'Onboarding Yeniden Başlat'",
+    ],
+    how: [
+      "İlk giriş → wizard otomatik açılır",
+      "Skip veya tamamla — sonuçlar Ayarlar'da güncellenir",
+    ],
+    testid: "docs-module-onboarding",
+  },
+  {
+    key: "webhooks", cat: "Bildirim", label: "Webhook Entegrasyonu", Icon: LinkIcon, tone: "cyan",
+    what: "Kritik olaylar (yeni spam yakalama, motor hatası, PIN girişimi, blacklist ekleme) için HTTP webhook fire. Slack, Discord, Telegram, generic HTTP.",
+    features: [
+      "5 sağlayıcı preset: Slack, Discord, Telegram, Teams, Generic",
+      "Event filter: sadece kritik / sadece motor / sadece PIN olaylarını gönder",
+      "Retry: 3 deneme + exponential backoff",
+      "Test butonu: manuel örnek payload gönder",
+      "Silence window: aynı olay 5 dk içinde 2. kez fire etmez",
+      "2FA zorunlu (webhook URL değişikliği)",
+    ],
+    how: [
+      "Ayarlar → Bildirim → Webhook Ekle → sağlayıcı seç → URL yapıştır → filter → 'Test' → 'Kaydet'",
+    ],
+    testid: "docs-module-webhooks",
+  },
+  {
+    key: "bayi_ip_enforce", cat: "Sistem", label: "Bayi IP Katı Mod", Icon: ShieldCheck, tone: "amber",
+    what: "Bayı hesaplarına sadece kayıtlı lisans IP'lerinden erişilebilir. Farklı IP'den denendiğinde 403 + Slack alarm + audit log.",
+    features: [
+      "Toggle: aktif/pasif",
+      "Whitelist: lisansın kayıtlı IP'lerine ek IP tanımlama",
+      "IPv6 desteği",
+      "'Test dene' butonu — sizin şu anki IP'niz ile test",
+    ],
+    how: [
+      "Ayarlar → Advanced → Bayi IP Katı Mod → Aktifleştir",
+      "Bayı farklı IP'den login denerse otomatik reddedilir + master'a bildirim",
+    ],
+    testid: "docs-module-bayi-ip",
+  },
 ];
 
 
@@ -810,6 +1067,23 @@ const MODULE_ROUTES = {
   maintenance: "/panel/maintenance",
   logs: "/panel/logs",
   settings: "/panel/settings",
+  // v43.99.15 — Yeni eklenenler
+  pricing: "/panel/pricing",
+  install: "/panel/install",
+  shop: "/shop",
+  reseller: "/reseller",
+  havale: "/payment/havale",
+  idle_auto_lock: "/panel/settings?tab=lock",
+  pin_management: "/panel/settings?tab=lock",
+  pin_history: "/panel/settings?tab=lock",
+  master_2fa: "/panel/settings?tab=security",
+  trusted_ips: "/panel/settings?tab=advanced",
+  master_rotate: "/panel/settings?tab=advanced",
+  backups: "/panel/maintenance",
+  ui_theme: "/panel/settings?tab=personalization",
+  onboarding_wizard: "/panel/settings",  // hoşgeldin — tekrar başlatma menüsünden
+  webhooks: "/panel/settings?tab=integration",
+  bayi_ip_enforce: "/panel/settings?tab=advanced",
 };
 
 // v43.99.14 — Modül bazlı Sık Sorulan Sorular (FAQ) haritası

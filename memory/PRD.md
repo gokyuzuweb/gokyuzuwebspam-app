@@ -14,6 +14,25 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 19, 2026 (Session 21, v43.99.15) — Modül Docs Tam Kaplama (46 → 62)
+
+**KULLANICI TALEBİ:** "Modül Dokümantasyonu TÜM MODÜLLERİ EKLEMEMİŞSİN EKLE."
+
+**IMPLEMENTATION** (`pages/Docs.js`):
+
+**16 yeni modül eklendi (46 → 62)**:
+- **Bayi kategorisinde (6+5=11)**: `pricing` (Fiyatlandırma) · `install` (Kurulum Wizard) · `shop` (Mağaza) · `reseller` (Bayi Programı) · `havale` (Havale ile Ödeme) · `ui_theme` (UI Kişiselleştirme)
+- **Sistem kategorisinde (4+9=13)**: `idle_auto_lock` (Kilit Ekranı) · `pin_management` (Kullanıcı PIN Yönetimi) · `pin_history` (PIN Değişiklik Geçmişi) · `master_2fa` (Master 2FA) · `trusted_ips` (Güvenilir IP'ler) · `master_rotate` (Master Key Rotate) · `backups` (Otomatik Yedekleme) · `onboarding_wizard` (Onboarding) · `bayi_ip_enforce` (Bayi IP Katı Mod)
+- **Bildirim kategorisinde (1+1=2)**: `webhooks` (Webhook Entegrasyonu)
+
+Her modül için 4-6 features + adım-adım "how" + testid + MODULE_ROUTES deeplink haritası genişletildi.
+
+**Test:** Docs sayfası → 62 kart render edildi ✓ · Kategoriler: Ana 1 · Motor 4 · Güvenlik 6 · Karantina 1 · İşlem 2 · AI 1 · Uyarı 1 · Rapor 2 · Bildirim 2 · Sağlık 3 · Kullanıcı 3 · **Master 12** · **Bayi 11** · **Sistem 13** ✓ · Fuzzy search "pin" → 59 result ✓
+
+**VERSION:** v43.99.14 → v43.99.15
+
+
+
 ## Feb 19, 2026 (Session 21, v43.99.14) — Docs Detail Drawer Tabs + PDF Genişletme
 
 **IMPLEMENTATION:**
