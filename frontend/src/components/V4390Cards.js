@@ -667,3 +667,319 @@ export function PinApprovalMasterQueue() {
     </Card>
   );
 }
+
+
+// v43.99.10 — Master için: Aktif Kullanıcı/Bayi PIN Yönetim Paneli
+// PIN'ler PBKDF2-SHA256 ile hash'lenmiş şekilde saklanır — hiçbir zaman plaintext döndürülemez.
+// Master burada sadece PIN durumunu görür, sıfırlar veya yeni PIN belirler.
+export function AdminUserPinManager() {
+  const qc = useQueryClient();
+  const [filter, setFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all"); // all | with_pin | no_pin | locked
+  const [selected, setSelected] = useState(null);   // owner
+  const [modalMode, setModalMode] = useState(null); // "reset" | "set"
+  const [newPin, setNewPin] = useState("");
+  const [note, setNote] = useState("");
+
+  const q = useQuery({
+    queryKey: ["admin-user-pins"],
+    queryFn: () => api.adminUserPinsList(),
+    refetchInterval: 30_000,
+  });
+
+  const resetMut = useMutation({
+    mutationFn: ({ owner, note }) => api.adminUserPinReset(owner, note),
+    onSuccess: (_d, v) => {
+      toast.success(`✓ ${v.owner.slice(0, 20)}… PIN'i sıfırlandı`);
+      qc.invalidateQueries({ queryKey: ["admin-user-pins"] });
+      closeModal();
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Sıfırlanamadı"),
+  });
+
+  const setMut = useMutation({
+    mutationFn: ({ owner, new_pin, note }) => api.adminUserPinSet(owner, new_pin, note),
+    onSuccess: (_d, v) => {
+      toast.success(`✓ ${v.owner.slice(0, 20)}… yeni PIN atandı — bayiye kanal dışı iletin`);
+      qc.invalidateQueries({ queryKey: ["admin-user-pins"] });
+      closeModal();
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Atanamadı"),
+  });
+
+  const unlockMut = useMutation({
+    mutationFn: (owner) => api.adminUserPinUnlock(owner),
+    onSuccess: () => {
+      toast.success("✓ Kullanıcı kilidi açıldı");
+      qc.invalidateQueries({ queryKey: ["admin-user-pins"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Açılamadı"),
+  });
+
+  const closeModal = () => {
+    setSelected(null); setModalMode(null); setNewPin(""); setNote("");
+  };
+
+  const items = (q.data?.items || []).filter(i => {
+    if (statusFilter === "with_pin" && !i.has_pin) return false;
+    if (statusFilter === "no_pin" && i.has_pin) return false;
+    if (statusFilter === "locked" && !i.is_locked) return false;
+    if (!filter) return true;
+    const s = filter.toLowerCase();
+    return (
+      (i.owner || "").toLowerCase().includes(s) ||
+      (i.customer_name || "").toLowerCase().includes(s) ||
+      (i.customer_email || "").toLowerCase().includes(s)
+    );
+  });
+
+  const stats = {
+    total: q.data?.items?.length || 0,
+    with_pin: (q.data?.items || []).filter(i => i.has_pin).length,
+    locked: (q.data?.items || []).filter(i => i.is_locked).length,
+  };
+
+  return (
+    <Card data-testid="admin-user-pin-manager">
+      <CardHeader
+        title={<span className="flex items-center gap-2"><KeyRound className="w-4 h-4 text-fuchsia-400" /> Kullanıcı PIN Yönetimi</span>}
+        subtitle={<span>Aktif bayi/kullanıcılarınızın PIN durumunu görün, sıfırlayın veya yeni PIN atayın.
+          <span className="ml-1 text-amber-400/80">PIN'ler PBKDF2-SHA256 ile hash'li saklanır — plaintext görülemez.</span>
+        </span>}
+        right={
+          <div className="flex items-center gap-1.5">
+            <Badge tone="slate" data-testid="pin-stats-total">Toplam: {stats.total}</Badge>
+            <Badge tone="emerald" data-testid="pin-stats-with">PIN: {stats.with_pin}</Badge>
+            {stats.locked > 0 && <Badge tone="rose" data-testid="pin-stats-locked">Kilit: {stats.locked}</Badge>}
+          </div>
+        }
+      />
+      <CardBody className="space-y-3">
+        {/* Filtre / Arama */}
+        <div className="flex flex-wrap gap-2 items-center">
+          <input
+            data-testid="pin-mgr-filter"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="İsim, e-posta veya lisans anahtarı ara..."
+            className="flex-1 min-w-[200px] bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-xs focus:border-fuchsia-500/40 focus:outline-none"
+          />
+          <select
+            data-testid="pin-mgr-status-filter"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs focus:border-fuchsia-500/40 focus:outline-none"
+          >
+            <option value="all">Tümü</option>
+            <option value="with_pin">PIN'i olanlar</option>
+            <option value="no_pin">PIN'i olmayanlar</option>
+            <option value="locked">Kilitlenmiş</option>
+          </select>
+        </div>
+
+        {q.isLoading && <div className="text-xs text-slate-500 py-6 text-center italic">Yükleniyor...</div>}
+        {!q.isLoading && items.length === 0 && (
+          <div className="text-xs text-slate-500 py-6 text-center italic">Kayıt yok.</div>
+        )}
+
+        {/* Kullanıcı Listesi */}
+        {items.length > 0 && (
+          <div className="border border-slate-800 rounded-md overflow-hidden max-h-[420px] overflow-y-auto">
+            <table className="w-full text-[12px]">
+              <thead className="bg-slate-900/60 border-b border-slate-800 sticky top-0">
+                <tr>
+                  <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Kullanıcı / Bayi</th>
+                  <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Plan / IP</th>
+                  <th className="text-center px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Durum</th>
+                  <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Son Değişim</th>
+                  <th className="text-right px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Eylem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((i) => (
+                  <tr key={i.owner} data-testid={`pin-user-row-${i.owner}`} className="border-b border-slate-800/60 hover:bg-slate-900/40">
+                    <td className="px-3 py-2">
+                      <div className="text-slate-200 font-semibold truncate max-w-[220px] flex items-center gap-1.5">
+                        {i.is_master_row && <Star className="w-3 h-3 text-amber-400 shrink-0" />}
+                        {i.customer_name || (i.owner === "__master__" ? "MASTER" : i.owner.slice(0, 24))}
+                      </div>
+                      <div className="text-[10px] mono text-slate-500 truncate max-w-[220px]">
+                        {i.customer_email || i.owner.slice(0, 30)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="text-[11px] text-slate-300">
+                        {i.plan?.toUpperCase() || "-"}
+                      </div>
+                      <div className="text-[10px] mono text-slate-500 truncate max-w-[140px]">
+                        {(i.ip_addresses || []).slice(0, 2).join(", ") || "-"}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {i.has_pin ? (
+                        i.is_locked ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 text-[10px] font-bold border border-rose-500/40">
+                            <ShieldAlert className="w-3 h-3" /> KİLİTLİ
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[10px] font-bold border border-emerald-500/30">
+                            <ShieldCheck className="w-3 h-3" /> PIN Aktif
+                          </span>
+                        )
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/60 text-slate-400 text-[10px] font-semibold border border-slate-700">
+                          PIN Yok
+                        </span>
+                      )}
+                      {i.failed_attempts > 0 && (
+                        <div className="text-[9px] text-amber-400 mt-0.5">
+                          {i.failed_attempts} hatalı deneme
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-[10px] mono text-slate-500 whitespace-nowrap">
+                      {i.updated_at ? i.updated_at.slice(0, 16).replace("T", " ") : "-"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex justify-end gap-1">
+                        {i.is_locked && (
+                          <button
+                            data-testid={`pin-unlock-${i.owner}`}
+                            title="Kilidi Aç"
+                            onClick={() => {
+                              if (window.confirm(`${i.customer_name || i.owner.slice(0,20)} kullanıcısının kilidini açmak istediğinize emin misiniz?`))
+                                unlockMut.mutate(i.owner);
+                            }}
+                            className="px-2 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 text-[10px] font-bold"
+                          >
+                            AÇ
+                          </button>
+                        )}
+                        <button
+                          data-testid={`pin-set-${i.owner}`}
+                          title="Yeni PIN Belirle"
+                          onClick={() => {
+                            setSelected(i);
+                            setModalMode("set");
+                          }}
+                          className="px-2 py-1 rounded bg-indigo-500/15 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/25 text-[10px] font-bold inline-flex items-center gap-1"
+                        >
+                          <KeyRound className="w-2.5 h-2.5" /> AYARLA
+                        </button>
+                        {i.has_pin && (
+                          <button
+                            data-testid={`pin-reset-${i.owner}`}
+                            title="PIN'i Sıfırla"
+                            onClick={() => {
+                              setSelected(i);
+                              setModalMode("reset");
+                            }}
+                            className="px-2 py-1 rounded bg-rose-500/15 border border-rose-500/40 text-rose-300 hover:bg-rose-500/25 text-[10px] font-bold inline-flex items-center gap-1"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" /> SIFIRLA
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardBody>
+
+      {/* Modal: Reset veya Set */}
+      {modalMode && selected && (
+        <div
+          data-testid="pin-mgr-modal"
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={closeModal}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-lg p-5 max-w-md w-full space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">
+                {modalMode === "reset" ? "PIN SIFIRLAMA" : "YENİ PIN ATA"}
+              </div>
+              <div className="text-sm font-bold text-slate-100">
+                {selected.customer_name || selected.owner.slice(0, 24)}
+              </div>
+              <div className="text-[11px] mono text-slate-500 truncate">
+                {selected.owner}
+              </div>
+            </div>
+
+            {modalMode === "set" && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Yeni PIN (4-8 rakam)
+                </label>
+                <input
+                  data-testid="pin-mgr-new-pin"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={8}
+                  value={newPin}
+                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+                  className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm mono focus:border-fuchsia-500/50 focus:outline-none"
+                  placeholder="123456"
+                />
+                <div className="text-[10px] text-amber-400 mt-1">
+                  PIN'i bayiye/kullanıcıya güvenli bir kanal üzerinden (telefon, güvenli chat) iletin.
+                  Sistem <b>plaintext</b> olarak kaydetmez.
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Not (kullanıcıya iletilir, opsiyonel)
+              </label>
+              <input
+                data-testid="pin-mgr-note"
+                value={note}
+                onChange={(e) => setNote(e.target.value.slice(0, 200))}
+                placeholder={modalMode === "reset" ? "Örn: Bilgi güncelleme talebiniz alındı" : "Örn: Ofis PIN'iniz yenilendi"}
+                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs focus:border-fuchsia-500/50 focus:outline-none"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                data-testid="pin-mgr-cancel"
+                onClick={closeModal}
+                className="px-4 py-2 rounded border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-sm font-semibold"
+              >
+                İptal
+              </button>
+              {modalMode === "reset" ? (
+                <button
+                  data-testid="pin-mgr-confirm-reset"
+                  onClick={() => resetMut.mutate({ owner: selected.owner, note })}
+                  disabled={resetMut.isPending}
+                  className="px-4 py-2 rounded bg-rose-500/15 border border-rose-500/40 text-rose-200 hover:bg-rose-500/25 text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {resetMut.isPending ? "Sıfırlanıyor..." : "PIN'i Sıfırla"}
+                </button>
+              ) : (
+                <button
+                  data-testid="pin-mgr-confirm-set"
+                  onClick={() => setMut.mutate({ owner: selected.owner, new_pin: newPin, note })}
+                  disabled={setMut.isPending || newPin.length < 4}
+                  className="px-4 py-2 rounded bg-indigo-500/15 border border-indigo-500/40 text-indigo-200 hover:bg-indigo-500/25 text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  {setMut.isPending ? "Uygulanıyor..." : "PIN'i Uygula"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import StripeConfigCard from "@/components/StripeConfigCard";
 import SlashAliasesConfigCard from "@/components/SlashAliasesConfigCard";
-import { UIThemeCard, BayiIPEnforceCard, PinChangeRequestCard, PinApprovalMasterQueue, TrustedIPsCard } from "@/components/V4390Cards";
+import { UIThemeCard, BayiIPEnforceCard, PinChangeRequestCard, PinApprovalMasterQueue, TrustedIPsCard, AdminUserPinManager } from "@/components/V4390Cards";
 import { Master2FACard } from "@/components/V4399Cards";
 import { api } from "@/lib/api";
 import { useI18n, useT } from "@/i18n";
@@ -929,6 +929,7 @@ function SettingsTabs({ state, patch, langs, uiLang, setUiLang, save, t }) {
             <IdleLockPersonalCard />
             <PinChangeRequestCard />
             <PinApprovalMasterQueue />
+            <AdminUserPinManager />
           </div>
           <div className="col-span-12 lg:col-span-4">
             <Card>

@@ -260,6 +260,15 @@ export const api = {
   pinApprovalPending: () => client.get("/pin-approvals/pending").then(r => r.data),
   pinApprovalDecide: (id, decision, note) => client.post(`/pin-approvals/${id}/decide`, { decision, note }).then(r => r.data),
 
+  // v43.99.10 — Master PIN Yönetimi (aktif kullanıcı/bayı PIN durumu)
+  adminUserPinsList: () => client.get("/pin-approvals/admin/user-pins").then(r => r.data),
+  adminUserPinReset: (owner, note = "") =>
+    client.post(`/pin-approvals/admin/user-pins/${encodeURIComponent(owner)}/reset`, { note }).then(r => r.data),
+  adminUserPinSet: (owner, new_pin, note = "") =>
+    client.post(`/pin-approvals/admin/user-pins/${encodeURIComponent(owner)}/set`, { new_pin, note }).then(r => r.data),
+  adminUserPinUnlock: (owner) =>
+    client.post(`/pin-approvals/admin/user-pins/${encodeURIComponent(owner)}/unlock`).then(r => r.data),
+
   scanAI: (payload) => llmClient.post("/scan/ai", payload).then(r => r.data),
 
   // Version

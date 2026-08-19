@@ -26,8 +26,9 @@ def _iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _hash_pin(pin: str, salt: bytes) -> str:
-    return hashlib.pbkdf2_hmac("sha256", pin.encode(), salt, 200_000).hex()
+def _hash_pin(pin: str, salt: str) -> str:
+    """v43.99.10 — server.py::_pin_hash ile birebir aynı: salt UTF-8 encoded hex string."""
+    return hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt.encode("utf-8"), 200_000).hex()
 
 
 def _client_ip(request: Request) -> str:
@@ -70,12 +71,12 @@ async def request_pin_change(payload: PinChangeRequestIn, request: Request):
     if existing:
         raise HTTPException(409, "Zaten bir talebiniz onay bekliyor")
 
-    salt = secrets.token_bytes(16)
+    salt = secrets.token_hex(16)   # v43.99.10 — hex string (server.py ile uyumlu)
     doc = {
         "id": str(uuid.uuid4()),
         "bayi_license_key": key,
         "new_pin_hash": _hash_pin(payload.new_pin, salt),
-        "new_pin_salt": salt.hex(),
+        "new_pin_salt": salt,
         "reason": (payload.reason or "").strip()[:200],
         "status": "pending",
         "requested_at": _iso(),
@@ -163,18 +164,19 @@ async def decide_request(req_id: str, payload: PinDecisionIn, request: Request):
     }
 
     if new_status == "approved":
-        # PIN'i gerçekten uygula: idle_lock_settings collection'a yaz
+        # v43.99.10 — PIN'i gerçekten uygula: idle_lock_user_configs koleksiyonu, server.py ile aynı field'lar
         try:
-            await db.idle_lock_user_settings.update_one(
+            await db.idle_lock_user_configs.update_one(
                 {"owner": doc["bayi_license_key"]},
                 {"$set": {
                     "owner": doc["bayi_license_key"],
                     "pin_hash": doc["new_pin_hash"],
-                    "pin_salt": doc["new_pin_salt"],
-                    "pin_updated_at": _iso(),
-                    "pin_failures": 0,
+                    "salt": doc["new_pin_salt"],
+                    "updated_at": _iso(),
+                    "updated_by_ip": _client_ip(request),
+                    "failed_attempts": 0,
                     "locked_until": None,
-                }},
+                }, "$setOnInsert": {"created_at": _iso()}},
                 upsert=True,
             )
         except Exception as e:
@@ -213,3 +215,251 @@ async def decide_request(req_id: str, payload: PinDecisionIn, request: Request):
         pass
 
     return {"ok": True, "status": new_status, "request_id": req_id}
+
+
+
+# ─────────────────────────────────────────────────────────────
+# v43.99.10 — MASTER ADMIN PIN YÖNETİMİ
+# Master, aktif tüm kullanıcı/bayilerin PIN durumlarını görebilir,
+# gerektiğinde PIN sıfırlayabilir veya yeni PIN atayabilir.
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/admin/user-pins")
+async def admin_list_user_pins(request: Request):
+    """Master: tüm bayilerin/kullanıcıların PIN durumunu listeler.
+    Sadece meta bilgiler döner (pin_hash/salt asla plaintext olarak dönmez).
+    """
+    if not _is_master(request):
+        raise HTTPException(403, "Sadece master yetkilendirilmiştir")
+
+    # Tüm PIN kayıtlarını topla
+    rows = await db.idle_lock_user_configs.find(
+        {}, {"_id": 0, "pin_hash": 0, "salt": 0}
+    ).sort("updated_at", -1).limit(500).to_list(500)
+
+    # Bayi ismini/eposta bilgisini enrich et
+    for r in rows:
+        owner = r.get("owner", "")
+        # __master__ sentinel bilgi olarak gösterilsin
+        if owner == "__master__":
+            r["customer_name"] = "MASTER (Kendisi)"
+            r["customer_email"] = ""
+            r["is_master_row"] = True
+        else:
+            try:
+                lic = await db.licenses.find_one(
+                    {"license_key": owner},
+                    {"_id": 0, "customer_name": 1, "customer_email": 1, "plan": 1,
+                     "ip_addresses": 1, "is_master": 1, "status": 1}
+                )
+                if lic:
+                    r["customer_name"] = lic.get("customer_name")
+                    r["customer_email"] = lic.get("customer_email")
+                    r["plan"] = lic.get("plan")
+                    r["license_status"] = lic.get("status")
+                    r["ip_addresses"] = lic.get("ip_addresses", [])
+                    r["is_master_row"] = bool(lic.get("is_master"))
+            except Exception:
+                pass
+        # UI için özet flag'ler
+        r["has_pin"] = bool(r.pop("_has_pin", None)) if "_has_pin" in r else True  # kayıt varsa PIN vardır
+        # Not: pin_hash'ı ayıkladık, has_pin doğrudan idle_lock_user_configs varlığından çıkar
+        r["is_locked"] = bool(r.get("locked_until"))
+        r["failed_attempts"] = int(r.get("failed_attempts") or 0)
+
+    # PIN'i olmayan lisansları da listeye ekle (bayı henüz PIN kurmamış)
+    all_lics = await db.licenses.find(
+        {"status": {"$ne": "revoked"}},
+        {"_id": 0, "license_key": 1, "customer_name": 1, "customer_email": 1,
+         "plan": 1, "ip_addresses": 1, "is_master": 1, "status": 1}
+    ).limit(500).to_list(500)
+    known = {r.get("owner") for r in rows}
+    for lic in all_lics:
+        lk = lic.get("license_key", "")
+        if lk and lk not in known:
+            rows.append({
+                "owner": lk,
+                "customer_name": lic.get("customer_name"),
+                "customer_email": lic.get("customer_email"),
+                "plan": lic.get("plan"),
+                "license_status": lic.get("status"),
+                "ip_addresses": lic.get("ip_addresses", []),
+                "is_master_row": bool(lic.get("is_master")),
+                "has_pin": False,
+                "is_locked": False,
+                "failed_attempts": 0,
+                "enabled": None,
+                "updated_at": None,
+            })
+
+    return {"items": rows, "count": len(rows)}
+
+
+class AdminPinResetIn(BaseModel):
+    note: str = Field("", max_length=200)
+
+
+@router.post("/admin/user-pins/{owner:path}/reset")
+async def admin_reset_user_pin(owner: str, payload: AdminPinResetIn, request: Request):
+    """Master: bir kullanıcının PIN'ini sıfırlar (kaldırır).
+    Kullanıcı yeni PIN'i lisans key fallback ile veya PIN Değişiklik Talebi ile yeniden koyabilir.
+    """
+    if not _is_master(request):
+        raise HTTPException(403, "Sadece master yetkilendirilmiştir")
+
+    doc = await db.idle_lock_user_configs.find_one({"owner": owner}) or {}
+    if not doc:
+        raise HTTPException(404, "Kullanıcı PIN kaydı bulunamadı")
+
+    await db.idle_lock_user_configs.update_one(
+        {"owner": owner},
+        {"$set": {
+            "pin_hash": None,
+            "salt": None,
+            "failed_attempts": 0,
+            "locked_until": None,
+            "updated_at": _iso(),
+            "updated_by_ip": _client_ip(request),
+            "reset_by_master": True,
+            "reset_note": (payload.note or "").strip()[:200],
+        }}
+    )
+
+    # Bayi'ye inbox bildirim
+    if owner != "__master__":
+        try:
+            await db.notifications_inbox.insert_one({
+                "id": str(uuid.uuid4()),
+                "license_key": owner,
+                "type": "pin_master_reset",
+                "title": "🔓 PIN'iniz Master tarafından sıfırlandı",
+                "body": (payload.note or "Panel üzerinden yeni PIN belirleyebilirsiniz."),
+                "created_at": _iso(),
+                "read": False,
+            })
+        except Exception:
+            pass
+
+    # Bekleyen talepleri de temizle
+    try:
+        await db.pin_change_requests.update_many(
+            {"bayi_license_key": owner, "status": "pending"},
+            {"$set": {"status": "cancelled_by_master_reset", "decided_at": _iso()}}
+        )
+    except Exception:
+        pass
+
+    # Audit
+    try:
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "pin_master_reset",
+            "actor_ip": _client_ip(request),
+            "details": {"target_owner": owner, "note": payload.note},
+            "at": _iso(), "severity": "warning",
+        })
+    except Exception:
+        pass
+
+    return {"ok": True, "owner": owner, "action": "reset"}
+
+
+class AdminPinSetIn(BaseModel):
+    new_pin: str = Field(..., min_length=4, max_length=8)
+    note: str = Field("", max_length=200)
+
+
+@router.post("/admin/user-pins/{owner:path}/set")
+async def admin_set_user_pin(owner: str, payload: AdminPinSetIn, request: Request):
+    """Master: bir kullanıcı için doğrudan yeni PIN belirler.
+    Bayi'ye bildirim ile iletilir. Onay akışı gerekmeksizin uygulanır.
+    """
+    if not _is_master(request):
+        raise HTTPException(403, "Sadece master yetkilendirilmiştir")
+    if not payload.new_pin.isdigit():
+        raise HTTPException(400, "PIN yalnızca rakam içermelidir")
+
+    salt = secrets.token_hex(16)
+    pin_hash = _hash_pin(payload.new_pin, salt)
+
+    await db.idle_lock_user_configs.update_one(
+        {"owner": owner},
+        {"$set": {
+            "owner": owner,
+            "pin_hash": pin_hash,
+            "salt": salt,
+            "failed_attempts": 0,
+            "locked_until": None,
+            "updated_at": _iso(),
+            "updated_by_ip": _client_ip(request),
+            "set_by_master": True,
+        }, "$setOnInsert": {"created_at": _iso()}},
+        upsert=True,
+    )
+
+    # Bayi'ye inbox bildirim (PIN'in kendisi asla plaintext olarak yazılmaz;
+    # Master zaten belirlediği PIN'i biliyor ve bayiye kanal dışı iletir).
+    if owner != "__master__":
+        try:
+            await db.notifications_inbox.insert_one({
+                "id": str(uuid.uuid4()),
+                "license_key": owner,
+                "type": "pin_master_set",
+                "title": "🔐 PIN'iniz Master tarafından yenilendi",
+                "body": (payload.note or "Yeni PIN'iniz Master tarafından iletildi. Kilit ekranında kullanabilirsiniz."),
+                "created_at": _iso(),
+                "read": False,
+            })
+        except Exception:
+            pass
+
+    # Bekleyen talepleri süpür
+    try:
+        await db.pin_change_requests.update_many(
+            {"bayi_license_key": owner, "status": "pending"},
+            {"$set": {"status": "superseded_by_master", "decided_at": _iso()}}
+        )
+    except Exception:
+        pass
+
+    # Audit — PIN'in kendisi ASLA loglanmaz
+    try:
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "pin_master_set",
+            "actor_ip": _client_ip(request),
+            "details": {"target_owner": owner, "note": payload.note, "pin_length": len(payload.new_pin)},
+            "at": _iso(), "severity": "warning",
+        })
+    except Exception:
+        pass
+
+    return {"ok": True, "owner": owner, "action": "set", "pin_length": len(payload.new_pin)}
+
+
+@router.post("/admin/user-pins/{owner:path}/unlock")
+async def admin_unlock_user_pin(owner: str, request: Request):
+    """Master: PIN'de kilitlenmiş kullanıcıyı hemen açar (failed_attempts=0)."""
+    if not _is_master(request):
+        raise HTTPException(403, "Sadece master yetkilendirilmiştir")
+    r = await db.idle_lock_user_configs.update_one(
+        {"owner": owner},
+        {"$set": {
+            "failed_attempts": 0,
+            "locked_until": None,
+            "unlocked_by_master_at": _iso(),
+        }}
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "Kullanıcı bulunamadı")
+    try:
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "pin_master_unlock",
+            "actor_ip": _client_ip(request),
+            "details": {"target_owner": owner},
+            "at": _iso(), "severity": "info",
+        })
+    except Exception:
+        pass
+    return {"ok": True, "owner": owner, "action": "unlock"}

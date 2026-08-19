@@ -14,6 +14,41 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 19, 2026 (Session 21, v43.99.10) — PIN Approval Fix + Admin PIN Management
+
+**KULLANICI RAPORU:**
+1. "PIN Değişiklik Talebi kısmında onaylandığında pin değişikliğini yapmıyor"
+2. "Aktif kullanıcı veya bayilerin şifre pin kodlarını bizde görelim, adam sıfırlamak isterse biz nasıl sıfırlayacağız"
+
+**KÖK NEDEN (Bug):**
+`routes/pin_approvals.py::decide_request` onaylandığında PIN'i **yanlış collection** ve **yanlış field'lara** yazıyordu:
+- Yazılan: `db.idle_lock_user_settings` collection · fields `pin_salt`/`pin_failures`
+- Okunan (server.py verify_pin): `db.idle_lock_user_configs` collection · fields `salt`/`failed_attempts`
+- Salt encoding uyumsuzluğu da vardı: `secrets.token_bytes(16)` (raw) yazılıyor ama server.py salt'ı UTF-8 hex string olarak PBKDF2'ye veriyordu → hash'ler asla eşleşmiyordu.
+
+**FIX (routes/pin_approvals.py):**
+- `_hash_pin` fonksiyonu server.py::_pin_hash ile bire-bir uyumlu hale getirildi (salt: UTF-8 hex string).
+- Onay sonrası yazılan collection: `idle_lock_user_configs`, fields: `pin_hash`, `salt`, `failed_attempts`, `locked_until`, `updated_at`.
+- Bekleyen taleplerdeki salt oluşturma: `secrets.token_hex(16)` (hex string).
+
+**YENİ ÖZELLİK — Master Kullanıcı PIN Yönetim Paneli:**
+- Backend endpoint'ler (`/pin-approvals/admin/user-pins/*`):
+  - `GET /admin/user-pins` — Tüm aktif bayilerin PIN durumu (has_pin, is_locked, failed_attempts, plan, ip).
+  - `POST /admin/user-pins/{owner}/reset` — Master bir bayinin PIN'ini kaldırır.
+  - `POST /admin/user-pins/{owner}/set` — Master direkt yeni PIN atar (onay akışı bypass).
+  - `POST /admin/user-pins/{owner}/unlock` — Kilitlenmiş kullanıcının kilidini açar.
+- Frontend (`V4390Cards.js::AdminUserPinManager`): Ayarlar → Kilit & PIN sekmesinde tablo görünümü, arama filtresi, durum filtresi, modal ile PIN atama/sıfırlama.
+- Güvenlik: PIN'ler PBKDF2-SHA256 (200k iter) ile hash'lenmiş saklanır; **hiçbir plaintext PIN loglanmaz veya API'den dönmez**. Master yeni PIN'i atadığında bayiye kanal-dışı (telefon/güvenli chat) iletir.
+
+**TEST:** Uçtan-uca curl testleri PASS:
+- Bayi talep → Master onay → server.py verify_pin(new_pin) TRUE ✓
+- Master `/set` PIN → verify TRUE ✓ · `/reset` → pin_hash=None ✓
+- Frontend smoke: 73 kullanıcı listelendi, "AYARLA"/"SIFIRLA" butonları render edildi ✓
+
+**VERSION:** v43.99.9 → v43.99.10
+
+
+
 ## Feb 18, 2026 (Session 19, v43.99) — Master 2FA + Auto-Activate Toast + Test History + Deep Link
 
 **KULLANICI İSTEĞİ:** 2FA, welcome toast, test history drawer, resume-last-visited
