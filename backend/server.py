@@ -2476,6 +2476,7 @@ class IdleLockMeIn(BaseModel):
     new_pin: Optional[str] = Field(None, pattern=r"^\d{4,8}$")   # 4-8 haneli sayı
     current_pin: Optional[str] = Field(None, pattern=r"^\d{4,8}$")  # PIN değişiminde mevcut PIN
     clear_pin: bool = False  # true → PIN'i kaldır (lisans key fallback)
+    force: bool = False  # v43.99.9 — Master için: current_pin olmadan reset (PIN unuttum akışı)
 
 
 @api.get("/settings/idle-lock/me")
@@ -2530,9 +2531,12 @@ async def settings_idle_lock_me_set(payload: IdleLockMeIn, request: Request,
     if payload.theme_schedule is not None:
         update["theme_schedule"] = payload.theme_schedule   # v43.85
     # PIN yönetimi
+    # v43.99.9 — Master hesabı 'force' parametresiyle current_pin olmadan reset yapabilir (PIN unuttuysa).
+    # Bayilerde 'force' yok — sadece master token'lı kullanıcı için geçerli.
+    _is_master_here = bool(license_key and MASTER_LICENSE_KEY and license_key == MASTER_LICENSE_KEY)
+    _force = getattr(payload, "force", False) and _is_master_here
     if payload.clear_pin:
-        # Mevcut PIN varsa current_pin gerekli
-        if existing.get("pin_hash"):
+        if existing.get("pin_hash") and not _force:
             if not payload.current_pin:
                 raise HTTPException(status_code=400, detail="PIN'i kaldırmak için mevcut PIN gerekli")
             if _pin_hash(payload.current_pin, existing.get("salt", "")) != existing.get("pin_hash"):
@@ -2542,8 +2546,7 @@ async def settings_idle_lock_me_set(payload: IdleLockMeIn, request: Request,
         update["failed_attempts"] = 0
         update["locked_until"] = None
     elif payload.new_pin:
-        # PIN değişiminde mevcut PIN doğrula (eğer varsa)
-        if existing.get("pin_hash"):
+        if existing.get("pin_hash") and not _force:
             if not payload.current_pin:
                 raise HTTPException(status_code=400, detail="PIN değişimi için mevcut PIN gerekli")
             if _pin_hash(payload.current_pin, existing.get("salt", "")) != existing.get("pin_hash"):

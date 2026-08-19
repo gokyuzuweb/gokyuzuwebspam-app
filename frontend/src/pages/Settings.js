@@ -152,8 +152,24 @@ function IdleLockThemePreview({ theme, minutes = 15, hasPin = false, schedule = 
               <div key={n} className={`text-center text-xs py-1.5 rounded border mono ${s.pin}`}>{n}</div>
             ))}
           </div>
-          <div className={`text-center text-xs py-1.5 rounded bg-gradient-to-r ${s.btn} text-white font-semibold`}>
-            Kilidi Aç (önizleme)
+          <div className={`text-center text-xs py-1.5 rounded bg-gradient-to-r ${s.btn} text-white font-semibold cursor-pointer hover:opacity-90 transition-opacity`}
+               data-testid="lock-preview-btn"
+               onClick={() => {
+                 try {
+                   localStorage.setItem("gws.idle_locked_at", String(Date.now()));
+                   window.dispatchEvent(new Event("storage"));
+                 } catch (_) {}
+                 // 5 saniye sonra otomatik kaldır
+                 setTimeout(() => {
+                   try {
+                     localStorage.removeItem("gws.idle_locked_at");
+                     window.dispatchEvent(new Event("storage"));
+                     window.location.reload();
+                   } catch (_) {}
+                 }, 5000);
+                 window.location.reload();
+               }}>
+            🔓 Kilit Ekranını Test Et (5 sn)
           </div>
         </div>
       </div>
@@ -195,7 +211,13 @@ function IdleLockPersonalCard() {
     onError: (e) => toast.error(e?.response?.data?.detail || "Kaydedilemedi"),
   });
   const savePin = useMutation({
-    mutationFn: () => {
+    mutationFn: (opts = {}) => {
+      if (opts.force) {
+        // v43.99.9 — Master için "PIN unuttum" akışı: current_pin olmadan direkt reset
+        if (!/^\d{4,8}$/.test(newPin)) throw new Error("PIN 4-8 haneli sayı olmalı");
+        if (newPin !== confirmPin) throw new Error("PIN doğrulama eşleşmiyor");
+        return api.idleLockMeSet({ new_pin: newPin, force: true });
+      }
       if (!/^\d{4,8}$/.test(newPin)) throw new Error("PIN 4-8 haneli sayı olmalı");
       if (newPin !== confirmPin) throw new Error("PIN doğrulama eşleşmiyor");
       const payload = { new_pin: newPin };
@@ -203,16 +225,16 @@ function IdleLockPersonalCard() {
       return api.idleLockMeSet(payload);
     },
     onSuccess: () => {
-      toast.success(hasPin ? "PIN güncellendi" : "PIN oluşturuldu — kilit ekranı bundan sonra PIN soracak");
+      toast.success(hasPin ? "PIN başarıyla güncellendi ✓" : "PIN başarıyla oluşturuldu ✓ — kilit ekranı bundan sonra PIN soracak");
       setNewPin(""); setConfirmPin(""); setCurrentPin("");
       qc.invalidateQueries({ queryKey: ["idle-lock-me"] });
     },
     onError: (e) => toast.error(e?.response?.data?.detail || e.message || "PIN kaydedilemedi"),
   });
   const clearPin = useMutation({
-    mutationFn: () => api.idleLockMeSet({ clear_pin: true, current_pin: currentPin }),
+    mutationFn: (opts = {}) => api.idleLockMeSet({ clear_pin: true, current_pin: currentPin, force: !!opts.force }),
     onSuccess: () => {
-      toast.success("PIN kaldırıldı — kilit ekranı lisans key soracak");
+      toast.success("PIN kaldırıldı ✓ — kilit ekranı lisans key soracak");
       setCurrentPin("");
       qc.invalidateQueries({ queryKey: ["idle-lock-me"] });
     },
@@ -325,12 +347,12 @@ function IdleLockPersonalCard() {
                 className="w-full bg-slate-950 border border-slate-700 rounded-md px-3 py-2 text-sm mono mt-1" />
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button
               data-testid="idle-lock-me-save-pin"
               onClick={() => savePin.mutate()}
               disabled={savePin.isPending || !newPin || !confirmPin}
-              className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+              className="flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
             >
               {hasPin ? "PIN Güncelle" : "PIN Oluştur"}
             </button>
@@ -345,6 +367,23 @@ function IdleLockPersonalCard() {
                 className="px-3 py-2 rounded-md text-sm border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
               >
                 PIN Kaldır
+              </button>
+            )}
+            {hasPin && owner === "master" && (
+              <button
+                data-testid="idle-lock-me-forgot-pin"
+                onClick={() => {
+                  if (!newPin || newPin !== confirmPin || !/^\d{4,8}$/.test(newPin)) {
+                    toast.error("Önce yukarıya yeni PIN'i iki kez girin (4-8 haneli)");
+                    return;
+                  }
+                  if (!window.confirm("Mevcut PIN'i unuttunuz mu? Master yetkisiyle SIFIRLA yapılsın?\n\n(Yeni PIN doğrudan atanır — audit log'a yazılır)")) return;
+                  savePin.mutate({ force: true });
+                }}
+                className="px-3 py-2 rounded-md text-sm border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                title="Master yetkisiyle mevcut PIN olmadan sıfırla"
+              >
+                🔓 PIN'i Unuttum (Master Reset)
               </button>
             )}
           </div>
