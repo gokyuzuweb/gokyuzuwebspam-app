@@ -12,6 +12,7 @@ import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { PluginStatusStripe, LicenseGate } from "@/components/LicenseGate";
 import RenewalBanner from "@/components/RenewalBanner";
+import DemoBanner from "@/components/DemoBanner";
 import { ImpersonationBar } from "@/components/Impersonate";
 import PushToastBridge from "@/components/PushToastBridge";
 import BayiEventBridge from "@/components/BayiEventBridge";
@@ -445,6 +446,7 @@ function Shell() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <PluginStatusStripe />
+        <DemoBanner />
         <ImpersonationBar />
         <PushToastBridge />
         <BayiEventBridge />
