@@ -488,14 +488,34 @@ function Shell() {
 
 export default function App() {
   // v43.90 — Apply persisted accent color as early as possible (before any UI paint)
+  // v43.97 — Auto-activate master mode when backend detects master IP/session
   React.useEffect(() => {
     try {
       const cached = localStorage.getItem("gws.ui.accent") || "indigo";
       const map = { indigo: "99 102 241", fuchsia: "217 70 239", emerald: "16 185 129", cyan: "6 182 212", rose: "244 63 94" };
       document.documentElement.style.setProperty("--gws-accent-rgb", map[cached] || map.indigo);
       document.documentElement.setAttribute("data-accent", cached);
-      // Sunucudan güncel değeri de çek (localStorage stale olabilir)
+
+      // Sunucudan güncel değeri de çek + master auto-detect
       import("@/lib/api").then(({ api }) => {
+        // v43.97 — Master auto-activate: whoami if is_master AND we don't already have the master key stored,
+        // populate localStorage.gws.master_license automatically. Bu WHM cPanel iframe'inden ya da master IP'den
+        // girildiğinde kullanıcının el ile bir şey yapmasına gerek kalmaz.
+        api.whoami().then(who => {
+          if (who?.is_master && who?.master_key) {
+            const existing = localStorage.getItem("gws.master_license");
+            if (!existing || existing !== who.master_key) {
+              localStorage.setItem("gws.master_license", who.master_key);
+              localStorage.setItem("gws.event_license", who.master_key);
+              localStorage.setItem("gws.license.dismissed", "1");
+              // Yeni master keyi yüklendi — sayfa yenilenmeden mode switch olsun
+              window.dispatchEvent(new CustomEvent("gws:master-auto-activated", { detail: who }));
+              // Bir kere daha yenile ki React Query'ler yeni header ile fetch etsin
+              setTimeout(() => { try { window.location.reload(); } catch {} }, 400);
+            }
+          }
+        }).catch(() => {});
+
         api.uiThemeGet().then(d => {
           if (d?.accent_color && d.accent_color !== cached) {
             document.documentElement.style.setProperty("--gws-accent-rgb", map[d.accent_color] || map.indigo);
