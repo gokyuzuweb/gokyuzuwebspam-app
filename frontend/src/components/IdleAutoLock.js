@@ -42,15 +42,32 @@ export default function IdleAutoLock() {
   const hasLicense = typeof window !== "undefined"
     && !!(localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license"));
 
+  // v43.99.10 — WHM iframe içinden erişimde kilit devre dışı.
+  // WHM :2087 root oturumu zaten koruma sağlıyor.
+  const isWhmIframe = typeof window !== "undefined" && (() => {
+    try {
+      const ref = document.referrer || "";
+      if (ref.includes(":2087") || ref.includes("/cgi/mailshield")) return true;
+      if (window.self !== window.top) return true;
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("whm") === "1" || p.get("from") === "whm") return true;
+      if (localStorage.getItem("gws.whm_context") === "1") return true;
+    } catch (_) { return true; }
+    return false;
+  })();
+  if (isWhmIframe && typeof window !== "undefined") {
+    try { localStorage.setItem("gws.whm_context", "1"); } catch (_) {}
+  }
+
   const cfg = useQuery({
     queryKey: ["idle-lock-me"],
     queryFn: () => api.idleLockMeGet(),
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
-    enabled: hasLicense,
+    enabled: hasLicense && !isWhmIframe,
   });
-  const enabled = hasLicense && (cfg.data?.enabled ?? true);
+  const enabled = hasLicense && !isWhmIframe && (cfg.data?.enabled ?? true);
   const minutes = Math.max(1, Math.min(1440, cfg.data?.minutes ?? 15));
   const warnSec = Math.max(0, Math.min(300, cfg.data?.warn_seconds ?? 30));
   const hasPin = Boolean(cfg.data?.has_pin);
@@ -67,7 +84,7 @@ export default function IdleAutoLock() {
   // v43.99.3 — Lisans yoksa kilit state'i temizle (yeni ziyaretçi kilit görmesin)
   const [locked, setLocked] = useState(() => {
     if (typeof window === "undefined") return false;
-    if (!hasLicense) {
+    if (!hasLicense || isWhmIframe) {
       try {
         localStorage.removeItem(LS_LOCKED_AT);
         localStorage.removeItem(LS_LOCKED_OWNER);
