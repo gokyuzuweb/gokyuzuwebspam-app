@@ -6,7 +6,6 @@
  * Lisans girildiğinde bu banner otomatik gizlenir.
  */
 import { useState, useEffect } from "react";
-import { NavLink } from "react-router-dom";
 import { Sparkles, ShoppingCart, X, TrendingUp } from "lucide-react";
 
 const DISMISS_KEY = "gws.demo_banner_dismissed_at";
@@ -64,15 +63,17 @@ export default function DemoBanner() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <NavLink
-            to="/panel/pricing"
+          <a
+            href="/shop"
+            target="_blank"
+            rel="noopener noreferrer"
             data-testid="demo-banner-buy-btn"
             className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-gradient-to-br from-amber-400 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-slate-950 font-bold text-[12px] shadow-lg shadow-amber-500/30 transition-all hover:scale-105"
           >
             <ShoppingCart className="w-3.5 h-3.5" strokeWidth={2.5} />
             <span>Satın Al</span>
             <TrendingUp className="w-3 h-3 opacity-70" strokeWidth={2.5} />
-          </NavLink>
+          </a>
           <button
             onClick={dismiss}
             data-testid="demo-banner-dismiss"

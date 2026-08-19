@@ -29,6 +29,13 @@ export function usePlanFeatures() {
 
 export default function PlanFeatureGuard({ feature, featureLabel, children }) {
   const q = usePlanFeatures();
+  // v43.99.4 — Demo mode: lisans yoksa TÜM özellikler açık.
+  // Kullanıcı ürünü inceleyip satın alma kararı versin.
+  const isDemo = typeof window !== "undefined"
+    && !localStorage.getItem("gws.master_license")
+    && !localStorage.getItem("gws.event_license");
+  if (isDemo) return children;
+
   if (q.isLoading) return null;
   const data = q.data || {};
   // Master her zaman geçer (impersonation aktifse target bayi planı uygulanır)
