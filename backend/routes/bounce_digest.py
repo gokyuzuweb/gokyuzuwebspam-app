@@ -168,7 +168,7 @@ async def _generate_digest_for_license(license_key: str, hours: int = 24) -> dic
     top_reasons: dict[str, int] = {}
     samples: list[dict] = []
     async for e in db.mail_events.find(
-        match, {"_id": 0, "from_user": 1, "to_addr": 1, "subject": 1,
+        match, {"_id": 0, "from_user": 1, "from_addr": 1, "to_addr": 1, "subject": 1,
                 "ts": 1, "action": 1, "sa_report": 1, "size_bytes": 1},
     ).sort("ts", -1).limit(500):
         u = e.get("from_user") or "(bilinmeyen)"
@@ -183,7 +183,9 @@ async def _generate_digest_for_license(license_key: str, hours: int = 24) -> dic
         top_reasons[r_key] = top_reasons.get(r_key, 0) + 1
         if len(samples) < 10:
             samples.append({
-                "user": u, "to": rcpt, "subject": (e.get("subject") or "")[:80],
+                "user": u,
+                "from_addr": e.get("from_addr") or "",  # v43.99.20 — tam gönderici e-posta
+                "to": rcpt, "subject": (e.get("subject") or "")[:80],
                 "ts": e.get("ts"), "action": e.get("action"),
                 "size_kb": round((e.get("size_bytes") or 0) / 1024, 1),
             })

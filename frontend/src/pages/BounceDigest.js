@@ -403,7 +403,12 @@ export default function BounceDigest() {
                       {p.samples.map((s, i) => (
                         <tr key={i} className="border-t border-slate-800/60">
                           <td className="px-2 py-1.5 text-slate-500 mono">{s.ts ? new Date(s.ts).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{s.user}</td>
+                          <td className="px-2 py-1.5">
+                            <div className="text-slate-300">{s.user}</div>
+                            {s.from_addr && s.from_addr !== s.user && (
+                              <div className="text-[10px] mono text-slate-500 truncate max-w-[220px]" title={s.from_addr}>{s.from_addr}</div>
+                            )}
+                          </td>
                           <td className="px-2 py-1.5 text-slate-400 mono truncate max-w-[180px]">{s.to}</td>
                           <td className="px-2 py-1.5 text-slate-400 truncate max-w-[240px]">{s.subject}</td>
                           <td className="px-2 py-1.5 text-right"><Badge tone="danger">{s.action}</Badge></td>
