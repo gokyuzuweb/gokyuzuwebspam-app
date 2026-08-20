@@ -1042,8 +1042,14 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
   const handleDrop = (targetKey, e) => {
     e.preventDefault();
     setDragOverCol(null);
-    if (!dragOid) return;
-    const order = orders.find((o) => o.merchant_oid === dragOid);
+    // v43.99.21 — Prefer dataTransfer (survives React state async race) fallback to state
+    let oid = dragOid;
+    try {
+      const dt = e.dataTransfer?.getData?.("application/x-oid") || e.dataTransfer?.getData?.("text/plain") || "";
+      if (dt) oid = dt;
+    } catch (_) {}
+    if (!oid) return;
+    const order = orders.find((o) => o.merchant_oid === oid);
     setDragOid(null);
     if (!order) return;
     const movable = ["notified_by_user", "awaiting_transfer", "pending"];
@@ -1121,8 +1127,17 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
               : col.color;
           return (
           <div key={col.key}
-               onDragOver={(e) => { e.preventDefault(); if (dragOverCol !== col.key) setDragOverCol(col.key); }}
-               onDragLeave={() => { if (dragOverCol === col.key) setDragOverCol(null); }}
+               onDragOver={(e) => {
+                 e.preventDefault();
+                 try { e.dataTransfer.dropEffect = "move"; } catch (_) {}
+                 if (dragOverCol !== col.key) setDragOverCol(col.key);
+               }}
+               onDragLeave={(e) => {
+                 // Only clear when leaving column boundary, not entering child
+                 if (!e.currentTarget.contains(e.relatedTarget) && dragOverCol === col.key) {
+                   setDragOverCol(null);
+                 }
+               }}
                onDrop={(e) => handleDrop(col.key, e)}
                className={`rounded-lg border-2 p-2 min-h-[60vh] transition-all ${borderClass}`}
                data-testid={`kanban-col-${col.key}`}>
@@ -1143,9 +1158,17 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
               ) : col.items.slice(0, 40).map((o) => (
                 <div key={o.merchant_oid}
                      draggable
-                     onDragStart={() => setDragOid(o.merchant_oid)}
+                     onDragStart={(e) => {
+                       // v43.99.21 — Firefox drag fix: MUST set dataTransfer or drag is cancelled
+                       try {
+                         e.dataTransfer.effectAllowed = "move";
+                         e.dataTransfer.setData("text/plain", o.merchant_oid);
+                         e.dataTransfer.setData("application/x-oid", o.merchant_oid);
+                       } catch (_) {}
+                       setDragOid(o.merchant_oid);
+                     }}
                      onDragEnd={() => { setDragOid(null); setDragOverCol(null); }}
-                     className={`p-2 rounded border bg-slate-900/80 border-slate-800 text-[10px] cursor-move transition-all ${
+                     className={`p-2 rounded border bg-slate-900/80 border-slate-800 text-[10px] cursor-grab active:cursor-grabbing transition-all select-none ${
                        dragOid === o.merchant_oid ? "opacity-40 scale-95 rotate-1" : "hover:border-indigo-500/40 hover:shadow-md"
                      }`}
                      data-testid={`kanban-card-${o.merchant_oid}`}>

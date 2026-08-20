@@ -14,6 +14,40 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 20, 2026 (Session 22, v43.99.21) — Landing Module Tour + Kanban Drag Fix
+
+**USER REQUESTS:**
+1. Modülleri ve Modül Tanıtım Videosu'nu siteye (landing) de ekle
+2. Ödeme Yönetim Panosu Kanban sürükle-bırak çalışmıyor
+
+**IMPLEMENTATION:**
+
+**Task 1 — Public Module Tour:**
+- New public route: `/moduller-turu` (App.js) — kayıt/login gerekmez, standalone fullscreen
+- `ModulePresentation.js`: `isPublic` detection (URL != `/panel/*`) → tam ekran modu + "← Ana Sayfa" back button
+- New Landing section: `frontend/src/pages/landing/ModuleTourCTA.js`
+  - Browser mockup çerçevesi + pulsing play button + 4 floating module icon (Cpu/Shield/BarChart/Lock)
+  - Sağda 4 bölüm breakdown (Motor 5 · Threat 10 · Rapor 4 · Sistem 5)
+  - "Modül Turunu Şimdi Başlat" CTA butonu → `/moduller-turu`
+- NavBar link eklendi: "Modül Turu 🎬" (fuchsia renkte vurgulu)
+- Sırası: `<Features>` → `<ModulesShowcase>` → **`<ModuleTourCTA>`** → `<GeoBlockedHeatmap>`
+
+**Task 2 — Kanban Drag-Drop Fix:**
+- `PaymentsAdmin.js::OrdersKanban` — HTML5 native drag API'sinin Firefox ve bazı browserlarda çalışmama nedeni: `onDragStart` içinde `e.dataTransfer.setData()` çağrılmıyordu. Bunun eksikliği Firefox'ta drag'ı sessizce iptal ediyordu.
+- Fix:
+  - `onDragStart`: `e.dataTransfer.effectAllowed = "move"` + `setData("application/x-oid", oid)` + `setData("text/plain", oid)`
+  - `onDragOver`: `e.dataTransfer.dropEffect = "move"` eklendi
+  - `handleDrop`: `dataTransfer.getData()` fallback ile React state async race korunuyor
+  - `onDragLeave`: `contains(relatedTarget)` check — child element'e girildiğinde false-negative önlenir
+  - Cursor: `cursor-move` → `cursor-grab active:cursor-grabbing` (daha net UX)
+- Playwright smoke test doğruladı: "Havale onaylandı, lisans aktif olacak" toast'ı drag sonrası çıkıyor ✅
+
+**FILES MODIFIED:**
+- Created: `frontend/src/pages/landing/ModuleTourCTA.js`
+- Modified: `frontend/src/App.js` (public route), `frontend/src/pages/Landing.js` (section + nav), `frontend/src/pages/ModulePresentation.js` (public mode), `frontend/src/pages/PaymentsAdmin.js` (drag fix)
+
+
+
 ## Feb 20, 2026 (Session 22, v43.99.19) — Animated Install Simulations + Module Tour
 
 **USER REQUEST (Option A):** Kurulum adımlarının animasyonlu React simülasyonu + kurulum sonrası modülleri tek tek tanıtan detaylı animasyonlu bir sunum.

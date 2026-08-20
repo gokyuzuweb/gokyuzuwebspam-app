@@ -672,6 +672,8 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/moduller-turu" element={<ModulePresentation />} />
+            <Route path="/module-tour" element={<Navigate to="/moduller-turu" replace />} />
             <Route path="/shop" element={<Shop />} />
             <Route path="/checkout/success" element={<CheckoutSuccess />} />
             <Route path="/reseller" element={<Reseller />} />

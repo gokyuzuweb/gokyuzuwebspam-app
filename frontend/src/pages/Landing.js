@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui-primitives";
 import GeoBlockedHeatmap from "@/components/GeoBlockedHeatmap";
 import LiveTicker from "@/components/LiveTicker";
 import ModulesShowcase from "@/pages/landing/ModulesShowcase";
+import ModuleTourCTA from "@/pages/landing/ModuleTourCTA"; // v43.99.20
 import ActivityHeatmap from "@/components/ActivityHeatmap";
 import CostSavingsWidget from "@/components/CostSavingsWidget";
 import AchievementBadges from "@/components/AchievementBadges";
@@ -519,6 +520,7 @@ function NavBar() {
         </Link>
         <nav className="hidden md:flex items-center gap-7 text-sm text-slate-400">
           <a href="#features" className="hover:text-slate-100 transition-colors">Features</a>
+          <a href="#module-tour" data-testid="nav-module-tour" className="hover:text-fuchsia-300 transition-colors font-semibold text-fuchsia-400">Modül Turu 🎬</a>
           <a href="#how" className="hover:text-slate-100 transition-colors">How it works</a>
           <a href="#pricing" className="hover:text-slate-100 transition-colors">Pricing</a>
           <a href="#faq" className="hover:text-slate-100 transition-colors">FAQ</a>
@@ -1724,6 +1726,7 @@ export default function Landing() {
       <AchievementBadges />
       <Features />
       <ModulesShowcase />
+      <ModuleTourCTA />
       <GeoBlockedHeatmap />
       <Stats />
       <HowItWorks />

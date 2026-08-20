@@ -650,6 +650,9 @@ export default function ModulePresentation() {
   const rafRef = useRef(null);
   const slide = slides[idx];
 
+  // v43.99.20 — Public route (no /panel/ prefix) → standalone fullscreen mode
+  const isPublic = typeof window !== "undefined" && !window.location.pathname.startsWith("/panel/");
+
   // Auto-advance
   useEffect(() => {
     if (!playing) return;
@@ -715,7 +718,7 @@ export default function ModulePresentation() {
       ref={containerRef}
       data-testid="module-presentation"
       className={`relative bg-slate-950 text-white overflow-hidden ${
-        fullscreen ? "w-screen h-screen" : "w-full h-[calc(100vh-3rem)] rounded-xl"
+        fullscreen || isPublic ? "w-screen h-screen" : "w-full h-[calc(100vh-3rem)] rounded-xl"
       }`}
     >
       {/* Animated backgrounds */}
@@ -762,12 +765,22 @@ export default function ModulePresentation() {
       {/* Top-left buttons */}
       {!recordMode && (
         <div className="absolute top-4 left-4 flex items-center gap-2 z-30">
-          <Link
-            to="/panel/tanitim"
-            className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold inline-flex items-center gap-1.5 backdrop-blur"
-          >
-            ← Ürün Tanıtımı
-          </Link>
+          {isPublic ? (
+            <Link
+              to="/"
+              data-testid="mp-back-home"
+              className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold inline-flex items-center gap-1.5 backdrop-blur"
+            >
+              ← Ana Sayfa
+            </Link>
+          ) : (
+            <Link
+              to="/panel/tanitim"
+              className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold inline-flex items-center gap-1.5 backdrop-blur"
+            >
+              ← Ürün Tanıtımı
+            </Link>
+          )}
           <button
             onClick={startRecordMode}
             data-testid="mp-record-mode"
