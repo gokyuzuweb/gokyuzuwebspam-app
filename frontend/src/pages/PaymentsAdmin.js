@@ -1030,13 +1030,20 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
     items: orders.filter((o) => col.statuses.includes(o.status)),
   }));
 
-  // Bir kartın hangi hedef sütunlara "düşebileceğini" belirler
+  // v43.99.22 — Esnek geçişler: her karta her yönde hareket serbest
+  //   • paid ↔ failed (yanlış karar düzeltilebilir)
+  //   • failed → paid (reddedilen bir kaydı sonradan onaylamak için)
+  //   • pending → paid/failed
+  //   • Aynı sütuna bırakma (no-op) engellenir
   const isValidTarget = (colKey) => {
     if (!dragOid) return false;
     const order = orders.find((o) => o.merchant_oid === dragOid);
     if (!order) return false;
-    const movable = ["notified_by_user", "awaiting_transfer", "pending"];
-    return movable.includes(order.status) && (colKey === "paid" || colKey === "failed");
+    // Hedef sütun paid veya failed olmalı; kaynak sütun aynı olmamalı
+    if (colKey !== "paid" && colKey !== "failed") return false;
+    const currentCol = KANBAN_COLUMNS.find(c => c.statuses.includes(order.status));
+    if (currentCol && currentCol.key === colKey) return false;   // aynı sütun
+    return true;
   };
 
   const handleDrop = (targetKey, e) => {
@@ -1052,8 +1059,12 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
     const order = orders.find((o) => o.merchant_oid === oid);
     setDragOid(null);
     if (!order) return;
-    const movable = ["notified_by_user", "awaiting_transfer", "pending"];
-    if (targetKey === "paid" && movable.includes(order.status)) {
+    // Aynı sütuna bırakma (no-op)
+    const currentCol = KANBAN_COLUMNS.find(c => c.statuses.includes(order.status));
+    if (currentCol && currentCol.key === targetKey) {
+      return;
+    }
+    if (targetKey === "paid") {
       // v43.96 — Onaylandı chime (soft ascending "success" ding-ding-ding)
       try {
         const AC = window.AudioContext || window.webkitAudioContext;
@@ -1077,11 +1088,16 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
           setTimeout(() => { try { ctx.close(); } catch {} }, 800);
         }
       } catch {}
+      // v43.99.22 — Rejected/failed → paid geçişi için de approve
+      if (order.status === "rejected" || order.status === "failed") {
+        toast.info(`↩ ${order.merchant_oid.slice(0, 14)}… reddedilen kayıt tekrar onaylanıyor`);
+      }
       onApprove(order.merchant_oid);
-    } else if (targetKey === "failed" && movable.includes(order.status)) {
+    } else if (targetKey === "failed") {
+      if (order.status === "paid") {
+        toast.warning(`⚠ ${order.merchant_oid.slice(0, 14)}… onaylı kayıt reddediliyor — lisans iptal edilebilir`);
+      }
       onReject(order.merchant_oid);
-    } else {
-      toast.info("Bu geçiş desteklenmiyor");
     }
   };
 
@@ -1090,7 +1106,7 @@ function OrdersKanban({ orders, onApprove, onReject, onRefetch }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs text-slate-400">
           <LayoutGrid className="w-4 h-4 text-indigo-400"/>
-          <span>Sürükle-bırak: kartı <span className="text-emerald-300 font-semibold">Onaylandı</span> veya <span className="text-rose-300 font-semibold">Başarısız</span> sütununa taşı</span>
+          <span>Sürükle-bırak: her karta serbestçe hareket · <span className="text-emerald-300 font-semibold">Onaylandı</span> ⇄ <span className="text-rose-300 font-semibold">Başarısız</span> yönleri iki taraflı</span>
         </div>
         <div className="flex items-center gap-2">
           <button
