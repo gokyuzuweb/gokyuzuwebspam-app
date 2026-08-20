@@ -22,18 +22,65 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 # ---------- Fonts ----------
-try:
-    pdfmetrics.registerFont(TTFont("DejaVu", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
-    pdfmetrics.registerFont(TTFont("DejaVu-Bold", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
-    pdfmetrics.registerFont(TTFont("DejaVu-Mono", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"))
-    FONT_LATIN, FONT_LATIN_BOLD, FONT_MONO = "DejaVu", "DejaVu-Bold", "DejaVu-Mono"
-except Exception:
-    FONT_LATIN, FONT_LATIN_BOLD, FONT_MONO = "Helvetica", "Helvetica-Bold", "Courier"
+# v43.99.19 — Font path fallback (Docker container'da farklı yolda olabilir)
+def _find_font(candidates):
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
+_DEJAVU_REGULAR = _find_font([
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+])
+_DEJAVU_BOLD = _find_font([
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+])
+_DEJAVU_MONO = _find_font([
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+])
+
+if not _DEJAVU_REGULAR or not _DEJAVU_BOLD:
+    import sys as _sys
+    print("[WARN] DejaVu fontları bulunamadı — Türkçe/Arapça karakterler kayıp render olur!", file=_sys.stderr)
+    print(f"  DejaVu regular: {_DEJAVU_REGULAR}", file=_sys.stderr)
+    print(f"  DejaVu bold:    {_DEJAVU_BOLD}", file=_sys.stderr)
+    print("  Çözüm: 'apt-get install fonts-dejavu-core' veya Dockerfile'a ekleyin", file=_sys.stderr)
 
 try:
-    pdfmetrics.registerFont(TTFont("NotoAr", "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf"))
-    pdfmetrics.registerFont(TTFont("NotoAr-Bold", "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf"))
-    FONT_AR, FONT_AR_BOLD = "NotoAr", "NotoAr-Bold"
+    if _DEJAVU_REGULAR:
+        pdfmetrics.registerFont(TTFont("DejaVu", _DEJAVU_REGULAR))
+    if _DEJAVU_BOLD:
+        pdfmetrics.registerFont(TTFont("DejaVu-Bold", _DEJAVU_BOLD))
+    if _DEJAVU_MONO:
+        pdfmetrics.registerFont(TTFont("DejaVu-Mono", _DEJAVU_MONO))
+    FONT_LATIN = "DejaVu" if _DEJAVU_REGULAR else "Helvetica"
+    FONT_LATIN_BOLD = "DejaVu-Bold" if _DEJAVU_BOLD else "Helvetica-Bold"
+    FONT_MONO = "DejaVu-Mono" if _DEJAVU_MONO else "Courier"
+except Exception as _fe:
+    print(f"[WARN] Font register failed: {_fe}", file=__import__('sys').stderr)
+    FONT_LATIN, FONT_LATIN_BOLD, FONT_MONO = "Helvetica", "Helvetica-Bold", "Courier"
+
+_NOTO_AR_REGULAR = _find_font([
+    "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+    "/usr/share/fonts/noto/NotoNaskhArabic-Regular.ttf",
+])
+_NOTO_AR_BOLD = _find_font([
+    "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
+    "/usr/share/fonts/noto/NotoNaskhArabic-Bold.ttf",
+])
+try:
+    if _NOTO_AR_REGULAR:
+        pdfmetrics.registerFont(TTFont("NotoAr", _NOTO_AR_REGULAR))
+    if _NOTO_AR_BOLD:
+        pdfmetrics.registerFont(TTFont("NotoAr-Bold", _NOTO_AR_BOLD))
+    FONT_AR = "NotoAr" if _NOTO_AR_REGULAR else FONT_LATIN
+    FONT_AR_BOLD = "NotoAr-Bold" if _NOTO_AR_BOLD else FONT_LATIN_BOLD
 except Exception:
     FONT_AR, FONT_AR_BOLD = FONT_LATIN, FONT_LATIN_BOLD
 
@@ -1265,7 +1312,7 @@ def build(lang="tr", out_path=None):
         c.drawString(2.5*cm, H - 8*cm, T(L["cover_title"], lang))
         c.setFillColor(HexColor("#94A3B8")); c.setFont(FONT, 15)
         c.drawString(2.5*cm, H - 8.9*cm, T(L["cover_sub"], lang))
-        c.setFillColor(HexColor("#F59E0B")); c.roundRect(2.5*cm, H - 10.5*cm, 6.5*cm, 0.9*cm, 0.15*cm, fill=1, stroke=0)
+        c.setFillColor(HexColor("#F59E0B")); c.roundRect(2.5*cm, H - 10.5*cm, 7.5*cm, 0.9*cm, 0.15*cm, fill=1, stroke=0)
         c.setFillColor(DARK); c.setFont(FONT_BOLD, 11)
         c.drawString(2.85*cm, H - 10.24*cm, T(L["cover_badge"], lang))
         c.setFillColor(HexColor("#94A3B8")); c.setFont(FONT, 12)

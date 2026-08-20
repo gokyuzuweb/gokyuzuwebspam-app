@@ -2,9 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app/backend
 
-# System deps for dnspython, cryptography, wheels
+# System deps for dnspython, cryptography, wheels + Türkçe/Arapça PDF fontları
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libssl-dev libffi-dev curl \
+    fonts-dejavu-core fonts-noto-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/backend/requirements.txt
