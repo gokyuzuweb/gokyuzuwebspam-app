@@ -52,6 +52,7 @@ const ITEMS = [
   { path: "/panel/install",           icon: PackageOpen,  title: "Kurulum",            keywords: "install wizard" },
   { path: "/panel/docs",              icon: BookOpen,     title: "Dokümantasyon",      keywords: "docs help" },
   { path: "/panel/tanitim",           icon: Play,         title: "Tanıtım Videosu",    keywords: "promo video demo pitch sunum" },
+  { path: "/panel/moduller-turu",     icon: Play,         title: "Modül Turu",         keywords: "module tour modules presentation kurulum sonrası" },
 ];
 
 /**

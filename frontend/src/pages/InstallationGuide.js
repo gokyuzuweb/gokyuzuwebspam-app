@@ -4,6 +4,7 @@
  * · Multi-language PDF (TR/EN/AR)
  */
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/api";
 import { useIsMaster } from "@/hooks/useIsMaster";
@@ -11,8 +12,10 @@ import {
   Rocket, CheckCircle2, Circle, Copy, Download, Mail, Terminal,
   Server, Globe, Users, Shield, Bell, AlertTriangle, ExternalLink,
   Clock, ChevronRight, HelpCircle, FileText, Video, Play, Settings2, Save, X,
+  Sparkles, Film,
 } from "lucide-react";
 import { toast } from "sonner";
+import InstallStepSimulator from "@/components/InstallSimulations"; // v43.99.19
 
 // v43.99.13 — Video URL'leri DB'den çekilir. Master panelde `install-videos`
 // endpoint üzerinden düzenler. Şablon: { "1": {youtube: "", mp4: ""}, ... }
@@ -303,6 +306,43 @@ function VideoEmbed({ stepId, videos }) {
   );
 }
 
+// v43.99.19 — Simülasyon + Video sekme geçişli medya paneli
+function StepMediaTabs({ stepId, videos }) {
+  const [tab, setTab] = useState("sim"); // "sim" | "video"
+  useEffect(() => { setTab("sim"); }, [stepId]);
+  return (
+    <div data-testid={`step-media-tabs-${stepId}`} className="space-y-2">
+      <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden bg-slate-900/60">
+        <button
+          onClick={() => setTab("sim")}
+          data-testid={`media-tab-sim-${stepId}`}
+          className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider inline-flex items-center gap-1.5 transition ${
+            tab === "sim" ? "bg-gradient-to-r from-indigo-500/30 to-fuchsia-500/30 text-fuchsia-100" : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5" /> Canlı Simülasyon
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">YENİ</span>
+        </button>
+        <button
+          onClick={() => setTab("video")}
+          data-testid={`media-tab-video-${stepId}`}
+          className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider inline-flex items-center gap-1.5 transition border-l border-slate-800 ${
+            tab === "video" ? "bg-rose-500/15 text-rose-100" : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <Film className="w-3.5 h-3.5" /> Video Rehber
+        </button>
+      </div>
+      {tab === "sim" ? (
+        <InstallStepSimulator stepId={stepId} />
+      ) : (
+        <VideoEmbed stepId={stepId} videos={videos} />
+      )}
+    </div>
+  );
+}
+
+
 function WarnBox({ children }) {
   return (
     <div className="border border-amber-500/40 bg-amber-500/10 rounded p-3 flex items-start gap-2">
@@ -433,9 +473,29 @@ export default function InstallationGuide() {
                style={{ width: `${pct}%` }} />
         </div>
         {pct === 100 && (
-          <div className="mt-3 text-[13px] text-emerald-300 font-semibold flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4" />
-            Tebrikler! Kurulum tamamlandı — sunucunuz artık korunuyor 🎉
+          <div className="mt-3 space-y-3">
+            <div className="text-[13px] text-emerald-300 font-semibold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" />
+              Tebrikler! Kurulum tamamlandı — sunucunuz artık korunuyor 🎉
+            </div>
+            <Link
+              to="/panel/moduller-turu"
+              data-testid="post-install-module-tour-cta"
+              className="group flex items-center justify-between gap-4 p-4 rounded-lg bg-gradient-to-r from-indigo-500/20 via-fuchsia-500/20 to-rose-500/20 border border-fuchsia-500/40 hover:border-fuchsia-400/70 transition-all shadow-lg"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center shrink-0 shadow-lg group-hover:scale-110 transition-transform">
+                  <Sparkles className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-fuchsia-100">🎬 Modül Turuna Başla · Kurulum Sonrası Rehber</div>
+                  <div className="text-xs text-fuchsia-200/70 mt-0.5">
+                    24 kritik modül tek tek animasyonlu tanıtım · ~4 dakika · Otomatik oynatma
+                  </div>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 text-fuchsia-200 group-hover:translate-x-1 transition-transform shrink-0" />
+            </Link>
           </div>
         )}
       </div>
@@ -516,8 +576,8 @@ export default function InstallationGuide() {
                 </div>
                 <div className="p-5 space-y-4">
                   <div className="text-[14px] text-slate-300 leading-relaxed">{s.intro}</div>
-                  {/* v43.99.13 — Video kurulum rehberi (30 sn ekran kaydı) */}
-                  <VideoEmbed stepId={s.id} videos={videos} />
+                  {/* v43.99.19 — Canlı animasyonlu simülasyon + video sekmesi */}
+                  <StepMediaTabs stepId={s.id} videos={videos} />
                   {s.content}
                   {/* Navigation */}
                   <div className="flex items-center justify-between pt-4 border-t border-slate-800">

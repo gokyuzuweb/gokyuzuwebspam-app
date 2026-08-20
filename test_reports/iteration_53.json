@@ -1,0 +1,24 @@
+{
+  "summary": "Frontend smoke test of new Installation Guide simulators + Module Presentation slide deck. All requested UI features render and interact correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Landing (unrelated)", "issues": ["React hydration warning: <span> cannot be a child of <option> in GeoBlockedHeatmap.js line 134 (option value with x-ve-dynamic span wrapper). Not blocking, but should be cleaned up."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "InstallationGuide.js at 937 lines and ModulePresentation.js at 877 lines are approaching the 700-line threshold; consider splitting large STEPS/SLIDES data into separate files.",
+    "GeoBlockedHeatmap option children hydration warning present on Landing page (pre-existing, unrelated to this feature drop)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "test_credentials": "Master license MS-C02AB012652A4FE692D69676 via localStorage (gws.master_license, gws.event_license, gws.license.dismissed=1)",
+  "seed_data_creation": "localStorage.setItem('gws.install_done', JSON.stringify([1..8])) to trigger 100% completion CTA banner",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Verified: /panel/install-guide loads with sidebar of 8 steps + progress bar. Each step (1-8) renders install-simulator-{id}, sim-playpause-{id}, sim-restart-{id}, media-tab-sim-{id}, media-tab-video-{id}. Sidebar switch via step-nav-{id}. Tab switching works. Restart & play/pause clickable. Setting localStorage 'gws.install_done'=[1..8] triggers post-install-module-tour-cta banner. /panel/moduller-turu renders module-presentation with 30 mp-slide-dot-* dots and all mp-* controls (play-pause, next, prev, restart, fullscreen, record-mode). Record mode toggles UI visibility and ESC exits. CommandPalette (Cmd+K) surfaces 'Modül Turu' entry linking to /panel/moduller-turu. All tests passed - main agent can proceed."
+}

@@ -14,6 +14,46 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 20, 2026 (Session 22, v43.99.19) — Animated Install Simulations + Module Tour
+
+**USER REQUEST (Option A):** Kurulum adımlarının animasyonlu React simülasyonu + kurulum sonrası modülleri tek tek tanıtan detaylı animasyonlu bir sunum.
+
+**IMPLEMENTATION:**
+
+**Task 1 — Interactive Install Simulations:**
+- New file: `frontend/src/components/InstallSimulations.js` (660 lines)
+  - 8 gerçekçi mockup: Step1 Gmail e-posta, Step2 SSH terminal (typewriter), Step3 Docker curl install, Step4 install.sh progress bar streaming logs, Step5 WHM Plugins panel + animated cursor click, Step6 cPanel accounts table populating, Step7 Engine status blinking dots, Step8 Notification toggles
+  - `WindowFrame` wrapper: terminal / browser / whm chrome styles
+  - `useTypewriter` hook: character-by-character reveal
+  - Default export `InstallStepSimulator({ stepId })`: dispatcher + Play/Pause/Restart controls (`sim-playpause-{id}`, `sim-restart-{id}`)
+- `InstallationGuide.js` update:
+  - New `StepMediaTabs` component: 2-tab panel (Canlı Simülasyon YENİ / Video Rehber) via `media-tab-sim-{id}` / `media-tab-video-{id}`
+  - Replaced direct `<VideoEmbed>` render with `<StepMediaTabs>`
+  - Added post-install CTA banner (`post-install-module-tour-cta`) when %100 tamamlandı → links to `/panel/moduller-turu`
+
+**Task 2 — Module Tour Presentation:**
+- New file: `frontend/src/pages/ModulePresentation.js` (877 lines)
+  - Slide chain: 1 intro + 4 section intros + 24 modül slides + 1 outro = 30 slides (~4 dakika)
+  - 4 kategori: Çekirdek Motorlar (5), Threat Defense (10), Raporlama (4), Sistem Güvenliği (5)
+  - Her modül: icon + tag + name + what + how (3 madde) + stat kutusu
+  - Karma kontroller: `mp-play-pause`, `mp-next`, `mp-prev`, `mp-restart`, `mp-fullscreen`, `mp-record-mode`, `mp-slide-dot-{i}`
+  - Auto-play + manual controls (per user choice 2c)
+  - Record Mode: UI gizle + OBS kayıt için hazır, ESC ile çıkış
+- Route added at `App.js`: `/panel/moduller-turu`
+- `CommandPalette.js`: "Modül Turu" entry eklendi
+
+**BUG FIX:** İlk denemede `InstallationGuide.js`'a insert_text ile eklenen `StepMediaTabs` fonksiyonu, `VideoEmbed` fonksiyonunun closing `}`'ı yanlış yere yerleştirdiği için Babel'de "Maximum call stack size exceeded" hatasına neden olmuştu. Ampütasyon düzeltildi ve dev-server temiz derlendi.
+
+**TESTING:**
+- Testing agent v3 (iteration_53): frontend %100 başarı - tüm data-testid'ler doğrulandı, akışlar çalışıyor
+- Screenshot smoke test: Step1 Gmail, Step4 install.sh progress, Step5 WHM plugins, ModulePresentation intro/section/module slaytları
+
+**FILES MODIFIED:**
+- Created: `frontend/src/components/InstallSimulations.js`, `frontend/src/pages/ModulePresentation.js`
+- Modified: `frontend/src/pages/InstallationGuide.js`, `frontend/src/App.js`, `frontend/src/components/CommandPalette.js`
+
+
+
 ## Feb 19, 2026 (Session 21, v43.99.18) — PDF Screenshot Manager + OBS Kayıt Rehberi
 
 **KULLANICI İSTEĞİ:** 
