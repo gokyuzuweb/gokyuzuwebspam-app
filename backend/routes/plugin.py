@@ -48,8 +48,9 @@ async def plugin_install_info(request: Request, license_key: Optional[str] = Non
     """
     import os as _os
     # 1) Sabit master install URL — her zaman merkezi olsun
+    #    v43.99.24 — panel.gokyuzuhosting.com aktif master domain'idir
     master_url = (_os.environ.get("MASTER_INSTALL_URL")
-                  or "https://gokyuzuhosting.com").rstrip("/")
+                  or "https://panel.gokyuzuhosting.com").rstrip("/")
     # 2) Eğer master'da değilsek (preview veya bayi paneli), yine de master URL kullan
     fwd_proto = request.headers.get("x-forwarded-proto")
     fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
