@@ -605,13 +605,23 @@ export default function App() {
         params.delete("master_key");
         const cleanUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "") + window.location.hash;
         window.history.replaceState({}, "", cleanUrl);
-        // v43.99.1 — Race condition fix: whoami zaten empty localStorage ile çağrıldı,
-        // is_master:false cache'lendi. Master key set edildi → sayfayı yenile ki
-        // sidebar tam master menü ile render olsun (Ayarlar, Lisans Yönetimi vs).
         if (wasEmpty) {
           setTimeout(() => { try { window.location.reload(); } catch (_) {} }, 100);
           return;
         }
+      }
+
+      // v43.99.24 — BAYI/MÜŞTERİ query parametresi: `?license_key=MS-...`
+      // Master modu AKTİF ETMEZ, sadece bayi lisansı olarak scope'lar
+      const bk = params.get("license_key");
+      if (bk && bk.startsWith("MS-")) {
+        // ÖNEMLİ: master_license SET EDİLMEZ — bu bayi modu, master değil
+        localStorage.setItem("gws.event_license", bk);
+        localStorage.removeItem("gws.master_license");  // eski master iz varsa temizle
+        localStorage.setItem("gws.license.dismissed", "1");
+        params.delete("license_key");
+        const cleanUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "") + window.location.hash;
+        window.history.replaceState({}, "", cleanUrl);
       }
 
       // v43.35 — Preview otomatik master activation: kullanıcı manuel key girmesin diye

@@ -22,24 +22,38 @@ unless (Whostmgr::ACLS::hasroot()) {
 my $api    = $ENV{MAILSHIELD_API} // 'http://127.0.0.1:8001';
 my $public = $ENV{MAILSHIELD_PUBLIC} // 'https://panel.gokyuzuhosting.com';
 
-# Master license key — WHM'e sadece root erişebilir, iframe'e query parametre
-# olarak geçilerek tarayıcı localStorage'ına yazılır (master otomatik tanıma).
-my $master_key = $ENV{MAILSHIELD_MASTER_KEY} // '';
-if (!$master_key) {
-    # backend.env'den otomatik oku (fallback) — 2 lokasyon: deployment/ VE backend/
-    for my $env_file ('/opt/gokyuzuwebspam-app/backend/.env',
-                      '/opt/gokyuzuwebspam-app/deployment/backend.env') {
-        last if $master_key;
-        if (open my $fh, '<', $env_file) {
-            while (my $line = <$fh>) {
-                chomp $line;
-                if ($line =~ /^MASTER_LICENSE_KEY\s*=\s*(.+?)\s*$/) {
-                    $master_key = $1;
-                    $master_key =~ s/^["']|["']$//g;
-                    last;
+# v43.99.24 — Bu sunucu MASTER mı yoksa BAYI mı?
+# MASTER: sadece gokyuzuhosting.com'un kendi sunucusu (89.19.15.58)
+# BAYI:   müşterinin WHM sunucusu — panel LOCAL API'den yüklenir
+my $is_master_host = 0;
+if (open my $fh, '<', '/opt/gokyuzuwebspam-app/backend/.env') {
+    while (my $line = <$fh>) {
+        if ($line =~ /^MASTER_HOST\s*=\s*panel\.gokyuzuhosting\.com/i) {
+            $is_master_host = 1; last;
+        }
+    }
+    close $fh;
+}
+
+# Master license key — SADECE gerçek master sunucuda okunur, bayilerde ASLA
+my $master_key = '';
+if ($is_master_host) {
+    $master_key = $ENV{MAILSHIELD_MASTER_KEY} // '';
+    if (!$master_key) {
+        for my $env_file ('/opt/gokyuzuwebspam-app/backend/.env',
+                          '/opt/gokyuzuwebspam-app/deployment/backend.env') {
+            last if $master_key;
+            if (open my $fh, '<', $env_file) {
+                while (my $line = <$fh>) {
+                    chomp $line;
+                    if ($line =~ /^MASTER_LICENSE_KEY\s*=\s*(.+?)\s*$/) {
+                        $master_key = $1;
+                        $master_key =~ s/^["']|["']$//g;
+                        last;
+                    }
                 }
+                close $fh;
             }
-            close $fh;
         }
     }
 }
@@ -240,9 +254,43 @@ print "Content-type: text/html; charset=utf-8\r\n\r\n";
 Whostmgr::HTMLInterface::defheader("GökyüzüWebSpam");
 
 my $panel_url = "$public/panel";
-if ($master_key) {
-    # WHM'e giren = root, master anahtarı iframe query parametresi olarak geçilir
-    $panel_url .= "?master_key=$master_key";
+if ($is_master_host) {
+    # MASTER: iframe'e master_key geçilir → master modu
+    if ($master_key) {
+        $panel_url .= "?master_key=$master_key";
+    }
+} else {
+    # v43.99.24 — BAYI/MÜŞTERİ: master_key ASLA geçilmez!
+    # Kendi license_key'ini oku ve query parametre olarak geçir → tenant scope
+    my $customer_license = '';
+    for my $lic_file ('/etc/mailshield/mailshield.conf',
+                      '/etc/mailshield/license',
+                      '/etc/mailshield/mode.env') {
+        last if $customer_license;
+        if (open my $fh, '<', $lic_file) {
+            while (my $line = <$fh>) {
+                chomp $line;
+                # Format 1: [license] blok altında "key = MS-XXXX"
+                if ($line =~ /^key\s*=\s*(MS-[A-Z0-9]+)/i) {
+                    $customer_license = $1; last;
+                }
+                # Format 2: LICENSE_KEY=MS-XXXX
+                if ($line =~ /^(?:LICENSE_KEY|MAILSHIELD_LICENSE)\s*=\s*(.+?)\s*$/) {
+                    $customer_license = $1;
+                    $customer_license =~ s/^["']|["']$//g;
+                    last;
+                }
+                # Format 3: Düz "MS-XXXX" tek satır
+                if ($line =~ /^(MS-[A-Z0-9]+)$/i) {
+                    $customer_license = $1; last;
+                }
+            }
+            close $fh;
+        }
+    }
+    if ($customer_license) {
+        $panel_url .= "?license_key=$customer_license";
+    }
 }
 
 print <<"HTML";
