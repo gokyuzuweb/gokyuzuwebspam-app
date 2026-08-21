@@ -2924,13 +2924,14 @@ async def users_bulk_import(payload: BulkUserImportIn, request: Request):
 
 
 @api.get("/dashboard/top-domains")
-async def dashboard_top_domains(limit: int = 5, request: Request = None):
+async def dashboard_top_domains(limit: int = 5, request: Request = None, license_key: Optional[str] = None):
     """Dashboard widget: son 24 saatte en aktif alan adları + mail trafiği."""
     from datetime import datetime, timezone, timedelta
     since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    # Master iseniz tenant filtresi yok, değilseniz kendi license'ınız
-    master = ((request.headers.get("x-master-key") or "").strip() if request else "").startswith("MS-")
-    lic_filter = {} if master else {}  # events endpoint ile aynı davranış
+    # v43.99.24 — Doğru tenant scope: bayi kendi mail_events'ini görür, master global
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"]
+    lic_filter = {"license_key": owner} if owner else ({} if scope["is_master"] else {"license_key": "__none__"})
     # Aggregate: from_addr'dan domain çıkart ve grupla
     pipeline = [
         {"$match": {**lic_filter, "ts": {"$gte": since}, "from_addr": {"$exists": True, "$ne": None}}},
