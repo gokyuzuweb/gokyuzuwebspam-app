@@ -81,6 +81,7 @@ DB_NAME=gokyuzuwebspam_prod
 MASTER_HOST=$DOMAIN
 MASTER_IP=$SERVER_IP
 MASTER_LICENSE_KEY=$MASTER_LICENSE
+MASTER_INSTALL_URL=https://$DOMAIN
 CORS_ORIGINS=https://$DOMAIN,https://www.$DOMAIN,https://gokyuzubilgisayar.com
 EOF
 
