@@ -85,6 +85,14 @@ const LANG_STRINGS = {
     footer_copyright: "© 2026 GökyüzüWebSpam. All rights reserved.",
     demo_badge: "🎬 Live Demo",
     demo_hint: "No auth — browse the panel freely",
+    nav_features: "Features",
+    nav_module_tour: "Module Tour",
+    nav_how: "How it works",
+    nav_pricing: "Pricing",
+    nav_faq: "FAQ",
+    nav_reseller: "Reseller Portal",
+    nav_panel: "Panel",
+    nav_buy: "Buy",
   },
   de: {
     hero_badge: "Kommerzielle Mail-Sicherheit für WHM / cPanel",
@@ -142,6 +150,9 @@ const LANG_STRINGS = {
     footer_about: "Über uns", footer_contact: "Kontakt",
     footer_copyright: "© 2026 GökyüzüWebSpam. Alle Rechte vorbehalten.",
     demo_badge: "🎬 Live-Demo", demo_hint: "Keine Anmeldung — frei durchsuchen",
+    nav_features: "Funktionen", nav_module_tour: "Modul-Tour", nav_how: "Anleitung",
+    nav_pricing: "Preise", nav_faq: "FAQ", nav_reseller: "Reseller-Portal",
+    nav_panel: "Zum Panel", nav_buy: "Kaufen",
   },
   fr: {
     hero_badge: "Sécurité e-mail commerciale pour WHM / cPanel",
@@ -198,6 +209,9 @@ const LANG_STRINGS = {
     footer_about: "À propos", footer_contact: "Contact",
     footer_copyright: "© 2026 GökyüzüWebSpam. Tous droits réservés.",
     demo_badge: "🎬 Démo en direct", demo_hint: "Sans authentification — navigation libre",
+    nav_features: "Fonctionnalités", nav_module_tour: "Tour des Modules", nav_how: "Comment ça marche",
+    nav_pricing: "Tarifs", nav_faq: "FAQ", nav_reseller: "Portail Revendeur",
+    nav_panel: "Panneau", nav_buy: "Acheter",
   },
   es: {
     hero_badge: "Seguridad de correo comercial para WHM / cPanel",
@@ -254,6 +268,9 @@ const LANG_STRINGS = {
     footer_about: "Nosotros", footer_contact: "Contacto",
     footer_copyright: "© 2026 GökyüzüWebSpam. Todos los derechos reservados.",
     demo_badge: "🎬 Demo en vivo", demo_hint: "Sin autenticación — navega libremente",
+    nav_features: "Funciones", nav_module_tour: "Tour de Módulos", nav_how: "Cómo funciona",
+    nav_pricing: "Precios", nav_faq: "FAQ", nav_reseller: "Portal Revendedor",
+    nav_panel: "Panel", nav_buy: "Comprar",
   },
   ar: {
     hero_badge: "أمان بريد تجاري لـ WHM / cPanel",
@@ -310,6 +327,9 @@ const LANG_STRINGS = {
     footer_about: "من نحن", footer_contact: "اتصال",
     footer_copyright: "© 2026 GökyüzüWebSpam. جميع الحقوق محفوظة.",
     demo_badge: "🎬 عرض مباشر", demo_hint: "بلا مصادقة — تصفّح بحرية",
+    nav_features: "الميزات", nav_module_tour: "جولة الوحدات", nav_how: "كيف يعمل",
+    nav_pricing: "الأسعار", nav_faq: "الأسئلة الشائعة", nav_reseller: "بوابة الموزع",
+    nav_panel: "لوحة التحكم", nav_buy: "شراء",
   },
   tr: {
     hero_badge: "WHM / cPanel için ticari mail güvenliği",
@@ -375,6 +395,14 @@ const LANG_STRINGS = {
     footer_copyright: "© 2026 GökyüzüWebSpam. Tüm hakları saklıdır.",
     demo_badge: "🎬 Canlı Demo",
     demo_hint: "Kimlik doğrulama yok — panelde dilediğince gezinin",
+    nav_features: "Özellikler",
+    nav_module_tour: "Modül Turu",
+    nav_how: "Nasıl Çalışır",
+    nav_pricing: "Fiyatlandırma",
+    nav_faq: "SSS",
+    nav_reseller: "Bayi Portalı",
+    nav_panel: "Panele Dön",
+    nav_buy: "Satın Al",
   },
 };
 
@@ -505,6 +533,7 @@ function GridBackdrop() {
 
 function NavBar() {
   const { effective, setLang } = useI18n();
+  const s = useLandingStrings();
   const langs = ["tr", "en", "de", "fr", "es", "ar"];
   return (
     <header className="sticky top-0 z-30 border-b border-slate-800/60 bg-slate-950/70 backdrop-blur-md" data-testid="landing-nav">
@@ -519,11 +548,11 @@ function NavBar() {
           </div>
         </Link>
         <nav className="hidden md:flex items-center gap-7 text-sm text-slate-400">
-          <a href="#features" className="hover:text-slate-100 transition-colors">Features</a>
-          <a href="#module-tour" data-testid="nav-module-tour" className="hover:text-fuchsia-300 transition-colors font-semibold text-fuchsia-400">Modül Turu 🎬</a>
-          <a href="#how" className="hover:text-slate-100 transition-colors">How it works</a>
-          <a href="#pricing" className="hover:text-slate-100 transition-colors">Pricing</a>
-          <a href="#faq" className="hover:text-slate-100 transition-colors">FAQ</a>
+          <a href="#features" data-testid="nav-features" className="hover:text-slate-100 transition-colors">{s.nav_features}</a>
+          <a href="#module-tour" data-testid="nav-module-tour" className="hover:text-fuchsia-300 transition-colors font-semibold text-fuchsia-400">{s.nav_module_tour} 🎬</a>
+          <a href="#how" data-testid="nav-how" className="hover:text-slate-100 transition-colors">{s.nav_how}</a>
+          <a href="#pricing" data-testid="nav-pricing" className="hover:text-slate-100 transition-colors">{s.nav_pricing}</a>
+          <a href="#faq" data-testid="nav-faq" className="hover:text-slate-100 transition-colors">{s.nav_faq}</a>
         </nav>
         <div className="flex items-center gap-2">
           <select
@@ -535,13 +564,13 @@ function NavBar() {
             {langs.map((l) => <option key={l} value={l}>{l.toUpperCase()}</option>)}
           </select>
           <Link to="/reseller" data-testid="landing-reseller-cta" className="hidden lg:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md border border-slate-700 bg-slate-900 text-slate-300 text-sm hover:border-slate-600 transition-colors">
-            Reseller Portal
+            {s.nav_reseller}
           </Link>
           <Link to="/panel" data-testid="landing-panel-cta" className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-sm hover:bg-emerald-500/20 transition-colors">
-            <ShieldAlert className="w-3.5 h-3.5"/> Panele Dön
+            <ShieldAlert className="w-3.5 h-3.5"/> {s.nav_panel}
           </Link>
           <Link to="/shop" data-testid="landing-buy-cta" className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-gradient-to-br from-indigo-500 to-indigo-600 text-white text-sm font-medium shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 transition-shadow">
-            Buy <ArrowRight className="w-3.5 h-3.5" />
+            {s.nav_buy} <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
       </div>

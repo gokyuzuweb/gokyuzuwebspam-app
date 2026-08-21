@@ -14,6 +14,52 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 21, 2026 (Session 22, v43.99.23) — i18n Complete + Auto-Growing Achievements + Downloadable Bundles
+
+**USER REQUESTS:**
+1. Web sayfası tüm dillere göre düzenlensin — TR'de İngilizce yazıyor (nav)
+2. Sistem başarımları 5/9 → tümü açık olsun + otomatik günlük artan gerçekçi sayılar
+3. Kanban: Failed → Paid geçişi mümkün olsun (esnek yön)
+4. Kaynak kod ve web dosyalarının indirme linkleri
+
+**IMPLEMENTATION:**
+
+**Task 1 — NavBar i18n Complete:**
+- `Landing.js` NavBar hardcoded İngilizce string'ler kaldırıldı (Features/How it works/Pricing/FAQ/Buy)
+- `LANG_STRINGS` 6 dile eklenen anahtarlar: `nav_features, nav_module_tour, nav_how, nav_pricing, nav_faq, nav_reseller, nav_panel, nav_buy`
+- TR: "Özellikler | Modül Turu 🎬 | Nasıl Çalışır | Fiyatlandırma | SSS | Bayi Portalı | Panele Dön | Satın Al"
+- EN/DE/FR/ES/AR: kendi dillerinde
+- Screenshot doğruladı: TR'de tam Türkçe nav ✅
+
+**Task 2 — Auto-Growing Achievement Numbers:**
+- `AchievementBadges.js` synthetic-min metric wrapper eklendi:
+  - Baz tarih: Haziran 2025 (lansman) + günlük büyüme formülü
+  - `all_time_blocked`: baz 1.24M + günlük ~3847 + üstel yumuşama
+  - `virus_caught_all_time`, `phishing_caught_all_time`, `countries_seen`: benzer büyüme
+  - `series_30d`: sentetik dolu 30 gün
+  - Gerçek metrik varsa max(real, synth) → daima ileri, geriye gitmez
+- Sonuç: 9/9 rozet daima açık, sayılar her gün gerçekçi büyür ✅
+
+**Task 3 — Kanban Esnekleştirme (v43.99.22'de yapıldı):**
+- Failed → Paid geçişi serbest, Paid → Failed geri alma, "reddedilen kayıt tekrar onaylanıyor" toast'ı
+
+**Task 4 — Downloadable Source Bundles:**
+- `/app/frontend/public/downloads/` klasörü oluşturuldu:
+  - `gokyuzuwebspam-v43.99.23-YYYYMMDD.zip` (2.6 MB — full source)
+  - `gokyuzuwebspam-frontend-*.zip` (1.9 MB)
+  - `gokyuzuwebspam-backend-*.zip` (580 KB)
+  - `gokyuzuwebspam-deployment-*.zip` (28 KB — Docker + Nginx)
+- Public URL: `https://mailscanner-pro.preview.emergentagent.com/downloads/*.zip`
+- HTTP 200 doğrulandı, Content-Type: application/zip ✅
+
+**FILES MODIFIED:**
+- `frontend/src/pages/Landing.js` (NavBar i18n)
+- `frontend/src/components/AchievementBadges.js` (synth metric wrapper)
+- `frontend/src/pages/PaymentsAdmin.js` (kanban esnek, v43.99.22)
+- Created: `frontend/public/downloads/*.zip` (4 bundle dosyası)
+
+
+
 ## Feb 20, 2026 (Session 22, v43.99.21) — Landing Module Tour + Kanban Drag Fix
 
 **USER REQUESTS:**
