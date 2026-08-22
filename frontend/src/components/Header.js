@@ -142,20 +142,15 @@ function GlobalSearch() {
  */
 function MasterModeToggle() {
   const qc = useQueryClient();
-  // v43.99.24 — SADECE master sunucusunda göster (panel.gokyuzuhosting.com)
-  // Bayı/müşteri sunuculardaki iframe'de bu buton görünmemeli
-  const isMasterHost = typeof window !== "undefined" && (() => {
-    const h = window.location.hostname || "";
-    return h === "panel.gokyuzuhosting.com"
-        || h === "localhost"
-        || h.endsWith(".preview.emergentagent.com");
-  })();
+  // v44.00.00 — MASTER'i belirleyen HOSTNAME değil, whoami.is_master (backend authoritatif)
+  const whoami = useQuery({ queryKey: ["whoami-mt"], queryFn: api.whoami, staleTime: 30_000 });
+  const isMasterHost = whoami.data?.is_master === true;
   // Trigger re-render whenever localStorage'a yazılırsa
   const active = typeof window !== "undefined"
     && (localStorage.getItem("gws.master_license") || "").startsWith("MS-");
   const mode = useQuery({ queryKey: ["system-mode"], queryFn: api.systemMode, enabled: active && isMasterHost });
-  // Master host değilse hiçbir şey render etme
-  if (!isMasterHost) return null;
+  // whoami henüz yüklenmediyse (undefined) VE localStorage'da master key yoksa render etme
+  if (whoami.isLoading || !isMasterHost) return null;
   const masterIp = mode.data?.master_ip || "";
   const activate = () => {
     const val = window.prompt(
@@ -212,16 +207,12 @@ function MasterModeToggle() {
 }
 
 function MasterUpdatePush() {
-  // v43.99.24 — SADECE master sunucusunda görünür (bayı/müşteride hiç)
-  const isMasterHost = typeof window !== "undefined" && (() => {
-    const h = window.location.hostname || "";
-    return h === "panel.gokyuzuhosting.com"
-        || h === "localhost"
-        || h.endsWith(".preview.emergentagent.com");
-  })();
+  // v44.00.00 — Sadece gerçek master için (whoami.is_master authoritative)
+  const whoami = useQuery({ queryKey: ["whoami-mup"], queryFn: api.whoami, staleTime: 30_000 });
+  const isMasterHost = whoami.data?.is_master === true;
   const active = typeof window !== "undefined"
     && (localStorage.getItem("gws.master_license") || "").startsWith("MS-");
-  if (!isMasterHost || !active) return null;
+  if (whoami.isLoading || !isMasterHost || !active) return null;
   const push = async () => {
     if (!window.confirm("Master'a bağlı tüm bayilere 'gws-update çalıştır' sinyali gönderilsin mi?")) return;
     try {

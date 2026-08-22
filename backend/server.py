@@ -10489,6 +10489,40 @@ async def plugin_verify_license(payload: VerifyLicenseIn):
     # 1) license_key ile
     if payload.license_key:
         lic = await db.licenses.find_one({"active": True, "license_key": payload.license_key}, {"_id": 0})
+        # v44.00.00 — IP KİLİDİ: Lisans IP'ye bağlı olmalı
+        # · ip_addresses BOŞSA → İLK aktive eden IP'ye kilitlenir (auto-lock)
+        # · ip_addresses DOLUYSA → payload.ip listede yoksa reddet
+        if lic and payload.ip:
+            allowed = lic.get("ip_addresses") or []
+            if allowed:
+                if payload.ip not in allowed:
+                    # Farklı IP'den lisans anahtarı denemesi — VIOLATION
+                    v = LicenseViolation(
+                        ip=payload.ip or "",
+                        hostname=payload.hostname or "",
+                        license_key=payload.license_key or "",
+                        reason="ip_not_allowed",
+                        version="",
+                        raw={"attempted_ip": payload.ip, "allowed_ips": allowed[:3]},
+                    )
+                    await db.license_violations.insert_one(v.model_dump())
+                    return {
+                        "licensed": False,
+                        "gated": True,
+                        "reason": "ip_not_allowed",
+                        "message": f"Bu lisans başka bir IP'ye bağlı ({allowed[0]}). Erişmeye çalıştığınız IP ({payload.ip}) yetkili değil. Master ile iletişime geçin.",
+                    }
+            else:
+                # Boş — ilk connecting IP'ye kilitle
+                await db.licenses.update_one(
+                    {"license_key": payload.license_key},
+                    {"$set": {"ip_addresses": [payload.ip]}},
+                )
+                lic["ip_addresses"] = [payload.ip]
+                await db.logs.insert_one(ActivityLog(
+                    source="license", level="info",
+                    message=f"Lisans {payload.license_key[:14]}... IP'ye kilitlendi: {payload.ip}",
+                ).model_dump())
 
     # 2) hostname ile
     if not lic and payload.hostname:
