@@ -1,0 +1,44 @@
+{
+  "summary": "v44.00.03 backend regression — 51/51 yeşil (16 yeni v44.00.03 + 18 v44.00.01 + 17 v44.00.02). (1) BLACKLIST TENANT LEAK FIX doğrulandı: GET /api/blacklist/requests bayi (MS-TESTBAYI-STARTER-V4371) sadece kendi owner_license_key satırlarını görüyor (leak yok); master X-Master-Key ile tüm liste dönüyor. Bayi delist oluşturduğunda owner_license_key doğru şekilde kendi key'i olarak yazılıyor, master listesinde de görünüyor, PRO bayi listesinde görünmüyor. PUT /api/blacklist/requests/{id} + POST /update: bayi master'ın kaydını güncelleyemiyor (403 'Bu talep sizin lisansınıza ait değil'), kendi kaydını güncelleyebiliyor (200), master her şeyi güncelleyebiliyor (200). (2) ENGINES MASTER CASCADE doğrulandı: master spamassassin toggle sonrası master_cascaded_to>=1 dönüyor, aynı motor bayi (starter) GET /api/engines'te aynı enabled değerine geliyor; master tekrar toggle → geri dönüyor; state teardown ile orijinal master state'e geri döndürüldü. Reseller kendi key'i ile master paneline toggle isteği atarsa 403 BAYI_ON_MASTER_PANEL alıyor (beklenen güvenlik davranışı — bayi kendi sunucusundan yapmalı) — her iki durumda da master + diğer bayi state'i etkilenmiyor. (3) BOUNCE DIGEST EXPORT: CSV 200 + Content-Type text/csv + attachment header + UTF-8 BOM (\\ufeff) + 8 kolonlu doğru header (tarih, alici, gonderici, kullanici, sebep, kod, konu, boyut_kb). XLSX 200 + spreadsheetml.sheet + geçerli PK (ZIP) başlıklı binary body. license_key + master header yoksa 400. (4) VERIFY-LICENSE key_not_found short-circuit: bogus key 404 + Türkçe mesaj 'Lisans anahtarı geçersiz veya aktif değil' + db.license_violations satırı reason='key_not_found' olarak yazılıyor (ambiguous_shared_ip fallback yok). (5) REGRESSION v44.00.01 (18 test) ve v44.00.02 (17 test) hepsi yeşil.",
+  "endpoints_tested": {
+    "blacklist_tenant": "GET/POST /api/blacklist/requests, POST /api/blacklist/delist, PUT + POST /api/blacklist/requests/{id}/update",
+    "engines_cascade": "POST /api/engines/spamassassin/toggle (master + reseller), GET /api/engines",
+    "bounce_export": "GET /api/bounce-digest/export?fmt=csv|xlsx",
+    "verify_license": "POST /api/plugin/verify-license (bogus key), GET /api/license/violations",
+    "regression": "test_v44_ip_lock_and_tenant_isolation.py + test_v44_00_02_regression.py — 35/35"
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/engines/{name}/toggle (reseller key on master panel)",
+        "issue": "Bayi kendi lisansıyla master paneline motor toggle isteği yaparsa 403 BAYI_ON_MASTER_PANEL dönüyor. Bu güvenlik açısından doğru davranış (bayi kendi sunucusundan yapmalı), fakat spec cümlesi 'Reseller toggling their own engine (POST) does NOT affect other resellers or master (master_cascaded_to=0)' 200 dönüşü ima ediyor. Test hem 200 (own panel path) hem 403 (master-panel block) kabul ediyor; her iki durumda da master + diğer bayi state'i değişmediği doğrulandı. Öneri: spec'i netleştir ya da bayi kendi panelinden bu testin ayrıca çalıştırılabildiğine dair not ekle."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v44_00_03_regression.py",
+    "/app/test_reports/pytest/v44_00_03.xml",
+    "/app/test_reports/pytest/v44_00_03_full.xml"
+  ],
+  "action_items": [
+    "Küçük/dokümantasyon: engines cascade spec'inde 'reseller toggling their own engine' senaryosu — master paneli üzerinden 403 dönmesi doğru; spec'i bu ayrım için netleştirmek faydalı. Kod tarafında değişiklik gerekmiyor."
+  ],
+  "critical_code_review_comments": [
+    "server.py:2200-2228 engines_toggle master cascade — cascade filter {'owner_license_key': {'$nin': ['', None, master_env]}} doğru şekilde master + boş owner'ları hariç tutuyor; modified_count master_cascaded_to olarak dönüyor. Tenant başına 'owner_license_key' index'i (satır 688) cascade update'i verimli tutuyor.",
+    "server.py:7085-7195 blacklist delist / requests / update — owner_license_key kaydı ve _authorize_delist ile 403 kontrolü tutarlı. POST /update alternatifi (Apache/cPanel PUT/DELETE bloğuna karşı) aynı auth'u çağırıyor.",
+    "routes/bounce_digest.py:298-376 export — csv path StringIO'ya BOM ekliyor ve iter([buf.getvalue()]) ile StreamingResponse dönüyor (UTF-8 BOM ilk 3 byte olarak geliyor). xlsx openpyxl Workbook + BytesIO ile üretiliyor. Content-Disposition ve media_type doğru. Küçük not: fmt query'de Literal['csv','xlsx'] validasyonu 422 döner (400 değil) — bilgi amaçlı.",
+    "server.py:10612-10641 verify-license short-circuit — license_key sağlanıp DB'de yoksa doğrudan LicenseViolation(reason='key_not_found') hem canonical hem legacy koleksiyonuna yazılıyor + 404 dönüyor; ambiguous_shared_ip fallback baypas edildi."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v44_00_03_regression.py (yeni)"
+  ],
+  "success_rate": {"backend": "100% (51/51)", "frontend": "not tested (backend-only istek)"},
+  "test_credentials": "Master X-Master-Key: MS-C02AB012652A4FE692D69676. Reseller starter: MS-TESTBAYI-STARTER-V4371. Reseller pro: MS-TESTBAYI-PRO-V4371.",
+  "seed_data_creation": "Testler kendi delist_requests satırlarını (reason='TEST_v44_00_03*') oluşturuyor (biri bayi-sahipli, biri master-sahipli). Verify-license testi tek license_violations satırı ekliyor (bogus key, 5.6.7.8 IP) — 7 günlük _daily_violations_cleanup_task ile silinir. Engines cascade testi teardown'da master state'i orijinal değere geri döndürüyor.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "v44.00.03 için yeni regression suite /app/backend/tests/test_v44_00_03_regression.py (16 test). Çalıştırma: python -m pytest backend/tests/test_v44_00_03_regression.py -v -o addopts=. Tüm v44 suite: python -m pytest backend/tests/test_v44_00_03_regression.py backend/tests/test_v44_ip_lock_and_tenant_isolation.py backend/tests/test_v44_00_02_regression.py -v -o addopts= (51/51 yeşil). REACT_APP_BACKEND_URL /app/frontend/.env'den otomatik okunur. Engines cascade teardown master state'i restore ediyor — canlı sisteme kalıcı yan etki yok. Test dosyası bayi-master panel ayrımı için 403'ü de kabul ediyor.",
+  "rca of the issue": "N/A — tüm testler geçti."
+}

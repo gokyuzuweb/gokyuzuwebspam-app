@@ -10,8 +10,46 @@ gokyuzuhosting.com.
 - Frontend: React + TanStack Query + TailwindCSS + Shadcn UI.
 - Master domain: gokyuzuhosting.com.
 - Multi-tenant isolation via `owner_license_key` on rules, engines, mail_events,
-  quarantine, lists, settings.
+  quarantine, lists, settings, **delist_requests (v44.00.03)**.
 - Impersonation: `gws_impersonate` cookie.
+
+
+## Feb 22, 2026 (Session 23, v44.00.03) — 4 P1 Features + 2 Data Leak Fixes
+
+### 🐛 CRITICAL FIXES
+- **Blacklist tenant leak** (user reported): `/api/blacklist/requests` was returning ALL tenants' delist requests to any caller. Fixed:
+  - `DelistRequest` model now has `owner_license_key` field.
+  - `POST /blacklist/delist` stamps caller's tenant.
+  - `GET /blacklist/requests` filters by tenant (master sees all).
+  - `PUT /blacklist/requests/{id}` + POST `/update` gated via `_authorize_delist` (403 if not owner).
+- **Engines master → customer sync** (user reported): Master toggling an engine wasn't propagating to customers. Fixed:
+  - `POST /engines/{name}/toggle` with master credentials cascades new state to all non-master engine rows.
+  - Response includes `master_cascaded_to: N` (count of updated tenants).
+  - Customers still get their own state at first bootstrap (already worked).
+
+### 🎁 NEW FEATURES
+1. **ElevenLabs alternative → Free Web Speech API narration**: User asked for TR voice-over on Modül Turu slides. Instead of paid ElevenLabs (~$5/mo), built `useNarrator` hook using `window.speechSynthesis` (`tr-TR` voice) — **zero cost, no backend, no API key**. Mute toggle in `ModulePresentation` controls, auto-plays per-slide when playing.
+2. **Pricing A/B Landing**: Added `ComparisonMatrix` (Motorlar / Koruma / Yönetim / Destek — 15 features × 3 plans) + expanded `Testimonials` to 6 items with auto-rotating slider (5sn, pause on hover, dot navigation).
+3. **Bounce Digest CSV/Excel Export**: New `GET /api/bounce-digest/export?fmt=csv|xlsx&hours=24&limit=500` endpoint. CSV includes UTF-8 BOM for Turkish characters in Excel. Frontend adds 2 buttons above "Son 10 Örnek" list.
+4. **Reseller Onboarding Video Modal**: New `OnboardingVideoModal` component — auto-plays 8-step `InstallSimulations` animation on first login for non-master users (60sn total, ~7.5s per step), then persists `gws.onboarding_video_seen`. Skip/Pause/Next/Prev controls + ESC.
+
+### 🔒 Earlier v44.00.02 backend security hardening (preserved)
+- Master-only gating on `/api/licenses` and `/api/license/violations`.
+- `verify-license` short-circuits to `key_not_found` violation when license_key given but not found (no IP-fallback masking).
+- PIN Approvals: DELETE + bulk-delete + company enrichment + Şirket column + Sil button.
+- Kilit & PIN Settings sub-tabs (5 focused screens instead of one long list).
+- Demo banner text consolidated to single line.
+
+### Version bump
+- `v44.00.02 → v44.00.03` (all VERSION files, App.js, Landing.js, backend/routes/master.py, server.py).
+
+### Testing
+- Backend regression **51/51 green** on v44.00.03 (16 new + 18 v44.00.01 + 17 v44.00.02).
+- Test suites: `test_v44_ip_lock_and_tenant_isolation.py`, `test_v44_00_02_regression.py`, `test_v44_00_03_regression.py`.
+- Reports: iteration_54.json / 55.json / 56.json.
+
+
+## Feb 22, 2026 (Session 22, v43.99.24) — Critical Tenant Isolation Fixes
 
 
 ## Feb 22, 2026 (Session 23, v44.00.02) — Backend Security Hardening + PIN UX

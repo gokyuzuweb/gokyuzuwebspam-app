@@ -8,11 +8,14 @@ Koleksiyonlar:
   db.settings                 : { _key: bounce_digest_config:<lic>, ... }
 """
 from __future__ import annotations
+import io
+import csv
 import uuid
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Literal
 from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from deps import db
 
@@ -289,6 +292,88 @@ async def preview(request: Request, hours: int = 24, license_key: Optional[str] 
     d = await _generate_digest_for_license(lk, hours)
     d["html_preview"] = _render_html(d)
     return d
+
+
+# v44.00.03 — CSV / XLSX Export for "Son N Örnek" bounce list
+@router.get("/export")
+async def export_samples(
+    request: Request,
+    hours: int = 24,
+    limit: int = 500,
+    fmt: Literal["csv", "xlsx"] = "csv",
+    license_key: Optional[str] = None,
+):
+    """Son N saatlik bounce örneklerini CSV veya Excel dosyası olarak indir.
+    Alanlar: tarih, alıcı, gönderici, sebep, kod, konu, boyut_kb, kullanici.
+    """
+    master_key = (request.headers.get("x-master-key") or "").strip()
+    lk = license_key or master_key
+    if not lk:
+        raise HTTPException(400, "license_key gerekli veya X-Master-Key header")
+
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    match = {
+        "license_key": lk,
+        "direction": "out",
+        "ts": {"$gte": since},
+        "action": {"$in": ["bounce", "defer", "reject"]},
+    }
+    rows: list[dict] = []
+    async for e in db.mail_events.find(
+        match, {"_id": 0, "ts": 1, "to_addr": 1, "from_addr": 1, "from_user": 1,
+                "action": 1, "sa_report": 1, "subject": 1, "size_bytes": 1},
+    ).sort("ts", -1).limit(max(1, min(limit, 5000))):
+        rows.append({
+            "tarih": e.get("ts") or "",
+            "alici": e.get("to_addr") or "",
+            "gonderici": e.get("from_addr") or "",
+            "kullanici": e.get("from_user") or "",
+            "sebep": (e.get("sa_report") or "").strip()[:200] or (e.get("action") or ""),
+            "kod": (e.get("action") or "").upper(),
+            "konu": (e.get("subject") or "")[:150],
+            "boyut_kb": round((e.get("size_bytes") or 0) / 1024, 2),
+        })
+
+    ts_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    fields = ["tarih", "alici", "gonderici", "kullanici", "sebep", "kod", "konu", "boyut_kb"]
+
+    if fmt == "xlsx":
+        try:
+            from openpyxl import Workbook
+        except Exception:
+            raise HTTPException(500, "openpyxl kurulu değil — pip install openpyxl")
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Bounce Digest"
+        ws.append(fields)
+        for r in rows:
+            ws.append([r.get(f, "") for f in fields])
+        # Otomatik kolon genişliği (basit)
+        for col_idx, f in enumerate(fields, start=1):
+            ws.column_dimensions[chr(64 + col_idx)].width = max(12, min(40, len(f) + 4))
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=bounce-digest-{ts_stamp}.xlsx"},
+        )
+
+    # CSV varsayılan
+    buf = io.StringIO()
+    # BOM ekle ki Türkçe karakterler Excel'de düzgün açılsın
+    buf.write("\ufeff")
+    writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(r)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=bounce-digest-{ts_stamp}.csv"},
+    )
 
 
 @router.get("/history")

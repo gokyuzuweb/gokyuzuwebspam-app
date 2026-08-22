@@ -2197,11 +2197,35 @@ async def engines_toggle(name: str, request: Request, license_key: Optional[str]
         {"name": name, "owner_license_key": owner},
         {"$set": {"enabled": new_val}},
     )
+    # v44.00.03 — MASTER CASCADE: Master motor toggle'ı YAPARSA, aynı motor
+    # tüm bayilere de aynı durumla yansıtılır. Bayi kendi paneli üzerinden yine
+    # override edebilir, ama master global politika belirler.
+    # Sebep: kullanıcı "master'da motor kapattığımda müşteride kapanmıyor" dedi.
+    # Master'ın kapatması → ürün seviyesinde global "off" demektir.
+    cascaded = 0
+    if scope.get("is_master"):
+        # Master için owner boş/master key olabilir. Master dışındaki TÜM
+        # bayilere aynı ismin motoru için enabled=new_val yaz.
+        try:
+            master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+            # Cascade filter: master OLMAYAN her owner_license_key
+            cascade_filter = {"name": name, "owner_license_key": {"$nin": ["", None, master_env]}}
+            r = await db.engines.update_many(
+                cascade_filter, {"$set": {"enabled": new_val, "master_cascaded_at": _iso()}}
+            )
+            cascaded = int(r.modified_count or 0)
+            if cascaded:
+                await db.logs.insert_one(ActivityLog(
+                    source=name, level="info",
+                    message=f"MASTER CASCADE · {doc.get('label', name)} → {cascaded} bayide {'AÇILDI' if new_val else 'KAPATILDI'}",
+                ).model_dump())
+        except Exception as e:
+            logging.warning(f"engines cascade failed for {name}: {e}")
     await db.logs.insert_one(ActivityLog(
         source=name, level="info",
         message=f"{doc.get('label', name)} {'etkinleştirildi' if new_val else 'devre dışı bırakıldı'} · scope={owner[:16] if owner else 'master'}",
     ).model_dump())
-    return {"name": name, "enabled": new_val}
+    return {"name": name, "enabled": new_val, "master_cascaded_to": cascaded}
 
 
 # ----- Settings -----
@@ -4046,7 +4070,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.02"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.03"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -6077,7 +6101,7 @@ async def _fire_license_alert(violation: dict) -> None:
 
 @api.get("/licenses")
 async def licenses_list(request: Request, license_key: Optional[str] = None):
-    # v44.00.02 — SECURITY: master-only. Bayilere lisans listesini SIZDIRMA.
+    # v44.00.03 — SECURITY: master-only. Bayilere lisans listesini SIZDIRMA.
     m = await _is_master(request, license_key)
     if not m.get("is_master"):
         raise HTTPException(status_code=403, detail="Master yetkisi gerekli")
@@ -6883,7 +6907,7 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
 
 @api.get("/license/violations")
 async def license_violations(request: Request, limit: int = 100, license_key: Optional[str] = None):
-    # v44.00.02 — SECURITY: master-only. İhlaller license_key + IP bilgisi içerir → sızmasın.
+    # v44.00.03 — SECURITY: master-only. İhlaller license_key + IP bilgisi içerir → sızmasın.
     m = await _is_master(request, license_key)
     if not m.get("is_master"):
         raise HTTPException(status_code=403, detail="Master yetkisi gerekli")
@@ -7054,12 +7078,18 @@ class DelistRequest(BaseModel):
     status: Literal["pending", "submitted", "resolved", "failed"] = "pending"
     submitted_via: Optional[str] = "manual"  # manual (portal) | email | api
     notes: Optional[str] = ""
+    # v44.00.03 — Tenant isolation: hangi lisansa/bayiye ait olduğu (master için MASTER_LICENSE_KEY)
+    owner_license_key: Optional[str] = ""
 
 
 @api.post("/blacklist/delist")
 async def blacklist_delist(payload: DelistRequestIn, request: Request, license_key: Optional[str] = None):
     scope = await _tenant_scope(request, license_key)
     await _require_feature(scope, "blacklist_manage")
+    # v44.00.03 — Tenant sahibini belirle (master ise MASTER_LICENSE_KEY, bayi ise kendi key'i)
+    owner_lk = scope.get("owner_license_key") or (
+        os.environ.get("MASTER_LICENSE_KEY", "") if scope.get("is_master") else ""
+    )
     provider_map = {p["code"]: p for p in RBL_PROVIDERS}
     created = []
     email_attempts = 0
@@ -7102,6 +7132,7 @@ async def blacklist_delist(payload: DelistRequestIn, request: Request, license_k
             contact_email=payload.contact_email, reason=payload.reason,
             status="submitted" if submitted_via == "email" else "pending",
             submitted_via=submitted_via,
+            owner_license_key=owner_lk,  # v44.00.03 — Tenant isolation
         ).model_dump()
         # Insert a COPY (insert_one mutates the dict with ObjectId _id)
         await db.delist_requests.insert_one(dict(req))
@@ -7114,8 +7145,15 @@ async def blacklist_delist(payload: DelistRequestIn, request: Request, license_k
 
 
 @api.get("/blacklist/requests")
-async def blacklist_requests():
-    return await db.delist_requests.find({}, {"_id": 0}).sort("at", -1).to_list(200)
+async def blacklist_requests(request: Request, license_key: Optional[str] = None):
+    # v44.00.03 — Tenant isolation: bayi sadece KENDİ delisting taleplerini görür
+    scope = await _tenant_scope(request, license_key)
+    q: dict = {}
+    if not scope.get("is_master"):
+        owner_lk = scope.get("owner_license_key") or ""
+        # Bayi lisansı yoksa boş liste (fallthrough güvenli)
+        q = {"owner_license_key": owner_lk} if owner_lk else {"__none__": True}
+    return await db.delist_requests.find(q, {"_id": 0}).sort("at", -1).to_list(200)
 
 
 class DelistStatusUpdate(BaseModel):
@@ -7123,8 +7161,23 @@ class DelistStatusUpdate(BaseModel):
     notes: Optional[str] = ""
 
 
+async def _authorize_delist(req_id: str, request: Request, license_key: Optional[str]):
+    """v44.00.03 — Kayıt sahipliğini doğrula (master her şeye erişebilir)."""
+    scope = await _tenant_scope(request, license_key)
+    doc = await db.delist_requests.find_one({"id": req_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Talep bulunamadı")
+    if scope.get("is_master"):
+        return scope
+    owner = scope.get("owner_license_key") or ""
+    if not owner or doc.get("owner_license_key") != owner:
+        raise HTTPException(403, "Bu talep sizin lisansınıza ait değil")
+    return scope
+
+
 @api.put("/blacklist/requests/{req_id}")
-async def blacklist_update_request(req_id: str, upd: DelistStatusUpdate):
+async def blacklist_update_request(req_id: str, upd: DelistStatusUpdate, request: Request, license_key: Optional[str] = None):
+    await _authorize_delist(req_id, request, license_key)
     r = await db.delist_requests.update_one({"id": req_id}, {"$set": upd.model_dump()})
     if r.matched_count == 0:
         raise HTTPException(404, "Talep bulunamadı")
@@ -7134,7 +7187,8 @@ async def blacklist_update_request(req_id: str, upd: DelistStatusUpdate):
 # Apache/cPanel proxy PUT/DELETE metodlarını bloklayabildiği için POST alternatifi.
 # Frontend `blacklistUpdateRequest` bu endpoint'i kullanır.
 @api.post("/blacklist/requests/{req_id}/update")
-async def blacklist_update_request_post(req_id: str, upd: DelistStatusUpdate):
+async def blacklist_update_request_post(req_id: str, upd: DelistStatusUpdate, request: Request, license_key: Optional[str] = None):
+    await _authorize_delist(req_id, request, license_key)
     r = await db.delist_requests.update_one({"id": req_id}, {"$set": upd.model_dump()})
     if r.matched_count == 0:
         raise HTTPException(404, "Talep bulunamadı")
@@ -10558,7 +10612,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
     # 1) license_key ile
     if payload.license_key:
         lic = await db.licenses.find_one({"active": True, "license_key": payload.license_key}, {"_id": 0})
-        # v44.00.02 — license_key SAĞLANMIŞ ama DB'de aktif eşleşme YOK →
+        # v44.00.03 — license_key SAĞLANMIŞ ama DB'de aktif eşleşme YOK →
         # IP/hostname fallback'ini ATLA. Aksi halde IP başka bir lisansa kayıtlıysa
         # 'ambiguous_shared_ip' hatası tetiklenip gerçek key_not_found gizlenir.
         # Direkt key_not_found violation yaz ve 404 dön (spec 1c).
@@ -10712,7 +10766,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
                     logging.info(f"NS auto-license check failed for {payload.hostname}: {e}")
 
     if not lic:
-        # v44.00.02 — browser_ip'yi de yakala (server_ip = payload.ip, browser_ip = request headers)
+        # v44.00.03 — browser_ip'yi de yakala (server_ip = payload.ip, browser_ip = request headers)
         _browser_ip = ""
         try:
             if request is not None:
@@ -10734,7 +10788,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
             version="",
             raw={"verify_attempt": True, "ambiguous": ambiguous_ip_match, "browser_ip": _browser_ip},
         ).model_dump()
-        # v44.00.02 — Canonical collection'a da yaz (frontend'in yeni list endpoint'i buradan okur)
+        # v44.00.03 — Canonical collection'a da yaz (frontend'in yeni list endpoint'i buradan okur)
         await db.license_violations.insert_one(dict(v))
         await db.violations.insert_one(v)
         asyncio.create_task(_fire_license_alert(v))

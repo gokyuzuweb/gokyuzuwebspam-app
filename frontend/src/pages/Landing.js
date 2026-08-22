@@ -544,7 +544,7 @@ function NavBar() {
           </div>
           <div className="leading-tight">
             <div className="text-slate-100 font-bold tracking-tight text-[17px]">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v44.00.02</div>
+            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v44.00.03</div>
           </div>
         </Link>
         <nav className="hidden md:flex items-center gap-7 text-sm text-slate-400">
@@ -865,56 +865,145 @@ function Pricing() {
         {sorted.length === 0 ? (
           <div className="text-center text-slate-500">{s.plans_loading}</div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl mx-auto">
-            {sorted.map((p) => {
-              const featured = p.code === PLAN_HIGHLIGHT;
-              return (
-                <div key={p.code}
-                  data-testid={`plan-card-${p.code}`}
-                  className={`relative rounded-xl border p-6 flex flex-col ${
-                    featured
-                      ? "border-indigo-500/60 bg-gradient-to-b from-indigo-500/10 to-slate-900/40 shadow-xl shadow-indigo-500/10"
-                      : "border-slate-800 bg-slate-900/40"
-                  }`}>
-                  {featured && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full text-[10px] uppercase tracking-widest mono border border-indigo-500/60 bg-indigo-500/30 text-indigo-100">
-                      Most popular
-                    </div>
-                  )}
-                  <div className="text-lg font-bold text-slate-100 mb-1">{p.name}</div>
-                  <div className="text-xs text-slate-500 uppercase tracking-widest mono mb-5">{p.code}</div>
-                  <div className="flex items-baseline gap-1 mb-2">
-                    <span className="text-4xl font-bold text-slate-100 mono">${p.monthly}</span>
-                    <span className="text-slate-500 text-sm">{s.per_month}</span>
-                  </div>
-                  <div className="text-xs text-slate-500 mb-6">
-                    ${p.yearly} <span className="text-slate-600">{s.per_year}</span>
-                    <span className="ml-1.5 text-emerald-400 mono">({s.yearly_save})</span>
-                  </div>
-                  <ul className="space-y-2 text-sm text-slate-300 mb-6 flex-1">
-                    {(p.features || []).map((f, i) => (
-                      <li key={i} className="flex items-start gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                        <span>{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <Link to={`/shop?plan=${p.code}`}
-                    data-testid={`landing-plan-cta-${p.code}`}
-                    className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-colors ${
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl mx-auto">
+              {sorted.map((p) => {
+                const featured = p.code === PLAN_HIGHLIGHT;
+                return (
+                  <div key={p.code}
+                    data-testid={`plan-card-${p.code}`}
+                    className={`relative rounded-xl border p-6 flex flex-col ${
                       featured
-                        ? "bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40"
-                        : "border border-slate-700 bg-slate-900/60 text-slate-100 hover:border-slate-600"
+                        ? "border-indigo-500/60 bg-gradient-to-b from-indigo-500/10 to-slate-900/40 shadow-xl shadow-indigo-500/10"
+                        : "border-slate-800 bg-slate-900/40"
                     }`}>
-                    {s.pick_plan} <ArrowRight className="w-4 h-4" />
-                  </Link>
-                </div>
-              );
-            })}
-          </div>
+                    {featured && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full text-[10px] uppercase tracking-widest mono border border-indigo-500/60 bg-indigo-500/30 text-indigo-100">
+                        Most popular
+                      </div>
+                    )}
+                    <div className="text-lg font-bold text-slate-100 mb-1">{p.name}</div>
+                    <div className="text-xs text-slate-500 uppercase tracking-widest mono mb-5">{p.code}</div>
+                    <div className="flex items-baseline gap-1 mb-2">
+                      <span className="text-4xl font-bold text-slate-100 mono">${p.monthly}</span>
+                      <span className="text-slate-500 text-sm">{s.per_month}</span>
+                    </div>
+                    <div className="text-xs text-slate-500 mb-6">
+                      ${p.yearly} <span className="text-slate-600">{s.per_year}</span>
+                      <span className="ml-1.5 text-emerald-400 mono">({s.yearly_save})</span>
+                    </div>
+                    <ul className="space-y-2 text-sm text-slate-300 mb-6 flex-1">
+                      {(p.features || []).map((f, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <span>{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <Link to={`/shop?plan=${p.code}`}
+                      data-testid={`landing-plan-cta-${p.code}`}
+                      className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-colors ${
+                        featured
+                          ? "bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40"
+                          : "border border-slate-700 bg-slate-900/60 text-slate-100 hover:border-slate-600"
+                      }`}>
+                      {s.pick_plan} <ArrowRight className="w-4 h-4" />
+                    </Link>
+                  </div>
+                );
+              })}
+            </div>
+            {/* v44.00.03 — Feature comparison matrix */}
+            <ComparisonMatrix plans={sorted} />
+          </>
         )}
       </div>
     </section>
+  );
+}
+
+// v44.00.03 — Plan karşılaştırma tablosu (dönüşüm için "hangi planda ne var" netliği)
+function ComparisonMatrix({ plans }) {
+  const codes = plans.map(p => p.code);
+  // Feature rows — key must match backend feature flags to stay in sync
+  const ROWS = [
+    { section: "Motorlar", features: [
+      { label: "SpamAssassin + ClamAV", availability: { starter: true, pro: true, enterprise: true } },
+      { label: "Rspamd + DCC + Razor", availability: { starter: true, pro: true, enterprise: true } },
+      { label: "AI Sınıflandırma (LLM)", availability: { starter: false, pro: true, enterprise: true } },
+    ]},
+    { section: "Koruma", features: [
+      { label: "IP Blacklist Çıkışı (RBL)", availability: { starter: true, pro: true, enterprise: true } },
+      { label: "Karantina + Digest", availability: { starter: true, pro: true, enterprise: true } },
+      { label: "Özel Kurallar (Custom Rules)", availability: { starter: false, pro: true, enterprise: true } },
+      { label: "Threat Defense Center", availability: { starter: false, pro: true, enterprise: true } },
+      { label: "Marketplace + İmza Paylaşımı", availability: { starter: false, pro: true, enterprise: true } },
+    ]},
+    { section: "Yönetim", features: [
+      { label: "Multi-lang panel (10 dil)", availability: { starter: true, pro: true, enterprise: true } },
+      { label: "Bounce Digest + CSV/Excel Export", availability: { starter: true, pro: true, enterprise: true } },
+      { label: "API Erişimi", availability: { starter: false, pro: false, enterprise: true } },
+      { label: "SSO / SAML", availability: { starter: false, pro: false, enterprise: true } },
+      { label: "Beyaz Etiket (White-Label)", availability: { starter: false, pro: false, enterprise: true } },
+    ]},
+    { section: "Destek", features: [
+      { label: "Topluluk Destek", availability: { starter: true, pro: true, enterprise: true } },
+      { label: "Öncelikli E-Posta Destek", availability: { starter: false, pro: true, enterprise: true } },
+      { label: "7/24 Telefon + SLA", availability: { starter: false, pro: false, enterprise: true } },
+    ]},
+  ];
+  const cell = (has) => has ? (
+    <CheckCircle2 className="w-4 h-4 text-emerald-400 mx-auto" />
+  ) : (
+    <span className="text-slate-700 mono">–</span>
+  );
+  return (
+    <div className="mt-16 max-w-5xl mx-auto" data-testid="landing-comparison">
+      <div className="text-center mb-6">
+        <div className="text-xs uppercase tracking-widest text-indigo-400 mb-2 mono">Detaylı Karşılaştırma</div>
+        <h3 className="text-2xl font-bold text-slate-100">Hangi planda ne var?</h3>
+      </div>
+      <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-950/60">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-900/70">
+            <tr>
+              <th className="text-left px-5 py-3.5 text-slate-400 font-semibold text-xs uppercase tracking-widest">Özellik</th>
+              {codes.map(c => (
+                <th key={c} className={`text-center px-4 py-3.5 text-xs uppercase tracking-widest font-bold ${
+                  c === PLAN_HIGHLIGHT ? "text-indigo-300" : "text-slate-300"
+                }`}>
+                  {c}
+                  {c === PLAN_HIGHLIGHT && (
+                    <span className="block text-[9px] text-indigo-400/70 font-normal normal-case tracking-normal mt-0.5">En popüler</span>
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ROWS.map((row, ri) => (
+              <>
+                <tr key={`s-${ri}`} className="bg-slate-900/30 border-t border-slate-800">
+                  <td colSpan={codes.length + 1} className="px-5 py-2.5 text-[11px] uppercase tracking-widest font-bold text-slate-400">
+                    {row.section}
+                  </td>
+                </tr>
+                {row.features.map((f, fi) => (
+                  <tr key={`s${ri}-f${fi}`} className="border-t border-slate-800/60 hover:bg-slate-900/40 transition-colors" data-testid={`comparison-row-${ri}-${fi}`}>
+                    <td className="px-5 py-2.5 text-slate-200">{f.label}</td>
+                    {codes.map(c => (
+                      <td key={c} className="px-4 py-2.5 text-center">
+                        {cell(!!f.availability[c])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -947,6 +1036,7 @@ function FAQ() {
 }
 
 function Testimonials() {
+  // v44.00.03 — 6 testimonial, otomatik-dönen slider (5sn per slide)
   const items = [
     {
       quote: "3 sunucumuzda kurduk. İlk hafta içinde spam trafiğinin %94'ünü bloke etti. Kullanıcı politikası ve AI kural öneri sistemi işimizi çok kolaylaştırdı.",
@@ -960,12 +1050,31 @@ function Testimonials() {
       quote: "AI Sistem Analizi butonuna bastığımızda 30sn içinde Türkçe rapor + 3 aksiyon önerisi geldi. Kullanıcı deneyimi WHM eklentileri arasında bir seviye üstte.",
       author: "Mustafa D.", role: "DevOps", company: "Netdatatr", metric: "AI-powered",
     },
+    {
+      quote: "Bounce Digest'ı bayilerimize haftalık yolluyoruz. Excel'e tek tıkla export sayesinde raporlama süremiz yarıya indi. Müşterilere de white-label olarak sunuyoruz.",
+      author: "Kübra A.", role: "Ürün Müdürü", company: "Schmidt IT UG 🇩🇪", metric: "%50 rapor süresi",
+    },
+    {
+      quote: "Marketplace'te paylaşılan imzalar bize inanılmaz zaman kazandırdı — kendi kural setimizi yayınladık, 6 ayda 210+ kurulum aldık. Ek gelir kanalı bile oldu.",
+      author: "Onur T.", role: "CTO", company: "Marmara Tech Ltd.", metric: "210+ kurulum",
+    },
+    {
+      quote: "IP tabanlı lisans kilidi + master onaylı PIN akışı ile kimin ne yaptığı net. WHM plugin olarak deploy 30 saniyede bitiyor, kurulum stresi sıfır.",
+      author: "Deniz B.", role: "Head of Ops", company: "MailShield Cloud", metric: "30sn kurulum",
+    },
   ];
   const cases = [
     { logo: "🛒", brand: "E-Ticaret Platformu", size: "450+ cPanel hesabı", result: "%97 azalma", detail: "phishing girişimlerinde" },
     { logo: "🏦", brand: "Fintech Startup", size: "80 sunucu", result: "0 BEC kaybı", detail: "6 ay boyunca" },
     { logo: "🎓", brand: "Üniversite Sistemi", size: "12.000+ öğrenci", result: "%99.8 uptime", detail: "mail teslim oranı" },
   ];
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    if (paused) return;
+    const id = setInterval(() => setActiveIdx(i => (i + 1) % items.length), 5000);
+    return () => clearInterval(id);
+  }, [paused, items.length]);
   return (
     <section className="py-24 border-t border-slate-800/60 relative overflow-hidden" data-testid="landing-testimonials">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(217,70,239,0.08),transparent_50%)]"/>
@@ -991,21 +1100,55 @@ function Testimonials() {
           ))}
         </div>
 
-        {/* Testimonials */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {items.map((t, i) => (
-            <div key={i} data-testid={`testimonial-${i}`} className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 hover:-translate-y-0.5 transition-transform relative">
-              <div className="absolute -top-3 -left-3 w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white text-lg font-bold shadow-lg">"</div>
-              <p className="text-slate-300 text-sm leading-relaxed mb-5">{t.quote}</p>
-              <div className="flex items-center justify-between pt-4 border-t border-slate-800">
-                <div>
-                  <div className="text-sm text-slate-100 font-medium">{t.author}</div>
-                  <div className="text-[11px] text-slate-500">{t.role} · {t.company}</div>
+        {/* v44.00.03 — Auto-rotating testimonial slider (pause on hover) */}
+        <div
+          className="relative rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur p-6 sm:p-10 overflow-hidden"
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+          data-testid="testimonial-slider"
+        >
+          <div className="absolute -top-4 -left-2 w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white text-2xl font-bold shadow-lg">"</div>
+          <div className="min-h-[220px] flex flex-col justify-center">
+            {items.map((t, i) => (
+              <div
+                key={i}
+                data-testid={`testimonial-slide-${i}`}
+                className={`absolute inset-0 p-6 sm:p-10 flex flex-col justify-center transition-opacity duration-700 ${
+                  i === activeIdx ? "opacity-100 relative" : "opacity-0 pointer-events-none"
+                }`}
+              >
+                <p className="text-slate-100 text-lg sm:text-xl leading-relaxed mb-6 italic font-light">
+                  "{t.quote}"
+                </p>
+                <div className="flex items-center justify-between pt-4 border-t border-slate-800 flex-wrap gap-3">
+                  <div>
+                    <div className="text-base text-slate-100 font-semibold">{t.author}</div>
+                    <div className="text-xs text-slate-400">{t.role} · <span className="text-slate-300">{t.company}</span></div>
+                  </div>
+                  <div className="text-sm text-indigo-300 mono px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 font-bold">
+                    {t.metric}
+                  </div>
                 </div>
-                <div className="text-xs text-indigo-300 mono px-2 py-1 rounded bg-indigo-500/10 border border-indigo-500/30">{t.metric}</div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+          {/* Dots */}
+          <div className="flex items-center justify-center gap-2 mt-6 pt-6 border-t border-slate-800/60">
+            {items.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setActiveIdx(i)}
+                data-testid={`testimonial-dot-${i}`}
+                className={`h-1.5 rounded-full transition-all ${
+                  i === activeIdx ? "w-8 bg-indigo-400" : "w-1.5 bg-slate-700 hover:bg-slate-600"
+                }`}
+                aria-label={`Testimonial ${i + 1}`}
+              />
+            ))}
+          </div>
+          <div className="text-center text-[10px] text-slate-500 mt-2 mono">
+            {paused ? "⏸ duraklatıldı — hover'ı kaldırın" : `▶ otomatik döner · ${activeIdx + 1} / ${items.length}`}
+          </div>
         </div>
       </div>
     </section>

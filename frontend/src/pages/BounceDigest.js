@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Mail, Send, Clock, AlertTriangle, Save, Eye, Zap, Webhook, Radio, History } from "lucide-react";
+import { Mail, Send, Clock, AlertTriangle, Save, Eye, Zap, Webhook, Radio, History, Download, FileSpreadsheet } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 
@@ -387,7 +387,36 @@ export default function BounceDigest() {
             </div>
             {p.samples.length > 0 && (
               <div className="md:col-span-3">
-                <div className="text-[11px] uppercase text-slate-500 mb-1">Son 10 Bounce Örneği</div>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-[11px] uppercase text-slate-500">Son 10 Bounce Örneği</div>
+                  {/* v44.00.03 — Excel / CSV Export */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        const url = api.bounceDigestExportUrl({ hours, fmt: "csv", limit: 500 });
+                        window.open(url, "_blank");
+                      }}
+                      data-testid="bd-export-csv"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold border border-slate-700 bg-slate-900/60 hover:bg-slate-800 hover:border-slate-600 text-slate-300 transition"
+                      title="Son 500 kaydı CSV indir (Türkçe karakterlerle)"
+                    >
+                      <Download className="w-3 h-3" />
+                      CSV
+                    </button>
+                    <button
+                      onClick={() => {
+                        const url = api.bounceDigestExportUrl({ hours, fmt: "xlsx", limit: 500 });
+                        window.open(url, "_blank");
+                      }}
+                      data-testid="bd-export-xlsx"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-200 transition"
+                      title="Son 500 kaydı Excel (.xlsx) indir"
+                    >
+                      <FileSpreadsheet className="w-3 h-3" />
+                      Excel
+                    </button>
+                  </div>
+                </div>
                 <div className="border border-slate-800 rounded overflow-hidden">
                   <table className="w-full text-xs">
                     <thead>

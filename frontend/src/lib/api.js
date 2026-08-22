@@ -727,6 +727,15 @@ export const api = {
   bounceDigestHistory: () => client.get("/bounce-digest/history").then(r => r.data),
   bounceDigestTestSlack: () => client.post("/bounce-digest/test-slack").then(r => r.data),
   bounceDigestTestDiscord: () => client.post("/bounce-digest/test-discord").then(r => r.data),
+  // v44.00.03 — Bounce Digest export (CSV / XLSX). Returns a direct URL for window.open()
+  // We include X-Master-Key as query param since window.open cannot set headers.
+  bounceDigestExportUrl: ({ hours = 24, fmt = "csv", limit = 500 } = {}) => {
+    const mk = (localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license") || "").trim();
+    const base = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
+    const params = new URLSearchParams({ hours: String(hours), fmt, limit: String(limit) });
+    if (mk) params.set("license_key", mk);
+    return `${base}/api/bounce-digest/export?${params.toString()}`;
+  },
   msWeeklyReport: () => client.post("/mailscanner/ai/quarantine-recommend/weekly-report").then(r => r.data),
   // v43.42 — Marketplace leaderboard
   mpLeaderboard: (period = "week") => client.get("/marketplace/leaderboard", { params: { period } }).then(r => r.data),

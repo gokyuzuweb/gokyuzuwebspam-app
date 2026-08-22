@@ -11,8 +11,9 @@ import {
 import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { PluginStatusStripe, LicenseGate } from "@/components/LicenseGate";
+import OnboardingVideoModal from "@/components/OnboardingVideoModal";
 import RenewalBanner from "@/components/RenewalBanner";
-// v44.00.02 — DemoBanner artık kullanılmıyor; demo uyarısı LicenseGate içinde tek satır olarak gösteriliyor
+// v44.00.03 — DemoBanner artık kullanılmıyor; demo uyarısı LicenseGate içinde tek satır olarak gösteriliyor
 // import DemoBanner from "@/components/DemoBanner";
 import { ImpersonationBar } from "@/components/Impersonate";
 import PushToastBridge from "@/components/PushToastBridge";
@@ -267,7 +268,7 @@ function Sidebar() {
         </NavLink>
         <div className="leading-tight min-w-0">
           <div className="text-slate-100 font-bold tracking-tight text-[15px] truncate">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v44.00.02 · {effective.toUpperCase()}</div>
+          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v44.00.03 · {effective.toUpperCase()}</div>
         </div>
       </div>
       <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto sidebar-scroll">
@@ -453,7 +454,7 @@ function Shell() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <PluginStatusStripe />
-        {/* v44.00.02 — DemoBanner kaldırıldı: uyarı LicenseGate demo bandında tek satır olarak gösteriliyor */}
+        {/* v44.00.03 — DemoBanner kaldırıldı: uyarı LicenseGate demo bandında tek satır olarak gösteriliyor */}
         <ImpersonationBar />
         <PushToastBridge />
         <BayiEventBridge />
@@ -691,7 +692,7 @@ export default function App() {
             <Route path="/r/:hostSlug" element={<PublicResellerLanding />} />
             <Route path="/r" element={<PublicResellerLanding />} />
             <Route path="/install" element={<PublicInstall />} />
-            <Route path="/panel/*" element={<><Shell /><LicenseGate /></>} />
+            <Route path="/panel/*" element={<><Shell /><LicenseGate /><OnboardingVideoModal /></>} />
             {/* Legacy redirects — old panel URLs → /panel */}
             <Route path="/quarantine" element={<Navigate to="/panel/quarantine" replace />} />
             <Route path="/lists" element={<Navigate to="/panel/lists" replace />} />

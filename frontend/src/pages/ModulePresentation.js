@@ -20,8 +20,9 @@ import {
   Mail, TrendingUp, BarChart3, FileText, Activity, Users, Globe,
   Database, HardDrive, CheckCircle2, AlertTriangle, Bug, Fingerprint,
   Sparkles, Rocket, Cpu, Search, MousePointer2, Skull, Link2,
-  Archive, RefreshCcw, ClipboardCheck, Home,
+  Archive, RefreshCcw, ClipboardCheck, Home, Volume2, VolumeX,
 } from "lucide-react";
+import { useNarrator } from "@/hooks/useNarrator";
 
 // ═════════════════════════════════════════════════════════════════
 // MODÜL KATALOĞU (24 modül · her biri 10 sn)
@@ -635,6 +636,27 @@ function buildSlideChain() {
   return slides;
 }
 
+// v44.00.03 — Slaytlar için Türkçe seslendirme metni üretici (browser TTS)
+function buildNarrationText(slide) {
+  if (!slide) return "";
+  if (slide.kind === "intro") {
+    return "GökyüzüWebSpam modül turuna hoş geldiniz. Yaklaşık dört dakika boyunca yirmi dört modülün ne yaptığını sırayla anlatacağız.";
+  }
+  if (slide.kind === "outro") {
+    return "Modül turu tamamlandı. Panele geri dönerek istediğiniz modülü hemen kullanmaya başlayabilirsiniz.";
+  }
+  if (slide.kind === "section") {
+    const meta = SECTION_META[slide.section];
+    return `Bölüm ${meta?.label || slide.section}.`;
+  }
+  if (slide.kind === "module" && slide.module) {
+    const m = slide.module;
+    // 5 saniyeye sığdır: sadece ad + kısa tanım
+    return `${m.name}. ${m.what}`;
+  }
+  return "";
+}
+
 // ═════════════════════════════════════════════════════════════════
 // ANA BİLEŞEN
 // ═════════════════════════════════════════════════════════════════
@@ -650,8 +672,22 @@ export default function ModulePresentation() {
   const rafRef = useRef(null);
   const slide = slides[idx];
 
+  // v44.00.03 — Ücretsiz tarayıcı-tabanlı Türkçe seslendirme (Web Speech API)
+  const narrator = useNarrator({ lang: "tr-TR", rate: 1.0, pitch: 1.0 });
+
   // v43.99.20 — Public route (no /panel/ prefix) → standalone fullscreen mode
   const isPublic = typeof window !== "undefined" && !window.location.pathname.startsWith("/panel/");
+
+  // v44.00.03 — Slayt değiştiğinde ilgili anlatımı söyle (mute'lı değilse)
+  useEffect(() => {
+    if (!narrator.supported) return;
+    // Play only when actively playing (not paused) and not in record mode
+    if (!playing || recordMode) { narrator.cancel(); return; }
+    const text = buildNarrationText(slide);
+    if (text) narrator.speak(text);
+    return () => narrator.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx, playing, recordMode, narrator.muted, narrator.ready]);
 
   // Auto-advance
   useEffect(() => {
@@ -869,6 +905,21 @@ export default function ModulePresentation() {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* v44.00.03 — Türkçe seslendirme aç/kapat (ücretsiz Web Speech API) */}
+              {narrator.supported && (
+                <button
+                  onClick={() => narrator.setMuted(!narrator.muted)}
+                  data-testid="mp-narrator-toggle"
+                  className={`w-9 h-9 rounded-full flex items-center justify-center transition ${
+                    narrator.muted
+                      ? "bg-white/5 hover:bg-white/10 text-white/40"
+                      : "bg-indigo-500/30 hover:bg-indigo-500/50 text-indigo-100 ring-1 ring-indigo-400/50"
+                  }`}
+                  title={narrator.muted ? "Seslendirmeyi Aç (Türkçe)" : "Seslendirmeyi Kapat"}
+                >
+                  {narrator.muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                </button>
+              )}
               <button
                 onClick={toggleFullscreen}
                 data-testid="mp-fullscreen"
@@ -882,6 +933,11 @@ export default function ModulePresentation() {
 
           <div className="text-center text-[10px] text-white/40 mt-2">
             💡 Sahne noktalarına tıklayarak istediğiniz modüle atlayabilirsiniz · ~4 dk toplam süre
+            {narrator.supported && (
+              <span className="ml-2 text-indigo-300/70">
+                · 🎙️ Türkçe seslendirme {narrator.muted ? "kapalı" : "açık"} (ücretsiz, sunucusuz)
+              </span>
+            )}
           </div>
         </div>
       )}
