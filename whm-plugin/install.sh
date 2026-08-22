@@ -177,6 +177,11 @@ fi
 if [[ ! -f "$ETC_DIR/policy.json" ]]; then
   run "cp '$SRC/config/policy.default.json' '$ETC_DIR/policy.json'"
 fi
+# v44.00.01 — Plugin sürümünü kaydet (heartbeat.pl bu dosyayı okur)
+PLUGIN_VER="$(cat "$SRC/VERSION" 2>/dev/null || echo '44.00.01')"
+PLUGIN_VER="${PLUGIN_VER#v}"
+echo "$PLUGIN_VER" > "$ETC_DIR/plugin.version"
+chmod 644 "$ETC_DIR/plugin.version"
 # Plugin mode — customer (bayi) varsayılan; 7 günlük demo başlar
 if [[ ! -f "$ETC_DIR/mode.env" ]]; then
   cat > "$ETC_DIR/mode.env" <<'EOF'

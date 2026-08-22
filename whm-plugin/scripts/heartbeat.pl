@@ -43,7 +43,26 @@ if (open my $fh, '<', $CONF) {
 }
 
 my $license_key = $conf{license}{key} // '';
-my $version     = '1.2.0';  # v43.38+ — Exim log tailer, v43.40 verdict enrichment, v43.41 anomaly-friendly
+# v44.00.01 — Plugin sürümü: önce /etc/mailshield/plugin.version, sonra local API'den, en son fallback
+my $version = '44.00.01';
+# 1) install.sh yazdıysa VERSION dosyasından oku
+for my $vfile ('/etc/mailshield/plugin.version',
+               '/usr/local/mailshield/api/VERSION',
+               '/opt/mailshield/api/VERSION') {
+    if (open my $fh, '<', $vfile) {
+        my $v = <$fh>; chomp $v; close $fh;
+        $v =~ s/^v//i; $v =~ s/^\s+|\s+$//g;
+        if ($v =~ /^\d+\.\d+/) { $version = $v; last; }
+    }
+}
+# 2) Local API'den doğrula (en güncel)
+eval {
+    my $ua_v = LWP::UserAgent->new(timeout => 3);
+    my $r = $ua_v->get('http://127.0.0.1:8001/api/version/panel');
+    if ($r->is_success && $r->content =~ /"version"\s*:\s*"v?([\d.]+)"/) {
+        $version = $1;
+    }
+};
 
 # --- IP tespiti (birden çok kaynak)
 sub detect_ip {
