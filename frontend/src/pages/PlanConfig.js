@@ -36,6 +36,8 @@ const FEATURE_GROUPS = [
       { key: "live_diagnostic", label: "Canlı Sunucu Tanı", type: "bool", hint: "Kurulum tanı sihirbazı" },
       { key: "my_server", label: "Sunucumu Bağla", type: "bool", hint: "Bayi kendi WHM sunucusunu bağlar" },
       { key: "docs_view", label: "Dokümantasyon", type: "bool", hint: "Yardım dokümanları" },
+      { key: "installation_guide", label: "Kurulum Rehberi", type: "bool", hint: "Adım adım kurulum sihirbazı" },
+      { key: "module_tour", label: "Modül Turu (Animasyon)", type: "bool", hint: "24 modülün 4 dk animasyonlu tanıtımı" },
     ],
   },
   {
@@ -69,9 +71,10 @@ const FEATURE_GROUPS = [
     ],
   },
   {
-    title: "İleri Güvenlik",
+    title: "İleri Güvenlik / Threat Defense",
     icon: ShieldCheck,
     features: [
+      { key: "threat_defense_center", label: "Threat Defense Hub (28 modül)", type: "bool", hint: "Tehdit merkezi ana ekranı — 28 alt modül" },
       { key: "custom_rules", label: "Kural Editörü (Rules)", type: "bool", hint: "Custom regex spam kuralları" },
       { key: "exploit_editor", label: "Exploit / Webshell Tarayıcı", type: "bool", hint: "Sunucuda kötü niyetli dosya tarama" },
       { key: "ai_explanations", label: "AI Destekli Açıklama", type: "bool", hint: "GPT/Claude ile spam açıklama" },
@@ -88,6 +91,7 @@ const FEATURE_GROUPS = [
     features: [
       { key: "marketplace", label: "İmza Marketplace", type: "bool", hint: "Kural paylaşımı & topluluk marketi" },
       { key: "bounce_digest", label: "Bounce Digest", type: "bool", hint: "Günlük bounce özet raporu" },
+      { key: "bounce_digest_export", label: "Bounce Digest CSV/Excel Export", type: "bool", hint: "Son 500 kaydı Excel/CSV indir" },
     ],
   },
   {
@@ -101,6 +105,17 @@ const FEATURE_GROUPS = [
       { key: "reports_export", label: "Rapor Export (CSV/PDF)", type: "bool", hint: "Rapor dışa aktarma" },
       { key: "email_notifications", label: "E-posta Bildirimleri", type: "bool", hint: "Kritik olay maili" },
       { key: "smtp_settings", label: "SMTP Relay Ayarları", type: "bool", hint: "Kendi SMTP yapılandırması" },
+      { key: "push_health_widget", label: "Exim Push Health Widget", type: "bool", hint: "Canlı push durumu göstergesi" },
+      { key: "reseller_analytics_widget", label: "Kişisel Koruma Panosu", type: "bool", hint: "Dashboard KPI + trend + tehdit widget'ı" },
+    ],
+  },
+  {
+    title: "Güvenlik / Kilit",
+    icon: ShieldCheck,
+    features: [
+      { key: "idle_lock", label: "Otomatik Kilit + PIN", type: "bool", hint: "Hareketsizlik sonrası PIN sorgusu" },
+      { key: "pin_change_request", label: "PIN Değişim Talebi", type: "bool", hint: "Bayı PIN değiştirmek isteyince master'a talep" },
+      { key: "two_factor_auth", label: "İki Faktörlü Doğrulama (2FA)", type: "bool", hint: "TOTP/SMS ile giriş" },
     ],
   },
   {
@@ -113,7 +128,6 @@ const FEATURE_GROUPS = [
       { key: "reseller_mode", label: "Bayi Modu (Alt Bayi)", type: "bool", hint: "Kendi altına bayi açabilme" },
       { key: "api_access", label: "REST API Dış Erişim", type: "bool", hint: "API anahtarı ile 3rd party" },
       { key: "webhooks", label: "Webhook Entegrasyonu", type: "bool", hint: "Olay bazlı 3rd party bildirim" },
-      { key: "two_factor_auth", label: "İki Faktörlü Doğrulama (2FA)", type: "bool", hint: "TOTP/SMS ile giriş" },
       { key: "priority_support", label: "Öncelikli Destek (SLA)", type: "bool", hint: "WhatsApp / öncelik" },
       { key: "custom_branding", label: "Beyaz Etiket (Custom Logo/Domain)", type: "bool", hint: "Kendi marka görünümü" },
       { key: "settings_customize", label: "Genel Ayar Değiştirme", type: "bool", hint: "Sistem ayarlarını değiştirme yetkisi" },

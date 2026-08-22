@@ -544,7 +544,7 @@ function NavBar() {
           </div>
           <div className="leading-tight">
             <div className="text-slate-100 font-bold tracking-tight text-[17px]">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v44.00.05</div>
+            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v44.00.06</div>
           </div>
         </Link>
         <nav className="hidden md:flex items-center gap-7 text-sm text-slate-400">
@@ -913,7 +913,7 @@ function Pricing() {
                 );
               })}
             </div>
-            {/* v44.00.05 — Feature comparison matrix */}
+            {/* v44.00.06 — Feature comparison matrix */}
             <ComparisonMatrix plans={sorted} />
           </>
         )}
@@ -922,7 +922,7 @@ function Pricing() {
   );
 }
 
-// v44.00.05 — Plan karşılaştırma tablosu (dönüşüm için "hangi planda ne var" netliği)
+// v44.00.06 — Plan karşılaştırma tablosu (dönüşüm için "hangi planda ne var" netliği)
 function ComparisonMatrix({ plans }) {
   const codes = plans.map(p => p.code);
   // Feature rows — key must match backend feature flags to stay in sync
@@ -1036,7 +1036,7 @@ function FAQ() {
 }
 
 function Testimonials() {
-  // v44.00.05 — 6 testimonial, otomatik-dönen slider (5sn per slide)
+  // v44.00.06 — 6 testimonial, otomatik-dönen slider (5sn per slide)
   const items = [
     {
       quote: "3 sunucumuzda kurduk. İlk hafta içinde spam trafiğinin %94'ünü bloke etti. Kullanıcı politikası ve AI kural öneri sistemi işimizi çok kolaylaştırdı.",
@@ -1100,7 +1100,7 @@ function Testimonials() {
           ))}
         </div>
 
-        {/* v44.00.05 — Auto-rotating testimonial slider (pause on hover) */}
+        {/* v44.00.06 — Auto-rotating testimonial slider (pause on hover) */}
         <div
           className="relative rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur p-6 sm:p-10 overflow-hidden"
           onMouseEnter={() => setPaused(true)}
@@ -1155,7 +1155,7 @@ function Testimonials() {
   );
 }
 
-// v44.00.05 — Marketplace Trending Widget (sosyal kanıt · Landing page)
+// v44.00.06 — Marketplace Trending Widget (sosyal kanıt · Landing page)
 function MarketplaceTrendingWidget() {
   const q = useQuery({
     queryKey: ["mp-trending"],

@@ -15,6 +15,30 @@ gokyuzuhosting.com.
 
 
 
+## Feb 22, 2026 (Session 23, v44.00.06) — Plan Matrix Genişletme (Enterprise "Paket Bulunmuyor" Fix)
+
+### 🐛 CRITICAL FIX (user reported)
+Kullanıcı: "Threat Defense (28) ve Kurulum Rehberi enterprise pakette olduğu halde 'paket bulunmuyor' diyor. Bundan sonra eklenen her modul için oraya da ekle."
+
+**Root cause**: `PLAN_FEATURES_DEFAULT` matrix'inde son 3 sürümde eklenen modüller (`threat_defense_center`, `installation_guide`, `module_tour`, `bounce_digest_export`, vs.) DEĞİLDİ. Enterprise plan bu feature flag'leri okumadığından `_require_feature()` 403 dönüyor + UI "paket bulunmuyor" gösteriyordu.
+
+**Fix**:
+- Backend `PLAN_FEATURES_DEFAULT` matrix'ine **8 yeni modül** eklendi:
+  - `threat_defense_center` (28 modül hub) · `installation_guide` (Kurulum Rehberi) · `module_tour` (Modül Turu Animasyon) · `bounce_digest_export` (CSV/XLSX) · `push_health_widget` · `reseller_analytics_widget` (Kişisel Koruma Panosu) · `idle_lock` · `pin_change_request`.
+- **Enterprise plan artık 59 feature'ın 100%'ünü açık tutuyor**.
+- Frontend `PlanConfig.js` FEATURE_GROUPS listesi de eşleştirildi — Master UI'da tüm modüller görünüyor + toggle edilebilir.
+- Yeni "Güvenlik / Kilit" kategorisi eklendi (idle_lock, pin_change_request, 2FA).
+- "İleri Güvenlik" grubu "İleri Güvenlik / Threat Defense" olarak yeniden adlandırıldı.
+
+### Version bump
+- `v44.00.05 → v44.00.06`.
+
+### Testing
+- Backend regression **36/36 green** (`test_v44_00_02_regression.py` + `test_v44_00_04_regression.py`).
+- `/api/admin/plan-matrix` doğrulaması: starter=59, pro=59, enterprise=59; enterprise'ta 8 yeni feature'ın hepsi `true`.
+
+
+
 ## Feb 22, 2026 (Session 23, v44.00.05) — Heartbeat Version Fix + Satın Al CTA
 
 ### 🐛 CRITICAL FIXES
