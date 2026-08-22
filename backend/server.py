@@ -4003,7 +4003,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.00"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.01"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
