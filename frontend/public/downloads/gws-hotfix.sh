@@ -18,10 +18,22 @@ if [ -f /opt/gokyuzuwebspam-app/backend/.env ] && \
    grep -q "^MASTER_HOST=panel.gokyuzuhosting.com" /opt/gokyuzuwebspam-app/backend/.env 2>/dev/null; then
     IS_MASTER=1
     info "🎯 MASTER sunucu tespit edildi (panel.gokyuzuhosting.com)"
-elif [ -d /usr/local/cpanel/whostmgr ] && [ -f /var/cpanel/version ]; then
-    info "👥 MÜŞTERİ (WHM/cPanel) sunucu tespit edildi"
 else
-    err "Bilinmeyen ortam — GokyuzuWebSpam kurulu değil"
+    # WHM/cPanel plugin dizinini geniş kontrol et
+    for whm_check in \
+        /usr/local/cpanel/whostmgr/docroot/cgi/mailshield \
+        /usr/local/cpanel/whostmgr/docroot/cgi \
+        /var/cpanel \
+        /usr/local/cpanel; do
+        if [ -d "$whm_check" ]; then
+            info "👥 MÜŞTERİ (WHM/cPanel) sunucu tespit edildi ($whm_check)"
+            break
+        fi
+    done
+    # WHM yoksa da müşteri modu (standalone kurulum)
+    if [ ! -d /usr/local/cpanel ]; then
+        warn "cPanel bulunamadı ama devam ediliyor (standalone müşteri modu)"
+    fi
 fi
 
 # ────────────────────────────────────────────────────────────
