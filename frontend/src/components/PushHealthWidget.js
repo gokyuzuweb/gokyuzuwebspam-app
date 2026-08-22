@@ -1,21 +1,17 @@
 /**
  * v43.62 — Push Sağlık Widget
+ * v44.00.05 — "Onar" butonu artık tıklandığında modal açıp tek komutu net gösterir
  *
  * Dashboard'a eklenen canlı push durumu göstergesi.
  * Her bayinin (veya master'ın kendi sunucusunun) son Exim push zamanını
- * renk kodlu gösterir:
- *   • Yeşil (<15sn): Sistem sağlıklı, real-time akış aktif
- *   • Sarı (15-60sn): Push yavaşlamış — timer çalışıyor mu?
- *   • Turuncu (1-5dk): Push gecikmiş — script kontrolü gerekli
- *   • Kırmızı (>5dk): Push yok — gws-simple-push timer kurulmalı
- *
- * `/api/outbound/stats.last_push_at` verisine dayanır. Master mod'da tek
- * kutu, seller mod'da bayilerin listesi (v43.63'te eklenecek).
+ * renk kodlu gösterir.
  */
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertCircle, CheckCircle2, Clock } from "lucide-react";
+import { Activity, AlertCircle, CheckCircle2, Clock, Copy, X, Terminal } from "lucide-react";
 import { Card } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
+import { toast } from "sonner";
 
 const fmtSince = (isoStr) => {
   if (!isoStr) return "hiç";

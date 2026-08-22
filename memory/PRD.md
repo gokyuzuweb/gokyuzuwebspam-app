@@ -14,6 +14,29 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+
+## Feb 22, 2026 (Session 23, v44.00.05) — Heartbeat Version Fix + Satın Al CTA
+
+### 🐛 CRITICAL FIXES
+- **Heartbeat version yanlış**: Müşteri lisans tablosunda `v1.1.0` gösteriliyordu ama gerçek versiyon `v44.00.04`. 3 kök sebep birden düzeltildi:
+  1. `HeartbeatPayload.version` default'ı yanlış (`"1.1.0"`) — boş string yapıldı.
+  2. `/api/plugin/heartbeat` endpoint YOKTU — `gws-simple-push` timer bu URL'e POST atıyordu → hiçbir heartbeat kaydedilmiyor. `/api/license/heartbeat` alias'ı olarak eklendi.
+  3. Field mismatch: install.sh `plugin_version` field'ı gönderiyordu, backend `version` bekliyordu. Pydantic `alias="plugin_version"` + `populate_by_name=True` ile her iki isim de kabul ediliyor.
+- **Bogus seed cleanup**: 28 lisansta hardcoded `"1.1.0"` / `"1.0.9"` / `"2.6.0"` heartbeat_version seed'leri DB'den temizlendi. Artık gerçek heartbeat gelene kadar `—` gösteriyor.
+- **DB manifests**: `settings.version` + `settings.version_manifest` v44.00.05 olarak güncellendi.
+- **VerifyLicenseIn**: `version` field'ı eklendi (frontend her verify'da plugin versionunu gönderiyor).
+
+### 🎁 UI IMPROVEMENTS
+- **"Satın Al" CTA butonu** Demo Mode uyarı banner'ına eklendi (yeşil gradient, `/shop` linki yeni sekmede) — kullanıcı isteği.
+- **install.sh**: `gws-simple-push` timer artık her iki field'ı (`version` + `plugin_version`) gönderiyor (backward-compat).
+
+### Version bump
+- `v44.00.04 → v44.00.05` (tüm VERSION dosyaları + kod + DB manifests).
+
+### Testing
+- Backend regression **21/21 green**: `test_v44_00_04_regression.py` + `test_v44_00_02_regression.py::TestVersion`.
+
+
 ## Feb 22, 2026 (Session 23, v44.00.04) — 4 P1 Features + 3 Fixes + Auto-Install
 
 ### 🐛 CRITICAL FIXES (user reported)

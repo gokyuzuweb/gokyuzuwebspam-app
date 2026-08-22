@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ShieldAlert, Clock, KeyRound, Mail, ExternalLink, RotateCw, Sparkles,
-  CheckCircle2, Server, ArrowUpCircle, Zap,
+  CheckCircle2, Server, ArrowUpCircle, Zap, ShoppingCart,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -107,15 +107,29 @@ export function PluginStatusStripe() {
               <b className="text-amber-50">DEMO MODUNDASINIZ..</b> TÜM ÖZELLİKLER ACIK. CANLI KULLANMAK ICIN LİSANS SATIN AL..
             </span>
           </div>
-          <a
-            href="#"
-            onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("gws:open-license-modal")); } catch (_) {} }}
-            data-testid="demo-unlock-link"
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border border-amber-400/60 bg-amber-400/20 text-amber-50 hover:bg-amber-400/30 hover:border-amber-300 transition shrink-0"
-          >
-            <KeyRound className="w-3 h-3" />
-            Lisansla Kilidi Aç
-          </a>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* v44.00.05 — Doğrudan "Satın Al" CTA (kullanıcı istedi) */}
+            <a
+              href="https://panel.gokyuzuhosting.com/shop"
+              target="_blank"
+              rel="noreferrer"
+              data-testid="demo-buy-link"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border border-emerald-400/60 bg-gradient-to-br from-emerald-500/40 to-emerald-600/40 text-emerald-50 hover:from-emerald-500/60 hover:to-emerald-600/60 hover:border-emerald-300 shadow-sm shadow-emerald-500/20 transition"
+              title="Yeni sekmede fiyatlandırma sayfası"
+            >
+              <ShoppingCart className="w-3 h-3" />
+              Satın Al
+            </a>
+            <a
+              href="#"
+              onClick={(e) => { e.preventDefault(); try { window.dispatchEvent(new CustomEvent("gws:open-license-modal")); } catch (_) {} }}
+              data-testid="demo-unlock-link"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border border-amber-400/60 bg-amber-400/20 text-amber-50 hover:bg-amber-400/30 hover:border-amber-300 transition"
+            >
+              <KeyRound className="w-3 h-3" />
+              Lisansla Kilidi Aç
+            </a>
+          </div>
         </div>
       )}
     </>
@@ -169,7 +183,10 @@ export function LicenseGate() {
         if (cached === "MS-C02AB012652A4FE692D69676") return;
         let hostname = "";
         try { hostname = window.location.hostname.toLowerCase().replace(/^www\./, ""); } catch (_) {}
-        const resp = await api.pluginVerifyLicense({ license_key: cached, hostname: hostname || null });
+        // v44.00.05 — Frontend header'dan plugin versionu al ki master heartbeat'te doğru sürüm görsün
+        let pluginVer = "";
+        try { pluginVer = String(document.querySelector('[data-app-version]')?.getAttribute('data-app-version') || "44.00.05").replace(/^v/, ""); } catch (_) { pluginVer = "44.00.05"; }
+        const resp = await api.pluginVerifyLicense({ license_key: cached, hostname: hostname || null, version: pluginVer });
         if (cancelled) return;
         if (resp && resp.licensed === false) {
           // Backend revoked / not found → cache temizle

@@ -271,9 +271,9 @@ ExecStart=/usr/bin/env bash -c '\
   [ -z "$LIC" ] && exit 0; \
   [ -z "$SRV" ] && SRV=https://panel.gokyuzuhosting.com; \
   IP=$(hostname -I | awk "{print \$1}"); \
-  VER=$(cat /etc/mailshield/plugin.version 2>/dev/null || echo 44.00.01); \
+  VER=$(cat /etc/mailshield/plugin.version 2>/dev/null || echo 44.00.05); \
   curl -sfk -X POST "$SRV/api/plugin/heartbeat" -H "Content-Type: application/json" \
-       -d "{\"license_key\":\"$LIC\",\"ip\":\"$IP\",\"hostname\":\"$(hostname)\",\"plugin_version\":\"$VER\"}" \
+       -d "{\"license_key\":\"$LIC\",\"ip\":\"$IP\",\"hostname\":\"$(hostname)\",\"plugin_version\":\"$VER\",\"version\":\"$VER\"}" \
        -o /dev/null || true'
 PUSHSVC
 
