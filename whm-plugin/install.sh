@@ -253,6 +253,160 @@ fi
 # Karantina temizleyici — her saat çalışır, sadece kendi DB'sinden siler
 run "systemctl enable --now mailshield-quarantine.timer || true"
 
+# ═══════════════════════════════════════════════════════════════════
+# v44.00.01 — Otomatik Exim Push Timer + gwsm-update Komutu (BAYI)
+# ═══════════════════════════════════════════════════════════════════
+echo "==> Exim push timer kurulumu (5 dk'da bir master'a mail metriği push eder)"
+cat > /etc/systemd/system/gws-simple-push.service <<'PUSHSVC'
+[Unit]
+Description=GokyuzuWebSpam — Simple Exim log push to master
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/mailshield/mailshield.conf.env
+ExecStart=/usr/bin/env bash -c '\
+  LIC=$(awk -F= "/^key[[:space:]]*=/{gsub(/[[:space:]\"\x27]/,\"\",$2);print $2;exit}" /etc/mailshield/mailshield.conf 2>/dev/null); \
+  SRV=$(awk -F= "/^server_url[[:space:]]*=/{gsub(/[[:space:]\"\x27]/,\"\",$2);print $2;exit}" /etc/mailshield/mailshield.conf 2>/dev/null); \
+  [ -z "$LIC" ] && exit 0; \
+  [ -z "$SRV" ] && SRV=https://panel.gokyuzuhosting.com; \
+  IP=$(hostname -I | awk "{print \$1}"); \
+  VER=$(cat /etc/mailshield/plugin.version 2>/dev/null || echo 44.00.01); \
+  curl -sfk -X POST "$SRV/api/plugin/heartbeat" -H "Content-Type: application/json" \
+       -d "{\"license_key\":\"$LIC\",\"ip\":\"$IP\",\"hostname\":\"$(hostname)\",\"plugin_version\":\"$VER\"}" \
+       -o /dev/null || true'
+PUSHSVC
+
+cat > /etc/systemd/system/gws-simple-push.timer <<'PUSHTMR'
+[Unit]
+Description=GokyuzuWebSpam — Simple push timer (5 dk)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=gws-simple-push.service
+
+[Install]
+WantedBy=timers.target
+PUSHTMR
+
+run "systemctl daemon-reload"
+run "systemctl enable --now gws-simple-push.timer"
+echo "    ✓ gws-simple-push.timer aktif (5 dk'da bir heartbeat)"
+
+# ═══════════════════════════════════════════════════════════════════
+# gwsm-update — Müşteri Self-Update Komutu (bash'i CLI olarak yükler)
+# ═══════════════════════════════════════════════════════════════════
+echo "==> gwsm-update komutu kuruluyor"
+cat > /usr/local/bin/gwsm-update <<'GWSMUP'
+#!/usr/bin/env bash
+# GokyuzuWebSpam — Müşteri (WHM plugin) Self-Update
+# Kullanım: sudo gwsm-update [--force]
+set -e
+
+LOG=/var/log/mailshield/update.log
+mkdir -p /var/log/mailshield
+exec > >(tee -a "$LOG") 2>&1
+
+echo "═══════════════════════════════════════════════════════════"
+echo "  🔄 GokyuzuWebSpam — Müşteri Self-Update"
+echo "  $(date '+%Y-%m-%d %H:%M:%S')"
+echo "═══════════════════════════════════════════════════════════"
+
+# Konfig oku
+CONF=/etc/mailshield/mailshield.conf
+if [ ! -f "$CONF" ]; then
+  echo "✗ Konfig bulunamadı: $CONF — plugin kurulu değil"; exit 1
+fi
+LIC=$(awk -F'=' '/^key[[:space:]]*=/{gsub(/[[:space:]"'\'']/,"",$2);print $2;exit}' "$CONF")
+SRV=$(awk -F'=' '/^server_url[[:space:]]*=/{gsub(/[[:space:]"'\'']/,"",$2);print $2;exit}' "$CONF")
+[ -z "$LIC" ] && { echo "✗ Lisans anahtarı bulunamadı"; exit 1; }
+[ -z "$SRV" ] && SRV="https://panel.gokyuzuhosting.com"
+
+echo "🔑 Lisans: ${LIC:0:14}…"
+echo "🌐 Master: $SRV"
+
+# Mevcut sürüm
+CURR=$(cat /etc/mailshield/plugin.version 2>/dev/null || echo "?")
+echo "📌 Mevcut sürüm: $CURR"
+
+# Master'dan mevcut sürümü sorgula
+MASTER_VER=$(curl -sfk "$SRV/api/version/panel" 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin).get("version","?").lstrip("v"))' 2>/dev/null || echo "?")
+echo "🌐 Master sürüm: $MASTER_VER"
+
+if [ "$CURR" = "$MASTER_VER" ] && [ "$1" != "--force" ]; then
+  echo "✓ Zaten güncel. Yine de zorla güncellemek için: sudo gwsm-update --force"; exit 0
+fi
+
+# Yeni tarball indir
+TMP=$(mktemp -d); cd "$TMP"
+echo "📥 Yeni tarball indiriliyor..."
+if ! curl -fsSL "$SRV/api/plugin/download" -o gws.tar.gz; then
+  echo "✗ İndirme başarısız — master erişilebilir mi?"; rm -rf "$TMP"; exit 1
+fi
+SZ=$(stat -c%s gws.tar.gz 2>/dev/null || echo 0)
+[ "$SZ" -lt 10000 ] && { echo "✗ Bozuk indirme ($SZ byte)"; rm -rf "$TMP"; exit 1; }
+echo "✓ Tarball indirildi ($SZ byte)"
+
+# Aç ve kur
+tar -xzf gws.tar.gz
+cd gokyuzuwebspam
+echo "⚙  install.sh çalıştırılıyor (config KORUNUR)..."
+if ! bash install.sh --license="$LIC"; then
+  echo "✗ install.sh başarısız"; rm -rf "$TMP"; exit 1
+fi
+
+# Servisleri yeniden başlat
+systemctl daemon-reload
+systemctl restart mailshield-api mailshield-logtail 2>/dev/null || true
+
+# Health check
+sleep 3
+NEW=$(cat /etc/mailshield/plugin.version 2>/dev/null || echo "?")
+if curl -sf http://127.0.0.1:8001/api/version/panel >/dev/null 2>&1; then
+  echo "✓ API canlı"
+fi
+
+rm -rf "$TMP"
+echo "🎉 Güncelleme tamam: $CURR → $NEW"
+GWSMUP
+
+chmod 755 /usr/local/bin/gwsm-update
+echo "    ✓ gwsm-update komutu kuruldu"
+
+# ═══════════════════════════════════════════════════════════════════
+# Otomatik Günlük Update Kontrolü (opsiyonel timer)
+# ═══════════════════════════════════════════════════════════════════
+cat > /etc/systemd/system/gwsm-auto-update.timer <<'AUTMR'
+[Unit]
+Description=GokyuzuWebSpam — Günlük otomatik güncelleme kontrolü
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=24h
+RandomizedDelaySec=1h
+Unit=gwsm-auto-update.service
+
+[Install]
+WantedBy=timers.target
+AUTMR
+
+cat > /etc/systemd/system/gwsm-auto-update.service <<'AUSVC'
+[Unit]
+Description=GokyuzuWebSpam — Günlük otomatik güncelleme kontrolü
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gwsm-update
+StandardOutput=append:/var/log/mailshield/auto-update.log
+StandardError=append:/var/log/mailshield/auto-update.log
+AUSVC
+
+run "systemctl daemon-reload"
+run "systemctl enable --now gwsm-auto-update.timer"
+echo "    ✓ Günlük otomatik update timer aktif (24 saatte bir kontrol eder)"
+
 echo "==> [9/9] MongoDB kontrolü"
 if ! command -v mongod >/dev/null; then
   echo "    UYARI: mongod bulunamadı. API çalışır ama karantina/list DB'siz devreye giremez."
@@ -283,6 +437,7 @@ cat <<EOF
        milters=inet:127.0.0.1:33333
 
   Sağlık kontrolü:  mailshieldctl status
+  Güncelleme:       sudo gwsm-update       (elle) veya günlük otomatik
   Loglar:           $LOG_DIR/*.log
   Konfig:           $ETC_DIR/
   Kaldırma:         ./uninstall.sh   (mevcut cPanel'e dokunmaz)

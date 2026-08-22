@@ -168,7 +168,9 @@ class License(BaseModel):
 class LicenseViolation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     at: str = Field(default_factory=_iso)
-    ip: str
+    ip: str  # Deneme yapılan IP (browser veya sunucu)
+    browser_ip: Optional[str] = ""  # v44.00.01 — Tarayıcı IP (request.client.host)
+    whm_server_ip: Optional[str] = ""  # v44.00.01 — WHM sunucu IP (payload.ip)
     hostname: Optional[str] = ""
     license_key: Optional[str] = ""
     reason: str  # ip_not_allowed | key_not_found | expired | inactive
@@ -10414,7 +10416,7 @@ class VerifyLicenseIn(BaseModel):
 
 
 @api.post("/plugin/verify-license")
-async def plugin_verify_license(payload: VerifyLicenseIn):
+async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = None):
     """
     Bayinin 'Lisans Sorgula' butonundan çağrılır. Verilen key/IP/hostname
     lisans DB'sinde varsa ve süresi geçerliyse plugin_state güncellenir.
@@ -10497,13 +10499,24 @@ async def plugin_verify_license(payload: VerifyLicenseIn):
             if allowed:
                 if payload.ip not in allowed:
                     # Farklı IP'den lisans anahtarı denemesi — VIOLATION
+                    # v44.00.01 — Hem tarayıcı IP hem WHM sunucu IP'sini kaydet
+                    browser_ip = ""
+                    try:
+                        if request:
+                            browser_ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+                            if not browser_ip and request.client:
+                                browser_ip = request.client.host or ""
+                    except Exception:
+                        pass
                     v = LicenseViolation(
-                        ip=payload.ip or "",
+                        ip=payload.ip or "",  # legacy field (WHM server IP)
+                        browser_ip=browser_ip,
+                        whm_server_ip=payload.ip or "",
                         hostname=payload.hostname or "",
                         license_key=payload.license_key or "",
                         reason="ip_not_allowed",
                         version="",
-                        raw={"attempted_ip": payload.ip, "allowed_ips": allowed[:3]},
+                        raw={"attempted_whm_ip": payload.ip, "browser_ip": browser_ip, "allowed_ips": allowed[:3]},
                     )
                     await db.license_violations.insert_one(v.model_dump())
                     return {

@@ -30,8 +30,16 @@ systemctl disable --now mailshield-api.service       || true
 systemctl disable --now mailshield-milter.service    || true
 systemctl disable --now mailshield-logtail.service   || true
 systemctl disable --now mailshield-quarantine.timer  || true
+# v44.00.01 — Push timer + auto-update timer
+systemctl disable --now gws-simple-push.timer        || true
+systemctl disable --now gws-simple-push.service      || true
+systemctl disable --now gwsm-auto-update.timer       || true
+systemctl disable --now gwsm-auto-update.service     || true
 rm -f /etc/systemd/system/mailshield-*.service
 rm -f /etc/systemd/system/mailshield-*.timer
+rm -f /etc/systemd/system/gws-simple-push.*
+rm -f /etc/systemd/system/gwsm-auto-update.*
+rm -f /usr/local/bin/gwsm-update
 systemctl daemon-reload
 
 rm -rf /usr/local/mailshield

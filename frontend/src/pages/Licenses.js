@@ -832,8 +832,9 @@ function ViolationsPanel({ violRows, onSimulate, onClearViol }) {
           <thead className="sticky top-0 bg-slate-900">
             <tr className="text-[11px] uppercase tracking-widest text-slate-500">
               <th className="text-left px-4 py-3 font-semibold">Zaman</th>
-              <th className="text-left px-4 py-3 font-semibold">IP</th>
-              <th className="text-left px-4 py-3 font-semibold">Sunucu</th>
+              <th className="text-left px-4 py-3 font-semibold">WHM Sunucu IP</th>
+              <th className="text-left px-4 py-3 font-semibold">Tarayıcı IP</th>
+              <th className="text-left px-4 py-3 font-semibold">Sunucu (host)</th>
               <th className="text-left px-4 py-3 font-semibold">Anahtar</th>
               <th className="text-left px-4 py-3 font-semibold">Sebep</th>
               <th className="text-left px-4 py-3 font-semibold">Sürüm</th>
@@ -843,7 +844,20 @@ function ViolationsPanel({ violRows, onSimulate, onClearViol }) {
             {violRows.map((v) => (
               <tr key={v.id} data-row className="border-t border-slate-800">
                 <td className="px-4 py-2.5 mono text-[11px] text-slate-400">{isoDateTime(v.at)}</td>
-                <td className="px-4 py-2.5 mono text-slate-200">{v.ip}</td>
+                <td className="px-4 py-2.5 mono">
+                  <span className="text-amber-300 font-bold">{v.whm_server_ip || v.ip || "—"}</span>
+                  {(v.whm_server_ip || v.ip) && (
+                    <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 uppercase tracking-wider">cPanel</span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 mono">
+                  {v.browser_ip ? (
+                    <>
+                      <span className="text-cyan-300">{v.browser_ip}</span>
+                      <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 uppercase tracking-wider">tarayıcı</span>
+                    </>
+                  ) : <span className="text-slate-600 text-xs">—</span>}
+                </td>
                 <td className="px-4 py-2.5 mono text-slate-300 text-xs">{v.hostname || "—"}</td>
                 <td className="px-4 py-2.5 mono text-[11px] text-slate-400">{v.license_key || "—"}</td>
                 <td className="px-4 py-2.5"><Badge tone="danger">{REASON_LABEL[v.reason] || v.reason}</Badge></td>
@@ -851,7 +865,7 @@ function ViolationsPanel({ violRows, onSimulate, onClearViol }) {
               </tr>
             ))}
             {violRows.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-10 text-center text-emerald-400">🎉 İhlal yok</td></tr>
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-emerald-400">🎉 İhlal yok</td></tr>
             )}
           </tbody>
         </table>
