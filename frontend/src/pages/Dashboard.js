@@ -11,6 +11,7 @@ import {
 import { Card, CardBody, CardHeader, StatCard, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
 import { useT } from "@/i18n";
+import { useIsMaster } from "@/hooks/useIsMaster";
 import LiveMailEvents from "@/components/LiveMailEvents";
 import ModuleFooter from "@/components/ModuleFooter";
 import MultiServerRibbon from "@/components/MultiServerRibbon";
@@ -59,6 +60,7 @@ const TABS = [
 
 export default function Dashboard() {
   const t = useT();
+  const { isMaster } = useIsMaster();  // v44.00.06 — master-only widget'lar için
   const [tab, setTab] = useState("overview");
   const [queueOpen, setQueueOpen] = useState(false);
   const [drillIp, setDrillIp] = useState(null);
@@ -141,9 +143,12 @@ export default function Dashboard() {
             <div className="col-span-12 lg:col-span-8"><TopDomainsWidget /></div>
             <div className="col-span-12 lg:col-span-4"><MilterHealthWidget /></div>
           </div>
-          <div className="grid grid-cols-12 gap-4">
-            <div className="col-span-12"><PluginSignalLogWidget /></div>
-          </div>
+          {/* v44.00.06 — Plugin Sinyal Kayıtları SADECE master için: bayı lisans key'leri içerir */}
+          {isMaster && (
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12"><PluginSignalLogWidget /></div>
+            </div>
+          )}
         </div>
       )}
 

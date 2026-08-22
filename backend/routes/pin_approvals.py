@@ -103,6 +103,56 @@ async def request_pin_change(payload: PinChangeRequestIn, request: Request):
     except Exception:
         pass
 
+    # v44.00.06 — Master'a otomatik e-posta bildirimi (onay hızını 10x artırır)
+    try:
+        # Bayı adını al
+        lic = await db.licenses.find_one(
+            {"license_key": key},
+            {"_id": 0, "customer_name": 1, "customer_email": 1, "plan": 1},
+        ) or {}
+        bayi_name = lic.get("customer_name") or key[:14] + "..."
+        bayi_email = lic.get("customer_email") or "-"
+        bayi_plan = lic.get("plan") or "-"
+
+        # Master admin adresini notify_settings'den oku
+        notify = await db.settings.find_one({"_key": "notify"}, {"_id": 0, "_key": 0}) or {}
+        master_email = notify.get("admin_email") or os.environ.get("MASTER_ADMIN_EMAIL", "")
+
+        if master_email and "@" in master_email:
+            subject = f"🔐 GökyüzüWebSpam · PIN Değişikliği Onay Bekliyor · {bayi_name}"
+            reason_text = doc["reason"] or "(sebep belirtilmemiş)"
+            body = f"""Yeni bir PIN değişiklik talebi onay bekliyor:
+
+BAYI BİLGİLERİ
+──────────────────────────────────────────
+Ad          : {bayi_name}
+Plan        : {bayi_plan}
+E-posta     : {bayi_email}
+Lisans      : {key}
+Talep IP    : {doc['requested_ip']}
+Talep Saati : {doc['requested_at']}
+
+TALEP DETAYI
+──────────────────────────────────────────
+Yeni PIN uzunluğu : {doc['new_pin_length']} hane
+Sebep             : {reason_text}
+
+⚡ Hızlı işlem:
+Master panelde:  Ayarlar → Kilit & PIN → Talep Akışı
+
+Talep ID: {doc['id']}
+──────────────────────────────────────────
+Bu bildirim GökyüzüWebSpam v44.00.06 tarafından otomatik gönderildi.
+"""
+            # Master için _send_email — lazy import (server.py için)
+            import sys
+            server_mod = sys.modules.get("server")
+            if server_mod and hasattr(server_mod, "_send_email"):
+                await server_mod._send_email(master_email, subject, body)
+    except Exception:
+        # E-posta hatası talebi bloke etmesin — sadece log at
+        pass
+
     doc.pop("new_pin_hash", None)
     doc.pop("new_pin_salt", None)
     return {"ok": True, "status": "pending", "request_id": doc["id"], "message": "Talebiniz onaya gönderildi"}

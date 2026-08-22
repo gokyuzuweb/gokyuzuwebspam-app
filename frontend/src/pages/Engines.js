@@ -24,10 +24,28 @@ export default function Engines() {
   const [confirmEngine, setConfirmEngine] = useState(null); // v44.00.04 — cascade onay modalı
   const toggle = useMutation({
     mutationFn: (name) => api.engineToggle(name),
-    onSuccess: (data) => {
+    onSuccess: (data, engineName) => {
       const cascade = data.master_cascaded_to || 0;
       const base = `${data.name} ${data.enabled ? "etkinleştirildi" : "durduruldu"}`;
-      toast.success(cascade > 0 ? `${base} · ${cascade} bayiye yansıtıldı` : base);
+      // v44.00.06 — Master için 60sn "Geri Al" (Undo) toast
+      if (isMaster) {
+        toast.success(cascade > 0 ? `${base} · ${cascade} bayiye yansıtıldı` : base, {
+          duration: 60_000,
+          action: {
+            label: "Geri Al (60sn)",
+            onClick: () => {
+              // Aynı motoru tekrar toggle et — state tersine döner + cascade da ters yayılır
+              toast.info(`${engineName} eski durumuna döndürülüyor...`);
+              toggle.mutate(engineName);
+            },
+          },
+          description: cascade > 0
+            ? `Bu işlem ${cascade} bayinin sunucusunda uygulandı. 60 saniye içinde geri alabilirsin.`
+            : "60 saniye içinde geri alabilirsin.",
+        });
+      } else {
+        toast.success(base);
+      }
       qc.invalidateQueries({ queryKey: ["engines"] });
       qc.invalidateQueries({ queryKey: ["overview"] });
       qc.invalidateQueries({ queryKey: ["overview-header"] });

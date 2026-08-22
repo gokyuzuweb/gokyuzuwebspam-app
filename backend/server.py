@@ -340,7 +340,7 @@ async def seed_if_empty() -> None:
         **VersionManifest(
             latest_version="44.00.05",
             download_url="https://panel.gokyuzuhosting.com/api/plugin/download",
-            changelog="v44.00.06: heartbeat versiyon fix + /api/plugin/heartbeat alias + SMTP tenant scoping",
+            changelog="v44.00.07: heartbeat versiyon fix + /api/plugin/heartbeat alias + SMTP tenant scoping",
             release_date=_iso(),
         ).model_dump()
     })
@@ -357,7 +357,7 @@ async def seed_if_empty() -> None:
             notes="Yıllık pro paket · 2 sunucu",
             last_heartbeat_at=(now - timedelta(minutes=8)).isoformat(),
             last_heartbeat_ip="203.0.113.10",
-            last_heartbeat_version="44.00.04",  # v44.00.06 — bogus seed "1.1.0" kaldırıldı
+            last_heartbeat_version="44.00.04",  # v44.00.07 — bogus seed "1.1.0" kaldırıldı
         ).model_dump(),
         License(
             customer_name="Deneme Hosting Ltd.",
@@ -369,7 +369,7 @@ async def seed_if_empty() -> None:
             notes="Enterprise · unlimited domain limit yakın",
             last_heartbeat_at=(now - timedelta(hours=2)).isoformat(),
             last_heartbeat_ip="198.51.100.42",
-            last_heartbeat_version="44.00.03",  # v44.00.06 — bir sürüm eski (test için ESKİ badge görünsün)
+            last_heartbeat_version="44.00.03",  # v44.00.07 — bir sürüm eski (test için ESKİ badge görünsün)
         ).model_dump(),
     ]
     await db.licenses.insert_many(demo_licenses)
@@ -2185,7 +2185,7 @@ async def engines_get(request: Request, license_key: Optional[str] = None):
 
 @api.get("/engines/{name}/cascade-preview")
 async def engines_cascade_preview(name: str, request: Request, license_key: Optional[str] = None):
-    """v44.00.06 — Master motor toggle'ı yapmadan ÖNCE kaç bayiye yansıyacağını
+    """v44.00.07 — Master motor toggle'ı yapmadan ÖNCE kaç bayiye yansıyacağını
     ve şu anki durumlarını göster. Onay modalı için kullanılır."""
     scope = await _tenant_scope(request, license_key)
     if not scope.get("is_master"):
@@ -2248,7 +2248,7 @@ async def engines_toggle(name: str, request: Request, license_key: Optional[str]
         {"name": name, "owner_license_key": owner},
         {"$set": {"enabled": new_val}},
     )
-    # v44.00.06 — MASTER CASCADE: Master motor toggle'ı YAPARSA, aynı motor
+    # v44.00.07 — MASTER CASCADE: Master motor toggle'ı YAPARSA, aynı motor
     # tüm bayilere de aynı durumla yansıtılır. Bayi kendi paneli üzerinden yine
     # override edebilir, ama master global politika belirler.
     # Sebep: kullanıcı "master'da motor kapattığımda müşteride kapanmıyor" dedi.
@@ -3189,7 +3189,7 @@ async def _send_telegram(token: str, chat_id: str, text: str) -> bool:
 
 
 async def _smtp_settings(owner_license_key: Optional[str] = None) -> dict:
-    """v44.00.06 — Per-tenant SMTP settings.
+    """v44.00.07 — Per-tenant SMTP settings.
     Bayi kendi SMTP'sini yapılandırdıysa onu döner (`owner_license_key` eşleşen).
     Yoksa master varsayılanına (`owner_license_key=""` boş dokümana) düşer.
     None verilirse master varsayılanını okur (arka plan job'ları için).
@@ -3265,7 +3265,7 @@ async def _smart_from(license_key: Optional[str] = None) -> str:
 async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "gokyuzuwebspam@localhost", owner_license_key: Optional[str] = None) -> tuple[bool, str]:
     """Send email. Tries configured SMTP first, then falls back to local /usr/sbin/sendmail (Exim on WHM).
 
-    v44.00.06 — `owner_license_key` verilirse o bayinin SMTP ayarları kullanılır;
+    v44.00.07 — `owner_license_key` verilirse o bayinin SMTP ayarları kullanılır;
     verilmezse master varsayılanı kullanılır. Böylece her bayi kendi SMTP
     relay'ini yapılandırabilir ve master'ınkinden bağımsız çalışır.
     """
@@ -3601,7 +3601,7 @@ class MailTestIn(BaseModel):
 
 @api.get("/settings/smtp")
 async def get_smtp_settings(request: Request, license_key: Optional[str] = None):
-    # v44.00.06 — Per-tenant SMTP: bayi kendi ayarını görür (yoksa master fallback).
+    # v44.00.07 — Per-tenant SMTP: bayi kendi ayarını görür (yoksa master fallback).
     scope = await _tenant_scope(request, license_key)
     owner = scope["owner_license_key"] or ""
     # Bayi kendi dokümanı
@@ -3626,7 +3626,7 @@ async def get_smtp_settings(request: Request, license_key: Optional[str] = None)
         "password":  "" if not doc.get("password") else "********",
         "from_addr": doc.get("from_addr", ""),
         "use_tls":   doc.get("use_tls", "starttls"),
-        # v44.00.06 — UI için: bayi master'ınkinden mi devraldı?
+        # v44.00.07 — UI için: bayi master'ınkinden mi devraldı?
         "inherited_from_master": inherited,
         "tenant_scoped": True,
     }
@@ -3634,7 +3634,7 @@ async def get_smtp_settings(request: Request, license_key: Optional[str] = None)
 
 @api.put("/settings/smtp")
 async def put_smtp_settings(payload: SmtpSettingsIn, request: Request, license_key: Optional[str] = None):
-    # v44.00.06 — Kayıt, çağıranın tenant scope'una gider (bayi = kendi, master = global default).
+    # v44.00.07 — Kayıt, çağıranın tenant scope'una gider (bayi = kendi, master = global default).
     scope = await _tenant_scope(request, license_key)
     owner = scope["owner_license_key"] or ""
     doc = payload.model_dump()
@@ -3877,7 +3877,7 @@ async def put_landing_settings(payload: LandingContentIn, request: Request):
 @api.post("/mail/test")
 async def mail_send_test(payload: MailTestIn, request: Request, license_key: Optional[str] = None):
     """Send a real test email to `to`. Uses SMTP settings if enabled, otherwise local sendmail.
-    v44.00.06 — Tenant-scoped: bayi kendi SMTP ayarlarıyla test eder."""
+    v44.00.07 — Tenant-scoped: bayi kendi SMTP ayarlarıyla test eder."""
     if "@" not in payload.to:
         raise HTTPException(400, "Gecerli bir e-posta adresi girin")
     scope = await _tenant_scope(request, license_key)
@@ -4174,7 +4174,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.06"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.07"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -5880,8 +5880,15 @@ async def plugin_signal_ack(payload: dict):
 
 # v43.33 — Plugin Signal Log (son 20 sinyal ve durum)
 @api.get("/plugin/signal-log")
-async def plugin_signal_log(limit: int = 20):
-    """Master panelde son N plugin sinyalinin listesi + handled durumu."""
+async def plugin_signal_log(request: Request, limit: int = 20, license_key: Optional[str] = None):
+    """Master panelde son N plugin sinyalinin listesi + handled durumu.
+    v44.00.07 — SECURITY: master-only. Bu liste bayi lisans key'lerini içerir,
+    bayilere ASLA sızmamalı. Ayrıca kayıtlar `license_key` alanına göre filtreliyor
+    değildi → bayı çağırınca master'ın kayıtları da görünüyordu. Şimdi 403.
+    """
+    m = await _is_master(request, license_key)
+    if not m.get("is_master"):
+        raise HTTPException(403, "Master yetkisi gerekli")
     items = []
     cursor = db.settings.find(
         {"_key": {"$regex": r"^plugin_demand_(sync|update|milter_restart|bayes_train):"}},
@@ -5889,7 +5896,6 @@ async def plugin_signal_log(limit: int = 20):
     ).sort("requested_at", -1).limit(min(max(limit, 1), 100))
     async for d in cursor:
         key = d.get("_key", "")
-        # Extract type from _key
         signal_type = "unknown"
         if ":" in key:
             signal_type = key.split(":", 1)[0].replace("plugin_demand_", "")
@@ -6205,7 +6211,7 @@ async def _fire_license_alert(violation: dict) -> None:
 
 @api.get("/licenses")
 async def licenses_list(request: Request, license_key: Optional[str] = None):
-    # v44.00.06 — SECURITY: master-only. Bayilere lisans listesini SIZDIRMA.
+    # v44.00.07 — SECURITY: master-only. Bayilere lisans listesini SIZDIRMA.
     m = await _is_master(request, license_key)
     if not m.get("is_master"):
         raise HTTPException(status_code=403, detail="Master yetkisi gerekli")
@@ -6918,7 +6924,7 @@ class HeartbeatPayload(BaseModel):
     license_key: str
     ip: str
     hostname: Optional[str] = ""
-    # v44.00.06 — Default'ı boş yap; eğer plugin göndermediyse UI 'v?' göstersin,
+    # v44.00.07 — Default'ı boş yap; eğer plugin göndermediyse UI 'v?' göstersin,
     # yanlış "v1.1.0" DEĞİL. Ayrıca `plugin_version` alias kabul et
     # (gws-simple-push timer bu alanı gönderiyor).
     version: Optional[str] = Field("", alias="plugin_version")
@@ -7015,7 +7021,7 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
     }
 
 
-# v44.00.06 — Alias endpoint: `gws-simple-push` timer /api/plugin/heartbeat
+# v44.00.07 — Alias endpoint: `gws-simple-push` timer /api/plugin/heartbeat
 # çağırıyor. Aynı davranışı sağla. Böylece müşteri sunucularındaki eski
 # install.sh (v44.00.01) bile yeni master ile düzgün heartbeat atsın.
 @api.post("/plugin/heartbeat")
@@ -7028,7 +7034,7 @@ async def plugin_heartbeat(payload: HeartbeatPayload, request: Request = None):
 
 @api.get("/license/violations")
 async def license_violations(request: Request, limit: int = 100, license_key: Optional[str] = None):
-    # v44.00.06 — SECURITY: master-only. İhlaller license_key + IP bilgisi içerir → sızmasın.
+    # v44.00.07 — SECURITY: master-only. İhlaller license_key + IP bilgisi içerir → sızmasın.
     m = await _is_master(request, license_key)
     if not m.get("is_master"):
         raise HTTPException(status_code=403, detail="Master yetkisi gerekli")
@@ -7199,7 +7205,7 @@ class DelistRequest(BaseModel):
     status: Literal["pending", "submitted", "resolved", "failed"] = "pending"
     submitted_via: Optional[str] = "manual"  # manual (portal) | email | api
     notes: Optional[str] = ""
-    # v44.00.06 — Tenant isolation: hangi lisansa/bayiye ait olduğu (master için MASTER_LICENSE_KEY)
+    # v44.00.07 — Tenant isolation: hangi lisansa/bayiye ait olduğu (master için MASTER_LICENSE_KEY)
     owner_license_key: Optional[str] = ""
 
 
@@ -7207,7 +7213,7 @@ class DelistRequest(BaseModel):
 async def blacklist_delist(payload: DelistRequestIn, request: Request, license_key: Optional[str] = None):
     scope = await _tenant_scope(request, license_key)
     await _require_feature(scope, "blacklist_manage")
-    # v44.00.06 — Tenant sahibini belirle (master ise MASTER_LICENSE_KEY, bayi ise kendi key'i)
+    # v44.00.07 — Tenant sahibini belirle (master ise MASTER_LICENSE_KEY, bayi ise kendi key'i)
     owner_lk = scope.get("owner_license_key") or (
         os.environ.get("MASTER_LICENSE_KEY", "") if scope.get("is_master") else ""
     )
@@ -7253,7 +7259,7 @@ async def blacklist_delist(payload: DelistRequestIn, request: Request, license_k
             contact_email=payload.contact_email, reason=payload.reason,
             status="submitted" if submitted_via == "email" else "pending",
             submitted_via=submitted_via,
-            owner_license_key=owner_lk,  # v44.00.06 — Tenant isolation
+            owner_license_key=owner_lk,  # v44.00.07 — Tenant isolation
         ).model_dump()
         # Insert a COPY (insert_one mutates the dict with ObjectId _id)
         await db.delist_requests.insert_one(dict(req))
@@ -7267,7 +7273,7 @@ async def blacklist_delist(payload: DelistRequestIn, request: Request, license_k
 
 @api.get("/blacklist/requests")
 async def blacklist_requests(request: Request, license_key: Optional[str] = None):
-    # v44.00.06 — Tenant isolation: bayi sadece KENDİ delisting taleplerini görür
+    # v44.00.07 — Tenant isolation: bayi sadece KENDİ delisting taleplerini görür
     scope = await _tenant_scope(request, license_key)
     q: dict = {}
     if not scope.get("is_master"):
@@ -7283,7 +7289,7 @@ class DelistStatusUpdate(BaseModel):
 
 
 async def _authorize_delist(req_id: str, request: Request, license_key: Optional[str]):
-    """v44.00.06 — Kayıt sahipliğini doğrula (master her şeye erişebilir)."""
+    """v44.00.07 — Kayıt sahipliğini doğrula (master her şeye erişebilir)."""
     scope = await _tenant_scope(request, license_key)
     doc = await db.delist_requests.find_one({"id": req_id}, {"_id": 0})
     if not doc:
@@ -9738,8 +9744,10 @@ PLAN_FEATURES_DEFAULT = {
         "live_diagnostic": True,     # Canlı sunucu tanı sihirbazı
         "my_server": True,           # Sunucu bağlama sayfası
         "docs_view": True,           # Dokümantasyon sayfası
-        "installation_guide": True,  # v44.00.06 — Kurulum Rehberi (herkes görebilir)
-        "module_tour": True,         # v44.00.06 — Modül Turu (herkes görebilir)
+        "installation_guide": True,  # v44.00.07 — Kurulum Rehberi (herkes görebilir)
+        "install_guide": True,       # v44.00.07 — App.js aynı feature key kullanıyor (alias)
+        "module_tour": True,         # v44.00.07 — Modül Turu (herkes görebilir)
+        "promo_video": True,         # v44.00.07 — Tanıtım videosu (herkes görebilir)
         # === Liste Yönetimi ===
         "blacklist_check": True,     # RBL sorgu / delist
         "whitelist_manage": False,   # Whitelist ekleme
@@ -9760,7 +9768,8 @@ PLAN_FEATURES_DEFAULT = {
         "exploit_editor": False,     # Exploit/Webshell tarayıcı
         "ai_explanations": False,    # AI destekli açıklama
         "threat_intel": False,       # Tehdit zekası feed'i
-        "threat_defense_center": False,  # v44.00.06 — Threat Defense Hub (28 modül)
+        "threat_defense_center": False,  # v44.00.07 — Threat Defense Hub (28 modül)
+        "threat_defense": False,     # v44.00.07 — App.js alias (starter'da kapalı — pro/enterprise açık)
         "bec_detection": False,      # Business Email Compromise
         "sandbox": False,            # Ek/URL sandbox
         "attachment_scan": True,     # Ek tarama
@@ -9768,7 +9777,7 @@ PLAN_FEATURES_DEFAULT = {
         # === Ekosistem ===
         "marketplace": False,        # İmza Marketplace sayfası
         "bounce_digest": False,      # Günlük bounce özet raporu
-        "bounce_digest_export": False,  # v44.00.06 — CSV/XLSX export
+        "bounce_digest_export": False,  # v44.00.07 — CSV/XLSX export
         # === Bildirim & Raporlama ===
         "notifications_view": True,  # Bildirim kutusu
         "alerts_rules": False,       # Custom alert kuralları
@@ -9777,11 +9786,11 @@ PLAN_FEATURES_DEFAULT = {
         "reports_export": False,     # CSV/PDF export
         "email_notifications": True, # Basit e-posta bildirim
         "smtp_settings": False,      # SMTP relay yapılandırma
-        "push_health_widget": True,  # v44.00.06 — Exim push health (herkes görebilir)
-        "reseller_analytics_widget": True,  # v44.00.06 — Kişisel Koruma Panosu (herkes)
+        "push_health_widget": True,  # v44.00.07 — Exim push health (herkes görebilir)
+        "reseller_analytics_widget": True,  # v44.00.07 — Kişisel Koruma Panosu (herkes)
         # === Güvenlik & Kilit ===
-        "idle_lock": True,           # v44.00.06 — Otomatik kilit + PIN
-        "pin_change_request": True,  # v44.00.06 — Bayi PIN değişikliği talebi
+        "idle_lock": True,           # v44.00.07 — Otomatik kilit + PIN
+        "pin_change_request": True,  # v44.00.07 — Bayi PIN değişikliği talebi
         # === Yönetim ===
         "users_view": True,          # WHM kullanıcıları görüntüleme
         "bulk_actions": False,       # Toplu işlem
@@ -9801,7 +9810,8 @@ PLAN_FEATURES_DEFAULT = {
         "dashboard": True, "live_traffic": True, "attack_map": True, "logs_view": True,
         "mailscanner": True, "mail_health": True, "live_diagnostic": True,
         "my_server": True, "docs_view": True,
-        "installation_guide": True, "module_tour": True,
+        "installation_guide": True, "install_guide": True,
+        "module_tour": True, "promo_video": True,
         # Liste
         "blacklist_check": True, "whitelist_manage": True, "blacklist_manage": True,
         "whitelist_history": True,
@@ -9812,7 +9822,7 @@ PLAN_FEATURES_DEFAULT = {
         "outbound_view": True, "outbound_control": True,
         # İleri
         "custom_rules": True, "exploit_editor": True, "ai_explanations": True,
-        "threat_intel": True, "threat_defense_center": True,
+        "threat_intel": True, "threat_defense_center": True, "threat_defense": True,
         "bec_detection": True, "sandbox": True,
         "attachment_scan": True, "url_scan": True,
         # Ekosistem
@@ -9831,20 +9841,21 @@ PLAN_FEATURES_DEFAULT = {
         "label": "Pro",
     },
     "enterprise": {
-        # v44.00.06 — ENTERPRISE'da TÜM özellikler AÇIK olmalı (kullanıcı bildirdi:
+        # v44.00.07 — ENTERPRISE'da TÜM özellikler AÇIK olmalı (kullanıcı bildirdi:
         # bazı modüller "paket bulunmuyor" gösteriyordu)
         "max_domains": 999999, "max_mails_per_day": 999999999,
         "dashboard": True, "live_traffic": True, "attack_map": True, "logs_view": True,
         "mailscanner": True, "mail_health": True, "live_diagnostic": True,
         "my_server": True, "docs_view": True,
-        "installation_guide": True, "module_tour": True,
+        "installation_guide": True, "install_guide": True,
+        "module_tour": True, "promo_video": True,
         "blacklist_check": True, "whitelist_manage": True, "blacklist_manage": True,
         "whitelist_history": True,
         "quarantine_view": True, "quarantine_release": True, "quarantine_delete": True,
         "security_view": True, "security_config": True, "engine_toggle": True,
         "outbound_view": True, "outbound_control": True,
         "custom_rules": True, "exploit_editor": True, "ai_explanations": True,
-        "threat_intel": True, "threat_defense_center": True,
+        "threat_intel": True, "threat_defense_center": True, "threat_defense": True,
         "bec_detection": True, "sandbox": True,
         "attachment_scan": True, "url_scan": True,
         "marketplace": True, "bounce_digest": True, "bounce_digest_export": True,
@@ -10675,7 +10686,7 @@ class VerifyLicenseIn(BaseModel):
     license_key: Optional[str] = None
     ip: Optional[str] = None  # public IP of the plugin host
     hostname: Optional[str] = None  # cPanel primary domain (shared-hosting'de kritik)
-    # v44.00.06 — Plugin version (verify sırasında master hangi versiyonun bağlı olduğunu bilsin)
+    # v44.00.07 — Plugin version (verify sırasında master hangi versiyonun bağlı olduğunu bilsin)
     version: Optional[str] = None
 
 
@@ -10755,7 +10766,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
     # 1) license_key ile
     if payload.license_key:
         lic = await db.licenses.find_one({"active": True, "license_key": payload.license_key}, {"_id": 0})
-        # v44.00.06 — license_key SAĞLANMIŞ ama DB'de aktif eşleşme YOK →
+        # v44.00.07 — license_key SAĞLANMIŞ ama DB'de aktif eşleşme YOK →
         # IP/hostname fallback'ini ATLA. Aksi halde IP başka bir lisansa kayıtlıysa
         # 'ambiguous_shared_ip' hatası tetiklenip gerçek key_not_found gizlenir.
         # Direkt key_not_found violation yaz ve 404 dön (spec 1c).
@@ -10909,7 +10920,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
                     logging.info(f"NS auto-license check failed for {payload.hostname}: {e}")
 
     if not lic:
-        # v44.00.06 — browser_ip'yi de yakala (server_ip = payload.ip, browser_ip = request headers)
+        # v44.00.07 — browser_ip'yi de yakala (server_ip = payload.ip, browser_ip = request headers)
         _browser_ip = ""
         try:
             if request is not None:
@@ -10931,7 +10942,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
             version="",
             raw={"verify_attempt": True, "ambiguous": ambiguous_ip_match, "browser_ip": _browser_ip},
         ).model_dump()
-        # v44.00.06 — Canonical collection'a da yaz (frontend'in yeni list endpoint'i buradan okur)
+        # v44.00.07 — Canonical collection'a da yaz (frontend'in yeni list endpoint'i buradan okur)
         await db.license_violations.insert_one(dict(v))
         await db.violations.insert_one(v)
         asyncio.create_task(_fire_license_alert(v))
@@ -10964,7 +10975,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
             "last_heartbeat_at": now.isoformat(),
             "last_heartbeat_ip": payload.ip or "",
             "last_heartbeat_hostname": (payload.hostname or "").lower(),
-            "last_heartbeat_version": payload.version or "44.00.05",  # v44.00.06 — payload'dan al
+            "last_heartbeat_version": payload.version or "44.00.05",  # v44.00.07 — payload'dan al
         }},
     )
     await db.logs.insert_one(ActivityLog(

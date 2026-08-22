@@ -15,6 +15,33 @@ gokyuzuhosting.com.
 
 
 
+## Feb 22, 2026 (Session 23, v44.00.07) — 4 P1 Features + Critical Security Fix
+
+### 🐛 CRITICAL FIX (user reported)
+- **Plugin Signal Log master license leak**: Bayi Dashboard'unda "📡 Plugin Sinyal Kayıtları" widget'ı master lisans key'i dahil TÜM tenant'ların signal log kayıtlarını gösteriyordu (`MS-C02AB0126...`, `MS-508918D94...`). Master license kısaltılmış olsa bile identifikasyona yeter — hassas veri sızıntısı.
+- **Fix (çift savunma)**:
+  1. Backend `GET /api/plugin/signal-log` artık master-only (403 for bayi/anon). `_is_master()` gate eklendi.
+  2. Frontend `PluginSignalLogWidget` Dashboard'da `{isMaster && ...}` guard ile sarıldı → bayı hiç görmüyor.
+
+### 🎁 4 P1 FEATURES
+1. **Heartbeat gecikmesi alarmı**: Yeni `GET /api/master/offline-resellers?minutes=45` endpoint — 45+ dk'dır heartbeat atmamış bayı listesi. Master-only. `minutes_since_heartbeat` + `never_seen` bayrağı.
+2. **Motor Cascade "Geri Al" (Undo)**: Master motor toggle sonrası 60sn'lik sonner toast — "Geri Al (60sn)" action button ile aynı motoru tekrar toggle edip önceki state'e döndürüyor. Cascade sayısı da geri alınır.
+3. **PIN Onay E-posta Bildirimi**: `pin_approvals/request` endpoint'i bayi talebi geldiğinde master admin e-postasına otomatik mail atıyor. Bayı adı + plan + IP + sebep + hızlı erişim linki dahil. Failsafe: e-posta hatası talebi bloke etmiyor.
+4. **Feature Flag Validasyon Testleri** (`test_v44_00_06_feature_flags.py`): 4 pytest ile:
+   - App.js `<Route feature=...>` her key backend PLAN_FEATURES matrix'te var mı
+   - Enterprise starter'ın tüm feature'larını içeriyor mu
+   - PlanConfig.js UI backend matrix ile senkron mı
+   - 3 plan (starter, pro, enterprise) aynı key set'ine sahip mi
+- Bu testler bir kez oluşturulunca `install_guide`, `promo_video`, `threat_defense` gibi 3 uyumsuz key'i anında yakaladı → matrix güncellendi (alias'lar eklendi).
+
+### Version bump
+- `v44.00.06 → v44.00.07`.
+
+### Testing
+- Backend **25/25 green**: feature flags (4) + v44.00.04 (19) + version file check (2).
+
+
+
 ## Feb 22, 2026 (Session 23, v44.00.06) — Plan Matrix Genişletme (Enterprise "Paket Bulunmuyor" Fix)
 
 ### 🐛 CRITICAL FIX (user reported)

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/master", tags=["master"])
 
 MASTER_MODE   = os.environ.get("MASTER_MODE", "false").lower() == "true"
 MASTER_DOMAIN = os.environ.get("MASTER_DOMAIN", "panel.gokyuzuhosting.com")
-CURRENT_VERSION = "44.00.06"
+CURRENT_VERSION = "44.00.07"
 
 
 def _iso() -> str:
@@ -402,3 +402,65 @@ async def mark_all_alerts_read():
         {"$set": {"read": True, "seen": True, "read_at": _iso()}},
     )
     return {"ok": True, "modified": r.modified_count}
+
+
+# v44.00.06 — Heartbeat gecikmesi alarmı
+@router.get("/offline-resellers")
+async def offline_resellers(request: Request, minutes: int = 45):
+    """v44.00.06 — Son N dakika içinde heartbeat atmamış bayileri döner.
+    Master toast/alert widget'ı buna dayanır.
+    - Sadece MASTER (X-Master-Key = MASTER_LICENSE_KEY) çağırabilir.
+    - Response: {threshold_minutes, count, offline: [...]}
+    """
+    master_key = os.environ.get("MASTER_LICENSE_KEY", "")
+    caller = (request.headers.get("x-master-key") or request.headers.get("x-license-key") or "").strip()
+    if not master_key or caller != master_key:
+        raise HTTPException(403, "Sadece master erişebilir")
+
+    threshold = datetime.now(timezone.utc) - timedelta(minutes=max(5, min(minutes, 1440)))
+    threshold_iso = threshold.isoformat()
+
+    offline: list[dict] = []
+    # Aktif bayi lisansları: heartbeat_at yok VEYA threshold'dan eski
+    async for lic in db.licenses.find(
+        {
+            "active": True,
+            "license_key": {"$ne": master_key},  # master hariç
+            "$or": [
+                {"last_heartbeat_at": None},
+                {"last_heartbeat_at": {"$exists": False}},
+                {"last_heartbeat_at": {"$lt": threshold_iso}},
+            ],
+        },
+        {"_id": 0, "license_key": 1, "customer_name": 1, "customer_email": 1,
+         "plan": 1, "last_heartbeat_at": 1, "last_heartbeat_ip": 1, "last_heartbeat_version": 1},
+    ):
+        hb = lic.get("last_heartbeat_at") or ""
+        if hb:
+            try:
+                delta = datetime.now(timezone.utc) - datetime.fromisoformat(hb.replace("Z", "+00:00"))
+                minutes_ago = int(delta.total_seconds() // 60)
+            except Exception:
+                minutes_ago = None
+        else:
+            minutes_ago = None
+        offline.append({
+            "license_key": lic.get("license_key", ""),
+            "license_key_short": (lic.get("license_key") or "")[:16] + "...",
+            "customer_name": lic.get("customer_name") or "-",
+            "customer_email": lic.get("customer_email") or "",
+            "plan": lic.get("plan") or "-",
+            "last_heartbeat_at": hb or None,
+            "last_heartbeat_version": lic.get("last_heartbeat_version") or None,
+            "minutes_since_heartbeat": minutes_ago,
+            "never_seen": not hb,
+        })
+    # En eskiden en yeniye sırala
+    offline.sort(key=lambda x: (0 if x["never_seen"] else 1, -(x.get("minutes_since_heartbeat") or 0)))
+    return {
+        "threshold_minutes": minutes,
+        "generated_at": _iso(),
+        "count": len(offline),
+        "offline": offline,
+    }
+
