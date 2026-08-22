@@ -174,6 +174,18 @@ async def list_all_requests(request: Request, status: Optional[str] = None, limi
                 r["license_status"] = lic.get("status")
                 r["ip_addresses"] = lic.get("ip_addresses", [])
                 r["is_master_row"] = bool(lic.get("is_master"))
+            # v44.00.02 — company field'ı bayi tablosundan
+            try:
+                reseller = await db.resellers.find_one(
+                    {"license_key": r.get("bayi_license_key", "")},
+                    {"_id": 0, "company": 1, "email": 1}
+                )
+                if reseller:
+                    r["company"] = reseller.get("company") or ""
+                    if not r.get("customer_email"):
+                        r["customer_email"] = reseller.get("email") or ""
+            except Exception:
+                pass
         except Exception:
             pass
         # PIN'in kendisi ASLA dönmez; sadece güvenli meta:
@@ -260,6 +272,69 @@ async def decide_request(req_id: str, payload: PinDecisionIn, request: Request):
         pass
 
     return {"ok": True, "status": new_status, "request_id": req_id}
+
+
+@router.delete("/{req_id}")
+async def delete_request(req_id: str, request: Request):
+    """v44.00.02 — Master: geçmiş PIN talebini sil.
+    Yalnızca `pending` OLMAYAN kayıtlar silinebilir (aktif iş akışı silinmesin).
+    Silinen kayıt için audit log yazılır.
+    """
+    if not _is_master(request):
+        raise HTTPException(403, "Sadece master yetkilendirilmiştir")
+    doc = await db.pin_change_requests.find_one({"id": req_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Talep bulunamadı")
+    if doc.get("status") == "pending":
+        raise HTTPException(400, "Beklemede olan talepler silinemez — önce karar verin")
+    r = await db.pin_change_requests.delete_one({"id": req_id})
+    try:
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "pin_change_delete",
+            "actor_ip": _client_ip(request),
+            "details": {"request_id": req_id, "bayi": doc.get("bayi_license_key"), "was_status": doc.get("status")},
+            "at": _iso(),
+            "severity": "info",
+        })
+    except Exception:
+        pass
+    return {"ok": True, "deleted": int(r.deleted_count)}
+
+
+class PinBulkDeleteIn(BaseModel):
+    status: Optional[Literal["approved", "rejected", "cancelled_by_master_reset", "superseded_by_master"]] = None
+    older_than_days: Optional[int] = None
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_requests(payload: PinBulkDeleteIn, request: Request):
+    """v44.00.02 — Master: geçmiş PIN taleplerini toplu sil.
+    Örn. tüm 'rejected' kayıtları veya 30 günden eski karara bağlı kayıtlar.
+    `pending` durumundakilere DOKUNMAZ.
+    """
+    if not _is_master(request):
+        raise HTTPException(403, "Sadece master yetkilendirilmiştir")
+    q: dict = {"status": {"$ne": "pending"}}
+    if payload.status:
+        q["status"] = payload.status
+    if payload.older_than_days is not None and payload.older_than_days > 0:
+        cutoff = datetime.now(timezone.utc).timestamp() - payload.older_than_days * 86400
+        cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+        q["requested_at"] = {"$lt": cutoff_iso}
+    r = await db.pin_change_requests.delete_many(q)
+    try:
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "pin_change_bulk_delete",
+            "actor_ip": _client_ip(request),
+            "details": {"filter": q, "deleted": int(r.deleted_count)},
+            "at": _iso(),
+            "severity": "info",
+        })
+    except Exception:
+        pass
+    return {"ok": True, "deleted": int(r.deleted_count)}
 
 
 

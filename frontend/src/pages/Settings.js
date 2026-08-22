@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages, Server, ShieldCheck, ShieldAlert, RefreshCw, Zap, Palette, KeyRound, Plug } from "lucide-react";
+import { Save, Sliders, Clock, Bell, ArrowUpRight, Sparkles, Lock, Cpu, Languages, Server, ShieldCheck, ShieldAlert, RefreshCw, Zap, Palette, KeyRound, Plug, History } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import StripeConfigCard from "@/components/StripeConfigCard";
@@ -844,6 +844,70 @@ export default function SettingsPage() {
 }
 
 // v43.90 — Tab-based Settings layout (karışıklık çözümü)
+// v44.00.02 — Kilit & PIN alt sekmelere bölündü (vertical overflow fix)
+function LockPinTab() {
+  const [sub, setSub] = useState(() => localStorage.getItem("gws.settings.lock.sub") || "personal");
+  const chooseSub = (id) => { setSub(id); try { localStorage.setItem("gws.settings.lock.sub", id); } catch {} };
+  const SUB_TABS = [
+    { id: "personal", label: "Kişisel Kilit & PIN",   Icon: KeyRound,    testid: "lock-sub-personal" },
+    { id: "global",   label: "Global Ayar",           Icon: Sliders,     testid: "lock-sub-global" },
+    { id: "requests", label: "Talep Akışı",           Icon: Clock,       testid: "lock-sub-requests" },
+    { id: "history",  label: "PIN Geçmişi",           Icon: History,     testid: "lock-sub-history" },
+    { id: "admin",    label: "Admin PIN Yönetimi",    Icon: ShieldCheck, testid: "lock-sub-admin" },
+  ];
+  return (
+    <div className="grid grid-cols-12 gap-6">
+      <div className="col-span-12 lg:col-span-8 space-y-4">
+        {/* Sub-tab bar */}
+        <div className="flex flex-wrap gap-1.5 bg-slate-950/60 border border-slate-800 rounded-lg p-1.5" data-testid="lock-subtabs">
+          {SUB_TABS.map(({ id, label, Icon, testid }) => {
+            const active = sub === id;
+            return (
+              <button
+                key={id}
+                data-testid={testid}
+                onClick={() => chooseSub(id)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] font-semibold transition-all ${
+                  active
+                    ? "bg-amber-500/20 border border-amber-500/50 text-amber-100 shadow"
+                    : "border border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-800/40"
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {sub === "personal" && <IdleLockPersonalCard />}
+        {sub === "global"   && <IdleLockConfigCard />}
+        {sub === "requests" && (
+          <div className="space-y-4">
+            <PinChangeRequestCard />
+            <PinApprovalMasterQueue />
+          </div>
+        )}
+        {sub === "history"  && <PinApprovalHistory />}
+        {sub === "admin"    && <AdminUserPinManager />}
+      </div>
+      <div className="col-span-12 lg:col-span-4">
+        <Card>
+          <CardBody className="text-xs text-slate-500 space-y-2">
+            <div className="flex items-center gap-2 text-slate-400"><KeyRound className="w-3.5 h-3.5" /> Kilit & PIN yönetimi</div>
+            <div className="text-slate-500">
+              Otomatik kilit süresi, PIN oluşturma, bayı talepleri ve master onay akışı burada yönetilir.
+            </div>
+            <div className="text-[10px] text-amber-400/80 pt-1 border-t border-slate-800">
+              💡 Bölümler alt sekmelere ayrıldı — böylece uzun sayfa scrolling yerine odaklanmış ekranlar.
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+
 function SettingsTabs({ state, patch, langs, uiLang, setUiLang, save, t }) {
   const [tab, setTab] = useState(() => localStorage.getItem("gws.settings.tab") || "general");
   const chooseTab = (id) => { setTab(id); try { localStorage.setItem("gws.settings.tab", id); } catch {} };
@@ -922,26 +986,7 @@ function SettingsTabs({ state, patch, langs, uiLang, setUiLang, save, t }) {
           </div>
         </div>
       )}
-      {tab === "lock" && (
-        <div className="grid grid-cols-12 gap-6">
-          <div className="col-span-12 lg:col-span-8 space-y-4">
-            <IdleLockConfigCard />
-            <IdleLockPersonalCard />
-            <PinChangeRequestCard />
-            <PinApprovalMasterQueue />
-            <PinApprovalHistory />
-            <AdminUserPinManager />
-          </div>
-          <div className="col-span-12 lg:col-span-4">
-            <Card>
-              <CardBody className="text-xs text-slate-500 space-y-2">
-                <div className="flex items-center gap-2 text-slate-400"><KeyRound className="w-3.5 h-3.5" /> Kilit & PIN yönetimi</div>
-                <div className="text-slate-500">Otomatik kilit süresi, PIN oluşturma ve master onay akışı burada yönetilir.</div>
-              </CardBody>
-            </Card>
-          </div>
-        </div>
-      )}
+      {tab === "lock" && <LockPinTab />}
       {tab === "integrations" && (
         <div className="grid grid-cols-12 gap-6">
           <div className="col-span-12 lg:col-span-8 space-y-4">

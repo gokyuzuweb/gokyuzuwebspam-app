@@ -12,7 +12,8 @@ import { I18nProvider, useT, useI18n } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { PluginStatusStripe, LicenseGate } from "@/components/LicenseGate";
 import RenewalBanner from "@/components/RenewalBanner";
-import DemoBanner from "@/components/DemoBanner";
+// v44.00.02 — DemoBanner artık kullanılmıyor; demo uyarısı LicenseGate içinde tek satır olarak gösteriliyor
+// import DemoBanner from "@/components/DemoBanner";
 import { ImpersonationBar } from "@/components/Impersonate";
 import PushToastBridge from "@/components/PushToastBridge";
 import BayiEventBridge from "@/components/BayiEventBridge";
@@ -266,7 +267,7 @@ function Sidebar() {
         </NavLink>
         <div className="leading-tight min-w-0">
           <div className="text-slate-100 font-bold tracking-tight text-[15px] truncate">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v44.00.01 · {effective.toUpperCase()}</div>
+          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v44.00.02 · {effective.toUpperCase()}</div>
         </div>
       </div>
       <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto sidebar-scroll">
@@ -452,7 +453,7 @@ function Shell() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <PluginStatusStripe />
-        <DemoBanner />
+        {/* v44.00.02 — DemoBanner kaldırıldı: uyarı LicenseGate demo bandında tek satır olarak gösteriliyor */}
         <ImpersonationBar />
         <PushToastBridge />
         <BayiEventBridge />

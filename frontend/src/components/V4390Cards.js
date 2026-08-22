@@ -993,12 +993,31 @@ export function AdminUserPinManager() {
 export function PinApprovalHistory() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [expanded, setExpanded] = useState({}); // id -> bool
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["pin-approval-history", statusFilter],
     queryFn: () => api.pinApprovalAll(statusFilter === "all" ? undefined : statusFilter),
     refetchInterval: 30_000,
   });
   const items = q.data?.items || [];
+
+  // v44.00.02 — Silme mutations
+  const delOne = useMutation({
+    mutationFn: (id) => api.pinApprovalDelete(id),
+    onSuccess: () => {
+      toast.success("Talep silindi");
+      qc.invalidateQueries({ queryKey: ["pin-approval-history"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Silinemedi"),
+  });
+  const delBulk = useMutation({
+    mutationFn: (payload) => api.pinApprovalBulkDelete(payload),
+    onSuccess: (r) => {
+      toast.success(`${r?.deleted ?? 0} talep silindi`);
+      qc.invalidateQueries({ queryKey: ["pin-approval-history"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Toplu silme başarısız"),
+  });
 
   const badgeCls = (s) => ({
     "pending":  "bg-amber-500/15 text-amber-300 border-amber-500/40",
@@ -1037,6 +1056,26 @@ export function PinApprovalHistory() {
               <option value="rejected">Reddedilenler</option>
             </select>
             <Badge tone="slate">{items.length}</Badge>
+            {/* v44.00.02 — Toplu silme (30+ günlük veya seçili filtre) */}
+            <button
+              data-testid="pin-history-bulk-delete"
+              disabled={delBulk.isPending || items.length === 0}
+              onClick={() => {
+                const payload = {};
+                if (statusFilter !== "all" && statusFilter !== "pending") payload.status = statusFilter;
+                const confirmMsg = payload.status
+                  ? `Filtreye giren "${statusFilter}" durumundaki tüm geçmiş talepler silinsin mi? (Beklemede olanlara dokunulmaz)`
+                  : "30 günden eski, karara bağlanmış TÜM talepler silinsin mi? (Beklemede olanlara dokunulmaz)";
+                if (!payload.status) payload.older_than_days = 30;
+                if (!window.confirm(confirmMsg)) return;
+                delBulk.mutate(payload);
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 hover:border-rose-400 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Karara bağlanmış eski/filtre kayıtlarını toplu sil"
+            >
+              <Trash2 className="w-3 h-3" />
+              Toplu Sil
+            </button>
           </div>
         }
       />
@@ -1051,11 +1090,13 @@ export function PinApprovalHistory() {
               <thead className="bg-slate-900/60 border-b border-slate-800 sticky top-0">
                 <tr>
                   <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Talep Sahibi</th>
+                  <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Şirket</th>
                   <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Yeni PIN</th>
                   <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">IP / Cihaz</th>
                   <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Talep Zamanı</th>
                   <th className="text-center px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Durum</th>
                   <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Karar</th>
+                  <th className="text-center px-3 py-2 text-[10px] uppercase tracking-wider text-slate-400 font-bold">Sil</th>
                 </tr>
               </thead>
               <tbody>
@@ -1079,6 +1120,12 @@ export function PinApprovalHistory() {
                               {i.plan}
                             </span>
                           )}
+                        </td>
+                        {/* v44.00.02 — Şirket kolonu */}
+                        <td className="px-3 py-2">
+                          <div className="text-[11px] text-slate-300 truncate max-w-[160px]" title={i.company || "-"}>
+                            {i.company || <span className="text-slate-600 italic">-</span>}
+                          </div>
                         </td>
                         <td className="px-3 py-2">
                           <div className="text-slate-200 font-bold flex items-center gap-1.5">
@@ -1119,10 +1166,29 @@ export function PinApprovalHistory() {
                             <span className="text-[10px] italic text-slate-500">-</span>
                           )}
                         </td>
+                        {/* v44.00.02 — Sil butonu (yalnızca pending değilse aktif) */}
+                        <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                          {i.status !== "pending" ? (
+                            <button
+                              data-testid={`pin-history-delete-${i.id}`}
+                              onClick={() => {
+                                if (!window.confirm(`"${i.customer_name || i.bayi_license_key}" için geçmiş kayıt silinsin mi?`)) return;
+                                delOne.mutate(i.id);
+                              }}
+                              disabled={delOne.isPending}
+                              className="p-1.5 rounded hover:bg-rose-500/15 text-slate-500 hover:text-rose-300 transition disabled:opacity-40"
+                              title="Bu kaydı sil"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <span className="text-slate-700" title="Beklemedeki kayıt silinemez">—</span>
+                          )}
+                        </td>
                       </tr>
                       {exp && (
                         <tr className="bg-slate-950/50 border-b border-slate-800/60">
-                          <td colSpan={6} className="px-4 py-3 space-y-1.5">
+                          <td colSpan={8} className="px-4 py-3 space-y-1.5">
                             {i.reason && (
                               <div className="text-[11px] text-slate-300">
                                 <span className="text-slate-500 font-bold">Talep sebebi:</span>{" "}

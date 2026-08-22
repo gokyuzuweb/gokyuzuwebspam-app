@@ -16,7 +16,7 @@ router = APIRouter(prefix="/master", tags=["master"])
 
 MASTER_MODE   = os.environ.get("MASTER_MODE", "false").lower() == "true"
 MASTER_DOMAIN = os.environ.get("MASTER_DOMAIN", "panel.gokyuzuhosting.com")
-CURRENT_VERSION = "44.00.01"
+CURRENT_VERSION = "44.00.02"
 
 
 def _iso() -> str:

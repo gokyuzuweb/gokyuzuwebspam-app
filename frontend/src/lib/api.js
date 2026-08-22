@@ -260,6 +260,9 @@ export const api = {
   pinApprovalPending: () => client.get("/pin-approvals/pending").then(r => r.data),
   pinApprovalAll: (status) => client.get("/pin-approvals/all", { params: status ? { status } : {} }).then(r => r.data), // v43.99.11
   pinApprovalDecide: (id, decision, note) => client.post(`/pin-approvals/${id}/decide`, { decision, note }).then(r => r.data),
+  // v44.00.02 — Master: geçmiş talebi sil / toplu sil
+  pinApprovalDelete: (id) => client.delete(`/pin-approvals/${id}`).then(r => r.data),
+  pinApprovalBulkDelete: (payload = {}) => client.post(`/pin-approvals/bulk-delete`, payload).then(r => r.data),
 
   // v43.99.10 — Master PIN Yönetimi (aktif kullanıcı/bayı PIN durumu)
   adminUserPinsList: () => client.get("/pin-approvals/admin/user-pins").then(r => r.data),

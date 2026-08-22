@@ -1,0 +1,48 @@
+{
+  "summary": "v44.00.02 backend regression — 35/35 green. Yeni v44.00.02 suite'i (17 test) + v44.00.01 rejresyon (18 test) tam yeşil. GATING FIX #1 (/api/licenses) ve #2 (/api/license/violations) her ikisi de master gerektiriyor: header'sız 403, MS-TESTBAYI-STARTER-V4371 ile 403, MS-C02AB012652A4FE692D69676 ile 200 (liste). VIOLATION FIX doğrulandı: sahte license_key + benzersiz TEST-NET-1 IP ile POST /api/plugin/verify-license → 404 dönüyor, canonical db.license_violations koleksiyonuna reason='key_not_found', license_key, whm_server_ip=payload.ip, ve X-Forwarded-For'dan alınan browser_ip yazılıyor (master GET /api/license/violations ile anlık okunabildi). DELETE /api/pin-approvals/{req_id}: master gerektirir (403), pending için 400 + 'Beklemede olan talepler silinemez — önce karar verin', decided için {ok:true, deleted:1}. POST /api/pin-approvals/bulk-delete: master gerektirir, {status:'rejected'} tüm reddedilenleri temizler, {older_than_days:30} taze kayıtlara dokunmuyor, pending güvenlik kontratı korunuyor. GET /api/pin-approvals/all: 'company' alanı opsiyonel olarak dönüyor (bayi resellers'ta yoksa alan yok — bozulma yok). VERSION dosyası v44.00.02, plugin tarball içindeki VERSION dosyası da v44.00.02.",
+  "endpoints_tested": {
+    "licenses_gating": "GET /api/licenses — 3 alt kontrol (no-hdr / non-master / master)",
+    "violations_gating": "GET /api/license/violations — 3 alt kontrol",
+    "verify_bogus": "POST /api/plugin/verify-license (bogus key) → 404 + canonical violation w/ key_not_found + browser_ip",
+    "pin_delete_single": "DELETE /api/pin-approvals/{id} — auth, pending block, decided delete",
+    "pin_bulk_delete": "POST /api/pin-approvals/bulk-delete — auth, pending-safe, status/older_than_days",
+    "pin_all": "GET /api/pin-approvals/all — company alanı opsiyonel",
+    "version": "/app/VERSION dosyası + /api/plugin/download tarball VERSION",
+    "regression_v44_00_01": "18/18 test_v44_ip_lock_and_tenant_isolation.py"
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/pin-approvals/bulk-delete", "issue": "Spec 'silently overridden' der ama Pydantic PinBulkDeleteIn.status Literal'i sadece approved/rejected/cancelled_by_master_reset/superseded_by_master içeriyor → {status:'pending'} gövdesiyle çağrı 422 döner (silent override değil). Güvenlik kontratı (pending asla silinmez) yine de korunur çünkü q={'status':{'$ne':'pending'}} ile başlıyor. Testte 200 veya 422 kabul ederek geçtik; ama spec ile küçük tutarsızlık — ya spec cümlesini güncelle, ya Literal'e 'pending' ekleyip kod içinde sessizce yok say."},
+      {"endpoint": "POST /api/plugin/verify-license", "issue": "Sahte license_key + IP verildiğinde, key eşleşmesi yoksa akış hostname ve ARDINDAN IP eşleşmesine düşer. Test DB'de payload.ip zaten başka bir lisansa kayıtlıysa 409 ambiguous_shared_ip döner (spec'in beklediği 404/key_not_found DEĞİL). key_not_found yolunu tetiklemek için IP'nin de hiçbir lisansta olmaması gerekiyor. Öneri: license_key sağlandıysa ve o key DB'de yoksa, IP/hostname fallback'ini atla → daima 404 + key_not_found violation yaz."},
+      {"endpoint": "GET /api/pin-approvals/all", "issue": "'company' alanı yalnızca db.resellers'da license_key eşleşen bir satır bulunduğunda ekleniyor; eşleşme yoksa alan hiç eklenmiyor (spec: 'field absent or empty string' — 'empty string' varyantı hiçbir zaman üretilmiyor). Non-breaking, sadece belge/kontrat farkı."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v44_00_02_regression.py",
+    "/app/backend/tests/test_v44_ip_lock_and_tenant_isolation.py",
+    "/app/test_reports/pytest/v44_00_02.xml",
+    "/app/test_reports/pytest/v44_iplock_retest.xml"
+  ],
+  "action_items": [
+    "Küçük: bulk-delete PinBulkDeleteIn.status Literal'ine 'pending' ekleyip iç mantıkta silent override yapılırsa spec ile birebir eşleşir (opsiyonel).",
+    "Küçük: /api/plugin/verify-license — license_key verilmiş ama DB'de yoksa IP fallback'e düşmeyi bypass et; direkt key_not_found violation yaz + 404 dön (spec 1c'ye tam uyum, ambiguous_shared_ip yan etkisini engelle).",
+    "Belge: pin-approvals/all'da 'company' alanı yoksa dokümantasyon 'field absent' der (empty string varyantı üretilmiyor)."
+  ],
+  "critical_code_review_comments": [
+    "pin_approvals.py:640 satır civarında bulk-delete Pydantic modeli 'pending' hariç Literal; kod da $ne:pending ile başlar. İki koruma iyi, ancak spec 'silent override' der. Ya kod ya spec uyumlanmalı.",
+    "pin_approvals.py:322 older_than_days için requested_at ISO string karşılaştırması yapılıyor. ISO-8601 string sıralaması UTC ve aynı-uzunluk formatta çalışır — kod _iso() → datetime.now(tz=utc).isoformat() ürettiğinden şu an güvenli. Eski satırlar farklı format ile yazılmışsa (örn. mikrosaniye yok) karşılaştırma yine leksikografik doğru çalışır.",
+    "server.py verify-license: license_key sağlanmış ama yoksa hostname/IP fallback devreye giriyor — spec beklentisine ters, önce key bazlı 'not found' path'i çalışmalı."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v44_00_02_regression.py (yeni)"
+  ],
+  "success_rate": {"backend": "100% (35/35 — 17 new + 18 regression)", "frontend": "not tested (backend-only istek)"},
+  "test_credentials": "Master X-Master-Key: MS-C02AB012652A4FE692D69676. Non-master reseller: MS-TESTBAYI-STARTER-V4371.",
+  "seed_data_creation": "Testler kendi pin_change_requests satırlarını (reason='TEST_v44.00.02*') oluşturup teardown'da DELETE /api/pin-approvals/{id} ile temizliyor. verify-license testi tek bir license_violations satırı bırakır (bogus key, TEST-NET-1 IP) — 7 günlük _daily_violations_cleanup_task ile silinir.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "v44.00.02 için yeni regression suite /app/backend/tests/test_v44_00_02_regression.py. Çalıştırma: python -m pytest backend/tests/test_v44_00_02_regression.py -v -o addopts=. REACT_APP_BACKEND_URL env yoksa /app/frontend/.env'den okur. v44.00.01 suite (test_v44_ip_lock_and_tenant_isolation.py) da hâlâ yeşil. Bilinen küçük tutarsızlıklar action_items'da.",
+  "rca of the issue": "N/A — regresyon geçti. İki minor kod-spec tutarsızlığı (bulk-delete status=pending 422, verify-license key_not_found IP fallback ile örtülüyor) action_items altında belgelendi."
+}

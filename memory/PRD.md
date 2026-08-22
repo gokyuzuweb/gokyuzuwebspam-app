@@ -14,6 +14,40 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 22, 2026 (Session 23, v44.00.02) — Backend Security Hardening + PIN UX
+
+### Fixed data-leak endpoints (GATING)
+- `GET /api/licenses` → now requires master (`X-Master-Key`). Non-master callers get 403. Previously ANY caller could list all licenses (incl. master + every reseller).
+- `GET /api/license/violations` → same master-only gating.
+- Frontend axios interceptor already sends `X-Master-Key`, so master UI unaffected.
+
+### Verify-license improvements
+- `POST /api/plugin/verify-license`: when `license_key` is supplied but NOT found in DB, short-circuit and return 404 with `reason=key_not_found` violation written to canonical `db.license_violations` collection (+ legacy `db.violations`). No longer falls through to IP/hostname fallback that could mask the error as `ambiguous_shared_ip`.
+- Violation records now include `browser_ip` + `whm_server_ip` split (v44.00.01 field additions honored end-to-end).
+
+### PIN Approval — Master UX
+- `PinApprovalHistory` table adds **Şirket** (company from `db.resellers`) and **Sil** (delete) columns.
+- New endpoints:
+  - `DELETE /api/pin-approvals/{req_id}` — master-only; refuses pending (400); deletes decided + writes audit log.
+  - `POST /api/pin-approvals/bulk-delete` — master-only; body `{status?, older_than_days?}`; NEVER touches pending rows.
+- Frontend header adds **Toplu Sil** button (defaults to 30-day-old decided rows; when a status filter is active, deletes matching status).
+
+### Settings → Kilit & PIN sub-tabs
+- The single stacked "Kilit & PIN" pane (6 cards vertical) is broken into 5 focused sub-tabs:
+  - Kişisel Kilit & PIN · Global Ayar · Talep Akışı · PIN Geçmişi · Admin PIN Yönetimi
+- Fixes long vertical scroll UX complaint.
+
+### Demo mode text consolidation
+- `DemoBanner.js` removed from `App.js` (was showing separately from LicenseGate demo bar).
+- LicenseGate `plugin-status-demo` now shows single-line combined message: **"DEMO MODUNDASINIZ.. TÜM ÖZELLİKLER ACIK. CANLI KULLANMAK ICIN LİSANS SATIN AL.."** + inline "Lisansla Kilidi Aç" CTA.
+
+### Version bump
+- `v44.00.01` → `v44.00.02` (VERSION files, App.js, Landing.js, backend/routes/master.py, server.py `_PACKAGE_VERSION`).
+
+### Testing
+- Backend regression 35/35 green (`test_v44_ip_lock_and_tenant_isolation.py` + `test_v44_00_02_regression.py`). Reports: `/app/test_reports/iteration_54.json`, `iteration_55.json`.
+
+
 ## Feb 22, 2026 (Session 22, v43.99.24) — Critical Tenant Isolation Fixes
 
 **USER REPORTED (critical):** Müşteri sunucusuna GökyüzüWebSpam kurulduğunda master (panel.gokyuzuhosting.com) verileri sızıyor:

@@ -1435,8 +1435,49 @@ async def stats_overview(request: Request, license_key: Optional[str] = None):
 
 
 @api.get("/stats/traffic")
-async def stats_traffic(hours: int = 24):
+async def stats_traffic(hours: int = 24, request: Request = None, license_key: Optional[str] = None):
+    # v44.00.01 — Bayi için gerçek DB'den saatlik trafik topla
     now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    scope = await _tenant_scope(request, license_key) if request else {"is_master": False, "owner_license_key": ""}
+    owner = scope.get("owner_license_key") or ""
+    is_master = scope.get("is_master", False)
+
+    # Bayi ise DB'den gerçek veriyi çek (boş dönebilir)
+    if not is_master and owner:
+        since = (now - timedelta(hours=hours)).isoformat()
+        pipeline = [
+            {"$match": {"license_key": owner, "ts": {"$gte": since}}},
+            {"$group": {
+                "_id": {"$substr": ["$ts", 0, 13]},  # YYYY-MM-DDTHH
+                "ham":   {"$sum": {"$cond": [{"$eq": ["$verdict", "HAM"]}, 1, 0]}},
+                "spam":  {"$sum": {"$cond": [{"$eq": ["$verdict", "SPAM"]}, 1, 0]}},
+                "virus": {"$sum": {"$cond": [{"$eq": ["$verdict", "VIRUS"]}, 1, 0]}},
+                "phish": {"$sum": {"$cond": [{"$eq": ["$verdict", "PHISH"]}, 1, 0]}},
+            }},
+        ]
+        try:
+            real = {}
+            async for r in db.mail_events.aggregate(pipeline):
+                real[r["_id"]] = r
+        except Exception:
+            real = {}
+        # Her saat için sonuç oluştur (boşsa 0)
+        points = []
+        for i in range(hours, -1, -1):
+            t = now - timedelta(hours=i)
+            key = t.strftime("%Y-%m-%dT%H")
+            r = real.get(key, {})
+            points.append({
+                "time": t.isoformat(),
+                "hour": t.strftime("%H:00"),
+                "ham":   int(r.get("ham", 0)),
+                "spam":  int(r.get("spam", 0)),
+                "virus": int(r.get("virus", 0)),
+                "phish": int(r.get("phish", 0)),
+            })
+        return points
+
+    # Master: fiktif rastgele demo (aggregate global çok pahalı olabilir)
     points = []
     for i in range(hours, -1, -1):
         t = now - timedelta(hours=i)
@@ -4005,7 +4046,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.01"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.02"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -6035,7 +6076,11 @@ async def _fire_license_alert(violation: dict) -> None:
 
 
 @api.get("/licenses")
-async def licenses_list():
+async def licenses_list(request: Request, license_key: Optional[str] = None):
+    # v44.00.02 — SECURITY: master-only. Bayilere lisans listesini SIZDIRMA.
+    m = await _is_master(request, license_key)
+    if not m.get("is_master"):
+        raise HTTPException(status_code=403, detail="Master yetkisi gerekli")
     docs = await db.licenses.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     # v43.85 — Master license bayrağı frontend için (delete disabled UI)
     master_env = os.environ.get("MASTER_LICENSE_KEY", "")
@@ -6751,11 +6796,20 @@ class HeartbeatPayload(BaseModel):
 
 
 @api.post("/license/heartbeat")
-async def license_heartbeat(payload: HeartbeatPayload):
+async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
     """
     Plugin her 15 dk'da bir bunu çağırır. Doğrulama başarısızsa violation
     kaydı düşer + satıcıya Slack/Telegram bildirimi gider + 403 döner.
     """
+    # v44.00.01 — Browser/proxy IP'yi de tespit et (X-Forwarded-For veya socket)
+    browser_ip = ""
+    try:
+        if request:
+            browser_ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+            if not browser_ip and request.client:
+                browser_ip = request.client.host or ""
+    except Exception:
+        pass
     lic = await db.licenses.find_one({"license_key": payload.license_key}, {"_id": 0})
     reason = None
     if not lic:
@@ -6804,8 +6858,17 @@ async def license_heartbeat(payload: HeartbeatPayload):
             "last_heartbeat_at": _iso(),
             "last_heartbeat_ip": payload.ip,
             "last_heartbeat_version": payload.version,
+            # v44.00.01 — Master paneline browser IP'yi de göster
+            "last_browser_ip": browser_ip,
+            "last_browser_ip_at": _iso(),
         }},
     )
+    # v44.00.01 — Log farklı browser IP'lerini
+    if browser_ip:
+        await db.logs.insert_one(ActivityLog(
+            source="license", level="info",
+            message=f"Heartbeat · Bayı IP={payload.ip} · Tarayıcı IP={browser_ip} · key={payload.license_key[:14]}…",
+        ).model_dump())
     manifest = await db.settings.find_one({"_key": "version_manifest"}, {"_id": 0, "_key": 0}) or VersionManifest().model_dump()
     return {
         "ok": True,
@@ -6819,7 +6882,11 @@ async def license_heartbeat(payload: HeartbeatPayload):
 
 
 @api.get("/license/violations")
-async def license_violations(limit: int = 100):
+async def license_violations(request: Request, limit: int = 100, license_key: Optional[str] = None):
+    # v44.00.02 — SECURITY: master-only. İhlaller license_key + IP bilgisi içerir → sızmasın.
+    m = await _is_master(request, license_key)
+    if not m.get("is_master"):
+        raise HTTPException(status_code=403, detail="Master yetkisi gerekli")
     # Eski 'violations' + yeni 'license_violations' iki collection'ı birleştir
     # (geçmişten kalan kayıtlar da görünsün diye)
     rows_new = await db.license_violations.find({}, {"_id": 0}).sort("at", -1).to_list(limit)
@@ -10491,6 +10558,33 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
     # 1) license_key ile
     if payload.license_key:
         lic = await db.licenses.find_one({"active": True, "license_key": payload.license_key}, {"_id": 0})
+        # v44.00.02 — license_key SAĞLANMIŞ ama DB'de aktif eşleşme YOK →
+        # IP/hostname fallback'ini ATLA. Aksi halde IP başka bir lisansa kayıtlıysa
+        # 'ambiguous_shared_ip' hatası tetiklenip gerçek key_not_found gizlenir.
+        # Direkt key_not_found violation yaz ve 404 dön (spec 1c).
+        if not lic:
+            _browser_ip = ""
+            try:
+                if request is not None:
+                    _browser_ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+                    if not _browser_ip and request.client:
+                        _browser_ip = request.client.host or ""
+            except Exception:
+                pass
+            v = LicenseViolation(
+                ip=payload.ip or _browser_ip or "unknown",
+                browser_ip=_browser_ip,
+                whm_server_ip=payload.ip or "",
+                hostname=payload.hostname or "",
+                license_key=payload.license_key,
+                reason="key_not_found",
+                version="",
+                raw={"verify_attempt": True, "short_circuit": True, "browser_ip": _browser_ip},
+            ).model_dump()
+            await db.license_violations.insert_one(dict(v))
+            await db.violations.insert_one(v)
+            asyncio.create_task(_fire_license_alert(v))
+            raise HTTPException(404, "Lisans anahtarı geçersiz veya aktif değil. Lütfen satıcı ile iletişime geçin.")
         # v44.00.00 — IP KİLİDİ: Lisans IP'ye bağlı olmalı
         # · ip_addresses BOŞSA → İLK aktive eden IP'ye kilitlenir (auto-lock)
         # · ip_addresses DOLUYSA → payload.ip listede yoksa reddet
@@ -10618,8 +10712,19 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
                     logging.info(f"NS auto-license check failed for {payload.hostname}: {e}")
 
     if not lic:
+        # v44.00.02 — browser_ip'yi de yakala (server_ip = payload.ip, browser_ip = request headers)
+        _browser_ip = ""
+        try:
+            if request is not None:
+                _browser_ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+                if not _browser_ip and request.client:
+                    _browser_ip = request.client.host or ""
+        except Exception:
+            pass
         v = LicenseViolation(
-            ip=payload.ip or "unknown",
+            ip=payload.ip or _browser_ip or "unknown",
+            browser_ip=_browser_ip,
+            whm_server_ip=payload.ip or "",
             hostname=payload.hostname or "",
             license_key=payload.license_key or "",
             reason=(
@@ -10627,8 +10732,10 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
                 else ("key_not_found" if payload.license_key else "ip_or_hostname_not_allowed")
             ),
             version="",
-            raw={"verify_attempt": True, "ambiguous": ambiguous_ip_match},
+            raw={"verify_attempt": True, "ambiguous": ambiguous_ip_match, "browser_ip": _browser_ip},
         ).model_dump()
+        # v44.00.02 — Canonical collection'a da yaz (frontend'in yeni list endpoint'i buradan okur)
+        await db.license_violations.insert_one(dict(v))
         await db.violations.insert_one(v)
         asyncio.create_task(_fire_license_alert(v))
         if ambiguous_ip_match:

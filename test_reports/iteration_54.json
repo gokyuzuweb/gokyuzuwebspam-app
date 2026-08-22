@@ -1,0 +1,45 @@
+{
+  "summary": "v44.00.01 backend regression — 18/18 tests passed on first full run. Verified IP-lock on POST /api/plugin/verify-license (first-IP auto-lock + different-IP rejection with reason=ip_not_allowed), LicenseViolation logging with browser_ip + whm_server_ip fields, tenant isolation on /api/stats/traffic and /api/dashboard/top-domains between master (MS-C02AB012652A4FE692D69676) and starter reseller (MS-TESTBAYI-STARTER-V4371), master-only gating on /api/master/alerts (empty for non-master), plugin tarball download (200, gzip, contains VERSION file with v44.00.01), heartbeat via POST /api/license/heartbeat, and regression on /stats/overview, /licenses, /logs, /payments/settings, /master/status, /master/check. Wrong license key returns 404 (accepted). All recent tenant-isolation & IP-lock backend changes are working correctly with no regressions.",
+  "endpoints_tested": {
+    "verify_license": "POST /api/plugin/verify-license (IP auto-lock + reject different IP + violation record + wrong key)",
+    "violations_list": "GET /api/license/violations (master listing) — used because there is NO /api/master/violations route; both routes/master.py and server.py confirmed. Violations flow through db.license_violations + db.violations collections.",
+    "download": "GET /api/plugin/download (gzip tarball, VERSION file present)",
+    "heartbeat": "POST /api/license/heartbeat (there is NO /api/plugin/heartbeat route; correct path is /api/license/heartbeat per server.py:6794)",
+    "stats_traffic": "GET /api/stats/traffic?hours=6 with and without license_key",
+    "top_domains": "GET /api/dashboard/top-domains with license_key scoping",
+    "master_gating": "GET /api/master/alerts (returns empty items for non-master callers; full payload for master via X-Master-Key header)",
+    "regression": "/api/stats/overview, /api/licenses, /api/logs, /api/payments/settings, /api/master/status, /api/master/check"
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/licenses", "issue": "Endpoint has NO tenant/master gating — any unauthenticated caller can list ALL licenses (including master + every reseller). Data leak risk. This is likely PRE-EXISTING (not part of the v44 changes) but should be gated with _is_master."},
+      {"endpoint": "GET /api/license/violations", "issue": "Also unauthenticated — any caller can list all license violations (contains license_keys, browser/whm IPs). Consider requiring X-Master-Key."},
+      {"endpoint": "POST /api/plugin/verify-license", "issue": "Wrong-license-key path returns 404 with only 'Lisans bulunamadı' message and does NOT write a LicenseViolation row for reason=key_not_found (spec item 1c expects violation logged for wrong key). Only revoked / ip_not_allowed paths write violations."},
+      {"endpoint": "POST /api/plugin/verify-license", "issue": "Payload has no explicit server_ip field — the ip field is documented as 'public IP of the plugin host' and doubles as WHM server IP. The client is expected to pass browser IP via X-Forwarded-For (or socket) and server IP via body.ip; violation.raw records both. Documented behaviour, not a bug, but worth confirming with the CGI iframe change."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v44_ip_lock_and_tenant_isolation.py",
+    "/app/test_reports/pytest/v44_iplock.xml"
+  ],
+  "action_items": [
+    "Add violation-logging for reason='key_not_found' in POST /api/plugin/verify-license when license_key is present but no match (spec 1c). Currently only ip_not_allowed and license_revoked paths write to db.license_violations.",
+    "Consider gating GET /api/licenses and GET /api/license/violations behind _is_master() — currently they return all rows to any caller (potential PII / tenant leak).",
+    "There is no /api/master/violations route (as hinted in the request). If the spec calls for one, add it; otherwise document that /api/license/violations is the canonical route.",
+    "Heartbeat route is /api/license/heartbeat (not /api/plugin/heartbeat). If plugin code is expected to hit /plugin/heartbeat, add an alias."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 12k+ lines — split verify-license/heartbeat/download into routes/plugin.py (already exists but underused).",
+    "verify-license auto-locks on first IP without any auth — anyone with a leaked license_key can lock it to their IP first. Consider requiring hostname+NS check for first-lock, or a signed installer token.",
+    "browser_ip extraction uses only x-forwarded-for header — behind Kubernetes ingress this is trusted but any middleware/config change would let a caller spoof it. Add X-Real-IP fallback and document trust boundary."
+  ],
+  "updated_files": ["/app/backend/tests/test_v44_ip_lock_and_tenant_isolation.py"],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "Master X-Master-Key: MS-C02AB012652A4FE692D69676. Reseller starter: MS-TESTBAYI-STARTER-V4371 (query param license_key).",
+  "seed_data_creation": "One throwaway License (customer_name prefix TEST_iplock_*) created via POST /api/licenses and deleted in fixture teardown. Small number of license_violations rows inserted by test_b (with license_key of the throwaway license) — will be swept by the daily _daily_violations_cleanup_task after 7 days.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All v44.00.01 backend changes verified. Test file lives at /app/backend/tests/test_v44_ip_lock_and_tenant_isolation.py and can be re-run any time (creates + tears down its own fresh license). Note that /api/licenses and /api/license/violations are UNGATED — flagged as minor issues. Heartbeat endpoint is /api/license/heartbeat NOT /api/plugin/heartbeat."
+}
