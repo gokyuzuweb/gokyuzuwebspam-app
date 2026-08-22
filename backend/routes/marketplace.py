@@ -422,6 +422,51 @@ async def marketplace_stats():
     }
 
 
+# v44.00.04 — Public Trending Widget (Landing page için sosyal kanıt)
+@router.get("/trending")
+async def marketplace_trending(limit: int = 5, days: int = 7):
+    """Haftanın en çok kurulan imzaları (public — anonymize).
+    Landing page'de sosyal kanıt widget'ı için kullanılır."""
+    from datetime import datetime, timezone, timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
+    pipeline = [
+        {"$match": {"status": "active", "created_at": {"$gte": since}}},
+        {"$sort": {"stats.installs": -1, "stats.upvotes": -1}},
+        {"$limit": max(1, min(limit, 20))},
+        {"$project": {
+            "_id": 0, "id": 1, "name": 1, "category": 1, "description": 1,
+            "target": 1, "score": 1, "installs": "$stats.installs",
+            "upvotes": "$stats.upvotes", "created_at": 1,
+            "publisher_license": 1,
+        }},
+    ]
+    rows: list[dict] = []
+    async for r in db.marketplace_signatures.aggregate(pipeline):
+        # Publisher'ı anonymize et — public endpoint'te lisans key sızmasın
+        pl = r.pop("publisher_license", "") or ""
+        r["publisher_label"] = f"@{pl[3:7]}" if len(pl) > 7 else "@anon"
+        r["installs"] = int(r.get("installs") or 0)
+        r["upvotes"] = int(r.get("upvotes") or 0)
+        rows.append(r)
+    # Toplam istatistik (heartbeat için)
+    total_active = await db.marketplace_signatures.count_documents({"status": "active"})
+    total_installs = 0
+    async for r in db.marketplace_signatures.aggregate([
+        {"$match": {"status": "active"}},
+        {"$group": {"_id": None, "sum": {"$sum": {"$ifNull": ["$stats.installs", 0]}}}},
+    ]):
+        total_installs = int(r.get("sum") or 0)
+    return {
+        "period_days": days,
+        "generated_at": _iso(),
+        "trending": rows,
+        "totals": {
+            "active_signatures": total_active,
+            "total_installs_all_time": total_installs,
+        },
+    }
+
+
 # v43.73 — Haftalık Liderlik Tablosu
 @router.get("/leaderboard/weekly")
 async def marketplace_weekly_leaderboard():

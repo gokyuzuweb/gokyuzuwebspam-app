@@ -170,6 +170,8 @@ export const api = {
 
   engines: () => client.get("/engines").then(r => r.data),
   engineToggle: (name) => client.post(`/engines/${name}/toggle`).then(r => r.data),
+  // v44.00.04 — Master için cascade önizleme (toggle ONCESI kaç bayiye yansıyacak)
+  engineCascadePreview: (name) => client.get(`/engines/${name}/cascade-preview`).then(r => r.data),
 
   settings: () => client.get("/settings").then(r => r.data),
   settingsPut: (payload) => client.post("/settings/update", payload).then(r => r.data),
@@ -263,6 +265,15 @@ export const api = {
   // v44.00.02 — Master: geçmiş talebi sil / toplu sil
   pinApprovalDelete: (id) => client.delete(`/pin-approvals/${id}`).then(r => r.data),
   pinApprovalBulkDelete: (payload = {}) => client.post(`/pin-approvals/bulk-delete`, payload).then(r => r.data),
+  // v44.00.04 — PIN Geçmişi CSV/XLSX export
+  pinApprovalExportUrl: ({ status, fmt = "csv", limit = 2000 } = {}) => {
+    const mk = (localStorage.getItem("gws.master_license") || "").trim();
+    const base = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
+    const params = new URLSearchParams({ fmt, limit: String(limit) });
+    if (status && status !== "all") params.set("status", status);
+    if (mk) params.set("license_key", mk);
+    return `${base}/api/pin-approvals/export?${params.toString()}`;
+  },
 
   // v43.99.10 — Master PIN Yönetimi (aktif kullanıcı/bayı PIN durumu)
   adminUserPinsList: () => client.get("/pin-approvals/admin/user-pins").then(r => r.data),
@@ -736,6 +747,8 @@ export const api = {
     if (mk) params.set("license_key", mk);
     return `${base}/api/bounce-digest/export?${params.toString()}`;
   },
+  // v44.00.04 — Bayi Analytics
+  resellerStats: () => client.get("/analytics/reseller-stats").then(r => r.data),
   msWeeklyReport: () => client.post("/mailscanner/ai/quarantine-recommend/weekly-report").then(r => r.data),
   // v43.42 — Marketplace leaderboard
   mpLeaderboard: (period = "week") => client.get("/marketplace/leaderboard", { params: { period } }).then(r => r.data),
@@ -752,6 +765,8 @@ export const api = {
   mpMine: (license_key) => client.get("/marketplace/mine", { params: { license_key } }).then(r => r.data),
   mpDelete: (id, license_key) => client.delete(`/marketplace/signature/${id}`, { params: { license_key } }).then(r => r.data),
   mpStats: () => client.get("/marketplace/stats").then(r => r.data),
+  // v44.00.04 — Marketplace trending (public — Landing page için)
+  mpTrending: (limit = 5, days = 7) => client.get(`/marketplace/trending?limit=${limit}&days=${days}`).then(r => r.data),
   mpSeed: () => client.post("/marketplace/seed-demo").then(r => r.data),
   // v43.38 — Master alerts (Threat Intel sync fails vs.)
   masterAlerts: (opts = {}) => client.get("/master/alerts", { params: opts }).then(r => r.data),

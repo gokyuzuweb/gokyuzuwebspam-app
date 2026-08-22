@@ -10,8 +10,37 @@ gokyuzuhosting.com.
 - Frontend: React + TanStack Query + TailwindCSS + Shadcn UI.
 - Master domain: gokyuzuhosting.com.
 - Multi-tenant isolation via `owner_license_key` on rules, engines, mail_events,
-  quarantine, lists, settings, **delist_requests (v44.00.03)**.
+  quarantine, lists, settings, delist_requests, **smtp settings (v44.00.04)**.
 - Impersonation: `gws_impersonate` cookie.
+
+
+## Feb 22, 2026 (Session 23, v44.00.04) — 4 P1 Features + 3 Fixes + Auto-Install
+
+### 🐛 CRITICAL FIXES (user reported)
+- **SMTP tenant leak**: `/api/settings/smtp` was global for all resellers, exposing master's SMTP credentials. Fixed to `owner_license_key`-scoped with master fallback. New `inherited_from_master` UI flag. `_send_email(...)` now accepts `owner_license_key`.
+- **install.sh incomplete**: Customer diagnostics showed missing `gws-exim-push` bash tailer. Fixed by installing ALL push/heartbeat/update servers automatically in install.sh (no more separate 1-liner steps). Existing installs get it on next `sudo gwsm-update`.
+
+### 🎁 NEW FEATURES
+1. **Motor Cascade Onay Modalı**: Master toggling an engine now shows preview modal ("5 bayiye yansıyacak, emin misin?") with sample list before executing. New endpoint `/engines/{name}/cascade-preview`. Toast updated to show cascade count.
+2. **PIN History Excel Export**: `/api/pin-approvals/export?fmt=csv|xlsx` — 13-column audit-ready export with UTF-8 BOM for Turkish. CSV + Excel buttons in PIN Geçmişi table header.
+3. **Bayi Analytics Dashboard**: New `ResellerAnalyticsWidget` on Dashboard: 4 KPI (Son 24s Taranan, Engellenen, 7g Engelleme %, 30g Tahmini Kazanç), 7-day trend sparkline, top-5 threats. Backend endpoint `/api/analytics/reseller-stats` per-tenant.
+4. **Marketplace Trending Widget**: New PUBLIC endpoint `/api/marketplace/trending` (anonymized publisher labels). Landing page widget shows "haftanın en çok kurulan imzaları" with 6 cards + totals badges.
+
+### 🔧 Prior fixes (preserved from v44.00.03)
+- Blacklist/RBL tenant scoping (`owner_license_key` on delist_requests)
+- Engine master → customer cascade (auto-syncs state to all resellers)
+- Free browser-based TR narration for Modül Turu (Web Speech API)
+- Landing: Pricing comparison matrix + auto-rotating testimonials
+- Bounce Digest CSV/XLSX export
+- Onboarding video modal for new resellers
+
+### Version bump
+- `v44.00.03 → v44.00.04` (VERSION files + code refs).
+
+### Testing
+- Backend regression: **v44.00.04 19/19 green**, full v44 suite **70/70 green** after fixing stale version-string assertion in test_v44_00_02.
+- Test suites: `test_v44_ip_lock_and_tenant_isolation.py`, `test_v44_00_02_regression.py`, `test_v44_00_03_regression.py`, `test_v44_00_04_regression.py`.
+- Reports: `/app/test_reports/iteration_57.json`.
 
 
 ## Feb 22, 2026 (Session 23, v44.00.03) — 4 P1 Features + 2 Data Leak Fixes

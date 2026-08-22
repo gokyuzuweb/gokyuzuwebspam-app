@@ -544,7 +544,7 @@ function NavBar() {
           </div>
           <div className="leading-tight">
             <div className="text-slate-100 font-bold tracking-tight text-[17px]">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v44.00.03</div>
+            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v44.00.04</div>
           </div>
         </Link>
         <nav className="hidden md:flex items-center gap-7 text-sm text-slate-400">
@@ -913,7 +913,7 @@ function Pricing() {
                 );
               })}
             </div>
-            {/* v44.00.03 — Feature comparison matrix */}
+            {/* v44.00.04 — Feature comparison matrix */}
             <ComparisonMatrix plans={sorted} />
           </>
         )}
@@ -922,7 +922,7 @@ function Pricing() {
   );
 }
 
-// v44.00.03 — Plan karşılaştırma tablosu (dönüşüm için "hangi planda ne var" netliği)
+// v44.00.04 — Plan karşılaştırma tablosu (dönüşüm için "hangi planda ne var" netliği)
 function ComparisonMatrix({ plans }) {
   const codes = plans.map(p => p.code);
   // Feature rows — key must match backend feature flags to stay in sync
@@ -1036,7 +1036,7 @@ function FAQ() {
 }
 
 function Testimonials() {
-  // v44.00.03 — 6 testimonial, otomatik-dönen slider (5sn per slide)
+  // v44.00.04 — 6 testimonial, otomatik-dönen slider (5sn per slide)
   const items = [
     {
       quote: "3 sunucumuzda kurduk. İlk hafta içinde spam trafiğinin %94'ünü bloke etti. Kullanıcı politikası ve AI kural öneri sistemi işimizi çok kolaylaştırdı.",
@@ -1100,7 +1100,7 @@ function Testimonials() {
           ))}
         </div>
 
-        {/* v44.00.03 — Auto-rotating testimonial slider (pause on hover) */}
+        {/* v44.00.04 — Auto-rotating testimonial slider (pause on hover) */}
         <div
           className="relative rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur p-6 sm:p-10 overflow-hidden"
           onMouseEnter={() => setPaused(true)}
@@ -1154,6 +1154,89 @@ function Testimonials() {
     </section>
   );
 }
+
+// v44.00.04 — Marketplace Trending Widget (sosyal kanıt · Landing page)
+function MarketplaceTrendingWidget() {
+  const q = useQuery({
+    queryKey: ["mp-trending"],
+    queryFn: () => api.mpTrending(6, 30),
+    retry: false,
+    staleTime: 60_000,
+  });
+  if (q.isError || !q.data || !q.data.trending?.length) return null;
+  const items = q.data.trending;
+  const totals = q.data.totals || {};
+  const iconMap = { phishing: "🎣", scam: "💸", malware: "🐛", spam: "🚫", ransomware: "🔒" };
+  return (
+    <section className="py-20 border-t border-slate-800/60" data-testid="landing-mp-trending">
+      <div className="max-w-6xl mx-auto px-6">
+        <div className="text-center mb-10">
+          <div className="text-xs uppercase tracking-widest text-fuchsia-400 mb-2 mono">Marketplace · Sosyal Kanıt</div>
+          <h2 className="text-3xl sm:text-4xl font-bold text-slate-100 mb-3 tracking-tight">
+            Bu ayın en çok kurulan imzaları
+          </h2>
+          <p className="text-slate-400 leading-relaxed max-w-2xl mx-auto">
+            Bayilerimiz kendi tespit ettikleri spam/phishing kalıplarını paylaşıyor.
+            GökyüzüWebSpam kurulu tüm sunuculara tek tıkla dağıtılır.
+          </p>
+          <div className="flex items-center justify-center gap-3 mt-4 text-xs flex-wrap">
+            <div className="px-3 py-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 mono">
+              {new Intl.NumberFormat("tr-TR").format(totals.active_signatures || 0)} aktif imza
+            </div>
+            <div className="px-3 py-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 text-indigo-200 mono">
+              {new Intl.NumberFormat("tr-TR").format(totals.total_installs_all_time || 0)} toplam kurulum
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {items.map((s, i) => (
+            <div
+              key={s.id}
+              data-testid={`mp-trending-${i}`}
+              className="rounded-xl border border-slate-800 bg-slate-900/60 backdrop-blur p-5 hover:border-fuchsia-500/40 hover:-translate-y-0.5 transition-all group"
+            >
+              <div className="flex items-start justify-between mb-3">
+                <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-fuchsia-500/30 to-rose-500/30 border border-fuchsia-500/40 flex items-center justify-center text-2xl">
+                  {iconMap[s.category] || "🛡️"}
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-fuchsia-300 mono">{s.installs}</div>
+                  <div className="text-[10px] text-slate-500 uppercase tracking-widest">kurulum</div>
+                </div>
+              </div>
+              <div className="text-sm text-slate-100 font-bold mb-1 group-hover:text-fuchsia-100 transition-colors line-clamp-2">
+                {s.name}
+              </div>
+              <div className="text-[11px] text-slate-500 mb-3 line-clamp-2">
+                {s.description || "—"}
+              </div>
+              <div className="flex items-center justify-between pt-3 border-t border-slate-800/60 text-[11px]">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">Yayınlayan:</span>
+                  <span className="text-slate-300 mono">{s.publisher_label}</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-500">
+                  <span className="text-amber-300">▲ {s.upvotes}</span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-sm uppercase tracking-widest border ${
+                    s.category === "phishing" ? "border-rose-500/40 text-rose-300" :
+                    s.category === "scam" ? "border-amber-500/40 text-amber-300" :
+                    "border-slate-700 text-slate-400"
+                  }`}>
+                    {s.category || "spam"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="text-center mt-6 text-[11px] text-slate-500">
+          💡 Bayı olduğunuzda kendi imzalarınızı paylaşıp topluluk gelirinden pay alabilirsiniz.
+        </div>
+      </div>
+    </section>
+  );
+}
+
 
 function CTABottom() {
   const s = useLandingStrings();
@@ -1906,6 +1989,7 @@ export default function Landing() {
       <PaymentOptions />
       <FAQ />
       <Testimonials />
+      <MarketplaceTrendingWidget />
       <CTABottom />
       <Footer />
       <FloatingPanelButton />

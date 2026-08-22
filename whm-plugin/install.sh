@@ -413,6 +413,86 @@ if ! command -v mongod >/dev/null; then
   echo "    Kurulum önerisi: yum install -y mongodb-org && systemctl enable --now mongod"
 fi
 
+# ═══════════════════════════════════════════════════════════════════
+# v44.00.04 — Exim log push tailer'ı OTOMATİK kur (kullanıcı ekstra
+# 1-liner çalıştırmak zorunda kalmasın). Diagnostics ekranındaki
+# "Bash script hiç çalışmamış" hatasını sıfırlar.
+# ═══════════════════════════════════════════════════════════════════
+echo "==> [+] Exim log push tailer (gws-exim-push) kuruluyor"
+if [[ -n "$LICENSE_KEY" ]] && [[ $DRY_RUN -eq 0 ]]; then
+  # Panel URL: license_server flag varsa onu, yoksa varsayılan panel
+  PANEL_URL="${LICENSE_SERVER:-https://panel.gokyuzuhosting.com}"
+  # 1) Bash script'i indir
+  if curl -sSf -o /usr/local/bin/gws-exim-push "$PANEL_URL/api/tools/gws-exim-push.sh"; then
+    chmod +x /usr/local/bin/gws-exim-push
+    echo "    ✓ /usr/local/bin/gws-exim-push indirildi"
+    # 2) Config yaz (her bayı için kendi key + kendi panel)
+    cat > /etc/gws-exim-push.conf <<EOF
+PANEL_URL=$PANEL_URL
+LICENSE_KEY=$LICENSE_KEY
+EXIM_LOG=/var/log/exim_mainlog
+EOF
+    chmod 600 /etc/gws-exim-push.conf
+    echo "    ✓ /etc/gws-exim-push.conf yazıldı"
+    # 3) Cron entry (her dakika)
+    (crontab -l 2>/dev/null | grep -v gws-exim-push; echo '* * * * * /usr/local/bin/gws-exim-push >/dev/null 2>&1') | crontab -
+    echo "    ✓ Cron entry eklendi (* * * * *)"
+    # 4) Systemd timer (15sn'de bir gerçek anlık akış)
+    if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+      cat > /etc/systemd/system/gws-exim-push.service <<'SVC'
+[Unit]
+Description=GokyuzuWebSpam Exim Log Tailer (bash)
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gws-exim-push
+User=root
+SVC
+      cat > /etc/systemd/system/gws-exim-push.timer <<'TMR'
+[Unit]
+Description=GWS Exim Log Push Timer (her 15sn)
+After=network-online.target
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=15s
+AccuracySec=1s
+Unit=gws-exim-push.service
+[Install]
+WantedBy=timers.target
+TMR
+      systemctl daemon-reload
+      systemctl enable --now gws-exim-push.timer 2>/dev/null && \
+        echo "    ✓ gws-exim-push.timer aktif (15sn'de bir push)"
+
+      # 5) Real-time inotify servisi (opsiyonel — inotifywait mevcutsa)
+      if command -v inotifywait >/dev/null 2>&1; then
+        cat > /etc/systemd/system/gws-exim-inotify.service <<'INO'
+[Unit]
+Description=GWS Exim Log Real-Time Push (inotify)
+After=network-online.target
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStart=/bin/bash -c 'while inotifywait -qq -e modify /var/log/exim_mainlog; do sleep 2; /usr/local/bin/gws-exim-push; done'
+[Install]
+WantedBy=multi-user.target
+INO
+        systemctl enable --now gws-exim-inotify.service 2>/dev/null && \
+          echo "    ✓ gws-exim-inotify.service aktif (inotify real-time)"
+      fi
+    fi
+    # 6) İlk push'u ANINDA çalıştır — diagnostics ekranı hemen yeşil olsun
+    mkdir -p /var/log/gws-exim-push 2>/dev/null || true
+    /usr/local/bin/gws-exim-push >/dev/null 2>&1 || true
+    echo "    ✓ İlk push tetiklendi (diagnostics ekranı 1-2 dk içinde yeşile döner)"
+  else
+    echo "    UYARI: gws-exim-push indirilemedi ($PANEL_URL erişilebilir mi?)"
+  fi
+else
+  [[ -z "$LICENSE_KEY" ]] && echo "    ATLANDI: --license=MS-... verilmedi, Exim push kurulamaz"
+fi
+
 if [[ $DRY_RUN -eq 0 ]]; then
   /scripts/restartsrv_cpsrvd
 fi
@@ -431,6 +511,12 @@ cat <<EOF
     · WHM > Plugins > GokyuzuWebSpam
     · Kullanıcılar: cPanel > Email > GokyuzuWebSpam MailControl
 
+  Otomatik kurulan servisler:
+    · gws-simple-push.timer      → heartbeat (her 5 dk)
+    · gws-exim-push.timer        → outbound log push (her 15 sn)
+    · gws-exim-inotify.service   → real-time push (inotify varsa)
+    · gwsm-auto-update.timer     → günlük otomatik güncelleme
+
   Milter'ı etkinleştirmek İSTERSENİZ (opt-in):
     systemctl enable --now mailshield-milter.service
     WHM > Exim Configuration Manager > Advanced Editor:
@@ -438,8 +524,9 @@ cat <<EOF
 
   Sağlık kontrolü:  mailshieldctl status
   Güncelleme:       sudo gwsm-update       (elle) veya günlük otomatik
-  Loglar:           $LOG_DIR/*.log
-  Konfig:           $ETC_DIR/
+  Diagnostics:      WHM > GokyuzuWebSpam > Canlı Sunucu Tanı
+  Loglar:           $LOG_DIR/*.log · /var/log/gws-exim-push/push.log
+  Konfig:           $ETC_DIR/ · /etc/gws-exim-push.conf
   Kaldırma:         ./uninstall.sh   (mevcut cPanel'e dokunmaz)
 ============================================================
 EOF

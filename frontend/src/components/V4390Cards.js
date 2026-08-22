@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Palette, ShieldCheck, KeyRound, Check, X, Clock, Send, Trash2, Plus, ShieldAlert, Star, Sparkles, Download, Upload } from "lucide-react";
+import { Palette, ShieldCheck, KeyRound, Check, X, Clock, Send, Trash2, Plus, ShieldAlert, Star, Sparkles, Download, Upload, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -1075,6 +1075,33 @@ export function PinApprovalHistory() {
             >
               <Trash2 className="w-3 h-3" />
               Toplu Sil
+            </button>
+            {/* v44.00.04 — CSV / XLSX export (audit / compliance için) */}
+            <button
+              data-testid="pin-history-export-csv"
+              disabled={items.length === 0}
+              onClick={() => {
+                const url = api.pinApprovalExportUrl({ status: statusFilter, fmt: "csv", limit: 2000 });
+                window.open(url, "_blank");
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold border border-slate-700 bg-slate-900/60 hover:bg-slate-800 hover:border-slate-600 text-slate-300 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              title="CSV indir (Türkçe karakterlerle Excel'de düzgün açılır)"
+            >
+              <Download className="w-3 h-3" />
+              CSV
+            </button>
+            <button
+              data-testid="pin-history-export-xlsx"
+              disabled={items.length === 0}
+              onClick={() => {
+                const url = api.pinApprovalExportUrl({ status: statusFilter, fmt: "xlsx", limit: 2000 });
+                window.open(url, "_blank");
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-200 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Excel (.xlsx) indir"
+            >
+              <FileSpreadsheet className="w-3 h-3" />
+              Excel
             </button>
           </div>
         }

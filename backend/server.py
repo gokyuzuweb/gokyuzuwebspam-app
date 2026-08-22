@@ -2183,11 +2183,62 @@ async def engines_get(request: Request, license_key: Optional[str] = None):
     return engines
 
 
+@api.get("/engines/{name}/cascade-preview")
+async def engines_cascade_preview(name: str, request: Request, license_key: Optional[str] = None):
+    """v44.00.04 — Master motor toggle'ı yapmadan ÖNCE kaç bayiye yansıyacağını
+    ve şu anki durumlarını göster. Onay modalı için kullanılır."""
+    scope = await _tenant_scope(request, license_key)
+    if not scope.get("is_master"):
+        raise HTTPException(403, "Sadece master için")
+    owner = scope["owner_license_key"]
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    # Master'ın kendi motor kaydını al (bootstrap et)
+    await _engines_for(owner)
+    master_doc = await db.engines.find_one({"name": name, "owner_license_key": owner})
+    if not master_doc:
+        raise HTTPException(404, "Motor bulunamadı")
+    current = bool(master_doc.get("enabled", False))
+    target = not current
+    # Master OLMAYAN tüm bayi motor satırları
+    cascade_filter = {"name": name, "owner_license_key": {"$nin": ["", None, master_env, owner]}}
+    total = await db.engines.count_documents(cascade_filter)
+    # Aynı state'te olan bayı sayısı (değişmeyecek)
+    same_state = await db.engines.count_documents({**cascade_filter, "enabled": target})
+    will_change = total - same_state
+    # Aktif bayı örnekleri (en fazla 8 tane, isim + mevcut state)
+    sample_cur = await db.engines.find(cascade_filter, {"_id": 0, "owner_license_key": 1, "enabled": 1}).limit(8).to_list(8)
+    # Bayı isimlerini license'lardan çek
+    keys = [d.get("owner_license_key") for d in sample_cur if d.get("owner_license_key")]
+    lic_map = {}
+    if keys:
+        async for lic in db.licenses.find({"license_key": {"$in": keys}}, {"_id": 0, "license_key": 1, "customer_name": 1, "plan": 1}):
+            lic_map[lic["license_key"]] = lic
+    samples = []
+    for d in sample_cur:
+        lk = d.get("owner_license_key") or ""
+        info = lic_map.get(lk, {})
+        samples.append({
+            "license_key_short": lk[:14] + "..." if len(lk) > 14 else lk,
+            "customer_name": info.get("customer_name") or "-",
+            "plan": info.get("plan") or "-",
+            "current_state": bool(d.get("enabled", False)),
+        })
+    return {
+        "engine": name,
+        "label": master_doc.get("label", name),
+        "current_state": current,
+        "target_state": target,
+        "affected_total": total,
+        "will_change": will_change,
+        "already_same": same_state,
+        "samples": samples,
+    }
+
+
 @api.post("/engines/{name}/toggle")
 async def engines_toggle(name: str, request: Request, license_key: Optional[str] = None):
     scope = await _tenant_scope(request, license_key)
     owner = scope["owner_license_key"]
-    # Bootstrap edilmemişse yap
     await _engines_for(owner)
     doc = await db.engines.find_one({"name": name, "owner_license_key": owner})
     if not doc:
@@ -2197,7 +2248,7 @@ async def engines_toggle(name: str, request: Request, license_key: Optional[str]
         {"name": name, "owner_license_key": owner},
         {"$set": {"enabled": new_val}},
     )
-    # v44.00.03 — MASTER CASCADE: Master motor toggle'ı YAPARSA, aynı motor
+    # v44.00.04 — MASTER CASCADE: Master motor toggle'ı YAPARSA, aynı motor
     # tüm bayilere de aynı durumla yansıtılır. Bayi kendi paneli üzerinden yine
     # override edebilir, ama master global politika belirler.
     # Sebep: kullanıcı "master'da motor kapattığımda müşteride kapanmıyor" dedi.
@@ -3137,8 +3188,21 @@ async def _send_telegram(token: str, chat_id: str, text: str) -> bool:
         log.warning("telegram error: %s", e); return False
 
 
-async def _smtp_settings() -> dict:
-    doc = await db.settings.find_one({"_key": "smtp"}, {"_id": 0, "_key": 0}) or {}
+async def _smtp_settings(owner_license_key: Optional[str] = None) -> dict:
+    """v44.00.04 — Per-tenant SMTP settings.
+    Bayi kendi SMTP'sini yapılandırdıysa onu döner (`owner_license_key` eşleşen).
+    Yoksa master varsayılanına (`owner_license_key=""` boş dokümana) düşer.
+    None verilirse master varsayılanını okur (arka plan job'ları için).
+    """
+    doc = None
+    if owner_license_key:
+        doc = await db.settings.find_one({"_key": "smtp", "owner_license_key": owner_license_key}, {"_id": 0, "_key": 0})
+    if not doc:
+        # Master varsayılanı: owner_license_key alanı yok VEYA boş string
+        doc = await db.settings.find_one(
+            {"_key": "smtp", "$or": [{"owner_license_key": ""}, {"owner_license_key": {"$exists": False}}]},
+            {"_id": 0, "_key": 0}
+        ) or {}
     return {
         "enabled":   bool(doc.get("enabled", False)),
         "auto_mode": bool(doc.get("auto_mode", True)),   # WHM/cPanel sendmail otomatik kullan
@@ -3198,8 +3262,13 @@ async def _smart_from(license_key: Optional[str] = None) -> str:
     return f"noreply@{master}"
 
 
-async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "gokyuzuwebspam@localhost") -> tuple[bool, str]:
-    """Send email. Tries configured SMTP first, then falls back to local /usr/sbin/sendmail (Exim on WHM)."""
+async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "gokyuzuwebspam@localhost", owner_license_key: Optional[str] = None) -> tuple[bool, str]:
+    """Send email. Tries configured SMTP first, then falls back to local /usr/sbin/sendmail (Exim on WHM).
+
+    v44.00.04 — `owner_license_key` verilirse o bayinin SMTP ayarları kullanılır;
+    verilmezse master varsayılanı kullanılır. Böylece her bayi kendi SMTP
+    relay'ini yapılandırabilir ve master'ınkinden bağımsız çalışır.
+    """
     if not to_addr:
         return False, "no_recipient"
     try:
@@ -3229,7 +3298,7 @@ async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "g
         msg.attach(MIMEText(html_part, "html", "utf-8"))
 
         # 1) Try configured SMTP relay (only if manuel mode + host set)
-        cfg = await _smtp_settings()
+        cfg = await _smtp_settings(owner_license_key)
         use_smtp = cfg["enabled"] and cfg["host"] and not cfg.get("auto_mode", True)
         if use_smtp:
             eff_from = cfg["from_addr"] or from_addr
@@ -3245,7 +3314,7 @@ async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "g
         # 2) Local sendmail (WHM/Exim) — otomatik mod veya SMTP başarısızsa
         # from_addr default'sa akıllı FROM çöz
         if from_addr == "gokyuzuwebspam@localhost":
-            from_addr = await _smart_from()
+            from_addr = await _smart_from(owner_license_key)
         msg["From"] = from_addr
         # Preview ortamı tespit: local Exim relay dış domain'e izin vermiyorsa
         is_remote_target = "@" in to_addr and not to_addr.endswith("localhost")
@@ -3531,8 +3600,23 @@ class MailTestIn(BaseModel):
 
 
 @api.get("/settings/smtp")
-async def get_smtp_settings():
-    doc = await db.settings.find_one({"_key": "smtp"}, {"_id": 0, "_key": 0}) or {}
+async def get_smtp_settings(request: Request, license_key: Optional[str] = None):
+    # v44.00.04 — Per-tenant SMTP: bayi kendi ayarını görür (yoksa master fallback).
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"] or ""
+    # Bayi kendi dokümanı
+    doc = None
+    if owner:
+        doc = await db.settings.find_one({"_key": "smtp", "owner_license_key": owner}, {"_id": 0, "_key": 0})
+    # Yoksa master varsayılanına düş
+    if not doc:
+        doc = await db.settings.find_one(
+            {"_key": "smtp", "$or": [{"owner_license_key": ""}, {"owner_license_key": {"$exists": False}}]},
+            {"_id": 0, "_key": 0}
+        ) or {}
+        inherited = bool(owner) and bool(doc)
+    else:
+        inherited = False
     return {
         "enabled":   bool(doc.get("enabled", False)),
         "auto_mode": bool(doc.get("auto_mode", True)),
@@ -3542,20 +3626,37 @@ async def get_smtp_settings():
         "password":  "" if not doc.get("password") else "********",
         "from_addr": doc.get("from_addr", ""),
         "use_tls":   doc.get("use_tls", "starttls"),
+        # v44.00.04 — UI için: bayi master'ınkinden mi devraldı?
+        "inherited_from_master": inherited,
+        "tenant_scoped": True,
     }
 
 
 @api.put("/settings/smtp")
-async def put_smtp_settings(payload: SmtpSettingsIn):
+async def put_smtp_settings(payload: SmtpSettingsIn, request: Request, license_key: Optional[str] = None):
+    # v44.00.04 — Kayıt, çağıranın tenant scope'una gider (bayi = kendi, master = global default).
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"] or ""
     doc = payload.model_dump()
-    # If password is empty or masked, keep the existing password.
+    # If password is empty or masked, keep the existing password (per-tenant).
     if not doc["password"] or doc["password"] == "********":
-        existing = await db.settings.find_one({"_key": "smtp"}, {"_id": 0, "password": 1}) or {}
-        doc["password"] = existing.get("password", "")
+        existing = await db.settings.find_one({"_key": "smtp", "owner_license_key": owner}, {"_id": 0, "password": 1})
+        if not existing and not owner:
+            # Master'ın eski (owner_license_key yok/boş) kaydını da dene
+            existing = await db.settings.find_one(
+                {"_key": "smtp", "$or": [{"owner_license_key": ""}, {"owner_license_key": {"$exists": False}}]},
+                {"_id": 0, "password": 1}
+            )
+        doc["password"] = (existing or {}).get("password", "")
     doc["_key"] = "smtp"
+    doc["owner_license_key"] = owner
     doc["updated_at"] = _iso()
-    await db.settings.update_one({"_key": "smtp"}, {"$set": doc}, upsert=True)
-    return {"ok": True}
+    await db.settings.update_one(
+        {"_key": "smtp", "owner_license_key": owner},
+        {"$set": doc},
+        upsert=True,
+    )
+    return {"ok": True, "owner": (owner[:16] + "...") if owner and len(owner) > 16 else (owner or "master")}
 
 
 # ------------------------- Landing Page Settings + CMS -------------------------
@@ -3774,12 +3875,15 @@ async def put_landing_settings(payload: LandingContentIn, request: Request):
 
 
 @api.post("/mail/test")
-async def mail_send_test(payload: MailTestIn):
-    """Send a real test email to `to`. Uses SMTP settings if enabled, otherwise local sendmail."""
+async def mail_send_test(payload: MailTestIn, request: Request, license_key: Optional[str] = None):
+    """Send a real test email to `to`. Uses SMTP settings if enabled, otherwise local sendmail.
+    v44.00.04 — Tenant-scoped: bayi kendi SMTP ayarlarıyla test eder."""
     if "@" not in payload.to:
         raise HTTPException(400, "Gecerli bir e-posta adresi girin")
+    scope = await _tenant_scope(request, license_key)
+    owner = scope["owner_license_key"] or None
     ns = await _notify_settings()
-    cfg = await _smtp_settings()
+    cfg = await _smtp_settings(owner)
     from_addr = cfg.get("from_addr") or ns.get("email_from") or "gokyuzuwebspam@localhost"
     subject = payload.subject or "GökyüzüWebSpam · Test E-postası"
     body = payload.body or (
@@ -3790,7 +3894,7 @@ async def mail_send_test(payload: MailTestIn):
         f"Zaman: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
         f"Gönderen: {from_addr}\n"
     )
-    ok, via = await _send_email(payload.to, subject, body, from_addr=from_addr)
+    ok, via = await _send_email(payload.to, subject, body, from_addr=from_addr, owner_license_key=owner)
     await db.logs.insert_one(ActivityLog(
         source="mail-test",
         level="info" if ok else "warn",
@@ -4070,7 +4174,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.03"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.04"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -6101,7 +6205,7 @@ async def _fire_license_alert(violation: dict) -> None:
 
 @api.get("/licenses")
 async def licenses_list(request: Request, license_key: Optional[str] = None):
-    # v44.00.03 — SECURITY: master-only. Bayilere lisans listesini SIZDIRMA.
+    # v44.00.04 — SECURITY: master-only. Bayilere lisans listesini SIZDIRMA.
     m = await _is_master(request, license_key)
     if not m.get("is_master"):
         raise HTTPException(status_code=403, detail="Master yetkisi gerekli")
@@ -6907,7 +7011,7 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
 
 @api.get("/license/violations")
 async def license_violations(request: Request, limit: int = 100, license_key: Optional[str] = None):
-    # v44.00.03 — SECURITY: master-only. İhlaller license_key + IP bilgisi içerir → sızmasın.
+    # v44.00.04 — SECURITY: master-only. İhlaller license_key + IP bilgisi içerir → sızmasın.
     m = await _is_master(request, license_key)
     if not m.get("is_master"):
         raise HTTPException(status_code=403, detail="Master yetkisi gerekli")
@@ -7078,7 +7182,7 @@ class DelistRequest(BaseModel):
     status: Literal["pending", "submitted", "resolved", "failed"] = "pending"
     submitted_via: Optional[str] = "manual"  # manual (portal) | email | api
     notes: Optional[str] = ""
-    # v44.00.03 — Tenant isolation: hangi lisansa/bayiye ait olduğu (master için MASTER_LICENSE_KEY)
+    # v44.00.04 — Tenant isolation: hangi lisansa/bayiye ait olduğu (master için MASTER_LICENSE_KEY)
     owner_license_key: Optional[str] = ""
 
 
@@ -7086,7 +7190,7 @@ class DelistRequest(BaseModel):
 async def blacklist_delist(payload: DelistRequestIn, request: Request, license_key: Optional[str] = None):
     scope = await _tenant_scope(request, license_key)
     await _require_feature(scope, "blacklist_manage")
-    # v44.00.03 — Tenant sahibini belirle (master ise MASTER_LICENSE_KEY, bayi ise kendi key'i)
+    # v44.00.04 — Tenant sahibini belirle (master ise MASTER_LICENSE_KEY, bayi ise kendi key'i)
     owner_lk = scope.get("owner_license_key") or (
         os.environ.get("MASTER_LICENSE_KEY", "") if scope.get("is_master") else ""
     )
@@ -7132,7 +7236,7 @@ async def blacklist_delist(payload: DelistRequestIn, request: Request, license_k
             contact_email=payload.contact_email, reason=payload.reason,
             status="submitted" if submitted_via == "email" else "pending",
             submitted_via=submitted_via,
-            owner_license_key=owner_lk,  # v44.00.03 — Tenant isolation
+            owner_license_key=owner_lk,  # v44.00.04 — Tenant isolation
         ).model_dump()
         # Insert a COPY (insert_one mutates the dict with ObjectId _id)
         await db.delist_requests.insert_one(dict(req))
@@ -7146,7 +7250,7 @@ async def blacklist_delist(payload: DelistRequestIn, request: Request, license_k
 
 @api.get("/blacklist/requests")
 async def blacklist_requests(request: Request, license_key: Optional[str] = None):
-    # v44.00.03 — Tenant isolation: bayi sadece KENDİ delisting taleplerini görür
+    # v44.00.04 — Tenant isolation: bayi sadece KENDİ delisting taleplerini görür
     scope = await _tenant_scope(request, license_key)
     q: dict = {}
     if not scope.get("is_master"):
@@ -7162,7 +7266,7 @@ class DelistStatusUpdate(BaseModel):
 
 
 async def _authorize_delist(req_id: str, request: Request, license_key: Optional[str]):
-    """v44.00.03 — Kayıt sahipliğini doğrula (master her şeye erişebilir)."""
+    """v44.00.04 — Kayıt sahipliğini doğrula (master her şeye erişebilir)."""
     scope = await _tenant_scope(request, license_key)
     doc = await db.delist_requests.find_one({"id": req_id}, {"_id": 0})
     if not doc:
@@ -10612,7 +10716,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
     # 1) license_key ile
     if payload.license_key:
         lic = await db.licenses.find_one({"active": True, "license_key": payload.license_key}, {"_id": 0})
-        # v44.00.03 — license_key SAĞLANMIŞ ama DB'de aktif eşleşme YOK →
+        # v44.00.04 — license_key SAĞLANMIŞ ama DB'de aktif eşleşme YOK →
         # IP/hostname fallback'ini ATLA. Aksi halde IP başka bir lisansa kayıtlıysa
         # 'ambiguous_shared_ip' hatası tetiklenip gerçek key_not_found gizlenir.
         # Direkt key_not_found violation yaz ve 404 dön (spec 1c).
@@ -10766,7 +10870,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
                     logging.info(f"NS auto-license check failed for {payload.hostname}: {e}")
 
     if not lic:
-        # v44.00.03 — browser_ip'yi de yakala (server_ip = payload.ip, browser_ip = request headers)
+        # v44.00.04 — browser_ip'yi de yakala (server_ip = payload.ip, browser_ip = request headers)
         _browser_ip = ""
         try:
             if request is not None:
@@ -10788,7 +10892,7 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
             version="",
             raw={"verify_attempt": True, "ambiguous": ambiguous_ip_match, "browser_ip": _browser_ip},
         ).model_dump()
-        # v44.00.03 — Canonical collection'a da yaz (frontend'in yeni list endpoint'i buradan okur)
+        # v44.00.04 — Canonical collection'a da yaz (frontend'in yeni list endpoint'i buradan okur)
         await db.license_violations.insert_one(dict(v))
         await db.violations.insert_one(v)
         asyncio.create_task(_fire_license_alert(v))

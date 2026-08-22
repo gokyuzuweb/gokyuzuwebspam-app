@@ -1,0 +1,46 @@
+{
+  "summary": "v44.00.04 backend regression — 19/19 yeni v44.00.04 testleri yeşil; toplam v44 suite 68/70 (2 fail sadece stale version string 'v44.00.02' assertion'ları — kod doğru, testler eski sabit'e bağlı). (1) SMTP TENANT LEAK FIX doğrulandı: (a) Master X-Master-Key ile GET /api/settings/smtp → tenant_scoped=true, inherited_from_master=false. (b) STARTER bayi (kendi doküman yok) → inherited_from_master=true (master fallback). (c) db.settings.update_one ile bayi için yeni doküman insert edildiğinde master dokümanı BOZULMUYOR (host farklı, before/after karşılaştırma yapıldı) — composite key {_key='smtp', owner_license_key=<key>} çalışıyor. (d) Sonrası GET → inherited=false + bayinin kendi host/port'u dönüyor. (2) ENGINE CASCADE PREVIEW: /api/engines/spamassassin/cascade-preview master için tüm alanları (engine, label, current_state, target_state, affected_total, will_change, already_same, samples[]) doğru dönüyor; will_change+already_same=affected_total invariant tutuyor; samples <=8, her item customer_name/plan/license_key_short/current_state içeriyor; NON-MUTATING doğrulandı (3 çağrı arası engine states snapshot değişmedi); reseller → 403. (3) PIN HISTORY EXPORT: CSV 200 + text/csv + UTF-8 BOM (\\xef\\xbb\\xbf) + tam 13 kolon (bayi_name,bayi_email,company,plan,license_key,requested_at,decided_at,status,pin_length,pin_hash_preview,requested_ip,decided_by_ip,note); XLSX 200 + openxmlformats content-type + geçerli PK/ZIP body + openpyxl.load_workbook ile 13 kolon header doğrulandı; anahtarsız → 403; reseller → 403; ?status=approved filter → sadece approved satırlar. (4) RESELLER ANALYTICS: /api/analytics/reseller-stats master → scope='master', counts(24h/7d/30d hepsi int), quarantine(total/phish/virus), block_rate_pct 0.0–100.0, top_threats <=5, trend_7d tam 7 gün, engines.{active,total}; reseller STARTER → scope='reseller' + license_key_short 'MS-TESTBAYI...'; X-Master-Key yok → 401. (5) MARKETPLACE TRENDING (public): /api/marketplace/trending?limit=6&days=30 header'sız 200; period_days=30, generated_at, trending[], totals.{active_signatures,total_installs_all_time}; her item id/name/category/target/score/installs/upvotes/publisher_label içeriyor; publisher_label '@' ile başlıyor, 'MS-' içermiyor (anonymized). (6) REGRESSION verify-license key_not_found: bogus key → 404 + db.license_violations reason='key_not_found' satırı yazılıyor. (7) REGRESSION blacklist tenant isolation: reseller GET → sadece kendi owner_license_key satırları; master → tam liste 200.",
+  "endpoints_tested": {
+    "smtp_tenant": "GET /api/settings/smtp (master + reseller inherit + reseller own via direct DB)",
+    "cascade_preview": "GET /api/engines/spamassassin/cascade-preview (master 200 + reseller 403 + non-mutating snapshot check)",
+    "pin_export": "GET /api/pin-approvals/export?fmt=csv|xlsx&license_key=<master>&status=approved (+ 403 anahtarsız/reseller)",
+    "reseller_analytics": "GET /api/analytics/reseller-stats (master/reseller/no-key)",
+    "marketplace_trending": "GET /api/marketplace/trending?limit=6&days=30 (public, no headers)",
+    "regression": "verify-license bogus (404 + violation), blacklist requests tenant scoped"
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "backend/tests/test_v44_00_02_regression.py::TestVersion",
+        "issue": "test_version_file ve test_plugin_download_contains_version, VERSION dosyasında string 'v44.00.02' bekliyor ama şu anki değer 'v44.00.04'. Kod hatası DEĞİL — eski test dosyasında sabit hardcoded version string. Main agent version'u bump ederken bu testleri de güncellemeli (veya version string'i dinamik olarak /app/backend/VERSION dosyasından okumalı)."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v44_00_04_regression.py",
+    "/app/test_reports/pytest/v44_00_04.xml",
+    "/app/test_reports/pytest/v44_full.xml"
+  ],
+  "action_items": [
+    "Küçük: /app/backend/tests/test_v44_00_02_regression.py içindeki TestVersion sınıfında 'v44.00.02' string sabitini kaldırıp dosyadan dinamik okumak (2 test)."
+  ],
+  "critical_code_review_comments": [
+    "server.py:3191-3215 _smtp_settings + 3602-3632 GET /settings/smtp — composite key {_key:'smtp', owner_license_key} ve $or ile master varsayılanı (owner_license_key='' OR field yok) uyumluluğu iyi kurulmuş; inherited_from_master flag'i UI için doğru semantiğe sahip.",
+    "server.py:2186-2235 cascade-preview — cascade_filter master_env + owner + '' + None hariç tutuyor; will_change/already_same/affected_total invariant testte tutuyor; DB'yi değiştirmiyor (sadece _engines_for master bootstrap tetikliyor, idempotent). Samples 8 ile sınırlı, license enrichment tek $in query'sinde toplu — O(1) hitve fetch.",
+    "routes/pin_approvals.py:344-430 export — license_key query param'ı browser download için pragmatik (header eklenemez); CSV UTF-8 BOM Excel açılışını düzeltiyor; XLSX openpyxl generator + BytesIO. Küçük gözlem: Literal['csv','xlsx'] fmt validation 422 döner (spec 400 diyor ama pytest 200 dönüşünü öncelikledi — non-blocker).",
+    "routes/analytics.py:120-207 reseller-stats — base filter {} vs {'license_key': caller_key} ile tenant izolasyonu; block_rate_pct 0-100 arasında; 7-day trend inclusive/exclusive aralık ({'$gte':d_start,'$lt':d_end}) doğru. Küçük öneri: motor sayısını 'engines' koleksiyonundan çekmek yerine _engines_for(owner) helper'ı kullanmak master için daha tutarlı olabilir (şu an master için engines_filter={} tüm bayi motor satırlarını sayabilir).",
+    "routes/marketplace.py:425-467 trending — publisher_label anonimizasyonu ('@' + license_key[3:7]) doğru; 'MS-' prefix sızması yok. NOT: pipeline {'created_at':{'$gte':since}} filtre kullanıyor ancak seed_demo signatures 'published_at' alanı yazıyor — canlı DB'de bir kısım imza trending'e girmeyebilir. Şu an ok çünkü yeni /publish 'published_at' üretiyor (created_at yok) — belki $ifNull ile hem published_at hem created_at kabul edilmeli. (Bilgi amaçlı, test yeşildi.)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v44_00_04_regression.py (yeni)"
+  ],
+  "success_rate": {"backend": "19/19 v44.00.04 (100%); 68/70 tam v44 suite (97.1%, 2 fail sadece stale version string assertion'ları)", "frontend": "not tested (backend-only)"},
+  "test_credentials": "Master X-Master-Key: MS-C02AB012652A4FE692D69676. Reseller starter: MS-TESTBAYI-STARTER-V4371. Reseller pro: MS-TESTBAYI-PRO-V4371.",
+  "seed_data_creation": "Test suite geçici olarak db.settings içine {_key:'smtp', owner_license_key:'MS-TESTBAYI-STARTER-V4371'} dokümanı yaratıyor ve cleanup_smtp module fixture teardown ile MS-TESTBAYI-* SMTP doküman(lar)ını temizliyor. Verify-license testi tek license_violations satırı ekliyor (bogus key + 5.6.7.8, 7 günlük daily cleanup ile temizlenir).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "v44.00.04 regression suite: /app/backend/tests/test_v44_00_04_regression.py (19 test). Çalıştırma: python -m pytest backend/tests/test_v44_00_04_regression.py -v -o addopts=. Tüm v44 suite: python -m pytest backend/tests/test_v44_00_04_regression.py backend/tests/test_v44_00_03_regression.py backend/tests/test_v44_00_02_regression.py backend/tests/test_v44_ip_lock_and_tenant_isolation.py (v44_00_02 TestVersion 2 fail — sadece version string mismatch, kod OK). SMTP direct-DB insert path kullanıldı (reseller PUT master paneline 403 BAYI_ON_MASTER_PANEL — beklenen). Cascade preview non-mutating snapshot doğrulandı.",
+  "rca of the issue": "N/A — tüm yeni v44.00.04 testleri geçti. v44_00_02 TestVersion fail'leri stale test sabitinden kaynaklanıyor, kod hatası değil."
+}

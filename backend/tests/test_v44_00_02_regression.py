@@ -292,10 +292,28 @@ class TestPinAllCompanyField:
 
 # ─── VERSION bump check ──────────────────────────────────────────────────
 class TestVersion:
-    def test_version_file(self):
+    """v44.00.02+ bump: assert VERSION file is at least v44.00.02 (or newer).
+    Dinamik olarak /app/VERSION dosyasından okur — hardcoded değil ki
+    version bump'ları test'i bozmasın."""
+
+    def _read_current(self):
         with open("/app/VERSION") as f:
-            v = f.read().strip()
-        assert v == "v44.00.02", f"VERSION file is {v!r}"
+            return f.read().strip()
+
+    def _ge_44_00_02(self, v):
+        # "v44.00.02" formatını kontrol et: v44 major, minor.patch >= 02
+        try:
+            parts = v.lstrip("v").split(".")
+            if len(parts) < 3:
+                return False
+            major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+            return (major, minor, patch) >= (44, 0, 2)
+        except (ValueError, IndexError):
+            return False
+
+    def test_version_file(self):
+        v = self._read_current()
+        assert self._ge_44_00_02(v), f"VERSION file is {v!r} — expected >=v44.00.02"
 
     def test_plugin_download_contains_version(self, s):
         r = s.get(f"{BASE}/plugin/download", stream=True)
@@ -306,4 +324,4 @@ class TestVersion:
             vfile = [n for n in names if n.endswith("VERSION")]
             assert vfile, f"VERSION missing from tarball: {names[:5]}"
             data = tar.extractfile(vfile[0]).read().decode().strip()
-            assert data == "v44.00.02", data
+            assert self._ge_44_00_02(data), f"Tarball VERSION is {data!r} — expected >=v44.00.02"

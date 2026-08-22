@@ -37,6 +37,7 @@ export default function SmtpSettings() {
       username: q.data.username || "", password: q.data.password === "********" ? "" : (q.data.password || ""),
       from_addr: q.data.from_addr || "", use_tls: q.data.use_tls || "starttls",
       auto_mode: q.data.auto_mode ?? true,
+      inherited_from_master: !!q.data.inherited_from_master, // v44.00.04
     });
   }, [q.data]);
 
@@ -87,6 +88,20 @@ export default function SmtpSettings() {
           right={form.enabled ? <Badge tone="success">Aktif</Badge> : <Badge tone="default">Pasif</Badge>}
         />
         <CardBody className="space-y-4">
+          {/* v44.00.04 — Master'dan devralınmış SMTP banner (bayı henüz kendi ayarını girmemiş) */}
+          {form.inherited_from_master && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100 flex gap-2" data-testid="smtp-inherited-banner">
+              <Info className="w-4 h-4 shrink-0 mt-0.5 text-amber-300"/>
+              <div>
+                <b className="text-amber-50">Şu an master'ın SMTP ayarları görüntüleniyor.</b>
+                <div className="mt-1">
+                  Kendi bayi SMTP relay'inizi tanımlamak için aşağıdaki alanları doldurun ve <b>Kaydet</b>'e basın.
+                  Kaydettiğinizde bu bayi sunucusu <b>master'a bağımlı olmadan</b> kendi relay'inizden mail gönderir.
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Uyarı & Rehber */}
           <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3 text-xs text-indigo-200 flex gap-2">
             <Info className="w-4 h-4 shrink-0 mt-0.5 text-indigo-400"/>

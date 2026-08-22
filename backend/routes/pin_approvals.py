@@ -5,6 +5,8 @@ koleksiyonuna düşürür. Master onaylayınca PIN gerçekten uygulanır.
 """
 from __future__ import annotations
 import os
+import io
+import csv
 import uuid
 import hashlib
 import secrets
@@ -12,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 
@@ -335,6 +338,97 @@ async def bulk_delete_requests(payload: PinBulkDeleteIn, request: Request):
     except Exception:
         pass
     return {"ok": True, "deleted": int(r.deleted_count)}
+
+
+# v44.00.04 — PIN Geçmişi Export (CSV / XLSX)
+@router.get("/export")
+async def export_pin_history(
+    request: Request,
+    status: Optional[str] = None,
+    fmt: Literal["csv", "xlsx"] = "csv",
+    limit: int = 2000,
+    license_key: Optional[str] = None,
+):
+    """PIN Geçmişini CSV veya Excel dosyası olarak indir (master-only, audit için).
+    Alanlar: bayi_name, bayi_email, company, plan, license_key, requested_at,
+    decided_at, status, pin_length, pin_hash_preview, requested_ip, decided_by_ip,
+    note.
+    """
+    # v44.00.04 — browser download için header set edilemediğinden query'den de kabul et
+    header_key = _requester_key(request)
+    caller_key = license_key or header_key
+    if not (MASTER_LICENSE_KEY and caller_key == MASTER_LICENSE_KEY):
+        raise HTTPException(403, "Sadece master yetkilendirilmiştir")
+    q: dict = {}
+    if status:
+        q["status"] = status
+    rows: list[dict] = []
+    async for r in db.pin_change_requests.find(q, {"_id": 0}).sort("requested_at", -1).limit(max(1, min(limit, 10000))):
+        # Bayi enrichment
+        lic = await db.licenses.find_one(
+            {"license_key": r.get("bayi_license_key", "")},
+            {"_id": 0, "customer_name": 1, "customer_email": 1, "plan": 1}
+        )
+        reseller = await db.resellers.find_one(
+            {"license_key": r.get("bayi_license_key", "")},
+            {"_id": 0, "company": 1, "email": 1}
+        )
+        rows.append({
+            "bayi_name": (lic or {}).get("customer_name") or "",
+            "bayi_email": (lic or {}).get("customer_email") or (reseller or {}).get("email") or "",
+            "company": (reseller or {}).get("company") or "",
+            "plan": (lic or {}).get("plan") or "",
+            "license_key": r.get("bayi_license_key", ""),
+            "requested_at": r.get("requested_at", ""),
+            "decided_at": r.get("decided_at", "") or "",
+            "status": r.get("status", ""),
+            "pin_length": r.get("pin_length", ""),
+            "pin_hash_preview": r.get("pin_hash_preview", ""),
+            "requested_ip": r.get("requested_ip", "") or "",
+            "decided_by_ip": r.get("decided_by_ip", "") or "",
+            "note": (r.get("note") or "")[:200],
+        })
+    ts_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    fields = ["bayi_name", "bayi_email", "company", "plan", "license_key",
+              "requested_at", "decided_at", "status", "pin_length",
+              "pin_hash_preview", "requested_ip", "decided_by_ip", "note"]
+
+    if fmt == "xlsx":
+        try:
+            from openpyxl import Workbook
+        except Exception:
+            raise HTTPException(500, "openpyxl kurulu değil")
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "PIN History"
+        ws.append(fields)
+        for r in rows:
+            ws.append([r.get(f, "") for f in fields])
+        for col_idx, f in enumerate(fields, start=1):
+            col_letter = ws.cell(row=1, column=col_idx).column_letter
+            ws.column_dimensions[col_letter].width = max(14, min(38, len(f) + 4))
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=pin-history-{ts_stamp}.xlsx"},
+        )
+    # CSV varsayılan (UTF-8 BOM ile Türkçe karakterler Excel'de düzgün açılır)
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(r)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=pin-history-{ts_stamp}.csv"},
+    )
+
 
 
 

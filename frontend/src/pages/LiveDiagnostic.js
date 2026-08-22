@@ -184,18 +184,21 @@ function PhaseCommand({ cmd }) {
 }
 
 // v43.43 — Docker deployment kullanıcıları için tek-satır Exim log tailer kurulumu
+// v44.00.04 — Öncelik `sudo gwsm-update` — install.sh artık gws-exim-push'ı otomatik kuruyor.
 function DockerDeploymentInstaller() {
   const [copied, setCopied] = useState(false);
+  const [copiedManual, setCopiedManual] = useState(false);
   const masterKey = typeof window !== "undefined"
     ? (localStorage.getItem("gws.master_license") || "MS-YOUR-KEY-HERE")
     : "MS-YOUR-KEY-HERE";
   const panelHost = typeof window !== "undefined" ? window.location.origin : "https://panel.gokyuzuhosting.com";
-  const oneliner = `bash <(curl -sSf "${panelHost}/api/tools/install-exim-push.sh?license_key=${masterKey}")`;
-  const doCopy = () => {
-    navigator.clipboard.writeText(oneliner);
-    setCopied(true);
+  const primaryCmd = "sudo gwsm-update";
+  const fallbackCmd = `bash <(curl -sSf "${panelHost}/api/tools/install-exim-push.sh?license_key=${masterKey}")`;
+  const doCopy = (text, setter) => {
+    navigator.clipboard.writeText(text);
+    setter(true);
     toast.success("Komut kopyalandı — sunucunuzda root olarak yapıştırıp çalıştırın");
-    setTimeout(() => setCopied(false), 2500);
+    setTimeout(() => setter(false), 2500);
   };
   return (
     <Card data-testid="docker-installer" className="border-emerald-500/40">
@@ -205,42 +208,71 @@ function DockerDeploymentInstaller() {
             <span className="text-2xl">⚡</span>
           </div>
           <div className="flex-1">
-            <div className="text-slate-100 font-bold text-base">Docker Deployment · Tek-Satır Exim Kurulumu</div>
+            <div className="text-slate-100 font-bold text-base">Tek-Adım Kurulum · Diagnostics'i yeşile çevirir</div>
             <div className="text-xs text-slate-400 mt-0.5 leading-relaxed">
-              Sunucunuzda Docker container ile GökyüzüWebSpam çalıştırıyorsanız, container <code className="mono text-amber-300">/var/log/exim_mainlog</code>'a erişemez.
-              Aşağıdaki tek komut host'unuzda cron + tailer kurar (Perl gerektirmez):
+              v44.00.04'ten itibaren <code className="mono text-emerald-300">install.sh</code> Exim log push tailer'ı
+              (<code className="mono text-amber-300">gws-exim-push</code>), heartbeat timer ve otomatik güncelleme
+              servislerini <b className="text-emerald-300">tek seferde otomatik kurar</b>. Bu ekrandaki tüm kırmızı
+              işaretleri sıfırlamak için aşağıdaki komutu bir kere çalıştırmanız yeterli:
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <code className="mono flex-1 text-xs bg-slate-950 border border-emerald-500/30 rounded px-3 py-2 text-emerald-300 select-all break-all">
-                {oneliner}
+              <code className="mono flex-1 text-sm bg-slate-950 border border-emerald-500/30 rounded px-3 py-2.5 text-emerald-300 font-bold select-all">
+                {primaryCmd}
               </code>
               <button
-                onClick={doCopy}
-                data-testid="docker-installer-copy"
-                className="text-xs px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white inline-flex items-center gap-1"
+                onClick={() => doCopy(primaryCmd, setCopied)}
+                data-testid="gwsmupdate-copy"
+                className="text-xs px-3 py-2.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white inline-flex items-center gap-1 font-semibold"
               >
                 <Copy className="w-3.5 h-3.5"/>
                 {copied ? "Kopyalandı" : "Kopyala"}
               </button>
             </div>
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
-              <div className="bg-slate-950/60 border border-slate-800 rounded p-2">
-                <div className="text-emerald-400 font-semibold mb-0.5">1. Bash script indirir</div>
-                <div className="text-slate-500">/usr/local/bin/gws-exim-push</div>
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-2 text-[11px]">
+              <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">✓ gws-exim-push</div>
+                <div className="text-slate-500">Outbound tailer + 15sn timer</div>
               </div>
-              <div className="bg-slate-950/60 border border-slate-800 rounded p-2">
-                <div className="text-emerald-400 font-semibold mb-0.5">2. Cron entry ekler</div>
-                <div className="text-slate-500">*/5 * * * * (her 5dk)</div>
+              <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">✓ gws-exim-inotify</div>
+                <div className="text-slate-500">Real-time push (inotify)</div>
               </div>
-              <div className="bg-slate-950/60 border border-slate-800 rounded p-2">
-                <div className="text-emerald-400 font-semibold mb-0.5">3. İlk push'ı test eder</div>
-                <div className="text-slate-500">Log: /var/log/gws-exim-push/push.log</div>
+              <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">✓ gws-simple-push</div>
+                <div className="text-slate-500">Heartbeat timer (5 dk)</div>
+              </div>
+              <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">✓ gwsm-auto-update</div>
+                <div className="text-slate-500">Günlük otomatik update</div>
               </div>
             </div>
-            <div className="mt-2 text-[11px] text-amber-300 flex items-start gap-1">
-              <span>⚠</span>
-              <span>Sunucunuzda <b>root olarak</b> çalıştırın (Exim log root'un okuyabildiği dosyadır). 5 dk sonra Outbound sayfanız dolmaya başlayacak.</span>
+            <div className="mt-3 text-[11px] text-emerald-300 flex items-start gap-1.5 bg-emerald-500/5 border border-emerald-500/20 rounded p-2.5">
+              <span>💡</span>
+              <span>
+                <b>Ne yapar?</b> <code className="mono text-emerald-200">sudo gwsm-update</code> Master'dan en yeni
+                tarball'ı indirir + <code className="mono">install.sh</code>'ı çalıştırır. Mevcut config KORUNUR,
+                yalnızca eksik servisler tamamlanır. 1-2 dk sonra bu ekrandaki tüm satırlar 🟢 olur.
+              </span>
             </div>
+            {/* Fallback / Docker-only sadece SSH engelli sistemler için */}
+            <details className="mt-3">
+              <summary className="text-[11px] text-slate-500 cursor-pointer hover:text-slate-300">
+                Alternatif · Sadece Exim tailer kur (Docker deployment / SSH kısıtlı)
+              </summary>
+              <div className="mt-2 flex items-center gap-2">
+                <code className="mono flex-1 text-[11px] bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-400 select-all break-all">
+                  {fallbackCmd}
+                </code>
+                <button
+                  onClick={() => doCopy(fallbackCmd, setCopiedManual)}
+                  data-testid="docker-installer-copy"
+                  className="text-[10px] px-2.5 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 inline-flex items-center gap-1"
+                >
+                  <Copy className="w-3 h-3"/>
+                  {copiedManual ? "OK" : "Kopyala"}
+                </button>
+              </div>
+            </details>
           </div>
         </div>
       </div>

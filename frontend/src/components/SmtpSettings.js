@@ -97,6 +97,19 @@ export default function SmtpSettings() {
       />
       {expanded && (
       <CardBody className="space-y-4">
+        {/* v44.00.04 — Master'dan devralınmış SMTP uyarısı */}
+        {form.inherited_from_master && (
+          <div className="p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 flex items-start gap-2.5" data-testid="smtp-inherited-banner">
+            <div className="w-5 h-5 rounded-full bg-amber-500/30 border border-amber-500/50 flex items-center justify-center shrink-0 mt-0.5">
+              <Mail className="w-3 h-3 text-amber-300" />
+            </div>
+            <div className="text-xs text-amber-100 leading-relaxed">
+              <b>Master'ın SMTP ayarları görüntüleniyor.</b> Aşağıdaki alanları düzenleyip <b>Kaydet</b>'e basarak
+              kendi bayı SMTP relay'inizi tanımlayabilirsiniz. Kaydettiğinizde bu bayı sunucusu ARTIK master'a
+              bağımlı olmaz — kendi relay'inizden mail gönderir.
+            </div>
+          </div>
+        )}
         {/* AUTO MODE — WHM/cPanel sendmail */}
         <div className={`p-3 rounded-lg border ${
           form.auto_mode !== false ? "border-emerald-500/40 bg-emerald-500/10" : "border-slate-800 bg-slate-900/40"

@@ -24,6 +24,7 @@ import QueueModal from "@/components/QueueModal";
 import IpDrilldownDrawer from "@/components/IpDrilldownDrawer";
 import CountryBlockCard from "@/components/CountryBlockCard";
 import ThreatIntelTodayWidget from "@/components/ThreatIntelTodayWidget";
+import ResellerAnalyticsWidget from "@/components/ResellerAnalyticsWidget";
 import MasterAlertCenter from "@/components/MasterAlertCenter";
 import BounceDigestWidget from "@/components/BounceDigestWidget";
 import MarketplaceLeaderboardBanner from "@/components/MarketplaceLeaderboardBanner";
@@ -73,6 +74,9 @@ export default function Dashboard() {
   return (
     <div className="p-6 space-y-5">
       <OnboardingWizard />
+
+      {/* v44.00.04 — Kişisel Koruma Panosu (Bayi Analytics) */}
+      <ResellerAnalyticsWidget />
 
       {/* Always-on Control Bar */}
       <ControlBar onQueueClick={() => setQueueOpen(true)} />
