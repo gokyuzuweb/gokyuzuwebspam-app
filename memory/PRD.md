@@ -15,6 +15,32 @@ gokyuzuhosting.com.
 
 
 
+## Feb 22, 2026 (Session 23, v44.00.08) — "Onar" tek-komut fix + 4 P1 items
+
+### 🐛 CRITICAL FIX (user reported)
+Kullanıcı: "Exim Push Sağlığı ALINAMADI diyor, Onar diyince Giden Posta > Ayarlar'a gidiyor uzun SSH komut listesiyle. İlk kurulumda TEK SEFERDE hepsi kurulacak."
+
+**Root cause**: `PushHealthWidget` "Onar" butonu `<Link to="/panel/outbound">` idi. Outbound.js'in boş durumu ise 5 ayrı SSH komutu (`gws-update` + `systemctl enable gws-logtail` + `mail -s test` + `grep exim_mainlog` + `cp .service`) gösteriyordu.
+
+**Fix (testing_agent tarafından doğrulandı — 19/19 backend + Playwright modal test)**:
+- `PushHealthWidget` "Onar" artık `<button>` — tıklandığında `PushOnarModal` açılıyor. Modal içinde TEK komut: `sudo gwsm-update`. URL değişmiyor, `/panel/outbound`'a navigate etmiyor.
+- `Outbound.js` empty-state install guide 5-adım SSH sequence yerine büyük `sudo gwsm-update` + Kopyala butonu + 4-kutu servis grid'i gösteriyor. Eski manuel adımlar `<details>` collapse'a taşındı.
+- `install.sh` (v44.00.04'ten beri) 4 systemd unit'i (gws-simple-push.timer + gws-exim-push.timer + gws-exim-inotify.service + gwsm-auto-update.timer) tek geçişte kuruyor + kurulum sonrası ilk push tetikleniyor → müşteri ekstra komut girmiyor.
+
+### 🎁 4 P1 FEATURES (this session)
+1. **Bayı otomatik deaktive**: `_inactive_reseller_deactivation_task()` background loop — 30+ gün heartbeat yoksa `active=false` + master_alerts kaydı. Manuel tetikleme endpoint: `POST /api/master/deactivate-inactive-resellers`.
+2. **Feature Flag CI Guard**: `.github/workflows/feature-flags.yml` — her PR'da `test_v44_00_06_feature_flags.py` otomatik çalışır. Frontend/backend feature key uyumsuzluğunu merge öncesi yakalar.
+3. **PIN Onay E-posta Testi**: `test_v44_00_07_pin_email.py` — bayı `/request` çağırınca `_send_email(master_admin, ...)` doğru payload ile çağrılıyor mu; `admin_email` boşsa talep yine oluşuyor mu (failsafe).
+4. **OfflineResellersAlert Widget**: `/components/OfflineResellersAlert.js` — master Dashboard'da 45+ dk offline bayı listesi; 3+ offline'da sonner toast bildirimi.
+
+### Version bump
+- `v44.00.07 → v44.00.08`.
+
+### Testing
+- **testing_agent iteration_58.json**: 19/19 backend + Playwright frontend Onar modal — 100% PASS. Regresyonlar green.
+
+
+
 ## Feb 22, 2026 (Session 23, v44.00.07) — 4 P1 Features + Critical Security Fix
 
 ### 🐛 CRITICAL FIX (user reported)

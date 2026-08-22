@@ -1,0 +1,60 @@
+name: Feature Flag Consistency
+
+# v44.00.07 — Frontend feature key'leri backend PLAN_FEATURES_DEFAULT ile senkron
+# olmalı. Aksi halde müşteri "paket bulunmuyor" hatası alır (v44.00.05'te
+# enterprise'ta yaşandı). Bu workflow her PR + push'ta kontrol eder.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "backend/server.py"
+      - "backend/tests/test_v44_00_06_feature_flags.py"
+      - "frontend/src/App.js"
+      - "frontend/src/pages/PlanConfig.js"
+
+jobs:
+  feature-flags:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest
+        run: pip install --quiet pytest
+
+      - name: Run feature flag validation tests
+        run: |
+          cd $GITHUB_WORKSPACE
+          python -m pytest backend/tests/test_v44_00_06_feature_flags.py -v --tb=short
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "✅ Feature flag consistency check PASSED"
+          echo "→ Frontend feature key'leri backend PLAN_FEATURES matrix ile senkron"
+          echo "→ Enterprise planı starter'ın tüm feature'larına sahip"
+          echo "→ PlanConfig.js UI backend ile eşleşiyor"
+          echo "→ 3 plan (starter/pro/enterprise) aynı key set'ine sahip"
+
+      - name: Failure hint
+        if: failure()
+        run: |
+          echo "❌ Feature flag mismatch tespit edildi!"
+          echo ""
+          echo "En sık sebep: App.js'de yeni bir <Route feature=\"xxx\"> eklendi"
+          echo "ama backend PLAN_FEATURES_DEFAULT içine 'xxx' key'i eklenmedi."
+          echo ""
+          echo "Fix:"
+          echo "  1. /app/backend/server.py → PLAN_FEATURES_DEFAULT üç plana da 'xxx' ekle"
+          echo "  2. /app/frontend/src/pages/PlanConfig.js → FEATURE_GROUPS'a UI toggle ekle"
+          echo "  3. Local'de test et: python -m pytest backend/tests/test_v44_00_06_feature_flags.py"
+          exit 1

@@ -1,0 +1,23 @@
+{
+  "summary": "v44.00.07 'Onar' button bug fix + heartbeat alias + regressions — 19/19 backend tests + frontend Onar modal all PASS. install.sh contains one-shot auto-install blocks for all 4 systemd units (gws-simple-push.timer, gws-exim-push.timer, gws-exim-inotify.service, gwsm-auto-update.timer) plus a single immediate run of /usr/local/bin/gws-exim-push after install. /api/plugin/heartbeat alias endpoint accepts both `plugin_version` and `version` fields (Pydantic alias + populate_by_name). PushHealthWidget 'Onar' button is a <button> that opens a modal containing `sudo gwsm-update` — verified via Playwright: URL stays on /panel, modal opens, contains command, does NOT navigate to /panel/outbound. Outbound.js empty-state install guide shows the single command with copy button. All regressions green: signal-log master-only (bayi=403, master=200), /api/settings/smtp tenant-scoped (both 200 with tenant context), /api/master/offline-resellers master-only (master=200 with threshold_minutes/count/offline shape, bayi=403). Feature flag suite still 4/4 passing.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v44_00_07_onar_and_heartbeat.py",
+    "/app/backend/tests/test_v44_00_06_feature_flags.py",
+    "/app/test_reports/pytest/iter58_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 12,467 lines — recommend splitting into modules (already partially done via /app/backend/routes/). Continuing to grow is a maintainability risk.",
+    "Outbound.js is 1,407 lines — consider splitting install guide + stats + table components into separate files."
+  ],
+  "updated_files": ["/app/backend/tests/test_v44_00_07_onar_and_heartbeat.py"],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% (Onar modal verified)"},
+  "test_credentials": "Master X-Master-Key: MS-C02AB012652A4FE692D69676; Reseller: MS-TESTBAYI-STARTER-V4371",
+  "seed_data_creation": "None — used existing seeded licenses",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_v44_00_07_onar_and_heartbeat.py covers: install.sh unit blocks, /api/plugin/heartbeat alias with both field names, signal-log/smtp/offline-resellers regressions, and static frontend markers for PushHealthWidget/Outbound. Frontend Playwright verified Onar button opens modal (not navigates). All 19 tests pass in 1.36s.",
+  "rca of the issue": "User complaint 'Onar goes to Outbound with long SSH list' RCA: Old PushHealthWidget had <Link to='/panel/outbound'>. Fix converted to <button onClick={setShowFix(true)}> that opens PushOnarModal with single `sudo gwsm-update` command. Outbound.js primary install view also now shows single-command guide (5-step SSH sequence collapsed into <details> fallback). install.sh (v44.00.04+) writes all 4 systemd unit files + enables timers in one pass so customer literally never needs multiple commands. VERIFIED: modal renders, URL unchanged, command copyable."
+}

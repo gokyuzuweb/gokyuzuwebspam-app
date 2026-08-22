@@ -749,6 +749,10 @@ export const api = {
   },
   // v44.00.04 — Bayi Analytics
   resellerStats: () => client.get("/analytics/reseller-stats").then(r => r.data),
+  // v44.00.07 — Offline resellers (master-only)
+  offlineResellers: (minutes = 45) => client.get(`/master/offline-resellers?minutes=${minutes}`).then(r => r.data),
+  // v44.00.07 — Manuel inactive-cleanup tetikleme (master)
+  deactivateInactiveResellers: () => client.post("/master/deactivate-inactive-resellers").then(r => r.data),
   msWeeklyReport: () => client.post("/mailscanner/ai/quarantine-recommend/weekly-report").then(r => r.data),
   // v43.42 — Marketplace leaderboard
   mpLeaderboard: (period = "week") => client.get("/marketplace/leaderboard", { params: { period } }).then(r => r.data),

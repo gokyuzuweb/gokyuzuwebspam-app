@@ -41,6 +41,7 @@ const toneCls = (tone) => {
 };
 
 export default function PushHealthWidget() {
+  const [showFix, setShowFix] = useState(false);  // v44.00.07 — Onar modal state
   const q = useQuery({
     queryKey: ["outbound-stats-widget"],
     queryFn: api.outboundStats,
@@ -73,15 +74,96 @@ export default function PushHealthWidget() {
           </div>
         </div>
         {(t.tone === "orange" || t.tone === "rose") && (
-          <a
-            href="/panel/outbound"
+          <button
+            onClick={() => setShowFix(true)}
             data-testid="push-health-fix-link"
-            className="text-xs px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 whitespace-nowrap"
+            className="text-xs px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 whitespace-nowrap font-semibold"
           >
-            → Onar
-          </a>
+            → Onar (tek komut)
+          </button>
         )}
       </div>
+      {/* v44.00.07 — Tek komutlu onarım modalı (Outbound sayfasındaki SSH listesine YÖNLENDİRMEZ) */}
+      {showFix && <PushOnarModal onClose={() => setShowFix(false)} />}
     </Card>
+  );
+}
+
+function PushOnarModal({ onClose }) {
+  const [copied, setCopied] = useState(false);
+  const cmd = "sudo gwsm-update";
+  const doCopy = () => {
+    navigator.clipboard.writeText(cmd);
+    setCopied(true);
+    toast.success("Komut kopyalandı — sunucunuzda root olarak yapıştırın");
+    setTimeout(() => setCopied(false), 2500);
+  };
+  return (
+    <div
+      className="fixed inset-0 z-[90] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4"
+      data-testid="push-onar-modal"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-xl rounded-2xl border border-emerald-500/40 bg-slate-900 shadow-2xl shadow-emerald-500/20 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-slate-800 bg-gradient-to-r from-emerald-950/60 to-slate-900 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+              <Terminal className="w-5 h-5 text-emerald-300" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-slate-100">Tek Adım Onarım</div>
+              <div className="text-[11px] text-slate-500">Push sağlığını yeşile çevirir — sıfır ekstra komut</div>
+            </div>
+          </div>
+          <button onClick={onClose} data-testid="push-onar-close" className="p-1.5 rounded hover:bg-white/5 text-slate-500 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="text-sm text-slate-300 leading-relaxed">
+            <b className="text-emerald-300">GökyüzüWebSpam v44.00.07</b> ile <code className="mono text-amber-300">install.sh</code>
+            {" "}Exim push tailer'ı, heartbeat timer'ı ve otomatik güncelleme servislerini <b>tek seferde otomatik kuruyor</b>.
+            Aşağıdaki komutu sunucunuzda bir kere çalıştırmanız yeterli — 1-2 dakika içinde bu ekran <b className="text-emerald-300">yeşil</b> olur.
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="mono flex-1 text-base bg-slate-950 border border-emerald-500/40 rounded px-4 py-3 text-emerald-300 font-bold select-all text-center">
+              {cmd}
+            </code>
+            <button
+              onClick={doCopy}
+              data-testid="push-onar-copy"
+              className="text-sm px-4 py-3 rounded bg-emerald-600 hover:bg-emerald-500 text-white inline-flex items-center gap-1.5 font-semibold"
+            >
+              <Copy className="w-4 h-4" />
+              {copied ? "Kopyalandı" : "Kopyala"}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+              <div className="text-emerald-400 font-semibold mb-0.5">✓ gws-exim-push.timer</div>
+              <div className="text-slate-500">15 sn'de bir outbound push</div>
+            </div>
+            <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+              <div className="text-emerald-400 font-semibold mb-0.5">✓ gws-simple-push.timer</div>
+              <div className="text-slate-500">Heartbeat 5 dk'da bir</div>
+            </div>
+            <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+              <div className="text-emerald-400 font-semibold mb-0.5">✓ gws-exim-inotify</div>
+              <div className="text-slate-500">Real-time push (inotify)</div>
+            </div>
+            <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+              <div className="text-emerald-400 font-semibold mb-0.5">✓ gwsm-auto-update</div>
+              <div className="text-slate-500">Günlük otomatik güncelleme</div>
+            </div>
+          </div>
+          <div className="text-[11px] text-emerald-200 bg-emerald-500/5 border border-emerald-500/20 rounded p-2.5">
+            💡 <b>Ne yapar?</b> Master'dan yeni tarball'ı indirir → <code className="mono">install.sh</code> çalıştırır → eksik systemd timer'ları otomatik kurar. Mevcut yapılandırma KORUNUR.
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -459,49 +459,63 @@ export default function Outbound() {
         </Card>
       )}
 
-      {/* v43.29 — Milter/logtail kurulum rehberi (boş durum genişletildi) */}
+      {/* v44.00.07 — Tek-adım kurulum rehberi (SSH çoklu komut yerine `sudo gwsm-update` tek komutu) */}
       {events.length === 0 && !eventsQuery.isLoading && (
-        <Card data-testid="ob-install-guide" id="ob-install-guide">
+        <Card data-testid="ob-install-guide" id="ob-install-guide" className="border-emerald-500/40">
           <div className="p-5 space-y-3">
             <div className="text-sm font-bold text-emerald-300 flex items-center gap-2">
-              📘 Sunucunuza Milter/Logtail v43+ Kurulum
+              ⚡ Tek-Adım Kurulum · Outbound push'u devreye alır
             </div>
             <div className="text-xs text-slate-400 leading-relaxed">
-              "Toplam outbound: 0" görüyorsanız Milter/logtail sunucunuzda çalışmıyor.
-              WHM sunucunuza SSH ile bağlanıp aşağıdaki komutları sırayla çalıştırın:
+              v44.00.07 ile <code className="mono text-amber-300">install.sh</code>{" "}
+              <b>Milter, Logtail, Exim push, heartbeat, otomatik update</b> — hepsini tek seferde
+              otomatik kurar. Aşağıdaki komutu WHM sunucunuzda <b className="text-emerald-300">root olarak</b> bir kere çalıştırın:
             </div>
-            <div className="space-y-2">
-              <div>
-                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">1. GÜNCELLE</div>
-                <pre className="text-xs mono bg-slate-950 border border-slate-800 rounded p-2 text-emerald-300 overflow-auto">gws-update</pre>
+            <div className="flex items-center gap-2 mt-2">
+              <code className="mono flex-1 text-base bg-slate-950 border-2 border-emerald-500/50 rounded px-4 py-3 text-emerald-300 font-bold select-all text-center">
+                sudo gwsm-update
+              </code>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText("sudo gwsm-update");
+                  toast.success("Komut kopyalandı — sunucunuzda root olarak yapıştırın");
+                }}
+                data-testid="ob-install-copy"
+                className="text-sm px-4 py-3 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
+              >
+                Kopyala
+              </button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+              <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">✓ Milter servisi</div>
+                <div className="text-slate-500">MailScanner enteg.</div>
               </div>
-              <div>
-                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">2. LOGTAIL DAEMON'I BAŞLAT</div>
-                <pre className="text-xs mono bg-slate-950 border border-slate-800 rounded p-2 text-emerald-300 overflow-auto">systemctl enable --now gws-logtail
-systemctl status gws-logtail</pre>
+              <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">✓ Logtail daemon</div>
+                <div className="text-slate-500">exim_mainlog izleme</div>
               </div>
-              <div>
-                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">3. TEST ATIŞ YAP</div>
-                <pre className="text-xs mono bg-slate-950 border border-slate-800 rounded p-2 text-emerald-300 overflow-auto">echo "test" | mail -s "outbound test" your-external@gmail.com
-# 15 sn sonra bu sayfayı yenileyin</pre>
+              <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">✓ Push timer'ları</div>
+                <div className="text-slate-500">15sn + heartbeat</div>
               </div>
-              <div>
-                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">4. DOĞRULA (LOG'LAR)</div>
-                <pre className="text-xs mono bg-slate-950 border border-slate-800 rounded p-2 text-emerald-300 overflow-auto"># Exim'de outbound var mı?
-grep "U=" /var/log/exim_mainlog | tail -5
-
-# Logtail script ne ingest ediyor?
-tail -20 /var/log/gokyuzuwebspam/logtail.log</pre>
-              </div>
-              <div>
-                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1">5. YAYGIN SORUN</div>
-                <ul className="text-xs text-slate-400 list-disc pl-5 space-y-0.5">
-                  <li>Logtail script v43'ten eski — <code className="mono text-amber-300">grep "U=" /usr/local/bin/mailshield-logtail.pl</code> — <b>0 satır</b> döndüyse eski sürüm, <b>gws-update</b> gerekir</li>
-                  <li>Systemd servisi yok — kur: <code className="mono text-amber-300">cp /app/deployment/gws-logtail.service /etc/systemd/system/ && systemctl daemon-reload</code></li>
-                  <li>Preview panelinde de <b>0</b> gözüküyorsa Master anahtarınız gerçek bayi lisansı ile eşleşmiyor olabilir. Fiyat/Lisans sayfasından master lisansınızı doğrulayın.</li>
-                </ul>
+              <div className="bg-slate-950/60 border border-emerald-500/30 rounded p-2">
+                <div className="text-emerald-400 font-semibold mb-0.5">✓ Otomatik update</div>
+                <div className="text-slate-500">Günlük gwsm-auto</div>
               </div>
             </div>
+            <div className="text-[11px] text-emerald-200 bg-emerald-500/5 border border-emerald-500/20 rounded p-2.5">
+              💡 1-2 dakika içinde bu ekrandaki tüm kırmızı satırlar yeşile döner. Mevcut yapılandırmanız KORUNUR.
+            </div>
+            <details className="text-[11px] text-slate-500">
+              <summary className="cursor-pointer hover:text-slate-300">Alternatif · Manuel SSH adımları (istisna durumlar için)</summary>
+              <div className="mt-2 space-y-1.5 pl-3 border-l border-slate-800">
+                <div>1. <code className="mono text-amber-300">gws-update</code> — bundle güncelle</div>
+                <div>2. <code className="mono text-amber-300">systemctl enable --now gws-logtail gws-exim-push.timer gws-simple-push.timer</code></div>
+                <div>3. <code className="mono text-amber-300">echo "test" | mail -s "outbound test" your-external@gmail.com</code></div>
+                <div>4. 15 sn sonra bu sayfayı yenileyin</div>
+              </div>
+            </details>
           </div>
         </Card>
       )}
