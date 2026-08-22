@@ -14,6 +14,50 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 22, 2026 (Session 22, v43.99.24) — Critical Tenant Isolation Fixes
+
+**USER REPORTED (critical):** Müşteri sunucusuna GökyüzüWebSpam kurulduğunda master (panel.gokyuzuhosting.com) verileri sızıyor:
+1. Kontrol Paneli: En Aktif Alan Adları, Sistem Bildirimleri, coğrafi trafik, karantina master verisi
+2. Global Tehdit Zekası aynı
+3. Bloklanan IP'lerin coğrafi dağılımı master verisi
+4. Motorlar durdur/başlat çalışmıyor
+5. Master IP (89.19.15.58) rozeti müşteri panelinde görünüyor
+6. "Sunucumu Güncelle" butonu müşteride görünüyor
+
+**KÖK NEDENLER:**
+1. `/master/alerts` — kimlik doğrulama YOK, tenant filtresi YOK, herkes 195 master alert okuyabiliyor
+2. `/dashboard/top-domains` — `lic_filter = {} if master else {}` (her iki dal boş)
+3. `/stats/top-senders` — quarantine'e filtresiz aggregate
+4. `whm-plugin/whm/mailshield.cgi` — bayı sunucularda da master_key yükleniyor (env kontrolü yok)
+5. Frontend `App.js` — `?license_key=` query param handler yok
+6. Frontend `Header.js` — MasterModeToggle her hostname'de görünüyor
+
+**FIX'LER:**
+
+**Backend:**
+- `routes/master.py::list_master_alerts`: `_is_master` kontrolü eklendi, bayı boş liste alır
+- `server.py::dashboard_top_domains`: `_tenant_scope` ile doğru owner_license_key filtresi
+- `server.py::top_senders`: quarantine aggregate `owner_license_key` scope'lu, license_key param eklendi
+
+**Frontend:**
+- `Header.js::MasterModeToggle` + `MasterUpdatePush`: SADECE `panel.gokyuzuhosting.com` (veya localhost/preview) hostname'inde görünür, bayı sunucularda tamamen gizli
+- `App.js`: `?license_key=` query param handler → bayı scope (master_license SET ETMEZ)
+
+**WHM Plugin:**
+- `mailshield.cgi`: `$is_master_host` tespiti (MASTER_HOST env veya .env'den okur) → master_key SADECE master sunucuda yüklenir, bayı sunucuda customer license query param olarak geçer
+
+**Download Bundles:**
+- `/downloads/gws-plugin-v43.99.24.tar.gz` (45 KB — yeni WHM plugin tarball)
+- `/downloads/mailshield-cgi-v43.99.24.txt` (17 KB — sadece CGI dosyası)
+- `/downloads/gws-hotfix.sh` (7 KB — patch script master+bayı için)
+
+**KALAN GÖREVLER (backlog):**
+- Diğer endpoint'lerde de tenant scope audit (geo blocked heatmap, live traffic, engine list ...)
+- Kod deploy: user "Save to GitHub" bekleniyor → sonra `gws-update` ile master + müşteri sunucularına iner
+- Motor start/stop bayı yetkisiyle çalışsın (plan-based ACL)
+
+
+
 ## Feb 21, 2026 (Session 22, v43.99.23) — i18n Complete + Auto-Growing Achievements + Downloadable Bundles
 
 **USER REQUESTS:**

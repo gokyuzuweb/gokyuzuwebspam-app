@@ -544,7 +544,7 @@ function NavBar() {
           </div>
           <div className="leading-tight">
             <div className="text-slate-100 font-bold tracking-tight text-[17px]">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v1.3</div>
+            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v44.00.00</div>
           </div>
         </Link>
         <nav className="hidden md:flex items-center gap-7 text-sm text-slate-400">

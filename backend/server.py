@@ -4003,7 +4003,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v43.61"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.00"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -8833,7 +8833,7 @@ async def module_report_pdf():
                        if _os.path.exists(_os.path.join(cd, "generate_module_report.py"))), None)
     out_dirs = ["/app", "/app/backend", "/tmp"]
     out_dir = next((d for d in out_dirs if _os.access(d, _os.W_OK)), "/tmp")
-    pdf_path = f"{out_dir}/GokyuzuWebSpam-Modul-Tanitim-v43.99.pdf"
+    pdf_path = f"{out_dir}/GokyuzuWebSpam-Modul-Tanitim-v44.00.00.pdf"
     if not _os.path.exists(pdf_path):
         if not script_dir:
             raise HTTPException(status_code=500, detail=f"Modul rapor script yok. Denenen: {candidate_dirs}")
@@ -8856,7 +8856,7 @@ async def module_report_pdf():
     return FileResponse(
         pdf_path,
         media_type="application/pdf",
-        filename="GokyuzuWebSpam-Modul-Tanitim-v43.99.pdf",
+        filename="GokyuzuWebSpam-Modul-Tanitim-v44.00.00.pdf",
         headers={"Cache-Control": "public, max-age=3600"},
     )
 
@@ -8889,7 +8889,7 @@ async def install_guide_pdf(lang: str = "tr", force: bool = False):
     # PDF çıktı yolu: /app/backend altında writable olan bir yer olsun (Docker read-only fs'lerde)
     out_dirs = ["/app", "/app/backend", "/tmp"]
     out_dir = next((d for d in out_dirs if _os.access(d, _os.W_OK)), "/tmp")
-    pdf_path = f"{out_dir}/GokyuzuWebSpam-Kurulum-Rehberi-v43.99{suffix}.pdf"
+    pdf_path = f"{out_dir}/GokyuzuWebSpam-Kurulum-Rehberi-v44.00.00{suffix}.pdf"
 
     if force or not _os.path.exists(pdf_path):
         if not script_dir:

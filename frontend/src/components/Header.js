@@ -142,10 +142,20 @@ function GlobalSearch() {
  */
 function MasterModeToggle() {
   const qc = useQueryClient();
+  // v43.99.24 — SADECE master sunucusunda göster (panel.gokyuzuhosting.com)
+  // Bayı/müşteri sunuculardaki iframe'de bu buton görünmemeli
+  const isMasterHost = typeof window !== "undefined" && (() => {
+    const h = window.location.hostname || "";
+    return h === "panel.gokyuzuhosting.com"
+        || h === "localhost"
+        || h.endsWith(".preview.emergentagent.com");
+  })();
   // Trigger re-render whenever localStorage'a yazılırsa
   const active = typeof window !== "undefined"
     && (localStorage.getItem("gws.master_license") || "").startsWith("MS-");
-  const mode = useQuery({ queryKey: ["system-mode"], queryFn: api.systemMode, enabled: active });
+  const mode = useQuery({ queryKey: ["system-mode"], queryFn: api.systemMode, enabled: active && isMasterHost });
+  // Master host değilse hiçbir şey render etme
+  if (!isMasterHost) return null;
   const masterIp = mode.data?.master_ip || "";
   const activate = () => {
     const val = window.prompt(
@@ -202,9 +212,16 @@ function MasterModeToggle() {
 }
 
 function MasterUpdatePush() {
+  // v43.99.24 — SADECE master sunucusunda görünür (bayı/müşteride hiç)
+  const isMasterHost = typeof window !== "undefined" && (() => {
+    const h = window.location.hostname || "";
+    return h === "panel.gokyuzuhosting.com"
+        || h === "localhost"
+        || h.endsWith(".preview.emergentagent.com");
+  })();
   const active = typeof window !== "undefined"
     && (localStorage.getItem("gws.master_license") || "").startsWith("MS-");
-  if (!active) return null;
+  if (!isMasterHost || !active) return null;
   const push = async () => {
     if (!window.confirm("Master'a bağlı tüm bayilere 'gws-update çalıştır' sinyali gönderilsin mi?")) return;
     try {

@@ -266,7 +266,7 @@ function Sidebar() {
         </NavLink>
         <div className="leading-tight min-w-0">
           <div className="text-slate-100 font-bold tracking-tight text-[15px] truncate">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v1.3 · {effective.toUpperCase()}</div>
+          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v44.00.00 · {effective.toUpperCase()}</div>
         </div>
       </div>
       <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto sidebar-scroll">
