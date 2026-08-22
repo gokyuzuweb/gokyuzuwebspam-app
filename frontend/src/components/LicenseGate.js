@@ -136,6 +136,25 @@ export function LicenseGate() {
   const [showManual, setShowManual] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
 
+  // v44.00.01 — WHM iframe'inden gelen server_ip query param'ını yakala ve sessionStorage'a kaydet
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const sip = params.get("server_ip");
+      if (sip && /^\d+\.\d+\.\d+\.\d+$/.test(sip)) {
+        sessionStorage.setItem("gws.whm_server_ip", sip);
+        setDetectedIP(sip);
+        params.delete("server_ip");
+        const clean = window.location.pathname + (params.toString() ? "?" + params.toString() : "") + window.location.hash;
+        window.history.replaceState({}, "", clean);
+      } else {
+        // Session'da varsa kullan (iframe reload sonrası kalıcı)
+        const cached = sessionStorage.getItem("gws.whm_server_ip");
+        if (cached) setDetectedIP(cached);
+      }
+    } catch (_) {}
+  }, []);
+
   useEffect(() => {
     const handler = () => setManualOpen(true);
     window.addEventListener("gws:open-license-modal", handler);
@@ -240,7 +259,8 @@ export function LicenseGate() {
   });
 
   const runVerify = async () => {
-    let ip = detectedIP;
+    // v44.00.01 — Önce WHM sunucu IP'si (query param), sonra fallback browser IP
+    let ip = detectedIP || sessionStorage.getItem("gws.whm_server_ip") || "";
     if (!ip) {
       try {
         const r = await fetch("https://api.ipify.org?format=json");
@@ -315,7 +335,11 @@ export function LicenseGate() {
             </button>
             {detectedIP && (
               <div className="mt-2 mono text-[11px] text-slate-500 flex items-center gap-1">
-                <Server className="w-3 h-3" /> Tespit edilen IP: <span className="text-slate-300">{detectedIP}</span>
+                <Server className="w-3 h-3" />
+                {sessionStorage.getItem("gws.whm_server_ip") === detectedIP ? "WHM Sunucu IP" : "Tespit edilen IP"}: <span className="text-slate-300">{detectedIP}</span>
+                {sessionStorage.getItem("gws.whm_server_ip") === detectedIP && (
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] uppercase tracking-wider font-bold ml-1">CPANEL</span>
+                )}
               </div>
             )}
           </div>

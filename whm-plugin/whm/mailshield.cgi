@@ -289,7 +289,19 @@ if ($is_master_host) {
         }
     }
     if ($customer_license) {
+        # v44.00.01 — WHM sunucusunun IP'sini de query'e ekle
+        # (LicenseGate browser IP yerine bu server IP'yi kullanır)
+        my $server_ip = '';
+        for my $ip_cmd ('hostname -I', 'hostname -i',
+                        "ip route get 1.1.1.1 2>/dev/null | awk '{print \$7; exit}'") {
+            my $out = `$ip_cmd 2>/dev/null`;
+            chomp $out;
+            $out =~ s/^\s+|\s+$//g;
+            # İlk IPv4'ü al
+            if ($out =~ /(\d+\.\d+\.\d+\.\d+)/) { $server_ip = $1; last; }
+        }
         $panel_url .= "?license_key=$customer_license";
+        $panel_url .= "&server_ip=$server_ip" if $server_ip;
     }
 }
 
