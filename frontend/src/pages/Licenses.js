@@ -252,6 +252,9 @@ function LicensesInner() {
   const { isMaster, isLoading: masterLoading, clientIp, masterIp } = useIsMaster();
   const licenses = useQuery({ queryKey: ["licenses"], queryFn: api.licenses, refetchInterval: 20000, enabled: isMaster });
   const violations = useQuery({ queryKey: ["violations"], queryFn: api.violations, refetchInterval: 15000, enabled: isMaster });
+  // v44.00.00 — Master versiyonu ile karşılaştırıp güncelliği göster
+  const masterVer = useQuery({ queryKey: ["version-current-lics"], queryFn: api.versionCurrent, staleTime: 60_000 });
+  const masterVersion = (masterVer.data?.version || "").replace(/^v/i, "");
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState("");
   const [planFilter, setPlanFilter] = useState("all");
@@ -382,6 +385,7 @@ function LicensesInner() {
         selectedIds={selectedIds}
         setSelectedIds={setSelectedIds}
         bulkAction={bulkAction}
+        masterVersion={masterVersion}
         onAdded={() => qc.invalidateQueries({ queryKey: ["licenses"] })}
       />
 
@@ -416,7 +420,7 @@ const TAB_TONE_MAP = {
 function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, setPlanFilter,
                        statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onBroadcast, onDelete,
                        onSimulate, onClearViol, onFixIds, selectedIds, setSelectedIds,
-                       bulkAction, onAdded }) {
+                       bulkAction, onAdded, masterVersion = "" }) {
   const [tab, setTab] = useState("list");
   const counts = { list: rows.length, new: null, violations: violRows.length, admin: null };
 
@@ -471,6 +475,7 @@ function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, s
                            statusFilter={statusFilter} setStatusFilter={setStatusFilter}
                            selectedIds={selectedIds} setSelectedIds={setSelectedIds}
                            bulkAction={bulkAction} onFixIds={onFixIds}
+                           masterVersion={masterVersion}
                            onEdit={onEdit} onCopy={onCopy} onToggle={onToggle} onBroadcast={onBroadcast} onDelete={onDelete}/>
       )}
       {tab === "new" && (
@@ -536,7 +541,8 @@ function LicenseTabs({ rows, allRows, violRows, search, setSearch, planFilter, s
 
 function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPlanFilter,
                               statusFilter, setStatusFilter, onEdit, onCopy, onToggle, onBroadcast, onDelete,
-                              selectedIds = new Set(), setSelectedIds = () => {}, bulkAction, onFixIds }) {
+                              selectedIds = new Set(), setSelectedIds = () => {}, bulkAction, onFixIds,
+                              masterVersion = "" }) {
   return (
     <Card>
       {/* Search + Filter bar */}
@@ -634,6 +640,7 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
               <th className="text-left px-4 py-3 font-semibold">Plan</th>
               <th className="text-left px-4 py-3 font-semibold">IP'ler</th>
               <th className="text-left px-4 py-3 font-semibold">Bitiş</th>
+              <th className="text-left px-4 py-3 font-semibold">Kurulu Versiyon</th>
               <th className="text-left px-4 py-3 font-semibold">Son heartbeat</th>
               <th className="text-right px-4 py-3 font-semibold w-24"></th>
             </tr>
@@ -715,10 +722,33 @@ function LicensesListPanel({ rows, allRows, search, setSearch, planFilter, setPl
                     <div className={`mono text-xs ${expired ? "text-rose-400" : "text-slate-300"}`}>{isoDate(r.valid_until)}</div>
                   </td>
                   <td className="px-4 py-2.5">
+                    {r.last_heartbeat_version ? (() => {
+                      const cur = String(r.last_heartbeat_version || "").replace(/^v/i, "");
+                      const isOutdated = masterVersion && cur && cur !== masterVersion;
+                      const isNever = !r.last_heartbeat_at;
+                      if (isNever) return <span className="text-slate-600 text-xs">—</span>;
+                      return (
+                        <div
+                          data-testid={`lic-version-${r.id}`}
+                          title={isOutdated ? `Bayı v${cur} · Master v${masterVersion} · GÜNCELLEME GEREKLİ` : `Bayı v${cur} — güncel`}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md mono text-[11px] font-bold border ${
+                            isOutdated
+                              ? "border-amber-500/50 bg-amber-500/15 text-amber-200"
+                              : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isOutdated ? "bg-amber-400 animate-pulse" : "bg-emerald-400"}`} />
+                          v{cur}
+                          {isOutdated && <span className="text-[9px] font-normal opacity-80">· ESKİ</span>}
+                        </div>
+                      );
+                    })() : (r.last_heartbeat_at ? <span className="text-slate-500 text-xs mono">v?</span> : <span className="text-slate-600 text-xs">—</span>)}
+                  </td>
+                  <td className="px-4 py-2.5">
                     {r.last_heartbeat_at ? (
                       <div>
                         <div className="mono text-[11px] text-slate-300">{isoDateTime(r.last_heartbeat_at)}</div>
-                        <div className="mono text-[10px] text-slate-500">{r.last_heartbeat_ip} · v{r.last_heartbeat_version}</div>
+                        <div className="mono text-[10px] text-slate-500">{r.last_heartbeat_ip}</div>
                       </div>
                     ) : <span className="text-slate-600 text-xs">hiç bağlanmadı</span>}
                   </td>
