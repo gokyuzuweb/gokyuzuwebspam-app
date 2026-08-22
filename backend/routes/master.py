@@ -7,6 +7,7 @@ Master server (gokyuzuhosting.com) — bayiler ve pluginler bu uçları çağır
 """
 from __future__ import annotations
 import os, uuid
+from typing import Optional
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from deps import db
@@ -342,7 +343,21 @@ async def release_history(limit: int = 20):
 # `master_alerts` koleksiyonuna yazar. Frontend Dashboard bunu tüketir.
 # ============================================================================
 @router.get("/alerts")
-async def list_master_alerts(limit: int = 20, unread_only: bool = False):
+async def list_master_alerts(request: Request, limit: int = 20, unread_only: bool = False,
+                             license_key: Optional[str] = None):
+    """v43.99.24 — SADECE MASTER. Bayi/müşteri sunucu bu endpoint'i çağırırsa
+    boş liste döner (data leak önlemi). Master alert'leri sadece
+    panel.gokyuzuhosting.com sunucusunun sahibi görebilir."""
+    # Master doğrulaması (import inline — circular önleme)
+    try:
+        from server import _is_master
+        r = await _is_master(request, license_key)
+        if not r.get("is_master"):
+            # Bayi/müşteri → boş dönüş (master alert'leri sızmasın)
+            return {"items": [], "count": 0, "total_unread": 0}
+    except Exception:
+        # Yardımcı fonksiyon yoksa güvenli tarafta kal → boş dön
+        return {"items": [], "count": 0, "total_unread": 0}
     q: dict = {}
     if unread_only:
         # Legacy 'seen' field OR new 'read' field

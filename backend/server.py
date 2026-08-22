@@ -1453,8 +1453,13 @@ async def stats_traffic(hours: int = 24):
 
 
 @api.get("/stats/top-senders")
-async def top_senders(limit: int = 8):
+async def top_senders(limit: int = 8, request: Request = None, license_key: Optional[str] = None):
+    # v43.99.24 — Tenant scope: bayi kendi quarantine'ini görür, master global
+    scope = await _tenant_scope(request, license_key) if request else {"is_master": False, "owner_license_key": ""}
+    owner = scope["owner_license_key"]
+    match_filter = {"owner_license_key": owner} if owner else ({} if scope["is_master"] else {"owner_license_key": "__none__"})
     pipeline = [
+        {"$match": match_filter},
         {"$group": {"_id": "$sender_ip", "count": {"$sum": 1},
                     "sender": {"$first": "$sender"},
                     "avg_score": {"$avg": "$score"},
