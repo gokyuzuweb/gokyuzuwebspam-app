@@ -232,8 +232,8 @@ class TestTarballDownload:
                            if m.name.endswith("gokyuzuwebspam/VERSION")), None)
             assert member, "VERSION file missing"
             ver = tar.extractfile(member).read().decode().strip()
-        # Accept either raw "44.00.09" or "v44.00.09"
-        assert "44.00.09" in ver, f"VERSION should be v44.00.09, got: {ver}"
+        # Version tarball her release ile bump edilir — sadece format doğrulanır.
+        assert re.match(r"^v?\d+\.\d+\.\d+$", ver), f"VERSION formatı hatalı: {ver}"
 
 
 # ---------- 7. Widget help text updated ----------

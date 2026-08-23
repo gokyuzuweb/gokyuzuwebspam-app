@@ -15,6 +15,36 @@ gokyuzuhosting.com.
 
 
 
+## Feb 15, 2026 (Session 24, v44.00.11) — "Master paneli müşterinin kurulu versiyonunu güncellemiyor" P0 FIX
+
+### 🐛 CRITICAL FIX (user reported)
+**"Müşteride 44.00.08 kurulu ama masterda Kurulu Versiyon eski görünüyor"**.
+
+**Root cause**: `license_heartbeat` handler'ı IP validasyonunda `payload.ip not in ip_addresses` durumunda 403 fırlatıyordu — bu tetiklenmeden ÖNCE `last_heartbeat_version` alanı güncellenmiyordu. `gws-simple-push.service` `hostname -I | awk '{print $1}'` kullanarak IP alıyor; multi-NIC cPanel sunucularında bu private/interstitial IP döndürebiliyor → her heartbeat 403 → versiyon asla güncellenmiyor.
+
+Ek olarak `/api/plugin/verify-license` başarılı yolunda `payload.version or "44.00.05"` fallback stale bir sürüme geri düşürüyordu.
+
+**Fix (backend + installer + regression tests)**:
+- `license_heartbeat` (server.py ~7080): Lisans bulunduğunda `last_heartbeat_version` alanı IP/tarih validasyonundan bağımsız olarak DAİMA yazılır. 403 hâlâ dönebilir (plugin ihlali görsün) ama monitoring alanı temiz kalır.
+- `plugin_verify_license` (server.py ~11079): `payload.version` boşsa mevcut değer korunur, `44.00.05` gibi bir stale defaulta düşülmez.
+- `install.sh` gws-simple-push service:
+  - IP tespiti: önce `curl ifconfig.co`, sonra `ipify.org`, sonra `hostname -I` → doğru public IP.
+  - VER fallback: `44.00.05` → `unknown` (yanıltıcı olmayan sentinel).
+- `install.sh` gwsm-update: Update sonrası hemen `systemctl start gws-simple-push.service` tetiklenir → master 5 dk beklemeden yeni sürümü görür.
+- Regression test suite: `/app/backend/tests/test_v44_00_11_heartbeat_version.py` (4 test — happy path, IP mismatch, alias-only, empty preserve).
+
+### 📦 Version Bump
+- `/app/VERSION`, `/app/backend/VERSION`, `/app/whm-plugin/VERSION` → `v44.00.11`.
+- `_PACKAGE_VERSION` (server.py 4263) → `v44.00.11`.
+- `version_manifest` DB güncellendi.
+
+### ✅ Tests Passing
+- v44.00.11 regression suite: 4/4 ✅
+- v44.00.09 push sync suite: 13/13 ✅ (version_file test format-only'e çevrildi)
+
+
+
+
 ## Feb 22, 2026 (Session 23, v44.00.10) — "gws-simple-push kurulmamış" persistent bug FIX + Onar Auto-Copy + PIN Push Notif
 
 ### 🐛 CRITICAL FIX (user reported — persistent from v44.00.08)

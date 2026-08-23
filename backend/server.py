@@ -338,9 +338,9 @@ async def seed_if_empty() -> None:
     await db.settings.insert_one({
         "_key": "version_manifest",
         **VersionManifest(
-            latest_version="44.00.05",
+            latest_version="44.00.11",
             download_url="https://panel.gokyuzuhosting.com/api/plugin/download",
-            changelog="v44.00.10: heartbeat versiyon fix + /api/plugin/heartbeat alias + SMTP tenant scoping",
+            changelog="v44.00.11: Kurulu versiyon Master paneline doğru yansıyor · heartbeat her koşulda versiyon kaydediyor · gwsm-update push tetikleme",
             release_date=_iso(),
         ).model_dump()
     })
@@ -4260,7 +4260,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.10"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.11"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -7054,6 +7054,24 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
         if not reason and payload.active_domains > (lic.get("max_domains") or 0):
             reason = "domain_limit_exceeded"
 
+    # v44.00.11 — VERSION TRACKING: license found ise, IP/date validasyonu
+    # başarısız olsa BILE `last_heartbeat_version` alanını daima güncelle.
+    # Sürüm izleme güvenlik denetiminden ayrı bir monitoring alanıdır — master
+    # panelin "Kurulu Versiyon" sütunu gerçekten yüklü sürümü göstermeli.
+    # Aksi halde IP mismatch (örn. `hostname -I` private IP döndürürse) durumunda
+    # master eski/boş versiyon görür ve müşteriye güncelleme itemez.
+    if lic and payload.version:
+        try:
+            await db.licenses.update_one(
+                {"license_key": payload.license_key},
+                {"$set": {
+                    "last_heartbeat_version": payload.version,
+                    "last_heartbeat_seen_at": _iso(),
+                }},
+            )
+        except Exception:
+            pass
+
     if reason:
         v = LicenseViolation(
             ip=payload.ip,
@@ -7078,16 +7096,20 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
         )
 
     # Success: update last heartbeat
+    # v44.00.11 — version yalnızca payload'da varsa yaz (boş string ile eski
+    # değerin üzerine geçme — master panel yanıltıcı v? gösterebilir).
+    _hb_set = {
+        "last_heartbeat_at": _iso(),
+        "last_heartbeat_ip": payload.ip,
+        # v44.00.01 — Master paneline browser IP'yi de göster
+        "last_browser_ip": browser_ip,
+        "last_browser_ip_at": _iso(),
+    }
+    if payload.version:
+        _hb_set["last_heartbeat_version"] = payload.version
     await db.licenses.update_one(
         {"license_key": payload.license_key},
-        {"$set": {
-            "last_heartbeat_at": _iso(),
-            "last_heartbeat_ip": payload.ip,
-            "last_heartbeat_version": payload.version,
-            # v44.00.01 — Master paneline browser IP'yi de göster
-            "last_browser_ip": browser_ip,
-            "last_browser_ip_at": _iso(),
-        }},
+        {"$set": _hb_set},
     )
     # v44.00.10 — Heartbeat de exim_logtail_pos.last_push_at yazsın ki
     # PushHealthWidget "PUSH YOK" göstermesin. Böylece gws-simple-push kurulup
@@ -11072,14 +11094,19 @@ async def plugin_verify_license(payload: VerifyLicenseIn, request: Request = Non
         upsert=True,
     )
     # Update license last heartbeat
+    # v44.00.11 — Version tracking: eğer payload.version varsa yaz, YOKSA
+    # mevcut değeri koru (varsayılan bir sürüme geri düşme — bu master paneli
+    # yanıltır). $set ile birlikte version'ı koşullu ekle.
+    _set_fields = {
+        "last_heartbeat_at": now.isoformat(),
+        "last_heartbeat_ip": payload.ip or "",
+        "last_heartbeat_hostname": (payload.hostname or "").lower(),
+    }
+    if payload.version:
+        _set_fields["last_heartbeat_version"] = payload.version
     await db.licenses.update_one(
         {"license_key": lic["license_key"]},
-        {"$set": {
-            "last_heartbeat_at": now.isoformat(),
-            "last_heartbeat_ip": payload.ip or "",
-            "last_heartbeat_hostname": (payload.hostname or "").lower(),
-            "last_heartbeat_version": payload.version or "44.00.05",  # v44.00.10 — payload'dan al
-        }},
+        {"$set": _set_fields},
     )
     await db.logs.insert_one(ActivityLog(
         source="license", level="info",

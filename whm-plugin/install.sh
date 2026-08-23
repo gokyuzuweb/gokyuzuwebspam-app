@@ -270,8 +270,9 @@ ExecStart=/usr/bin/env bash -c '\
   SRV=$(awk -F= "/^server_url[[:space:]]*=/{gsub(/[[:space:]\"\x27]/,\"\",$2);print $2;exit}" /etc/mailshield/mailshield.conf 2>/dev/null); \
   [ -z "$LIC" ] && exit 0; \
   [ -z "$SRV" ] && SRV=https://panel.gokyuzuhosting.com; \
-  IP=$(hostname -I | awk "{print \$1}"); \
-  VER=$(cat /etc/mailshield/plugin.version 2>/dev/null || echo 44.00.05); \
+  IP=$(curl -sfk --max-time 3 https://ifconfig.co 2>/dev/null || curl -sfk --max-time 3 https://api.ipify.org 2>/dev/null || hostname -I | awk "{print \$1}"); \
+  VER=$(cat /etc/mailshield/plugin.version 2>/dev/null | tr -d "[:space:]v"); \
+  [ -z "$VER" ] && VER=unknown; \
   curl -sfk -X POST "$SRV/api/plugin/heartbeat" -H "Content-Type: application/json" \
        -d "{\"license_key\":\"$LIC\",\"ip\":\"$IP\",\"hostname\":\"$(hostname)\",\"plugin_version\":\"$VER\",\"version\":\"$VER\"}" \
        -o /dev/null || true'
@@ -359,6 +360,9 @@ fi
 # Servisleri yeniden başlat
 systemctl daemon-reload
 systemctl restart mailshield-api mailshield-logtail 2>/dev/null || true
+# v44.00.11 — gws-simple-push servisini de yeniden yükle ki yeni payload
+# formatı (VER dosyasını her seferinde okuyan yeni ExecStart) devreye girsin
+systemctl restart gws-simple-push.service 2>/dev/null || true
 
 # Health check
 sleep 3
@@ -366,6 +370,11 @@ NEW=$(cat /etc/mailshield/plugin.version 2>/dev/null || echo "?")
 if curl -sf http://127.0.0.1:8001/api/version/panel >/dev/null 2>&1; then
   echo "✓ API canlı"
 fi
+
+# v44.00.11 — Master'a HEMEN heartbeat gönder ki yeni versiyon anında
+# master paneline yansısın (5 dk timer'ı bekleme)
+echo "📡 Master'a versiyon bildirimi gönderiliyor..."
+systemctl start gws-simple-push.service 2>/dev/null || true
 
 rm -rf "$TMP"
 echo "🎉 Güncelleme tamam: $CURR → $NEW"
