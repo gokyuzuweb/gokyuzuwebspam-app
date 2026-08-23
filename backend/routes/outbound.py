@@ -217,6 +217,7 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
         all_time_q["license_key"] = lic_key
     all_time_total = await db.mail_events.count_documents(all_time_q)
 
+    _push_info = await _get_last_push_at(lic_key or "MASTER")
     result = {
         "today_total": total,
         "today_spam": spam,
@@ -225,7 +226,9 @@ async def outbound_stats(request: Request, license_key: Optional[str] = None):
         "limit_per_hour": limit_hour,
         "top_users": top_users,
         "all_time_total": all_time_total,
-        "last_push_at": await _get_last_push_at(lic_key or "MASTER"),
+        "last_push_at": _push_info.get("at"),
+        # v44.00.12 — last_push_source: heartbeat (5dk) vs exim (15sn) → widget threshold'unu ayarlar
+        "last_push_source": _push_info.get("source"),
         "generated_at": _iso(),
     }
     await _cache.set(cache_key, result, 2.0)
@@ -259,18 +262,22 @@ def _decode_exim_mid_ts(mid: str) -> Optional[str]:
     return None
 
 
-async def _get_last_push_at(license_key: str) -> Optional[str]:
-    """Son bash push zamanı — Outbound sayfası göstergesi."""
+async def _get_last_push_at(license_key: str) -> Optional[dict]:
+    """Son push zamanı + kaynağı. v44.00.12: kaynak (heartbeat vs exim)
+    döndürülür ki UI widget threshold'u kaynağa göre ayarlayabilsin —
+    heartbeat 5dk'da bir, exim push 15sn'de bir çalışır."""
     if license_key == "MASTER":
-        # En son push edilen lisansın timestamp'ini döndür
         latest = await db.settings.find(
             {"_key": {"$regex": "^exim_logtail_pos:"}},
-            {"_id": 0, "last_push_at": 1},
+            {"_id": 0, "last_push_at": 1, "last_push_source": 1},
         ).sort("last_push_at", -1).limit(1).to_list(1)
-        return (latest[0].get("last_push_at") if latest else None)
+        if not latest:
+            return {"at": None, "source": None}
+        return {"at": latest[0].get("last_push_at"), "source": latest[0].get("last_push_source")}
     doc = await db.settings.find_one(
-        {"_key": f"exim_logtail_pos:{license_key}"}, {"_id": 0, "last_push_at": 1}) or {}
-    return doc.get("last_push_at")
+        {"_key": f"exim_logtail_pos:{license_key}"},
+        {"_id": 0, "last_push_at": 1, "last_push_source": 1}) or {}
+    return {"at": doc.get("last_push_at"), "source": doc.get("last_push_source")}
 
 
 # ============================================================================

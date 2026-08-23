@@ -21,12 +21,22 @@ const fmtSince = (isoStr) => {
   return `${Math.floor(s / 3600)}sa önce`;
 };
 
-const healthTier = (isoStr) => {
+const healthTier = (isoStr, source) => {
   if (!isoStr) return { tone: "rose", label: "Push YOK", icon: AlertCircle, help: "Push servisleri henüz kurulmadı — 'Onar' butonuna basın" };
   const s = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
-  if (s < 15) return { tone: "emerald", label: "SAĞLIKLI", icon: CheckCircle2, help: "Real-time akış aktif · <15sn" };
-  if (s < 60) return { tone: "yellow", label: "YAVAŞ", icon: Clock, help: "Timer'dan biraz uzun · normal olabilir" };
-  if (s < 300) return { tone: "orange", label: "GECİKMİŞ", icon: Clock, help: "Push timer'ı yavaşladı — 'Onar' ile yeniden kurun" };
+  // v44.00.12 — Kaynağa göre threshold: heartbeat 5dk timer, exim 15sn timer
+  const isHeartbeat = source === "heartbeat";
+  if (isHeartbeat) {
+    // Heartbeat: 5 dk timer, tolerans ×2 → 10dk sağlıklı, 20dk yavaş
+    if (s < 600)  return { tone: "emerald", label: "SAĞLIKLI", icon: CheckCircle2, help: "Heartbeat aktif · 5dk timer" };
+    if (s < 1200) return { tone: "yellow",  label: "YAVAŞ",    icon: Clock,         help: "Heartbeat'ten biraz uzun — normal olabilir" };
+    if (s < 1800) return { tone: "orange",  label: "GECİKMİŞ", icon: Clock,         help: "Heartbeat yavaşladı — 'Onar' ile yeniden kurun" };
+    return { tone: "rose", label: "PUSH DURDU", icon: AlertCircle, help: "Heartbeat durdu — 'Onar' butonuyla yeniden kurun" };
+  }
+  // Exim push (varsa): 15sn hedefli, sıkı threshold
+  if (s < 15)  return { tone: "emerald", label: "SAĞLIKLI", icon: CheckCircle2, help: "Real-time akış aktif · <15sn" };
+  if (s < 60)  return { tone: "yellow",  label: "YAVAŞ",    icon: Clock,         help: "Timer'dan biraz uzun · normal olabilir" };
+  if (s < 300) return { tone: "orange",  label: "GECİKMİŞ", icon: Clock,         help: "Push timer'ı yavaşladı — 'Onar' ile yeniden kurun" };
   return { tone: "rose", label: "PUSH DURDU", icon: AlertCircle, help: "Push servisi durdu — 'Onar' butonuyla yeniden kurun" };
 };
 
@@ -49,7 +59,8 @@ export default function PushHealthWidget() {
     staleTime: 0,
   });
   const lastPush = q.data?.last_push_at;
-  const t = healthTier(lastPush);
+  const lastPushSource = q.data?.last_push_source;
+  const t = healthTier(lastPush, lastPushSource);
   const cls = toneCls(t.tone);
   const Icon = t.icon;
   return (
