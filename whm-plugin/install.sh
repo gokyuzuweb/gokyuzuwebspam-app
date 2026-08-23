@@ -257,25 +257,50 @@ run "systemctl enable --now mailshield-quarantine.timer || true"
 # v44.00.01 — Otomatik Exim Push Timer + gwsm-update Komutu (BAYI)
 # ═══════════════════════════════════════════════════════════════════
 echo "==> Exim push timer kurulumu (5 dk'da bir master'a mail metriği push eder)"
-cat > /etc/systemd/system/gws-simple-push.service <<'PUSHSVC'
+# v44.00.11 — Bağımsız heartbeat script dosyası. Systemd ExecStart içinde
+# karmaşık bash escape'i yerine ayrı bir .sh çağırmak daha güvenli (systemd
+# `bash -c '\'` ile satır devamı desteklemez → "unexpected EOF" hatası olur).
+mkdir -p "$INSTALL_DIR/bin"
+cat > "$INSTALL_DIR/bin/gws-simple-push.sh" <<'PUSHSH'
+#!/usr/bin/env bash
+# GokyuzuWebSpam — Heartbeat & version push (v44.00.11)
+set -o pipefail
+
+CONF=/etc/mailshield/mailshield.conf
+VERFILE=/etc/mailshield/plugin.version
+
+LIC=$(awk -F= '/^key[[:space:]]*=/ { gsub(/[[:space:]"'"'"']/, "", $2); print $2; exit }' "$CONF" 2>/dev/null)
+SRV=$(awk -F= '/^server_url[[:space:]]*=/ { gsub(/[[:space:]"'"'"']/, "", $2); print $2; exit }' "$CONF" 2>/dev/null)
+
+[ -z "$LIC" ] && exit 0
+[ -z "$SRV" ] && SRV="https://panel.gokyuzuhosting.com"
+
+# Public IP tespit sırası: ifconfig.co → ipify → hostname -I first
+IP=$(curl -sfk --max-time 3 https://ifconfig.co 2>/dev/null \
+    || curl -sfk --max-time 3 https://api.ipify.org 2>/dev/null \
+    || hostname -I | awk '{print $1}')
+
+VER=$(tr -d '[:space:]v' < "$VERFILE" 2>/dev/null)
+[ -z "$VER" ] && VER="unknown"
+
+HOST=$(hostname)
+
+curl -sfk --max-time 10 \
+     -X POST "$SRV/api/plugin/heartbeat" \
+     -H "Content-Type: application/json" \
+     -d "{\"license_key\":\"$LIC\",\"ip\":\"$IP\",\"hostname\":\"$HOST\",\"plugin_version\":\"$VER\",\"version\":\"$VER\"}" \
+     -o /dev/null || true
+PUSHSH
+chmod 755 "$INSTALL_DIR/bin/gws-simple-push.sh"
+
+cat > /etc/systemd/system/gws-simple-push.service <<PUSHSVC
 [Unit]
-Description=GokyuzuWebSpam — Simple Exim log push to master
+Description=GokyuzuWebSpam — Simple heartbeat & version push to master
 After=network-online.target
 
 [Service]
 Type=oneshot
-EnvironmentFile=-/etc/mailshield/mailshield.conf.env
-ExecStart=/usr/bin/env bash -c '\
-  LIC=$(awk -F= "/^key[[:space:]]*=/{gsub(/[[:space:]\"\x27]/,\"\",$2);print $2;exit}" /etc/mailshield/mailshield.conf 2>/dev/null); \
-  SRV=$(awk -F= "/^server_url[[:space:]]*=/{gsub(/[[:space:]\"\x27]/,\"\",$2);print $2;exit}" /etc/mailshield/mailshield.conf 2>/dev/null); \
-  [ -z "$LIC" ] && exit 0; \
-  [ -z "$SRV" ] && SRV=https://panel.gokyuzuhosting.com; \
-  IP=$(curl -sfk --max-time 3 https://ifconfig.co 2>/dev/null || curl -sfk --max-time 3 https://api.ipify.org 2>/dev/null || hostname -I | awk "{print \$1}"); \
-  VER=$(cat /etc/mailshield/plugin.version 2>/dev/null | tr -d "[:space:]v"); \
-  [ -z "$VER" ] && VER=unknown; \
-  curl -sfk -X POST "$SRV/api/plugin/heartbeat" -H "Content-Type: application/json" \
-       -d "{\"license_key\":\"$LIC\",\"ip\":\"$IP\",\"hostname\":\"$(hostname)\",\"plugin_version\":\"$VER\",\"version\":\"$VER\"}" \
-       -o /dev/null || true'
+ExecStart=$INSTALL_DIR/bin/gws-simple-push.sh
 PUSHSVC
 
 cat > /etc/systemd/system/gws-simple-push.timer <<'PUSHTMR'
