@@ -450,6 +450,10 @@ export const api = {
   adminBayiHealthPingSingle: (targetLicense, licenseKey) =>
     client.post(`/admin/bayi-health/ping/${targetLicense}`, null,
       { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  // v44.00.11 — Son N saatte hangi bayılar yeni sürüme geçti?
+  adminVersionChanges: (hours = 24, licenseKey) =>
+    client.get(`/admin/version-changes`,
+      { params: { hours, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
   adminEmailTemplates: (licenseKey) =>
     client.get(`/admin/email-templates`,
       { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),

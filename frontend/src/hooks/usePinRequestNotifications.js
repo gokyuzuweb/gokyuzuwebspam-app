@@ -24,6 +24,37 @@ import { useIsMaster } from "@/hooks/useIsMaster";
 
 const PERM_ASK_KEY = "gws.pin_notify.perm_asked";
 
+// v44.00.11 — Kısa "ding" ses efekti (WebAudio API — asset gerektirmez)
+// Master arka plan sekmedeyken bile PIN talebini duyabilsin.
+function playDing() {
+  if (typeof window === "undefined") return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    // İki hoş, hafif çıngırak sesi (E5 → G5)
+    const now = ctx.currentTime;
+    [
+      { freq: 659.25, start: 0,    dur: 0.18 },  // E5
+      { freq: 783.99, start: 0.14, dur: 0.28 },  // G5
+    ].forEach(({ freq, start, dur }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      // ADSR — hızlı attack, yumuşak decay (rahatsız etmesin)
+      gain.gain.setValueAtTime(0, now + start);
+      gain.gain.linearRampToValueAtTime(0.22, now + start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now + start);
+      osc.stop(now + start + dur + 0.05);
+    });
+    // Otomatik kapat
+    setTimeout(() => { try { ctx.close(); } catch {} }, 800);
+  } catch (_) { /* ignore — bazı tarayıcılar autoplay policy nedeniyle bloklayabilir */ }
+}
+
 export default function usePinRequestNotifications() {
   const { isMaster, ready } = useIsMaster();
   const seenIdsRef = useRef(new Set());
@@ -80,6 +111,8 @@ export default function usePinRequestNotifications() {
       const bayiName = req.customer_name || (req.bayi_license_key || "").slice(0, 12) + "...";
       const title = "🔐 Yeni PIN Talebi · Onay Bekliyor";
       const body = `${bayiName} PIN değişikliği istiyor${req.reason ? " — " + req.reason.slice(0, 80) : ""}`;
+      // v44.00.11 — Ding sesi çal ki arka plan sekmede bile master duyabilsin
+      try { playDing(); } catch (_) { /* ignore */ }
       // 1) Sonner toast (panel içi)
       toast.info(title, {
         description: body,

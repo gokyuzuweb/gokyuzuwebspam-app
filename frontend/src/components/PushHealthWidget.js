@@ -179,10 +179,62 @@ function PushOnarModal({ onClose }) {
               <div className="text-slate-500">Günlük otomatik güncelleme</div>
             </div>
           </div>
+          {/* v44.00.11 — SSH Copy Assist: master admin uzaktan tek satırla tetikleyebilsin */}
+          <SshAssist />
           <div className="text-[11px] text-emerald-200 bg-emerald-500/5 border border-emerald-500/20 rounded p-2.5">
             💡 <b>Ne yapar?</b> Master'dan yeni tarball'ı indirir → <code className="mono">install.sh</code> çalıştırır → eksik systemd timer'ları otomatik kurar. Mevcut yapılandırma KORUNUR.
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// v44.00.11 — SSH ile uzaktan tetikleme yardımcısı. Master admin müşteri
+// panele erişemediğinde direkt SSH üzerinden komutu koşturmak için kullanılır.
+function SshAssist() {
+  const [host, setHost] = useState("customer-server.com");
+  const [copied, setCopied] = useState(false);
+  const sshCmd = `ssh root@${host} "sudo gwsm-update"`;
+  const doCopy = () => {
+    try {
+      navigator.clipboard.writeText(sshCmd);
+      setCopied(true);
+      toast.success("SSH komutu kopyalandı — kendi terminalinize yapıştırın");
+      setTimeout(() => setCopied(false), 2500);
+    } catch (_) {
+      toast.error("Kopyalama başarısız");
+    }
+  };
+  return (
+    <div className="rounded-lg border border-sky-500/25 bg-sky-500/5 p-3 space-y-2" data-testid="push-onar-ssh-assist">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-widest text-sky-400 font-bold">Uzaktan tetikle (opsiyonel)</span>
+        <span className="text-[10px] text-slate-500">— müşteri panele giremiyorsa SSH ile siz koşun</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-slate-500 mono shrink-0">ssh root@</span>
+        <input
+          data-testid="push-onar-ssh-host"
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+          placeholder="customer-server.com"
+          className="flex-1 bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs mono text-sky-200 focus:border-sky-500 focus:outline-none"
+        />
+        <span className="text-xs text-slate-500 mono shrink-0">"sudo gwsm-update"</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <code className="mono flex-1 text-[11px] bg-slate-950 border border-sky-500/30 rounded px-3 py-2 text-sky-300 select-all truncate">
+          {sshCmd}
+        </code>
+        <button
+          onClick={doCopy}
+          data-testid="push-onar-ssh-copy"
+          className="text-xs px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white inline-flex items-center gap-1.5 font-semibold shrink-0"
+        >
+          <Copy className="w-3.5 h-3.5" />
+          {copied ? "Kopyalandı" : "Kopyala"}
+        </button>
       </div>
     </div>
   );

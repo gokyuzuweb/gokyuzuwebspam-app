@@ -1,0 +1,23 @@
+{
+  "summary": "v44.00.11 backend regression: heartbeat version tracking + admin/version-changes endpoint. 10/10 tests pass. Verified: (1) IP mismatch (403) still writes last_heartbeat_version, (2) plugin_version alias accepted, (3) empty version preserves old value, (4) version_changes collection only writes on actual change (no dup on same version), (5) version_changes still recorded on IP mismatch, (6) /api/admin/version-changes returns correct schema (hours, latest_version, total_changes, updated_to_latest, changes[] with license_key/customer_name/previous_version/new_version/changed_at/is_latest/minutes_ago), (7) master-only auth: bayi key -> 403, (8) hours param clamped to 1-168.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v44_00_11_heartbeat_version.py",
+    "/app/backend/tests/test_v44_00_11_version_changes.py",
+    "/app/test_reports/pytest/v44_00_11.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py has grown to 12574 lines — recommend splitting into modules (heartbeat, admin, payments, licenses).",
+    "version_changes uses insert (not upsert) which is correct for change log; ensure background TTL/cleanup exists for old rows (currently unbounded)."
+  ],
+  "updated_files": ["/app/backend/tests/test_v44_00_11_version_changes.py"],
+  "success_rate": {"backend": "100%", "frontend": "N/A (not requested)"},
+  "test_credentials": "Master: MS-C02AB012652A4FE692D69676. Tests seed disposable bayi licenses.",
+  "seed_data_creation": "Ephemeral bayi licenses (MS-TEST*) created and cleaned up per test via fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: DB_NAME=test_database TEST_BACKEND_URL=<REACT_APP_BACKEND_URL> pytest backend/tests/test_v44_00_11_*.py. Default DB_NAME in older test files is wrong (gws_master_db); pass DB_NAME env var.",
+  "rca of the issue": "Original bug: license_heartbeat returned early on IP mismatch (403) without updating last_heartbeat_version. Fix reorders logic: version tracking runs unconditionally when license found, then validation determines HTTP code. version_changes insert guarded by old != new to avoid duplicate rows on repeated same-version heartbeats. Endpoint uses _require_master and clamps hours to [1,168]."
+}

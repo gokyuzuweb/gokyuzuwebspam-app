@@ -7061,6 +7061,7 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
     # Aksi halde IP mismatch (örn. `hostname -I` private IP döndürürse) durumunda
     # master eski/boş versiyon görür ve müşteriye güncelleme itemez.
     if lic and payload.version:
+        _old_version = lic.get("last_heartbeat_version") or ""
         try:
             await db.licenses.update_one(
                 {"license_key": payload.license_key},
@@ -7071,6 +7072,22 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
             )
         except Exception:
             pass
+        # v44.00.11 — Sürüm gerçekten değiştiyse version_changes koleksiyonuna
+        # yaz. Master "Son 24 saatte güncellenen bayılar" widget'ı bunu okur.
+        if _old_version != payload.version:
+            try:
+                await db.version_changes.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "license_key": payload.license_key,
+                    "customer_name": lic.get("customer_name") or "",
+                    "old_version": _old_version or None,
+                    "new_version": payload.version,
+                    "changed_at": _iso(),
+                    "source_ip": payload.ip or "",
+                    "hostname": payload.hostname or "",
+                })
+            except Exception:
+                pass
 
     if reason:
         v = LicenseViolation(
@@ -11618,6 +11635,51 @@ async def admin_bayi_health(request: Request, license_key: Optional[str] = None)
         "totals": totals,
         "generated_at": now.isoformat(),
         "bayis": out,
+    }
+
+
+# v44.00.11 — Version Change Log Widget: son 24 saatte hangi bayılar yeni sürüme
+# geçti (last_heartbeat_version değişti mi?). Master paneline canlı "kim güncel"
+# göstergesi verir. `previous_version` alanı, güncelleme öncesindeki değeri saklar.
+@api.get("/admin/version-changes")
+async def admin_version_changes(request: Request, license_key: Optional[str] = None, hours: int = 24):
+    """Master-only. Son N saatte last_heartbeat_version alanı değişen bayıları
+    listeler. Master 'Kim güncel?' widget'ı bunu okur."""
+    await _require_master(request, license_key)
+    hours = max(1, min(hours, 168))  # 1-168 (7 gün)
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(hours=hours)
+    since_iso = since.isoformat()
+
+    # Manifest'ten latest version
+    manifest = await db.settings.find_one({"_key": "version_manifest"}, {"_id": 0}) or {}
+    latest = str(manifest.get("latest_version") or "").lstrip("v")
+
+    rows = []
+    async for chg in db.version_changes.find(
+        {"changed_at": {"$gte": since_iso}}, {"_id": 0}
+    ).sort("changed_at", -1).limit(200):
+        cur = str(chg.get("new_version") or "").lstrip("v")
+        rows.append({
+            "license_key": chg.get("license_key"),
+            "customer_name": chg.get("customer_name") or "",
+            "previous_version": chg.get("old_version") or None,
+            "new_version": cur or None,
+            "changed_at": chg.get("changed_at"),
+            "is_latest": bool(latest and cur == latest),
+            "minutes_ago": int((now - datetime.fromisoformat(str(chg["changed_at"]).replace("Z","+00:00"))).total_seconds() // 60)
+                            if chg.get("changed_at") else None,
+        })
+
+    # Aggregate özet
+    updated_to_latest = sum(1 for r in rows if r["is_latest"])
+    return {
+        "hours": hours,
+        "latest_version": latest,
+        "total_changes": len(rows),
+        "updated_to_latest": updated_to_latest,
+        "generated_at": now.isoformat(),
+        "changes": rows,
     }
 
 

@@ -32,6 +32,7 @@ import MarketplaceLeaderboardBanner from "@/components/MarketplaceLeaderboardBan
 import TrustedPublisherBadge from "@/components/TrustedPublisherBadge";
 import PendingApprovalsWidget from "@/components/PendingApprovalsWidget";
 import PushHealthWidget from "@/components/PushHealthWidget";
+import VersionChangeLogWidget from "@/components/VersionChangeLogWidget";
 
 const LICKEY = () => (typeof window !== "undefined"
   ? (localStorage.getItem("gws.event_license") || "")
@@ -113,6 +114,8 @@ export default function Dashboard() {
           <MasterAlertCenter />
           {/* v43.62 — Exim Push Sağlığı canlı göstergesi */}
           <PushHealthWidget />
+          {/* v44.00.11 — Son güncellenen bayılar (master-only) */}
+          {isMaster && <VersionChangeLogWidget />}
           {/* v43.53 — Bounce Digest özet widget'ı (bounce yoksa null) */}
           <BounceDigestWidget />
           <div className="grid grid-cols-12 gap-4">

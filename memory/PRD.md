@@ -41,6 +41,44 @@ Ek olarak `/api/plugin/verify-license` başarılı yolunda `payload.version or "
 ### ✅ Tests Passing
 - v44.00.11 regression suite: 4/4 ✅
 - v44.00.09 push sync suite: 13/13 ✅ (version_file test format-only'e çevrildi)
+- testing_agent iteration_60: 10/10 ✅ (heartbeat + admin/version-changes)
+
+## Feb 15, 2026 (Session 24 devam) — 3 UX Enhancement (v44.00.11 kapsamında)
+
+### 🎁 SSH Copy Assist (PushHealthWidget Onar modal)
+`/app/frontend/src/components/PushHealthWidget.js` — Onar modalına
+`SshAssist` alt-bileşeni eklendi. Master admin müşteri panele giremediğinde
+kendi terminaline yapıştırmak üzere `ssh root@customer-server.com "sudo gwsm-update"`
+şablonu üretir. Host input canlı düzenlenebilir, "Kopyala" tek tık.
+
+### 🔔 PIN Ding Sesi
+`/app/frontend/src/hooks/usePinRequestNotifications.js` — WebAudio API ile
+2 tonlu (E5 → G5) kısa ding sesi. Asset yok, extra dependency yok. Yeni PIN
+talebi geldiğinde `playDing()` çağrılır — arka plan sekmede bile master
+duyar. AudioContext otomatik kapanır (bellek sızıntısı yok).
+
+### 📊 Version Change Log Widget (Master-only)
+- Backend: `GET /api/admin/version-changes?hours=N` (server.py ~11624). Son
+  N saatte (1-168) değişen bayı sürümlerini `db.version_changes`
+  koleksiyonundan okur. Response: `{hours, latest_version, total_changes,
+  updated_to_latest, changes[]}`.
+- Heartbeat handler artık `last_heartbeat_version` gerçekten değiştiğinde
+  `db.version_changes.insert_one({...})` yapar. Aynı sürüm tekrarında yeni
+  kayıt DÜŞMEZ (idempotent).
+- Frontend: `/app/frontend/src/components/VersionChangeLogWidget.js`.
+  Dashboard "Overview" tabında master-only olarak render edilir. 30sn
+  polling. Time range switcher: 6sa / 24sa / 3g / 7g.
+
+### 📄 UNINSTALL_AND_REINSTALL.md
+`/app/whm-plugin/UNINSTALL_AND_REINSTALL.md` — müşteri sunucusunda sıfırdan
+temiz kurulum için adım-adım komut kılavuzu. Kaldırma (uninstall) →
+install.sh çalıştır → heartbeat tetikle → master panelde doğrula.
+
+### ⏸ Skipped: server.py Refactor
+12.5k satırlık `server.py`'yi routes/ altına parçalama işi bu session'da
+YAPILMADI — risk/fayda dengesi göz önünde bulunduruldu. Kullanıcı temiz
+reinstall testi yapmak istiyor; bu refactor gelecek session'a ertelendi.
+Yeni route'lar (`admin_version_changes`) direkt server.py'ye eklendi.
 
 
 
