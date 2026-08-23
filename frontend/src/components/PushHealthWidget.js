@@ -6,7 +6,7 @@
  * Her bayinin (veya master'ın kendi sunucusunun) son Exim push zamanını
  * renk kodlu gösterir.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, AlertCircle, CheckCircle2, Clock, Copy, X, Terminal } from "lucide-react";
 import { Card } from "@/components/ui-primitives";
@@ -22,12 +22,12 @@ const fmtSince = (isoStr) => {
 };
 
 const healthTier = (isoStr) => {
-  if (!isoStr) return { tone: "rose", label: "Push YOK", icon: AlertCircle, help: "gws-simple-push timer kurulmamış" };
+  if (!isoStr) return { tone: "rose", label: "Push YOK", icon: AlertCircle, help: "Push servisleri henüz kurulmadı — 'Onar' butonuna basın" };
   const s = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
   if (s < 15) return { tone: "emerald", label: "SAĞLIKLI", icon: CheckCircle2, help: "Real-time akış aktif · <15sn" };
-  if (s < 60) return { tone: "yellow", label: "YAVAŞ", icon: Clock, help: "10sn timer'dan biraz uzun · normal olabilir" };
-  if (s < 300) return { tone: "orange", label: "GECİKMİŞ", icon: Clock, help: "Timer çalışıyor mu? systemctl status gws-simple-push.timer" };
-  return { tone: "rose", label: "PUSH DURDU", icon: AlertCircle, help: "Script/timer yeniden kurulmalı — fix-all.sh çalıştırın" };
+  if (s < 60) return { tone: "yellow", label: "YAVAŞ", icon: Clock, help: "Timer'dan biraz uzun · normal olabilir" };
+  if (s < 300) return { tone: "orange", label: "GECİKMİŞ", icon: Clock, help: "Push timer'ı yavaşladı — 'Onar' ile yeniden kurun" };
+  return { tone: "rose", label: "PUSH DURDU", icon: AlertCircle, help: "Push servisi durdu — 'Onar' butonuyla yeniden kurun" };
 };
 
 const toneCls = (tone) => {
@@ -93,11 +93,31 @@ function PushOnarModal({ onClose }) {
   const [copied, setCopied] = useState(false);
   const cmd = "sudo gwsm-update";
   const doCopy = () => {
-    navigator.clipboard.writeText(cmd);
-    setCopied(true);
-    toast.success("Komut kopyalandı — sunucunuzda root olarak yapıştırın");
-    setTimeout(() => setCopied(false), 2500);
+    try {
+      navigator.clipboard.writeText(cmd);
+      setCopied(true);
+      toast.success("Komut kopyalandı — sunucunuzda root olarak yapıştırın");
+      setTimeout(() => setCopied(false), 2500);
+    } catch (_) {
+      toast.error("Kopyalama başarısız — komutu manuel seçip kopyalayın");
+    }
   };
+  // v44.00.09 — Modal açılınca komutu otomatik clipboard'a kopyala (tek adım UX)
+  useEffect(() => {
+    // Küçük gecikme ile ki toast öncesi modal render bitsin
+    const t = setTimeout(() => {
+      try {
+        navigator.clipboard.writeText(cmd).then(() => {
+          setCopied(true);
+          toast.success("✓ Komut otomatik kopyalandı — sunucunuza yapıştırın (Ctrl+V)", {
+            duration: 4000,
+          });
+          setTimeout(() => setCopied(false), 3000);
+        }).catch(() => { /* clipboard izni yok — sessizce geç */ });
+      } catch (_) { /* eski tarayıcı — sessizce geç */ }
+    }, 300);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <div
       className="fixed inset-0 z-[90] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4"

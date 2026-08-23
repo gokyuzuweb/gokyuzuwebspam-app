@@ -1,0 +1,23 @@
+{
+  "summary": "v44.00.09 heartbeat → exim_logtail_pos.last_push_at sync FIX verified. 13/13 new + 38/38 regression = 51/51 backend tests PASS. Confirmed: POST /api/plugin/heartbeat with bayi MS-TESTBAYI-STARTER-V4371 (IP 203.0.113.42 added to allowed_ips) returns 200 AND writes MongoDB settings doc {_key:'exim_logtail_pos:MS-TESTBAYI-STARTER-V4371', last_push_at: <within 10s>, last_push_source: 'heartbeat'}. GET /api/outbound/stats with bayi key returns non-null last_push_at ISO string (widget now goes green). Tarball /api/plugin/download contains install.sh with gws-simple-push mentioned 6 times, includes 'systemctl enable --now gws-simple-push.timer' AND 'gws-exim-push.timer' AND VERSION file = v44.00.09. Widget help text updated ('Push servisleri henüz kurulmadı — Onar butonuna basın'). Regressions green: signal-log (bayi 403, master 200), offline-resellers (bayi 403, master 200), SMTP tenant-scoped (both 200), pin-approvals/export (bayi 403, master 200 with UTF-8 BOM). v44.00.04 + v44.00.06 + v44.00.07 suites all still pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_v44_00_09_heartbeat_push_sync.py",
+    "/app/test_reports/pytest/iter59_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py at 12,485 lines — the heartbeat handler at line 7090-7108 nicely wraps the exim_logtail_pos write in try/except so DB error can't break heartbeat 200. Good defensive coding.",
+    "Consider indexing settings._key — the exim_logtail_pos:{license_key} lookup is now on the hot heartbeat path (every 5min per bayi). If bayi count grows, add an index on {_key:1}.",
+    "test_v44_00_09 has one PytestRemovedIn10 warning about class-scoped fixture as instance method — cosmetic, will still work in pytest 9.x."
+  ],
+  "updated_files": ["/app/backend/tests/test_v44_00_09_heartbeat_push_sync.py"],
+  "success_rate": {"backend": "100% (51/51)", "frontend": "skipped per request"},
+  "test_credentials": "Master X-Master-Key: MS-C02AB012652A4FE692D69676; Reseller: MS-TESTBAYI-STARTER-V4371 (with 203.0.113.42 in allowed_ips — restored after tests)",
+  "seed_data_creation": "Autouse module fixture adds 203.0.113.42 to bayi ip_addresses and cleans up (restore original list + delete test exim_logtail_pos row) at teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_v44_00_09_heartbeat_push_sync.py verifies: (a) heartbeat writes exim_logtail_pos.last_push_at with source='heartbeat' via direct Mongo query, (b) /outbound/stats.last_push_at populated after heartbeat, (c) tarball download contains updated install.sh with gws-simple-push + VERSION=v44.00.09, (d) all v44.00.04/06/07 regressions. Use `active_domains: 0` in heartbeat payload to avoid domain_limit_exceeded on bayi with max_domains=0. Fixture requires pymongo direct DB access (MONGO_URL=mongodb://localhost:27017, DB_NAME=test_database).",
+  "rca of the issue": "Customer reported v44.00.08 didn't fix 'gws-simple-push timer kurulmamış' because widget checked exim_logtail_pos.last_push_at (populated ONLY by gws-exim-push actually pushing exim logs) — but gws-simple-push only calls /api/plugin/heartbeat which was ONLY writing licenses.last_heartbeat_at, never touching exim_logtail_pos. Fix (server.py lines 7092-7108): heartbeat handler now upserts settings:{_key:exim_logtail_pos:{key}} with last_push_at=now and last_push_source='heartbeat'. Result: widget goes green within 5 min of gws-simple-push.timer firing even before real exim push data arrives. Verified via direct DB read + /outbound/stats API."
+}

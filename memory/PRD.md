@@ -15,6 +15,55 @@ gokyuzuhosting.com.
 
 
 
+## Feb 22, 2026 (Session 23, v44.00.10) — "gws-simple-push kurulmamış" persistent bug FIX + Onar Auto-Copy + PIN Push Notif
+
+### 🐛 CRITICAL FIX (user reported — persistent from v44.00.08)
+**"Müşteride hala 'gws-simple-push timer kurulmamış' yazıyor"**.
+
+**Root cause (testing_agent RCA)**: `PushHealthWidget` `outbound/stats.last_push_at` alanını okuyordu — bu alan sadece `gws-exim-push` script'i (Exim log push) tarafından yazılıyordu, `gws-simple-push` (heartbeat) tarafından değil. Yani bayı sunucusunda `gws-simple-push.timer` KURULU olsa bile widget "Push YOK" gösteriyordu — yardım metni de yanıltıcı biçimde `gws-simple-push` yazıyordu.
+
+**Fix (testing_agent 51/51 pass ile doğrulandı — iteration_59.json)**:
+- `/api/plugin/heartbeat` handler (server.py ~7095) artık `settings.{_key:exim_logtail_pos:{key}}.last_push_at` alanına da yazıyor + `last_push_source='heartbeat'` ile ayırt ediyor. Böylece `gws-simple-push.timer` 5dk'da bir çalıştıkça widget yeşile döner — gerçek Exim push verisi gelmeden bile.
+- `PushHealthWidget` yardım metinleri "gws-simple-push timer kurulmamış" → "Push servisleri henüz kurulmadı — Onar butonuna basın" (yanıltıcı özel-servis-ismi kaldırıldı).
+- **Bonus**: `settings._key` üzerine MongoDB index eklendi (heartbeat hot-path optimizasyonu).
+
+### 🎁 UX ENHANCEMENTS (session'ın kalanı)
+- **Onar Modal Auto-Copy** (v44.00.09): `PushOnarModal` açılınca `sudo gwsm-update` clipboard'a otomatik kopyalanıyor (300ms delay).
+- **PIN Onay Browser Push Notif** (v44.00.09): `usePinRequestNotifications` hook — master ilk mount'ta izin sorar, 30sn polling'de yeni pending gördükçe `new Notification(...)` masaüstü bildirimi + sonner toast.
+- **Feature Flag CI Guard** (v44.00.08): `.github/workflows/feature-flags.yml`.
+- **Bayı auto-deactivation** (v44.00.08): 30+ gün heartbeat yoksa `active=false` cron.
+- **OfflineResellersAlert widget** (v44.00.08).
+
+### Version bump
+- `v44.00.09 → v44.00.10` — plus DB index optimization.
+
+### Testing
+- **testing_agent iteration_59.json: 51/51 PASS (13 new + 38 regression)**. DB doğrudan doğrulama + tarball extract kontrolü + tüm v44 regresyonları green.
+
+
+
+## Feb 22, 2026 (Session 23, v44.00.09) — Onar Auto-Copy + PIN Push Notification
+
+### 🎁 UX ENHANCEMENTS
+1. **Onar Modal Auto-Copy**: `PushOnarModal` açıldığında `sudo gwsm-update` komutu **otomatik olarak clipboard'a kopyalanıyor** (`useEffect` + 300ms delay). Kullanıcı "Kopyala" butonuna basmadan direkt sunucusuna `Ctrl+V` yapabilir. Fallback: clipboard izni yoksa sessizce geçer.
+
+2. **PIN Onay Browser Push Bildirim**: Yeni `usePinRequestNotifications` hook (`/hooks/usePinRequestNotifications.js`). Master için:
+   - İlk mount'ta 3sn gecikmeyle `Notification.requestPermission()` çağırıyor (bir kez).
+   - `pinApprovalPending()` 30sn polling'de yeni pending kayıt gördüğünde:
+     - Sonner in-panel toast (15sn, "Onaya Git" action)
+     - `new Notification(...)` masaüstü bildirimi (`requireInteraction: true` — master tıklayana kadar kalır)
+     - Bildirime tıklanınca `/panel/settings`'e navigate
+   - Hafif: service worker, VAPID veya subscription DB yok — sadece açık sekme için çalışıyor (MVP).
+   - `Header.js`'de global mount edildi.
+
+### Version bump
+- `v44.00.08 → v44.00.09`.
+
+### Testing
+- Feature flag suite **4/4 green**. Frontend smoke screenshot: v44.00.09 header, `1 PIN Bekliyor` badge görünüyor, Kişisel Koruma Panosu + Kurulum Sihirbazı render OK.
+
+
+
 ## Feb 22, 2026 (Session 23, v44.00.08) — "Onar" tek-komut fix + 4 P1 items
 
 ### 🐛 CRITICAL FIX (user reported)

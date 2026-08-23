@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import ThreatAlertBell from "@/components/ThreatAlertBell";
 import SlashCommandBar from "@/components/SlashCommandBar";
 import { ImpersonatePicker } from "@/components/Impersonate";
+import usePinRequestNotifications from "@/hooks/usePinRequestNotifications";
 
 // v43.91/93 — Pending PIN Approval floating badge (master-only) + soft chime
 function PinPendingBadge() {
@@ -235,6 +236,8 @@ function MasterUpdatePush() {
 }
 
 export default function Header({ title }) {
+  // v44.00.09 — Master için PIN talep browser Push bildirim hook'u
+  usePinRequestNotifications();
   return <HeaderMain title={title} />;
 }
 
