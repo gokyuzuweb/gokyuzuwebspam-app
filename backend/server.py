@@ -7089,6 +7089,28 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
             except Exception:
                 pass
 
+    # v44.00.11 — PUSH SAĞLIĞI TRACKING: license found ise IP mismatch olsa
+    # BILE `exim_logtail_pos.last_push_at` alanını daima güncelle. Bu bir
+    # güvenlik gate'i değil, "müşteri sunucusu master'a erişebiliyor" izleme
+    # sinyalidir. Aksi halde PushHealthWidget "PUSH YOK" gösterir çünkü
+    # `hostname -I` private IP döndüren cPanel sunucularda heartbeat 403 alır
+    # ve last_push_at hiç yazılmaz.
+    if lic:
+        try:
+            await db.settings.update_one(
+                {"_key": f"exim_logtail_pos:{payload.license_key}"},
+                {"$set": {
+                    "_key": f"exim_logtail_pos:{payload.license_key}",
+                    "license_key": payload.license_key,
+                    "hostname": payload.hostname or "",
+                    "last_push_at": _iso(),
+                    "last_push_source": "heartbeat",
+                }},
+                upsert=True,
+            )
+        except Exception:
+            pass
+
     if reason:
         v = LicenseViolation(
             ip=payload.ip,
@@ -7128,23 +7150,9 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
         {"license_key": payload.license_key},
         {"$set": _hb_set},
     )
-    # v44.00.10 — Heartbeat de exim_logtail_pos.last_push_at yazsın ki
-    # PushHealthWidget "PUSH YOK" göstermesin. Böylece gws-simple-push kurulup
-    # gws-exim-push henüz veri göndermemişse bile widget yeşile döner.
-    try:
-        await db.settings.update_one(
-            {"_key": f"exim_logtail_pos:{payload.license_key}"},
-            {"$set": {
-                "_key": f"exim_logtail_pos:{payload.license_key}",
-                "license_key": payload.license_key,
-                "hostname": payload.hostname or "",
-                "last_push_at": _iso(),
-                "last_push_source": "heartbeat",
-            }},
-            upsert=True,
-        )
-    except Exception:
-        pass
+    # v44.00.11 — exim_logtail_pos artık if reason kontrolünden ÖNCE yazılıyor
+    # (yukarı bkz.). Bu blok kaldırıldı — hem success hem IP mismatch senaryosunda
+    # PushHealthWidget yeşile döner.
     # v44.00.01 — Log farklı browser IP'lerini
     if browser_ip:
         await db.logs.insert_one(ActivityLog(
