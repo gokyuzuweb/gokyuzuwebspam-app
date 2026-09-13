@@ -10,6 +10,10 @@ Group=mailshield
 ExecStart=/usr/bin/perl /usr/local/mailshield/bin/mailshield-milter.pl
 Restart=on-failure
 RestartSec=5
+# v44.00.12 — Sonsuz restart döngüsünü durdur. 60 sn içinde 5 kez çökerse
+# servisi devre dışı bırak (Perl modülü eksikse 28k+ restart olmasın).
+StartLimitInterval=60
+StartLimitBurst=5
 
 # Güvenlik: sadece localhost'ta dinler; Exim'e milter=inet:127.0.0.1:33333 satırı
 # elle eklenene kadar hiçbir e-posta akışına dokunmaz.

@@ -97,6 +97,42 @@ run "cp -n  '$SRC/mailshieldctl'                 '$INSTALL_DIR/bin/mailshieldctl
 run "chmod +x '$INSTALL_DIR/bin/'*"
 run "ln -sfn '$INSTALL_DIR/bin/mailshieldctl' /usr/local/sbin/mailshieldctl"
 
+# v44.00.12 — Perl bağımlılıkları (milter için kritik). Sendmail::PMilter
+# yoksa mailshield-milter.service sonsuz döngüde çöker. Kurulum sırasında
+# otomatik yükle; hata olsa bile kurulum devam etsin (opt-in servis).
+echo "==> Perl bağımlılıkları kontrol ediliyor (Sendmail::PMilter, JSON::XS, LWP)"
+_perl_check() { perl -M"$1" -e '1' 2>/dev/null; }
+_MISSING_MODS=()
+for _mod in "Sendmail::PMilter" "JSON::XS" "LWP::UserAgent" "HTTP::Request"; do
+  if ! _perl_check "$_mod"; then _MISSING_MODS+=("$_mod"); fi
+done
+if [[ ${#_MISSING_MODS[@]} -gt 0 ]] && [[ $DRY_RUN -eq 0 ]]; then
+  echo "    Eksik modüller: ${_MISSING_MODS[*]}"
+  # 1) Paket yöneticisi (en hızlı, cPanel/AlmaLinux repo'da varsa)
+  if command -v dnf >/dev/null; then
+    dnf install -y perl-Sendmail-PMilter perl-JSON-XS perl-libwww-perl 2>/dev/null || true
+  elif command -v yum >/dev/null; then
+    yum install -y perl-Sendmail-PMilter perl-JSON-XS perl-libwww-perl 2>/dev/null || true
+  fi
+  # 2) CPAN fallback — kalan modülleri kur
+  for _mod in "${_MISSING_MODS[@]}"; do
+    if ! _perl_check "$_mod"; then
+      echo "    → CPAN üzerinden $_mod kuruluyor (birkaç dakika sürebilir)..."
+      cpan -T "$_mod" 2>&1 | tail -3 || true
+    fi
+  done
+  # 3) Doğrula
+  for _mod in "${_MISSING_MODS[@]}"; do
+    if _perl_check "$_mod"; then
+      echo "    ✓ $_mod"
+    else
+      echo "    ✗ $_mod HALA YÜKLENMEDİ — milter çalışmayacak"
+    fi
+  done
+else
+  echo "    ✓ Tüm Perl modülleri hazır"
+fi
+
 echo "==> [4/9] WHM CGI proxy kuruluyor (force-overwrite, root:root)"
 # Önceki hatalı sahipliği tamir et
 run "chown -R root:root '$CGI_DIR'"
