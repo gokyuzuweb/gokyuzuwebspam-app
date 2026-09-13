@@ -1,16 +1,18 @@
 """v43.99.18 — Kurulum Rehberi PDF için ekran görüntüsü yönetimi.
 
 Master 8 adım için WHM/panel ekran görüntülerini yükleyebilir.
-Görseller /app/uploads/install_screenshots/step-{N}.png olarak saklanır.
-PDF üretimi bu dosyaları varsa mockup yerine kullanır.
+v44.00.13 — Görseller MongoDB `install_screenshots` koleksiyonunda base64
+olarak saklanır (pod-ephemeral disk yerine — deploy-safe).
+PDF üretimi bu binary'leri varsa mockup yerine kullanır.
 """
 from __future__ import annotations
+import base64
 import os
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
+from fastapi.responses import Response
 from motor.motor_asyncio import AsyncIOMotorClient
 
 _client = AsyncIOMotorClient(os.environ["MONGO_URL"])
@@ -19,9 +21,8 @@ MASTER_LICENSE_KEY = os.environ.get("MASTER_LICENSE_KEY", "")
 
 router = APIRouter(prefix="/install-screenshots", tags=["install-screenshots"])
 
-UPLOAD_DIR = Path("/app/uploads/install_screenshots")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_EXT = {"png", "jpg", "jpeg", "webp"}
+_MEDIA = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
 MAX_SIZE = 5 * 1024 * 1024  # 5 MB
 
 
@@ -39,39 +40,46 @@ def _is_master(request: Request) -> bool:
     return bool(MASTER_LICENSE_KEY and k == MASTER_LICENSE_KEY)
 
 
+async def _invalidate_pdf_cache():
+    # PDF cache doc'ları MongoDB'de tutuluyorsa geçersiz kıl (v44.00.13 sonrası)
+    try:
+        await db.pdf_cache.delete_many({"key": {"$regex": "^install-guide-"}})
+    except Exception:
+        pass
+
+
 @router.get("")
 async def list_screenshots():
-    """Herkese açık: 8 adım için yüklenmiş ekran görüntülerini listeler.
-    URL'ler /api/install-screenshots/file/{step_id} — kendi backend endpoint'imiz serve eder."""
+    """Herkese açık: 8 adım için yüklenmiş ekran görüntülerini listeler."""
     result = {}
-    for i in range(1, 9):
-        for ext in ["png", "jpg", "jpeg", "webp"]:
-            fp = UPLOAD_DIR / f"step-{i}.{ext}"
-            if fp.exists():
-                result[str(i)] = {
-                    "url": f"/api/install-screenshots/file/{i}",
-                    "size_kb": round(fp.stat().st_size / 1024, 1),
-                    "ext": ext,
-                    "uploaded_at": datetime.fromtimestamp(
-                        fp.stat().st_mtime, tz=timezone.utc
-                    ).isoformat(),
-                }
-                break
+    async for doc in db.install_screenshots.find({}, {"data_b64": 0}):
+        sid = str(doc.get("step_id"))
+        result[sid] = {
+            "url": f"/api/install-screenshots/file/{sid}",
+            "size_kb": doc.get("size_kb", 0),
+            "ext": doc.get("ext", "png"),
+            "uploaded_at": doc.get("uploaded_at"),
+        }
     return {"screenshots": result, "count": len(result)}
 
 
 @router.get("/file/{step_id}")
 async def serve_screenshot(step_id: int):
     """Yüklenmiş ekran görüntüsünü döner (public)."""
-    from fastapi.responses import FileResponse
     if not (1 <= step_id <= 8):
         raise HTTPException(400, "step_id 1-8")
-    for ext in ALLOWED_EXT:
-        fp = UPLOAD_DIR / f"step-{step_id}.{ext}"
-        if fp.exists():
-            media = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}[ext]
-            return FileResponse(fp, media_type=media, headers={"Cache-Control": "public, max-age=300"})
-    raise HTTPException(404, "Bu adım için henüz görüntü yüklenmedi")
+    doc = await db.install_screenshots.find_one({"step_id": step_id})
+    if not doc:
+        raise HTTPException(404, "Bu adım için henüz görüntü yüklenmedi")
+    try:
+        raw = base64.b64decode(doc["data_b64"])
+    except Exception:
+        raise HTTPException(500, "Bozuk kayıt")
+    return Response(
+        content=raw,
+        media_type=_MEDIA.get(doc.get("ext", "png"), "image/png"),
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @router.post("/upload")
@@ -80,7 +88,7 @@ async def upload_screenshot(
     step_id: int = Form(...),
     file: UploadFile = File(...),
 ):
-    """Master: bir adım için ekran görüntüsü yükler."""
+    """Master: bir adım için ekran görüntüsü yükler (MongoDB'ye kaydeder)."""
     if not _is_master(request):
         raise HTTPException(403, "Sadece master")
     if not (1 <= step_id <= 8):
@@ -96,22 +104,19 @@ async def upload_screenshot(
     if len(contents) < 100:
         raise HTTPException(400, "Dosya çok küçük veya boş")
 
-    # Aynı adım için diğer format dosyalarını sil
-    for e in ALLOWED_EXT:
-        old = UPLOAD_DIR / f"step-{step_id}.{e}"
-        if old.exists() and e != ext:
-            old.unlink()
+    await db.install_screenshots.update_one(
+        {"step_id": step_id},
+        {"$set": {
+            "step_id": step_id,
+            "ext": ext,
+            "size_kb": round(len(contents) / 1024, 1),
+            "data_b64": base64.b64encode(contents).decode("ascii"),
+            "uploaded_at": _iso(),
+        }},
+        upsert=True,
+    )
 
-    target = UPLOAD_DIR / f"step-{step_id}.{ext}"
-    target.write_bytes(contents)
-
-    # PDF cache'i geçersiz kıl (yeni resmi bekleyeceğiz)
-    for lang_suf in ["", "-EN", "-AR"]:
-        for cache_dir in ["/app", "/app/backend"]:
-            cache = Path(f"{cache_dir}/GokyuzuWebSpam-Kurulum-Rehberi-v43.99{lang_suf}.pdf")
-            if cache.exists():
-                try: cache.unlink()
-                except Exception: pass
+    await _invalidate_pdf_cache()
 
     try:
         await db.audit_logs.insert_one({
@@ -140,22 +145,9 @@ async def delete_screenshot(step_id: int, request: Request):
     if not (1 <= step_id <= 8):
         raise HTTPException(400, "step_id 1-8")
 
-    deleted = False
-    for ext in ALLOWED_EXT:
-        fp = UPLOAD_DIR / f"step-{step_id}.{ext}"
-        if fp.exists():
-            fp.unlink()
-            deleted = True
+    r = await db.install_screenshots.delete_one({"step_id": step_id})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Silinecek kayıt yok")
 
-    if not deleted:
-        raise HTTPException(404, "Silinecek dosya yok")
-
-    # Cache'i geçersiz kıl
-    for lang_suf in ["", "-EN", "-AR"]:
-        for cache_dir in ["/app", "/app/backend"]:
-            cache = Path(f"{cache_dir}/GokyuzuWebSpam-Kurulum-Rehberi-v43.99{lang_suf}.pdf")
-            if cache.exists():
-                try: cache.unlink()
-                except Exception: pass
-
+    await _invalidate_pdf_cache()
     return {"ok": True, "step_id": step_id}
