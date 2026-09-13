@@ -1,0 +1,96 @@
+#!/usr/bin/env perl
+# GökyüzüWebSpam — Exim system_filter köprüsü (v44.00.14)
+# ═════════════════════════════════════════════════════════════
+# Exim system_filter her mail delivery ÖNCESİ bu script'i çağırır.
+# Mesajı /var/spool/exim/input'tan okur, mailshield engine'e HTTP POST
+# atar, verdict alır ve STDOUT'a yazar: "clean" | "spam" | "high_spam"
+#
+# Kullanım (system_filter'dan):
+#   ${run{/usr/local/mailshield/bin/mailshield-verdict $message_id}}
+#
+# Timeout: 5 sn (mail flow yavaşlamasın)
+# Fail-safe: hata → "clean" döner (mail engellenmez)
+
+use strict;
+use warnings;
+use LWP::UserAgent;
+use HTTP::Request;
+use File::Slurp qw(read_file);
+use JSON::XS qw(encode_json decode_json);
+
+my $msg_id = $ARGV[0] || $ENV{message_id} || '';
+if ($msg_id !~ /^[A-Za-z0-9\-]+$/) {
+    print "clean";
+    exit 0;
+}
+
+# Exim spool klasörü — cPanel default
+my @spool_dirs = ("/var/spool/exim/input");
+# split_spool_directory=yes ise mesaj 6. karakterin dizinine düşer
+my $sub = substr($msg_id, 5, 1);
+push @spool_dirs, "/var/spool/exim/input/$sub" if $sub;
+
+my ($hdr_file, $body_file);
+for my $dir (@spool_dirs) {
+    my $h = "$dir/${msg_id}-H";
+    my $d = "$dir/${msg_id}-D";
+    if (-r $h && -r $d) {
+        $hdr_file = $h;
+        $body_file = $d;
+        last;
+    }
+}
+unless ($hdr_file && $body_file) {
+    print "clean";
+    exit 0;
+}
+
+# İçeriği oku (ilk 200KB yeter — spam analizi için)
+my $headers = eval { read_file($hdr_file) } || "";
+my $body    = eval { read_file($body_file) } || "";
+$body = substr($body, 0, 200_000);
+
+# Basit parse — Subject, From, To
+my ($subject, $from_addr, $to_addr) = ("", "", "");
+if ($headers =~ /^\d+\s+Subject:\s*(.+)$/mi) { $subject = $1; $subject =~ s/\s+$//; }
+if ($headers =~ /^\d+\s+From:\s*(.+)$/mi)    { $from_addr = $1; $from_addr =~ s/\s+$//; }
+if ($headers =~ /^\d+\s+To:\s*(.+)$/mi)      { $to_addr = $1; $to_addr =~ s/\s+$//; }
+
+# Config'ten license_key ve server_url oku
+my $lic = "";
+my $srv = "http://127.0.0.1:8001";
+if (open(my $fh, "<", "/etc/mailshield/mailshield.conf")) {
+    while (my $l = <$fh>) {
+        if ($l =~ /^\s*key\s*=\s*"?([A-Z0-9\-]+)"?\s*$/i)          { $lic = $1; }
+        if ($l =~ /^\s*server_url\s*=\s*"?(https?:\/\/[^"\s]+)"?/i) { $srv = $1; }
+    }
+    close($fh);
+}
+
+# HTTP POST → /api/plugin/scan-verdict
+my $ua = LWP::UserAgent->new(timeout => 5, ssl_opts => { verify_hostname => 0 });
+my $payload = encode_json({
+    subject   => $subject,
+    from_addr => $from_addr,
+    to_addr   => $to_addr,
+    body      => $body,
+    headers   => substr($headers, 0, 10_000),
+    license_key => $lic,
+});
+
+my $req = HTTP::Request->new(POST => "$srv/api/plugin/scan-verdict");
+$req->header("Content-Type" => "application/json");
+$req->content($payload);
+my $res = $ua->request($req);
+
+if ($res->is_success) {
+    my $data = eval { decode_json($res->content) };
+    if ($data && $data->{verdict}) {
+        print $data->{verdict};
+        exit 0;
+    }
+}
+
+# Fail-safe
+print "clean";
+exit 0;

@@ -93,9 +93,29 @@ run "cp -n  '$SRC/scripts/quarantine-prune.pl'   '$INSTALL_DIR/bin/quarantine-pr
 run "cp -n  '$SRC/scripts/heartbeat.pl'          '$INSTALL_DIR/bin/heartbeat.pl'"
 # NOTE: logtail is our own file — always force-refresh
 run "install -m 0755 -o root -g root '$SRC/scripts/mailshield-logtail.pl' '$INSTALL_DIR/bin/mailshield-logtail.pl'"
+# v44.00.14 — Panel-authority verdict bridge (Exim system_filter için).
+# Bu script her mail delivery ÖNCESİ mailshield engine'e sorar; sonucu
+# 'clean'|'spam'|'high_spam' string olarak stdout'a basar.
+run "install -m 0755 -o root -g root '$SRC/scripts/mailshield-verdict' '$INSTALL_DIR/bin/mailshield-verdict'"
 run "cp -n  '$SRC/mailshieldctl'                 '$INSTALL_DIR/bin/mailshieldctl'"
 run "chmod +x '$INSTALL_DIR/bin/'*"
 run "ln -sfn '$INSTALL_DIR/bin/mailshieldctl' /usr/local/sbin/mailshieldctl"
+
+# v44.00.14 — Exim system_filter'ı /etc/mailshield'e kopyala ve cPanel'e bildir.
+# cpaneleximfilter user'ı okuyabilecek şekilde izin ayarla.
+run "install -m 0644 -o cpaneleximfilter -g cpaneleximfilter '$SRC/config/exim-system-filter' '$ETC_DIR/exim-system-filter' 2>/dev/null || cp '$SRC/config/exim-system-filter' '$ETC_DIR/exim-system-filter'"
+
+# System filter path'i /etc/exim.conf.localopts'a idempotent olarak ekle
+if [[ -x /usr/local/cpanel/scripts/buildeximconf ]] && [[ $DRY_RUN -eq 0 ]]; then
+  LOCALOPTS=/etc/exim.conf.localopts
+  touch "$LOCALOPTS"
+  sed -i '/^system_filter=/d' "$LOCALOPTS"
+  echo "system_filter=$ETC_DIR/exim-system-filter" >> "$LOCALOPTS"
+  echo "    ✓ Exim system_filter kaydedildi: $ETC_DIR/exim-system-filter"
+  # Filter'ı canlıya al — cPanel exim.conf'u regenerate etsin
+  /usr/local/cpanel/scripts/buildeximconf 2>/dev/null | tail -1 || true
+  /usr/local/cpanel/scripts/restartsrv_exim 2>/dev/null | tail -1 || true
+fi
 
 # v44.00.12 — Perl bağımlılıkları (milter için kritik). Sendmail::PMilter
 # yoksa mailshield-milter.service sonsuz döngüde çöker. Kurulum sırasında

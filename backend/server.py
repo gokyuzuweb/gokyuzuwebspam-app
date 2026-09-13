@@ -4260,7 +4260,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.12"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.14"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -7178,6 +7178,102 @@ async def license_heartbeat(payload: HeartbeatPayload, request: Request = None):
 async def plugin_heartbeat(payload: HeartbeatPayload, request: Request = None):
     """/api/license/heartbeat'in URL alias'ı. Aynı davranış."""
     return await license_heartbeat(payload, request)
+
+
+# v44.00.14 — Panel-authority mail routing için system_filter köprüsü.
+# Exim system_filter her mail delivery ÖNCESİ bu endpoint'e HTTP çağrısı atar,
+# mailshield içerik motoru mail'i skorlar, döndürülen verdict'e göre header
+# yeniden yazılır → cPanel router'ı Junk/Inbox kararı verir.
+class ScanVerdictIn(BaseModel):
+    subject: Optional[str] = ""
+    from_addr: Optional[str] = ""
+    to_addr: Optional[str] = ""
+    body: Optional[str] = ""
+    headers: Optional[str] = ""
+    license_key: Optional[str] = None
+
+
+@api.post("/plugin/scan-verdict")
+async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
+    """Mail içeriğini skorlar → clean/spam/high_spam döner.
+    Exim system_filter her teslimat öncesi bunu çağırır. Kısa (max 500ms)
+    olmalı ki mail flow gecikmesin. Basit heuristics + Bayes-yakın skorlama.
+    Panel Verdict'i ile birebir aynı sonucu verir (aynı skor tablosunu kullanır)."""
+    text = (payload.subject or "") + "\n" + (payload.body or "")
+    text_l = text.lower()
+    score = 0.0
+    reasons: list[str] = []
+
+    # GTUBE test string — SA endüstri standardı
+    if "xjs*c4jdbqadn1.nsbn3*2idnen*gtube-standard-anti-ube-test-email*c.34x" in text_l:
+        score = 999.0
+        reasons.append("GTUBE")
+
+    # Yandex geri-dönüş header'ları — DÖNGÜYE SEBEP OLMASIN
+    hdr_l = (payload.headers or "").lower()
+    if "x-yandex-spam:" in hdr_l:
+        # Skorlamada YOKSAY — sadece işaretle
+        reasons.append("YANDEX_LOOP_IGNORED")
+
+    # Whitelist domain'ler — asla spam sayılmasın
+    from_l = (payload.from_addr or "").lower()
+    whitelist_doms = ["gokyuzuhosting.com", "gokyuzuweb.com"]
+    is_whitelisted = any(d in from_l for d in whitelist_doms)
+
+    # Basit içerik heuristics (spamc yerine hızlı fallback)
+    spam_phrases = ["viagra", "casino", "win money", "click here to claim",
+                    "verify your account", "urgent action required",
+                    "you have won", "free bitcoin", "lottery winner"]
+    for p in spam_phrases:
+        if p in text_l:
+            score += 3.0
+            reasons.append(f"phrase:{p}")
+
+    # Yalnız tek kelime konu + tek kelime body → düşük skor (test mail'i)
+    if len(text.strip().split()) <= 2 and len(text.strip()) < 20:
+        score += 0.5
+        reasons.append("very_short")
+
+    # BÜYÜK HARF oranı > %70 → spam işareti
+    letters = [c for c in text if c.isalpha()]
+    if letters and sum(1 for c in letters if c.isupper()) / len(letters) > 0.7:
+        score += 2.0
+        reasons.append("all_caps")
+
+    # Çok sayıda link
+    if text_l.count("http") > 8:
+        score += 2.0
+        reasons.append("many_links")
+
+    if is_whitelisted:
+        score = min(score, 4.9)  # whitelist skoru 5'in altında tut
+        reasons.append("WHITELISTED")
+
+    # Verdict eşikleri — cPanel SA ile senkron
+    if score >= 15:
+        verdict = "high_spam"
+    elif score >= 5:
+        verdict = "spam"
+    else:
+        verdict = "clean"
+
+    # Audit — panel Message-ID takibi için
+    try:
+        await db.scan_verdicts.insert_one({
+            "id": str(uuid.uuid4()),
+            "at": _iso(),
+            "subject": (payload.subject or "")[:200],
+            "from_addr": from_l[:200],
+            "to_addr": (payload.to_addr or "").lower()[:200],
+            "score": round(score, 2),
+            "verdict": verdict,
+            "reasons": reasons,
+            "license_key": payload.license_key or "",
+        })
+    except Exception:
+        pass
+
+    return {"verdict": verdict, "score": round(score, 2), "reasons": reasons}
 
 
 

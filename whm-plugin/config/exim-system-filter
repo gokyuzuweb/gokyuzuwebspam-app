@@ -1,0 +1,40 @@
+# GökyüzüWebSpam Exim System Filter (v44.00.14)
+# ══════════════════════════════════════════════════════════════
+# Bu filter cPanel'in default system_filter'ından SONRA çalışır.
+# Her mail delivery ÖNCESİ mailshield engine'e sorup verdict alır,
+# X-Spam-* header'larını Panel verdict'e göre yeniden yazar.
+#
+# cPanel yeniden yükleme yaparsa (buildeximconf) bu satır yeniden
+# eklenmesi için /etc/exim.conf.localopts'a `system_filter=` girer.
+# ══════════════════════════════════════════════════════════════
+
+# 1) Var olan spam header'larını sıfırla — panel karar veriyor artık
+headers remove X-Spam-Status
+headers remove X-Spam-Flag
+headers remove X-Spam-Bar
+headers remove X-Spam-Score
+headers remove X-Spam-Subject
+headers remove X-GWS-Verdict
+
+# 2) Mailshield engine'e sor
+if "${run{/usr/local/mailshield/bin/mailshield-verdict $message_id}}" is "high_spam"
+then
+  headers add "X-GWS-Verdict: HIGH_SPAM"
+  headers add "X-Spam-Flag: YES"
+  headers add "X-Spam-Status: Yes, score=99, by GokyuzuWebSpam"
+  headers add "X-Spam-Bar: ++++++++++"
+endif
+
+if "${run{/usr/local/mailshield/bin/mailshield-verdict $message_id}}" is "spam"
+then
+  headers add "X-GWS-Verdict: SPAM"
+  headers add "X-Spam-Flag: YES"
+  headers add "X-Spam-Status: Yes, score=15, by GokyuzuWebSpam"
+  headers add "X-Spam-Bar: +++++"
+endif
+
+if "${run{/usr/local/mailshield/bin/mailshield-verdict $message_id}}" is "clean"
+then
+  headers add "X-GWS-Verdict: CLEAN"
+  # X-Spam-Flag YOK → cPanel virtual_user_spam router Junk'a atmaz → Inbox ✓
+endif
