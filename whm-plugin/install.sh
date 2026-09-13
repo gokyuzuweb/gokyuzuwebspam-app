@@ -103,16 +103,16 @@ run "ln -sfn '$INSTALL_DIR/bin/mailshieldctl' /usr/local/sbin/mailshieldctl"
 echo "==> Perl bağımlılıkları kontrol ediliyor (Sendmail::PMilter, JSON::XS, LWP)"
 _perl_check() { perl -M"$1" -e '1' 2>/dev/null; }
 _MISSING_MODS=()
-for _mod in "Sendmail::PMilter" "JSON::XS" "LWP::UserAgent" "HTTP::Request"; do
+for _mod in "Sendmail::PMilter" "JSON::XS" "LWP::UserAgent" "HTTP::Request" "IPC::Run3" "File::Slurp" "Digest::MD5" "Net::DNS"; do
   if ! _perl_check "$_mod"; then _MISSING_MODS+=("$_mod"); fi
 done
 if [[ ${#_MISSING_MODS[@]} -gt 0 ]] && [[ $DRY_RUN -eq 0 ]]; then
   echo "    Eksik modüller: ${_MISSING_MODS[*]}"
   # 1) Paket yöneticisi (en hızlı, cPanel/AlmaLinux repo'da varsa)
   if command -v dnf >/dev/null; then
-    dnf install -y perl-Sendmail-PMilter perl-JSON-XS perl-libwww-perl 2>/dev/null || true
+    dnf install -y perl-Sendmail-PMilter perl-JSON-XS perl-libwww-perl perl-IPC-Run3 perl-File-Slurp perl-Digest-MD5 perl-Net-DNS 2>/dev/null || true
   elif command -v yum >/dev/null; then
-    yum install -y perl-Sendmail-PMilter perl-JSON-XS perl-libwww-perl 2>/dev/null || true
+    yum install -y perl-Sendmail-PMilter perl-JSON-XS perl-libwww-perl perl-IPC-Run3 perl-File-Slurp perl-Digest-MD5 perl-Net-DNS 2>/dev/null || true
   fi
   # 2) CPAN fallback — kalan modülleri kur
   for _mod in "${_MISSING_MODS[@]}"; do

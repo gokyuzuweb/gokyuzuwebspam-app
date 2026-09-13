@@ -68,7 +68,10 @@ sub run {
         },
     );
     $milter->register('mailshield', \%cb, SMFI_CURR_ACTS);
-    $milter->main('inet:33333@127.0.0.1');
+    # v44.00.13 — Modern Sendmail::PMilter API: önce setconn, sonra main.
+    # Eski `main('inet:port@host')` argümanı yoksayılıyordu → "socket not bound"
+    $milter->setconn('inet:33333@127.0.0.1');
+    $milter->main;
 }
 
 sub _report_saas {
