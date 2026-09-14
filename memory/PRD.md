@@ -3649,3 +3649,22 @@ cPanel `LocalSocket /run/clamav/clamd.sock` — probe path'e eklendi + systemd u
 ```bash
 cd /root && curl -sSL https://panel.gokyuzuhosting.com/api/plugin/download -o gws.tar.gz && tar -xzf gws.tar.gz && cd gokyuzuwebspam && bash install.sh && systemctl restart mailshield-logtail
 ```
+
+
+
+## Feb 15, 2026 — v44.00.20 (part 3) — Whitelist UI Sync + IOC Daily Cron
+
+### 🐛 Bug: Whitelist UI'da görünmüyor
+`/api/plugin/trusted-domains` `db.trusted_domains`'e yazıyordu, Master Panel "Beyaz Liste" UI `db.lists`'ten okuyordu → senkron değildi.
+
+### 🛠 Fix — Bi-directional Sync
+1. `POST /plugin/trusted-domains` her iki koleksiyona yazar
+2. `DELETE` her ikisinden siler
+3. `scan-verdict` her iki koleksiyondan okur
+4. Startup task `_migrate_trusted_domains_to_lists()` mevcut kayıtları migrate eder
+Log: `trusted_domains→lists migration: 2 entries synced`
+
+### 🆕 IOC Domain Extract — Günlük Otomatik
+`_daily_ioc_domain_extract_task()` her sabah 04:00 UTC (07:00 TR) URL feed'lerinden Domain IOC'lar çıkartır. Idempotent (`settings.ioc_domain_extract_last_run` dedupe).
+
+### 🧪 Tests — 13/13 ✅ `test_v44_00_20_sync_and_cron.py`

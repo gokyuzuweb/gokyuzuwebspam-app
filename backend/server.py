@@ -740,6 +740,7 @@ async def _startup() -> None:
     asyncio.create_task(_license_expiry_alerts_task())
     asyncio.create_task(_daily_digest_task())  # v44.00.20 — daily ÇELİŞKİ digest
     asyncio.create_task(_migrate_trusted_domains_to_lists())  # v44.00.20 — one-time UI sync
+    asyncio.create_task(_daily_ioc_domain_extract_task())  # v44.00.20 — günlük URL→domain çıkarma
     asyncio.create_task(_pos_health_monitor_task())
     asyncio.create_task(_daily_violations_cleanup_task())
     asyncio.create_task(_threat_ratio_monitor_task())
@@ -1245,6 +1246,32 @@ async def _migrate_trusted_domains_to_lists():
             log.info("trusted_domains→lists migration: %d entries synced", n)
     except Exception as ex:
         log.warning("migrate_trusted_domains_to_lists failed: %s", ex)
+
+
+# v44.00.20 — Günlük 04:00 UTC (07:00 TR): URL IOC feed'lerinden Domain çıkart.
+# Kullanıcının "Domain kategorisi 0" sorununu otomatik çözer — panelde manuel
+# butona basmasına gerek kalmaz.
+async def _daily_ioc_domain_extract_task():
+    await asyncio.sleep(300)  # startup +5dk (feed'lerin ilk sync'i tamamlansın)
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.hour == 4:  # 04:00 UTC (Türkiye 07:00)
+                last = await db.settings.find_one({"_key": "ioc_domain_extract_last_run"}, {"_id": 0})
+                today = now.date().isoformat()
+                if not last or last.get("date") != today:
+                    from routes.threat_intel import _run_ioc_domain_extract_once
+                    r = await _run_ioc_domain_extract_once()
+                    await db.settings.update_one(
+                        {"_key": "ioc_domain_extract_last_run"},
+                        {"$set": {"_key": "ioc_domain_extract_last_run", "date": today, "result": r}},
+                        upsert=True,
+                    )
+                    log.info("ioc-domain-extract daily cron: %s", r)
+        except Exception as ex:
+            log.warning("ioc-domain-extract cron error: %s", ex)
+        await asyncio.sleep(3600)  # her saat başı kontrol
+
 
 
 async def _daily_digest_task():
