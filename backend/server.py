@@ -8641,6 +8641,66 @@ def _promote_dist_version(version: str) -> Optional[str]:
     return None
 
 
+@api.get("/plugin/install.sh")
+async def plugin_install_bootstrap(request: Request):
+    """v44.00.19 — One-liner bootstrap script.
+
+    Kullanım (cPanel root SSH):
+        curl -sSL https://panel.gokyuzuhosting.com/api/plugin/install.sh | bash
+
+    Bu endpoint text/x-shellscript döner; wrapper /api/plugin/download'dan
+    tarball'ı çekip açıp içindeki install.sh'ı çalıştırır. Böylece kullanıcı
+    ne manuel tar-extract yapar ne de yanlış URL'e curl atar.
+    """
+    ver = await _current_version()
+    proto = "https" if request.url.scheme == "https" else "http"
+    host = request.headers.get("host") or "panel.gokyuzuhosting.com"
+    base = f"{proto}://{host}"
+    script = f"""#!/usr/bin/env bash
+# GökyüzüWebSpam WHM/cPanel Plugin Bootstrap Installer
+# Version: {ver}
+# Source:  {base}/api/plugin/download
+set -euo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "HATA: Bu script root olarak çalışmalı. Deneyin: sudo bash" >&2
+  exit 1
+fi
+
+echo "==> GökyüzüWebSpam {ver} indiriliyor..."
+TMPDIR=$(mktemp -d /tmp/gws-install.XXXXXX)
+trap "rm -rf $TMPDIR" EXIT
+cd "$TMPDIR"
+
+curl -sSLf "{base}/api/plugin/download" -o plugin.tar.gz
+if [[ ! -s plugin.tar.gz ]]; then
+  echo "HATA: Plugin paketi indirilemedi. {base}/api/plugin/download erişilebilir mi?" >&2
+  exit 1
+fi
+
+echo "==> Paket açılıyor..."
+tar -xzf plugin.tar.gz
+cd gokyuzuwebspam
+
+echo "==> install.sh çalıştırılıyor..."
+chmod +x install.sh
+bash install.sh "$@"
+
+echo ""
+echo "✓ Kurulum tamamlandı. WHM > Plugins > GökyüzüWebSpam açın."
+"""
+    from fastapi.responses import Response
+    return Response(
+        content=script,
+        media_type="text/x-shellscript; charset=utf-8",
+        headers={
+            "Content-Disposition": 'inline; filename="install.sh"',
+            "X-Plugin-Version": ver,
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @api.get("/plugin/download")
 async def plugin_download_latest(request: Request):
     """En son plugin paketini indirir.
