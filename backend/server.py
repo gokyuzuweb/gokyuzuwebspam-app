@@ -4260,7 +4260,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.16"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.17"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -7423,6 +7423,139 @@ async def verdict_stats(request: Request, hours: int = 24, license_key: Optional
     }
 
 
+# v44.00.17 — Toplu mail silme (mailbox purge)
+# Master paneldeki formdan gönderilen kriterlere göre cPanel Maildir
+# yapılarındaki mail dosyalarını tarar ve siler. Dry-run mode ile önce
+# eşleşenleri sayar. Destructive — sadece master.
+class MailboxPurgeIn(BaseModel):
+    subject_contains: Optional[str] = ""      # case-insensitive substring
+    from_contains: Optional[str] = ""         # sender addr/name substring
+    older_than_days: Optional[int] = 0        # 0 = tüm mailler
+    dry_run: bool = True                      # önce say, sonra sil
+    max_files: int = 5000                     # güvenlik limiti
+    scan_folders: str = "all"                 # "all" | "junk" | "inbox"
+
+
+def _read_mail_headers(path: str, max_bytes: int = 8192) -> dict:
+    """Maildir dosyasından ilk N byte'ı okuyup Subject/From parse et."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(max_bytes).decode("utf-8", errors="replace")
+    except Exception:
+        return {}
+    subject = from_addr = ""
+    for line in raw.split("\n"):
+        if not line or line[0] in " \t":
+            continue
+        if not subject and line.lower().startswith("subject:"):
+            subject = line.split(":", 1)[1].strip()
+        elif not from_addr and line.lower().startswith("from:"):
+            from_addr = line.split(":", 1)[1].strip()
+        if line == "" or (subject and from_addr):
+            break
+    return {"subject": subject, "from": from_addr}
+
+
+@api.post("/plugin/mailbox-purge")
+async def mailbox_purge(payload: MailboxPurgeIn, request: Request, license_key: Optional[str] = None):
+    """cPanel /home/*/mail/*/*/{cur,new}/ altındaki mail dosyalarını tarar,
+    subject/from kriterine göre siler. Master-only. Dry-run önerilir."""
+    import glob, os as _os, time
+    await _require_master(request, license_key)
+
+    subj_needle = (payload.subject_contains or "").strip().lower()
+    from_needle = (payload.from_contains or "").strip().lower()
+    if not subj_needle and not from_needle:
+        raise HTTPException(400, "subject_contains veya from_contains gerekli")
+
+    cutoff = 0
+    if payload.older_than_days and payload.older_than_days > 0:
+        cutoff = time.time() - (payload.older_than_days * 86400)
+
+    # Klasör filtresi
+    if payload.scan_folders == "junk":
+        pattern = "/home/*/mail/*/*/.Junk/{cur,new}/*"
+    elif payload.scan_folders == "inbox":
+        pattern = "/home/*/mail/*/*/{cur,new}/*"  # sadece root Inbox
+    else:
+        pattern = "/home/*/mail/*/*/**/*"
+
+    matched: list[dict] = []
+    scanned = 0
+    for path in glob.iglob(pattern, recursive=True):
+        if scanned >= payload.max_files * 20:
+            break
+        try:
+            if not _os.path.isfile(path):
+                continue
+            # Only maildir mail files (contain colon/name pattern)
+            base = _os.path.basename(path)
+            if len(base) < 10:
+                continue
+            if cutoff:
+                try:
+                    if _os.path.getmtime(path) > cutoff:
+                        continue
+                except Exception:
+                    continue
+            scanned += 1
+            hdr = _read_mail_headers(path)
+            subj_l = hdr.get("subject", "").lower()
+            from_l = hdr.get("from", "").lower()
+            ok_subj = subj_needle in subj_l if subj_needle else True
+            ok_from = from_needle in from_l if from_needle else True
+            if ok_subj and ok_from:
+                matched.append({
+                    "path": path,
+                    "subject": hdr.get("subject", "")[:120],
+                    "from": hdr.get("from", "")[:120],
+                })
+                if len(matched) >= payload.max_files:
+                    break
+        except Exception:
+            continue
+
+    deleted = 0
+    errors: list[str] = []
+    if not payload.dry_run:
+        for m in matched:
+            try:
+                _os.unlink(m["path"])
+                deleted += 1
+            except Exception as e:
+                errors.append(f"{m['path']}: {e}")
+
+    # Audit
+    try:
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "mailbox_purge",
+            "at": _iso(),
+            "actor_ip": _client_ip(request) if hasattr(request, "client") else "",
+            "details": {
+                "subject_contains": subj_needle,
+                "from_contains": from_needle,
+                "older_than_days": payload.older_than_days,
+                "scan_folders": payload.scan_folders,
+                "dry_run": payload.dry_run,
+                "matched": len(matched),
+                "deleted": deleted,
+                "scanned": scanned,
+            },
+            "severity": "warning" if not payload.dry_run else "info",
+        })
+    except Exception:
+        pass
+
+    return {
+        "dry_run": payload.dry_run,
+        "scanned": scanned,
+        "matched_count": len(matched),
+        "deleted": deleted,
+        "errors": errors[:20],
+        "sample": matched[:20],  # UI önizleme için ilk 20 eşleşme
+        "truncated": len(matched) >= payload.max_files,
+    }
 
 
 @api.get("/license/violations")

@@ -471,6 +471,9 @@ export const api = {
   hamPatternDelete: (pattern, licenseKey) =>
     client.delete(`/plugin/ham-pattern/${encodeURIComponent(pattern)}`,
       { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  mailboxPurge: (body, licenseKey) =>
+    client.post(`/plugin/mailbox-purge`, body,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
   verdictStats: (hours = 24, licenseKey) =>
     client.get(`/plugin/verdict-stats`,
       { params: { hours, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),

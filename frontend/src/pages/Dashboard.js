@@ -34,6 +34,7 @@ import PendingApprovalsWidget from "@/components/PendingApprovalsWidget";
 import PushHealthWidget from "@/components/PushHealthWidget";
 import VersionChangeLogWidget from "@/components/VersionChangeLogWidget";
 import VerdictStatsWidget from "@/components/VerdictStatsWidget";
+import MailboxPurgeWidget from "@/components/MailboxPurgeWidget";
 
 const LICKEY = () => (typeof window !== "undefined"
   ? (localStorage.getItem("gws.event_license") || "")
@@ -119,6 +120,8 @@ export default function Dashboard() {
           {isMaster && <VersionChangeLogWidget />}
           {/* v44.00.16 — Panel verdict stats + whitelist yönetimi (master-only) */}
           {isMaster && <VerdictStatsWidget />}
+          {/* v44.00.17 — Toplu mail silme (master-only, destructive) */}
+          {isMaster && <MailboxPurgeWidget />}
           {/* v43.53 — Bounce Digest özet widget'ı (bounce yoksa null) */}
           <BounceDigestWidget />
           <div className="grid grid-cols-12 gap-4">
