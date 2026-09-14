@@ -3501,3 +3501,52 @@ tabidir.
 3. WHM ana sayfaya dönüp plugin'e tekrar tıklayın → browser viewport'un tamamı
 4. Bundan sonra tüm yeni giden/gelen mail'lerin body'si "Mail İçeriği Oku" modalında görünecek
 
+
+
+## Feb 15, 2026 — v44.00.18 — ClamAV Virus & Blocked Mail Logtail Fix
+
+### 🐛 User Report
+"burada virüslü mailleri block mailleri göstermiyor" — Master Panel Live Traffic / GeoBlockedHeatmap virüs ve engellenmiş mail'leri **0** gösteriyordu.
+
+### 🔍 Root Cause
+1. `mailshield-logtail.pl` sadece MailScanner/ClamAV **spool header dosyalarını** okuyordu. Sunucularda ClamAV **WHM eklentisi kurulu ama "Scan Mail" default kutucuğu işaretlenmemiş** → Exim ClamAV DATA aşamasında hiç çağırılmıyordu, dolayısıyla log'da virüs reject satırı yoktu.
+2. `mailshield-logtail.pl` içindeki generic "rejected" regex `F=<...>` field'ının `rejected` kelimesinden SONRA gelmesini bekliyordu — Exim gerçek log formatında `F=<>` `rejected`'dan **ÖNCE** gelir → hiçbir reject satırı yakalanmıyordu.
+
+### 🛠 Fix (2 katman)
+
+**Katman 1 — `install.sh` ClamAV auto-wire (v44.00.18)**
+- clamd Unix socket'i keşfedilir (`/var/clamd`, `/var/run/clamd.scan/clmd.sock`, …).
+- cPanel update-safe include: `/usr/local/cpanel/etc/exim/acls/ACL_MAIL_POST_DATA_BLOCK/gws_clamav_check` içine `deny malware = *` ACL bloğu yazılır.
+- `av_scanner=clamd:<socket>` `/etc/exim.conf.localopts`'a idempotent eklenir.
+- `clamd@scan.service` enable + start.
+- `buildeximconf` + `restartsrv_exim` ile canlıya alınır.
+- clamd socket bulunamazsa uyarı verilir, kurulum devam eder.
+
+**Katman 2 — `mailshield-logtail.pl` regex düzeltmeleri**
+- **YENİ:** ClamAV virüs reject pattern (`This message contains a virus (<name>)` / `Message contains malware (<name>)`) → `verdict=virus`, `engine=clamav`.
+- **YENİ:** cPanel dangerous-attachment DENY (`.exe`, `.scr`, `.bat`, …) → `verdict=virus`, `virus_name=DangerousExtension.<file>`.
+- **YENİ:** ACL blacklist (Host banned / Sender domain banned / Country banned) → `verdict=blocked`, `reason=blacklist`.
+- **DÜZELTME:** Generic `rejected` regex `F=<>` sıra kısıtı kaldırıldı — gerçek Exim log formatına uygun oldu.
+- **DÜZELTME:** Blok sırası: spesifik reject'ler (ClamAV → attachment → banned) her biri `return;` ile catch-all `rejected` bloğundan **önce**, böylece bir satır **birden fazla event üretemez** (duplike engeli).
+
+### 🧪 Tests
+`/app/backend/tests/test_v44_00_18_clamav_logtail.py` — 6 test, hepsi ✅:
+1. ClamAV virus rejection → `virus:<name>`
+2. ClamAV malware rejection → `virus:<name>`
+3. Dangerous attachment → `virus:DangerousExtension.<file>`
+4. Generic rejected RCPT → `blocked:reject`
+5. Host banned → `blocked:blacklist`
+6. Normal delivery → no match
+
+### 📦 Version Bump
+- `/app/VERSION`, `/app/backend/VERSION`, `/app/whm-plugin/VERSION` → `v44.00.18`
+- `_PACKAGE_VERSION` (server.py 4263) → `v44.00.18`
+- `/api/version/panel` doğrulandı: `{"version": "v44.00.18"}`
+
+### 🧑‍💻 User Deployment
+```bash
+# Sunucuda:
+cd /root && curl -sSLO https://panel.gokyuzuhosting.com/whm-plugin/install.sh && bash install.sh
+# veya WHM'de Plugin > Güncelle
+```
+Kurulumdan sonra bir test virüsü (EICAR) gönderin → 30 sn içinde Master Panel'de "Blocked / Virus" pie diliminde görünmeli.

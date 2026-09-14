@@ -117,6 +117,77 @@ if [[ -x /usr/local/cpanel/scripts/buildeximconf ]] && [[ $DRY_RUN -eq 0 ]]; the
   /usr/local/cpanel/scripts/restartsrv_exim 2>/dev/null | tail -1 || true
 fi
 
+# v44.00.18 — ClamAV mail-scanning auto-wire (Exim built-in malware ACL)
+# cPanel'de "ClamAV Scanner" WHM eklentisi kuruludur ama varsayılan olarak
+# MAIL taramasına eklenmemiştir. Biz burada:
+#   1) clamd socket'ini keşfediyoruz (cPanel: /var/clamd, standalone: /var/run/clamd.scan/*)
+#   2) Exim'in `av_scanner`'ını ve `acl_smtp_data`'ya `deny malware = *` bloğunu
+#      cPanel'in UPDATE-SAFE include mekanizması üzerinden ekliyoruz:
+#      /usr/local/cpanel/etc/exim/acls/acl_smtp_data/gws_clamav_check
+#   3) clamd servisinin çalıştığından emin oluyoruz.
+# Not: cPanel `system_filter` (Panel-verdict bridge) zaten kuruldu; ClamAV
+# ekstra bir güvenlik katmanı — virüs olan mail Exim seviyesinde reject edilir
+# ve mailshield-logtail.pl bunu Panel'e "virus" verdict olarak iletir.
+if [[ $DRY_RUN -eq 0 ]]; then
+  echo "==> [3.5/9] ClamAV mail-tarama entegrasyonu (opt-safe)"
+  # 1) clamd socket'i bul
+  CLAMD_SOCK=""
+  for _s in /var/clamd /var/run/clamd.scan/clmd.sock /var/run/clamd.exim/clmd.sock /var/run/clamav/clamd.ctl; do
+    if [[ -S "$_s" ]]; then CLAMD_SOCK="$_s"; break; fi
+  done
+  if [[ -n "$CLAMD_SOCK" ]]; then
+    echo "    ✓ clamd socket bulundu: $CLAMD_SOCK"
+    # 2) cPanel include dizini varsa update-safe ekle
+    EXIM_ACL_DIR=/usr/local/cpanel/etc/exim/acls/ACL_MAIL_POST_DATA_BLOCK
+    if [[ -d "$EXIM_ACL_DIR" ]]; then
+      ACL_FILE="$EXIM_ACL_DIR/gws_clamav_check"
+      cat > "$ACL_FILE" <<'ACLEOF'
+# GökyüzüWebSpam v44.00.18 — Exim built-in ClamAV DATA scan.
+# cPanel update-safe include dosyası.
+deny malware = *
+     message = This message contains a virus ($malware_name)
+     log_message = GWS-CLAMAV rejected virus: $malware_name from $sender_address
+ACLEOF
+      chmod 0644 "$ACL_FILE"
+      echo "    ✓ Exim ACL yazıldı: $ACL_FILE"
+    else
+      # 3) Fallback: /etc/exim.conf.local'e ekle (cPanel update sırasında override edilebilir ama denemeye değer)
+      LOCAL_CONF=/etc/exim.conf.local
+      if [[ -f "$LOCAL_CONF" ]] && ! grep -q "gws_clamav_check" "$LOCAL_CONF" 2>/dev/null; then
+        cat >> "$LOCAL_CONF" <<'ECONF'
+
+@ACL_MAIL_POST_DATA_BLOCK@
+# GökyüzüWebSpam v44.00.18 — gws_clamav_check
+deny malware = *
+     message = This message contains a virus ($malware_name)
+     log_message = GWS-CLAMAV rejected virus: $malware_name from $sender_address
+ECONF
+        echo "    ✓ Exim conf.local'e ClamAV bloğu eklendi (fallback)"
+      fi
+    fi
+    # 4) Exim'in av_scanner'ını localopts'a idempotent kaydet
+    if [[ -f "$LOCALOPTS" ]] || [[ -f /etc/exim.conf.localopts ]]; then
+      LOCALOPTS=${LOCALOPTS:-/etc/exim.conf.localopts}
+      touch "$LOCALOPTS"
+      sed -i '/^av_scanner=/d' "$LOCALOPTS"
+      echo "av_scanner=clamd:$CLAMD_SOCK" >> "$LOCALOPTS"
+      echo "    ✓ av_scanner ayarlandı: clamd:$CLAMD_SOCK"
+    fi
+    # 5) clamd servisini çalıştır
+    if systemctl list-unit-files 2>/dev/null | grep -qE '^clamd(@scan)?\.service'; then
+      systemctl enable --now clamd@scan.service 2>/dev/null || systemctl enable --now clamd.service 2>/dev/null || true
+      echo "    ✓ clamd servisi enabled+started"
+    fi
+    # 6) cPanel Exim config'ini regenerate et
+    /usr/local/cpanel/scripts/buildeximconf 2>/dev/null | tail -1 || true
+    /usr/local/cpanel/scripts/restartsrv_exim 2>/dev/null | tail -1 || true
+  else
+    echo "    ⚠ clamd socket bulunamadı — ClamAV mail-tarama atlandı."
+    echo "      WHM'de ClamAV Scanner kurulu ise, ClamAV daemon'ının başlatılması gerekir:"
+    echo "      systemctl enable --now clamd@scan.service"
+  fi
+fi
+
 # v44.00.12 — Perl bağımlılıkları (milter için kritik). Sendmail::PMilter
 # yoksa mailshield-milter.service sonsuz döngüde çöker. Kurulum sırasında
 # otomatik yükle; hata olsa bile kurulum devam etsin (opt-in servis).

@@ -259,9 +259,75 @@ sub _process_line {
         return;
     }
 
-    # Rejected messages: 'H=... rejected RCPT ...'  or  'rejected after DATA'
-    if ($line =~ m{^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s.*?\brejected\b.*?F=<([^>]*)>}i) {
-        my ($date, $time, $from) = ($1, $2, $3);
+    # v44.00.18 — Exim built-in ClamAV rejection (malware = * ACL)
+    # Log format:
+    #   2026-02-15 10:30:12 H=[1.2.3.4] F=<x@y> rejected after DATA: This message contains a virus (Eicar-Test-Signature)
+    #   2026-02-15 10:30:12 ... rejected after DATA: Message contains malware (Win.Trojan.Generic-6296825-0)
+    if ($line =~ m{^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2}).*?rejected\s+after\s+DATA:\s*(?:This\s+)?[Mm]essage\s+contains\s+(?:a\s+)?(?:virus|malware)(?:\s+or\s+malware)?\s*\(?([^)]*)\)?}i) {
+        my ($date, $time, $vname) = ($1, $2, $3);
+        $vname =~ s/^\s+|\s+$//g;
+        $vname ||= 'Unknown-Malware';
+        my $from = ($line =~ m{F=<([^>]*)>}) ? $1 : undef;
+        my $ip   = ($line =~ m{H=\S*?\[([\d.:a-fA-F]+)\]}) ? $1 : undef;
+        _post_event({
+            license_key     => $license,
+            server_hostname => $host,
+            server_ip       => $ip,
+            from_addr       => $from,
+            subject         => "Virüs tespit: $vname",
+            verdict         => 'virus',
+            action          => 'reject',
+            total_score     => 100,
+            scores          => { virus_name => $vname, engine => 'clamav' },
+            ts              => "${date}T${time}${TZ_OFFSET}",
+        });
+        return;
+    }
+
+    # v44.00.18 — cPanel acl_smtp_mime DENY (dangerous attachment)
+    #   DENY: disallowed "file.exe"  or  DENY: disallowed \"file.scr\"
+    if ($line =~ m{^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2}).*DENY:\s*disallowed\s*["']?([^"'\s]+\.(?:exe|scr|bat|com|cmd|pif|vbs|js|jse|wsf|wsh|hta|lnk|reg|msi|dll|jar))["']?}i) {
+        my ($date, $time, $fname) = ($1, $2, $3);
+        my $from = ($line =~ m{F=<([^>]*)>}) ? $1 : undef;
+        _post_event({
+            license_key     => $license,
+            server_hostname => $host,
+            from_addr       => $from,
+            subject         => "Zararlı ek: $fname",
+            verdict         => 'virus',
+            action          => 'reject',
+            total_score     => 100,
+            scores          => { virus_name => "DangerousExtension.$fname" },
+            ts              => "${date}T${time}${TZ_OFFSET}",
+        });
+        return;
+    }
+
+    # v44.00.18 — Domain/host blacklist / spammer IP block from ACL
+    #   'Host is banned' / 'Sender domain is banned' / 'Your country is not allowed'
+    if ($line =~ m{^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2}).*(?:Host is banned|Sender domain is banned|Country is banned)}i) {
+        my ($date, $time) = ($1, $2);
+        my $from = ($line =~ m{F=<([^>]*)>}) ? $1 : undef;
+        my $ip = ($line =~ m{H=\S+\s+\[(\S+?)\]}) ? $1 : ($line =~ m{H=\[?([\d.:a-fA-F]+)\]?}) ? $1 : undef;
+        _post_event({
+            license_key     => $license,
+            server_hostname => $host,
+            from_addr       => $from,
+            source_ip       => $ip,
+            verdict         => 'blocked',
+            action          => 'reject',
+            total_score     => 0,
+            scores          => { reason => 'blacklist' },
+            ts              => "${date}T${time}${TZ_OFFSET}",
+        });
+        return;
+    }
+
+    # Generic catch-all: any other 'rejected' log line (RCPT reject, greylist, etc.)
+    # NOT: Exim log formatında F=<...> genelde 'rejected' kelimesinden ÖNCE gelir.
+    if ($line =~ m{^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s.*?\brejected\b}i) {
+        my ($date, $time) = ($1, $2);
+        my $from = ($line =~ m{F=<([^>]*)>}) ? $1 : undef;
         _post_event({
             license_key     => $license,
             server_hostname => $host,
