@@ -203,15 +203,14 @@ sub _process_line {
         $to =~ s/^\s+|\s+$//g;
 
         # SpamAssassin/MailScanner header'ları için akıllı retry stratejisi:
-        # Mail Exim'e yeni geldiğinde (arrival log satırı), MailScanner henüz
-        # taramamış olabilir. Backfill sırasında spool zaten yazılmış → hızlı geçer.
-        # Live'da MS için tolerans: 5 deneme x 500ms = worst 2.5sn. İlk denemede
-        # varsa 0ms; %90 mail 1. veya 2. denemede yakalanır.
+        # v44.00.19 — SA scan mail body'e bağlı, saniye sürebilir. Retry sayısını ve
+        # bekleme süresini artırdık. 12 deneme × 500ms = worst case 6sn.
+        # Live'da MS için tolerans: %90 mail 1-3. denemede yakalanır.
         my ($spam_score, $spam_status, $spam_report, $virus_found, $virus_name);
-        for my $attempt (1..5) {
+        for my $attempt (1..12) {
             ($spam_score, $spam_status, $spam_report, $virus_found, $virus_name) = _spam_from_spool($mid);
             last if defined $spam_score || defined $spam_status || $virus_found;
-            select(undef, undef, undef, 0.5) if $attempt < 5;   # 500ms uyu (son deneme sonrası bekleme)
+            select(undef, undef, undef, 0.5) if $attempt < 12;
         }
 
         # Verdict logic — MailScanner ile parite:
@@ -373,11 +372,29 @@ sub _spam_from_spool {
     for my $path (@search_paths) {
         next unless -r $path;
         open my $h, '<', $path or next;
+        my $score_from_status = 0;   # v44.00.19 — Status score= dominant marker
         while (my $l = <$h>) {
+            # v44.00.19 — Exim spool -H dosyasında her header line'ın başında
+            # 3-basamaklı length prefix var (örn "019 X-Spam-Status: Yes").
+            # Bu prefix'i strip et yoksa hiçbir header regex'i match olmaz.
+            $l =~ s/^\d{3}\s?//;
             # ---- SpamAssassin standart header'ları ----
-            if ($l =~ /X-Spam-Score:\s*(-?\d+(?:\.\d+)?)/i)  { $score = $1; }
-            if ($l =~ /X-Spam-Status:\s*(\w+)/i)             { $status = $1; }
+            # ÖNCE Status parse'ını yap (score= decimal daha güvenilir);
+            # sonra Score satırı yalnızca Status'te score yoksa fallback olarak kullan.
+            if ($l =~ /X-Spam-Status:\s*(\w+)(?:.*?\bscore=(-?\d+(?:\.\d+)?))?/i) {
+                $status = $1;
+                if (defined $2) { $score = $2; $score_from_status = 1; }
+            }
+            if ($l =~ /X-Spam-Score:\s*(-?\d+(?:\.\d+)?)/i && !$score_from_status) {
+                # X-Spam-Score bazen bar-count integer olarak (60 = "++++++" x10) yazılır.
+                # 20'den büyük değer bar-count'tur → 10'a böl.
+                my $s = $1;
+                if ($s > 20) { $s = $s / 10.0; }
+                $score = $s;
+            }
             if ($l =~ /X-Spam-Report:\s*(.+)/i)              { $report = $1; }
+            # v44.00.19 — X-Spam-Flag: YES header'ı → SA açıkça spam demiş
+            if ($l =~ /X-Spam-Flag:\s*YES/i)                 { $status //= 'Yes'; }
             # ---- MailScanner standart header'ları ----
             if ($l =~ /X-MailScanner-SpamCheck:\s*(.+?)['"]?\s*$/i) {
                 if ($1 =~ /score=(-?\d+(?:\.\d+)?)/i) { $score //= $1; }
