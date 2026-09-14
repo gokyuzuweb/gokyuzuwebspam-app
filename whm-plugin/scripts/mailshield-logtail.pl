@@ -203,14 +203,20 @@ sub _process_line {
         $to =~ s/^\s+|\s+$//g;
 
         # SpamAssassin/MailScanner header'ları için akıllı retry stratejisi:
-        # v44.00.19 — SA scan mail body'e bağlı, saniye sürebilir. Retry sayısını ve
-        # bekleme süresini artırdık. 12 deneme × 500ms = worst case 6sn.
-        # Live'da MS için tolerans: %90 mail 1-3. denemede yakalanır.
+        # v44.00.20 — cPanel Exim SA'yı LOG-ONLY modda çalıştırır: X-Spam-* header'ları
+        # spool'a yazılmaz, sadece exim_mainlog'a `Warning: "SpamAssassin ... NOT spam (score)"`
+        # satırı düşer. Öncelik: log'daki SA warning satırı (dominant). Fallback: spool
+        # header'ları (MailScanner kurulu ise).
         my ($spam_score, $spam_status, $spam_report, $virus_found, $virus_name);
-        for my $attempt (1..12) {
+        # SA warning arrival'la aynı saniyede/hemen sonra gelir — 6 deneme × 500ms = 3sn
+        for my $attempt (1..6) {
+            # 1) Önce Exim log'daki SA warning satırını dene (cPanel default path)
+            ($spam_score, $spam_status) = _spam_from_exim_log($mid);
+            last if defined $spam_score;
+            # 2) Fallback: spool header'ları (MailScanner override kurulu ise)
             ($spam_score, $spam_status, $spam_report, $virus_found, $virus_name) = _spam_from_spool($mid);
             last if defined $spam_score || defined $spam_status || $virus_found;
-            select(undef, undef, undef, 0.5) if $attempt < 12;
+            select(undef, undef, undef, 0.5) if $attempt < 6;
         }
 
         # Verdict logic — MailScanner ile parite:
@@ -339,6 +345,43 @@ sub _process_line {
         });
     }
 }
+
+# v44.00.20 — cPanel default SA log-only mode support.
+# cPanel Exim SA'yı acl_smtp_data içinde çağırır ve sonucu spool'a değil
+# doğrudan exim_mainlog'a `Warning:` satırı olarak düşer:
+#   YYYY-MM-DD HH:MM:SS MID H=... Warning: "SpamAssassin as USER detected message as NOT spam (SCORE)"
+#   YYYY-MM-DD HH:MM:SS MID H=... Warning: "SpamAssassin as USER detected message as spam (SCORE)"
+# Bu fonksiyon tail -n 5000 ile son log satırlarını tarayıp verilen MID'e ait
+# SA verdict'ini döner. Genelde arrival satırından 0-3 saniye sonra düşer.
+sub _spam_from_exim_log {
+    my ($mid) = @_;
+    my ($score, $status);
+    my $eximlog = '/var/log/exim_mainlog';
+    return (undef, undef) unless -r $eximlog;
+    # tail son 5000 satır — SA warning arrival'la aynı saniyede/1-2sn sonra gelir
+    my $fh;
+    unless (open $fh, '-|', 'tail', '-n', '5000', $eximlog) {
+        return (undef, undef);
+    }
+    while (my $l = <$fh>) {
+        next unless index($l, $mid) >= 0;
+        # cPanel default SA warning line
+        if ($l =~ /SpamAssassin\s+as\s+\S+\s+detected\s+message\s+as\s+(NOT\s+)?spam\s*\((-?\d+(?:\.\d+)?)\)/i) {
+            my $is_not_spam = $1 ? 1 : 0;
+            $score  = $2;
+            $status = $is_not_spam ? 'No' : 'Yes';
+            last;
+        }
+        # Alternate format: `spam-score=X.Y`
+        if ($l =~ /spam[-_]score[=:]\s*(-?\d+(?:\.\d+)?)/i) {
+            $score //= $1;
+            $status //= ($score >= 5 ? 'Yes' : 'No');
+        }
+    }
+    close $fh;
+    return ($score, $status);
+}
+
 
 sub _spam_from_spool {
     my ($mid) = @_;

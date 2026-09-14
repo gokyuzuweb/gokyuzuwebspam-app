@@ -3588,3 +3588,31 @@ Mail-details response'a `third_party_verdicts` alanı eklendi.
 `/app/backend/tests/test_v44_00_19_third_party.py`
 
 ### 📦 Version Bump → v44.00.19
+
+
+
+## Feb 15, 2026 — v44.00.20 — cPanel SA Log-Only Mode Support (CRITICAL FIX)
+
+### 🔴 Kritik Bulgu
+Plugin "clean 0.00" gösteriyordu ama SA gerçekten 6.0 score veriyordu.
+- `grep "SpamAssassin as" /var/log/exim_mainlog` → dolu
+- `grep "^019 X-Spam" /var/spool/exim/input/*/*-H` → BOŞ
+
+### 🎯 Root Cause
+**cPanel Exim SA'yı LOG-ONLY modda çalıştırır.** X-Spam-* header'ları spool'a değil doğrudan `exim_mainlog`'a `Warning: "SpamAssassin as USER detected message as [NOT] spam (SCORE)"` satırı olarak düşer.
+
+### 🛠 Fix
+Yeni `_spam_from_exim_log(mid)` fonksiyonu — tail son 5000 satırı tarayıp SA warning satırından score+status çıkarır. Retry loop içinde PRIMARY olarak çağrılır, `_spam_from_spool` FALLBACK.
+
+### 🐛 ClamAV Socket Path Fix
+cPanel `LocalSocket /run/clamav/clamd.sock` — probe path'e eklendi + systemd unit detection cPanel `clamd.service`.
+
+### 🧪 Tests — 27/27 ✅
+`test_v44_00_20_sa_log_warning.py` (6 test): SA warning parse, MID isolation, syntax, install.sh path check.
+
+### 📦 v44.00.20 Bump
+
+### 🧑‍💻 Deployment
+```bash
+cd /root && curl -sSL https://panel.gokyuzuhosting.com/api/plugin/download -o gws.tar.gz && tar -xzf gws.tar.gz && cd gokyuzuwebspam && bash install.sh && systemctl restart mailshield-logtail
+```

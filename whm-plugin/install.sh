@@ -130,9 +130,9 @@ fi
 # ve mailshield-logtail.pl bunu Panel'e "virus" verdict olarak iletir.
 if [[ $DRY_RUN -eq 0 ]]; then
   echo "==> [3.5/9] ClamAV mail-tarama entegrasyonu (opt-safe)"
-  # 1) clamd socket'i bul
+  # 1) clamd socket'i bul (cPanel /run/clamav, standalone /var/clamd, EL clamd@scan)
   CLAMD_SOCK=""
-  for _s in /var/clamd /var/run/clamd.scan/clmd.sock /var/run/clamd.exim/clmd.sock /var/run/clamav/clamd.ctl; do
+  for _s in /run/clamav/clamd.sock /var/run/clamav/clamd.sock /var/clamd /var/run/clamd.scan/clmd.sock /var/run/clamd.exim/clmd.sock /var/run/clamav/clamd.ctl /tmp/clamd.socket; do
     if [[ -S "$_s" ]]; then CLAMD_SOCK="$_s"; break; fi
   done
   if [[ -n "$CLAMD_SOCK" ]]; then
@@ -173,18 +173,22 @@ ECONF
       echo "av_scanner=clamd:$CLAMD_SOCK" >> "$LOCALOPTS"
       echo "    ✓ av_scanner ayarlandı: clamd:$CLAMD_SOCK"
     fi
-    # 5) clamd servisini çalıştır
-    if systemctl list-unit-files 2>/dev/null | grep -qE '^clamd(@scan)?\.service'; then
-      systemctl enable --now clamd@scan.service 2>/dev/null || systemctl enable --now clamd.service 2>/dev/null || true
-      echo "    ✓ clamd servisi enabled+started"
+    # 5) clamd servisini çalıştır (cPanel: clamd.service, EL: clamd@scan.service)
+    if systemctl list-unit-files 2>/dev/null | grep -qE '^clamd\.service'; then
+      systemctl enable --now clamd.service 2>/dev/null || true
+      echo "    ✓ clamd.service enabled+started (cPanel)"
+    elif systemctl list-unit-files 2>/dev/null | grep -qE '^clamd@scan\.service'; then
+      systemctl enable --now clamd@scan.service 2>/dev/null || true
+      echo "    ✓ clamd@scan.service enabled+started (EL)"
     fi
     # 6) cPanel Exim config'ini regenerate et
     /usr/local/cpanel/scripts/buildeximconf 2>/dev/null | tail -1 || true
     /usr/local/cpanel/scripts/restartsrv_exim 2>/dev/null | tail -1 || true
   else
     echo "    ⚠ clamd socket bulunamadı — ClamAV mail-tarama atlandı."
-    echo "      WHM'de ClamAV Scanner kurulu ise, ClamAV daemon'ının başlatılması gerekir:"
-    echo "      systemctl enable --now clamd@scan.service"
+    echo "      cPanel WHM'de ClamAV Scanner kurulu ise servisi başlatın:"
+    echo "      /usr/local/cpanel/scripts/restartsrv_clamd"
+    echo "      Sonra bu install.sh'i tekrar çalıştırın."
   fi
 fi
 
