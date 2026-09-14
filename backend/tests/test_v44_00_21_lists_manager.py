@@ -39,7 +39,7 @@ def test_frontend_page_created():
     assert 'data-testid="lists-manager-page"' in src
     assert 'data-testid="lm-add-btn"' in src
     assert 'data-testid={`lm-tab-${t.k}`}' in src
-    assert 'k: "list"' in src and 'k: "history"' in src
+    assert 'k: "all"' in src and 'k: "whitelist"' in src and 'k: "blacklist"' in src and 'k: "history"' in src
     assert "lists-manager/unified" in src
     assert "lists-manager/add" in src
     assert "lists-manager/delete" in src

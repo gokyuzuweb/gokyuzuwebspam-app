@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Search, Plus, Trash2, History, ShieldCheck, ShieldX, RefreshCw, Filter } from "lucide-react";
 import { toast } from "sonner";
-import { Card, CardHeader, CardBody, Badge } from "@/components/ui-primitives";
-import { client, API } from "@/lib/api";
+import { Card } from "@/components/ui-primitives";
+import { client } from "@/lib/api";
 
 const sourceLabel = {
   lists_ui: "UI · Kara/Beyaz",
@@ -48,14 +48,10 @@ function AddForm({ onAdded }) {
 
   const add = useMutation({
     mutationFn: async () => {
-      const r = await fetch(`${API}/api/lists-manager/add`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ kind, entry_type, value: value.trim(), note }),
+      const r = await client.post("/lists-manager/add", {
+        kind, entry_type, value: value.trim(), note,
       });
-      if (!r.ok) throw new Error(await r.text());
-      return r.json();
+      return r.data;
     },
     onSuccess: (d) => {
       toast.success(d.added ? `✓ ${d.value} eklendi` : `${d.value} zaten mevcut`);
@@ -114,17 +110,13 @@ function AddForm({ onAdded }) {
 function Row({ row, onDeleted }) {
   const del = useMutation({
     mutationFn: async () => {
-      const r = await fetch(`${API}/api/lists-manager/delete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ kind: row.kind, entry_type: row.entry_type, value: row.value }),
+      const r = await client.post("/lists-manager/delete", {
+        kind: row.kind, entry_type: row.entry_type, value: row.value,
       });
-      if (!r.ok) throw new Error(await r.text());
-      return r.json();
+      return r.data;
     },
     onSuccess: (d) => { toast.success(`${row.value} kaldırıldı (${d.removed} kayıt)`); onDeleted?.(); },
-    onError: (e) => toast.error("Silinemedi: " + e.message),
+    onError: (e) => toast.error("Silinemedi: " + (e.response?.data?.detail || e.message)),
   });
 
   return (
@@ -191,11 +183,13 @@ function HistoryPane() {
 }
 
 export default function ListsManager() {
-  const [tab, setTab] = useState("list");   // list | history
-  const [kind, setKind] = useState("");     // "", whitelist, blacklist
+  const [tab, setTab] = useState("all");    // all | whitelist | blacklist | history
   const [entry_type, setEntryType] = useState("");
   const [q, setQ] = useState("");
   const qc = useQueryClient();
+
+  // Tab kind filter (sekme direkt kind belirler; ek filtre bar kaldırıldı)
+  const kind = tab === "whitelist" ? "whitelist" : tab === "blacklist" ? "blacklist" : "";
 
   const list = useQuery({
     queryKey: ["lists-manager-unified", kind, entry_type, q],
@@ -208,6 +202,7 @@ export default function ListsManager() {
       return (await client.get(`/lists-manager/unified?${p.toString()}`)).data;
     },
     refetchInterval: 30000,
+    enabled: tab !== "history",
   });
 
   const items = list.data?.items || [];
@@ -222,26 +217,30 @@ export default function ListsManager() {
           </h1>
           <p className="text-slate-400 text-sm mt-1">
             Tüm whitelist / blacklist kaynakları tek yerde — ekle, sil, geçmişi gör.
-            <span className="text-slate-600 ml-2">
-              (UI: {sources.lists_ui || 0} · Motor: {sources.lists_maintenance || 0} · Legacy: {sources.trusted_domains || 0})
-            </span>
+            {tab !== "history" && (
+              <span className="text-slate-600 ml-2">
+                (UI: {sources.lists_ui || 0} · Motor: {sources.lists_maintenance || 0} · Legacy: {sources.trusted_domains || 0})
+              </span>
+            )}
           </p>
         </div>
-        <button onClick={() => qc.invalidateQueries({ queryKey: ["lists-manager-unified"] })}
+        <button onClick={() => qc.invalidateQueries()}
           className="p-2 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300" title="Yenile">
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-800">
+      {/* Tabs — 4 sekme yan yana */}
+      <div className="flex gap-1 border-b border-slate-800 overflow-x-auto">
         {[
-          { k: "list", lbl: `Kayıtlar (${list.data?.count ?? 0})`, Icon: ShieldCheck },
-          { k: "history", lbl: "Geçmiş", Icon: History },
+          { k: "all",       lbl: "Tümü",         Icon: ShieldCheck, color: "text-slate-300" },
+          { k: "whitelist", lbl: "Beyaz Liste",  Icon: ShieldCheck, color: "text-emerald-400" },
+          { k: "blacklist", lbl: "Kara Liste",   Icon: ShieldX,     color: "text-rose-400" },
+          { k: "history",   lbl: "Geçmiş",       Icon: History,     color: "text-indigo-400" },
         ].map((t) => (
           <button key={t.k} onClick={() => setTab(t.k)} data-testid={`lm-tab-${t.k}`}
-            className={`px-4 py-2 text-sm font-semibold flex items-center gap-2 border-b-2 -mb-px ${
-              tab === t.k ? "text-emerald-400 border-emerald-500" : "text-slate-500 border-transparent hover:text-slate-300"
+            className={`px-4 py-2 text-sm font-semibold flex items-center gap-2 border-b-2 -mb-px whitespace-nowrap transition-colors ${
+              tab === t.k ? `${t.color} border-current` : "text-slate-500 border-transparent hover:text-slate-300"
             }`}>
             <t.Icon className="w-4 h-4" /> {t.lbl}
           </button>
@@ -249,18 +248,14 @@ export default function ListsManager() {
       </div>
 
       <Card>
-        {tab === "list" && (
+        {tab === "history" ? (
+          <HistoryPane />
+        ) : (
           <>
             <AddForm onAdded={() => qc.invalidateQueries({ queryKey: ["lists-manager-unified"] })} />
-            {/* Filters */}
+            {/* Filtre bar (kind sekme tarafından belirleniyor) */}
             <div className="flex flex-wrap items-center gap-2 p-3 border-b border-slate-800 bg-slate-950/40">
               <Filter className="w-4 h-4 text-slate-500" />
-              <select value={kind} onChange={(e) => setKind(e.target.value)} data-testid="lm-filter-kind"
-                className="bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-xs">
-                <option value="">Tümü (Beyaz+Kara)</option>
-                <option value="whitelist">Sadece Beyaz</option>
-                <option value="blacklist">Sadece Kara</option>
-              </select>
               <select value={entry_type} onChange={(e) => setEntryType(e.target.value)} data-testid="lm-filter-type"
                 className="bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-xs">
                 <option value="">Tüm Tipler</option>
@@ -274,12 +269,13 @@ export default function ListsManager() {
                   data-testid="lm-search"
                   className="w-full bg-slate-950 border border-slate-800 rounded-md pl-8 pr-3 py-1.5 text-xs mono" />
               </div>
+              <span className="text-[10px] text-slate-500 mono">{items.length} kayıt</span>
             </div>
             {list.isLoading ? (
               <div className="p-6 text-slate-500 text-sm">Yükleniyor…</div>
             ) : items.length === 0 ? (
               <div className="p-8 text-center text-slate-500 text-sm">
-                {kind || entry_type || q ? "Filtreye uyan kayıt yok." : "Henüz kayıt yok. Yukarıdan ekleyin."}
+                {entry_type || q ? "Filtreye uyan kayıt yok." : "Henüz kayıt yok. Yukarıdan ekleyin."}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -306,7 +302,6 @@ export default function ListsManager() {
             )}
           </>
         )}
-        {tab === "history" && <HistoryPane />}
       </Card>
     </div>
   );

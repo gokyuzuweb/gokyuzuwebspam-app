@@ -258,12 +258,18 @@ async def dmarc_summary(days: int = Query(30, ge=1, le=180)):
 
 # ---------- 3) Global Blocklist Sync ----------
 GLOBAL_FEEDS = [
-    {"key": "spamhaus_zen", "name": "Spamhaus ZEN", "url": "https://www.spamhaus.org/", "interval_min": 30},
-    {"key": "barracuda_bl", "name": "Barracuda Reputation", "url": "https://barracudacentral.org/", "interval_min": 30},
-    {"key": "sorbs", "name": "SORBS DNSBL", "url": "https://sorbs.net/", "interval_min": 60},
-    {"key": "uceprotect_l1", "name": "UCEPROTECT Level 1", "url": "https://uceprotect.net/", "interval_min": 60},
-    {"key": "urlhaus", "name": "URLhaus (abuse.ch)", "url": "https://urlhaus.abuse.ch/", "interval_min": 15},
-    {"key": "phishtank", "name": "PhishTank", "url": "https://phishtank.org/", "interval_min": 15},
+    {"key": "spamhaus_zen",  "name": "Spamhaus ZEN",       "url": "https://www.spamhaus.org/",     "interval_min": 30},
+    {"key": "barracuda_bl",  "name": "Barracuda Reputation", "url": "https://barracudacentral.org/", "interval_min": 30},
+    {"key": "sorbs",         "name": "SORBS DNSBL",        "url": "https://sorbs.net/",            "interval_min": 60},
+    {"key": "uceprotect_l1", "name": "UCEPROTECT Level 1", "url": "https://uceprotect.net/",       "interval_min": 60},
+    {"key": "urlhaus",       "name": "URLhaus (abuse.ch)", "url": "https://urlhaus.abuse.ch/",     "interval_min": 15},
+    {"key": "phishtank",     "name": "PhishTank",          "url": "https://phishtank.org/",        "interval_min": 15},
+    # v44.00.21 — ek 5 spam feed'i
+    {"key": "spamcop",       "name": "SpamCop BL",         "url": "https://spamcop.net/bl.shtml",  "interval_min": 30},
+    {"key": "psbl",          "name": "Passive SBL (PSBL)", "url": "https://psbl.org/",             "interval_min": 60},
+    {"key": "dronebl",       "name": "DroneBL",            "url": "https://dronebl.org/",          "interval_min": 60},
+    {"key": "manitu",        "name": "Manitu iX",          "url": "https://www.dnsbl.manitu.net/", "interval_min": 60},
+    {"key": "cbl",           "name": "CBL (Composite)",    "url": "https://cbl.abuseat.org/",      "interval_min": 60},
 ]
 
 
@@ -297,6 +303,48 @@ async def list_feeds():
             "ioc_count": ioc_count,
         })
     return {"items": items, "count": len(items)}
+
+
+# v44.00.21 — Ortak helper: son 24s public IP'leri topla (private/loopback filtre).
+# Spamhaus/SORBS/Barracuda/SpamCop/vs. DNSBL sorguları hep bu listeyi kullanır.
+async def _collect_recent_public_ips(hours: int = 24, limit: int = 50) -> list:
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    pipeline = [
+        {"$match": {"ingested_at": {"$gte": since},
+                    "verdict": {"$in": ["spam", "high_spam"]}}},
+        {"$project": {
+            "ip": {"$ifNull": [
+                "$client_ip", {"$ifNull": [
+                    "$sender_ip", {"$ifNull": ["$server_ip", "$source_ip"]}
+                ]}
+            ]},
+        }},
+        {"$match": {"ip": {"$exists": True, "$nin": ["", None]}}},
+        {"$group": {"_id": "$ip", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}}, {"$limit": limit * 3},
+    ]
+    ips: list = []
+    private_prefixes = ("10.", "127.", "169.254.", "192.168.",
+                        "172.16.", "172.17.", "172.18.", "172.19.",
+                        "172.20.", "172.21.", "172.22.", "172.23.",
+                        "172.24.", "172.25.", "172.26.", "172.27.",
+                        "172.28.", "172.29.", "172.30.", "172.31.")
+    async for row in db.mail_events.aggregate(pipeline):
+        ip = (row.get("_id") or "").strip()
+        if not ip or ":" in ip:
+            continue  # skip IPv6 for DNSBL (would need ip6.arpa)
+        if ip.startswith(private_prefixes) or ip == "0.0.0.0":
+            continue
+        # Sanity: 4 octets 0-255
+        parts = ip.split(".")
+        if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+            continue
+        ips.append(ip)
+        if len(ips) >= limit:
+            break
+    return ips
+
+
 
 
 @router.post("/feeds/{feed_key}/sync")
@@ -341,22 +389,12 @@ async def trigger_sync(feed_key: str):
                 else:
                     errors.append(f"URLhaus http {r.status_code}")
         elif feed_key == "spamhaus_zen":
-            # Spamhaus ZEN DNS-based: son 24s'te en çok görülen kaynak IP'leri ZEN'e sorgula
+            # v44.00.21 — Spamhaus ZEN DNS lookup. sender_ip/client_ip'nin herhangi biri dolu olan
+            # public IP'leri sorgu. Private IP'leri (10.x/172.x/192.x/127.x) filtrele.
             import socket
-            since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-            pipeline = [
-                {"$match": {"ingested_at": {"$gte": since},
-                            "verdict": {"$in": ["spam", "high_spam"]},
-                            "client_ip": {"$exists": True, "$nin": ["", None]}}},
-                {"$group": {"_id": "$client_ip", "n": {"$sum": 1}}},
-                {"$sort": {"n": -1}}, {"$limit": 30},
-            ]
-            top_ips = []
-            async for row in db.mail_events.aggregate(pipeline):
-                top_ips.append(row["_id"])
+            top_ips = await _collect_recent_public_ips()
             for ip in top_ips:
                 try:
-                    # Reverse octets and query <rev>.zen.spamhaus.org
                     parts = ip.split(".")
                     if len(parts) != 4:
                         continue
@@ -404,19 +442,58 @@ async def trigger_sync(feed_key: str):
                         added += 1
                 else:
                     errors.append(f"OpenPhish http {r.status_code}")
-        elif feed_key in ("barracuda", "barracuda_bl", "sorbs", "uceprotect", "uceprotect_l1"):
-            # DNS-based blacklist lookup — Spamhaus pattern ile aynı, farklı domain
+        elif feed_key in ("barracuda", "barracuda_bl", "sorbs", "uceprotect", "uceprotect_l1",
+                          "spamcop", "psbl", "dronebl", "manitu", "cbl"):
+            # v44.00.21 — DNS-based blacklist lookup — Spamhaus pattern ile aynı, farklı domain.
+            # Genişletilmiş dnsbl_map + yeni feed'ler.
             import socket
             dnsbl_map = {
-                "barracuda": "b.barracudacentral.org",
-                "barracuda_bl": "b.barracudacentral.org",
-                "sorbs": "dnsbl.sorbs.net",
-                "uceprotect": "dnsbl-1.uceprotect.net",
+                "barracuda":     "b.barracudacentral.org",
+                "barracuda_bl":  "b.barracudacentral.org",
+                "sorbs":         "dnsbl.sorbs.net",
+                "uceprotect":    "dnsbl-1.uceprotect.net",
                 "uceprotect_l1": "dnsbl-1.uceprotect.net",
+                "spamcop":       "bl.spamcop.net",
+                "psbl":          "psbl.surriel.com",
+                "dronebl":       "dnsbl.dronebl.org",
+                "manitu":        "ix.dnsbl.manitu.net",
+                "cbl":           "cbl.abuseat.org",
             }
             dnsbl_domain = dnsbl_map[feed_key]
-            confidence_val = {"barracuda": 88, "barracuda_bl": 88, "sorbs": 82,
-                              "uceprotect": 75, "uceprotect_l1": 75}[feed_key]
+            confidence_val = {
+                "barracuda": 88, "barracuda_bl": 88, "sorbs": 82,
+                "uceprotect": 75, "uceprotect_l1": 75,
+                "spamcop": 90, "psbl": 80, "dronebl": 78, "manitu": 82, "cbl": 88,
+            }[feed_key]
+            top_ips = await _collect_recent_public_ips()
+            for ip in top_ips:
+                try:
+                    parts = ip.split(".")
+                    if len(parts) != 4:
+                        continue
+                    q = ".".join(reversed(parts)) + "." + dnsbl_domain
+                    result = socket.gethostbyname_ex(q)
+                    codes = result[2]
+                    if codes:
+                        await db.threat_iocs.update_one(
+                            {"type": "ip", "value": ip},
+                            {"$set": {
+                                "id": str(uuid.uuid4()), "type": "ip",
+                                "value": ip, "tag": "spam",
+                                "confidence": confidence_val,
+                                "source": feed_key,
+                                "note": f"{feed_key} codes: {','.join(codes)}",
+                                "created_at": _iso(),
+                                "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                            }},
+                            upsert=True,
+                        )
+                        added += 1
+                except socket.gaierror:
+                    pass
+                except Exception as e:
+                    errors.append(str(e)[:60])
+                    break
             since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             pipeline = [
                 {"$match": {"ingested_at": {"$gte": since},

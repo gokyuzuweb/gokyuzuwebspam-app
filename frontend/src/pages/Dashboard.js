@@ -103,27 +103,13 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Overview tab: 4 stat cards + threat dist */}
+      {/* Overview tab: sadeleştirildi — sadece KPI + trend */}
       {show("overview") && (
         <div className="space-y-5">
-          {/* v43.76 — Master Onay Bekleyen İşlemler (havale + PayTR) — 0 pending ise gizlenir */}
-          <PendingApprovalsWidget />
           {/* v43.73 — Marketplace Haftalık Lider (winner yoksa null) */}
           <MarketplaceLeaderboardBanner />
           {/* v43.74 — Bayı Trusted Publisher rozeti (progress banner) */}
           <TrustedPublisherBadge />
-          {/* v43.38 — Master Alert Center (Threat Intel sync fails etc.) — null if 0 alerts */}
-          <MasterAlertCenter />
-          {/* v43.62 — Exim Push Sağlığı canlı göstergesi */}
-          <PushHealthWidget />
-          {/* v44.00.11 — Son güncellenen bayılar (master-only) */}
-          {isMaster && <VersionChangeLogWidget />}
-          {/* v44.00.16 — Panel verdict stats + whitelist yönetimi (master-only) */}
-          {isMaster && <VerdictStatsWidget />}
-          {/* v44.00.17 — Toplu mail silme (master-only, destructive) */}
-          {isMaster && <MailboxPurgeWidget />}
-          {/* v43.53 — Bounce Digest özet widget'ı (bounce yoksa null) */}
-          <BounceDigestWidget />
           <div className="grid grid-cols-12 gap-4">
             <div className="col-span-12 md:col-span-3">
               <StatCard label={t("dashboard.scanned_today")} tone="info" icon={Activity} testid="stat-scanned"

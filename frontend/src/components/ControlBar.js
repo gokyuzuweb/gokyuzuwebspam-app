@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Server, Cpu, Activity, Users, ShieldAlert, Zap } from "lucide-react";
 
@@ -6,8 +7,9 @@ const LICKEY = () => (typeof window !== "undefined"
   ? (localStorage.getItem("gws.event_license") || "")
   : "");
 
-/** Renkli, hover mikro animasyonlu üst kontrol barı. */
+/** Renkli, hover mikro animasyonlu üst kontrol barı. Tüm kartlar tıklanabilir. */
 export default function ControlBar({ onQueueClick }) {
+  const nav = useNavigate();
   const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview, refetchInterval: 15000 });
   const qstats   = useQuery({ queryKey: ["queue-stats-bar"], queryFn: () => api.queueStats(LICKEY()), refetchInterval: 10000 });
   const resel    = useQuery({ queryKey: ["adm-resellers-bar"], queryFn: () => api.adminResellers().catch(() => ({items: []})), refetchInterval: 60000 });
@@ -20,13 +22,22 @@ export default function ControlBar({ onQueueClick }) {
   const resellersTotal = (resel.data?.items || resel.data?.resellers || []).length;
   const countries = (map.data?.items || []).length;
 
+  // v44.00.21 — Her kart tıklanınca ilgili detay sayfasına git.
+  //   Queue → modal (backwards compat)
+  //   Spam1h → Canlı sekmesine geç
+  //   WPM → Trafik sekmesine geç
+  //   Engines → Motorlar sayfası
+  //   Resellers → Bayi Yönetimi
+  //   Geo → Coğrafi sekmesine geç
+  const goTab = (tab) => nav(`/panel?tab=${tab}`);
+
   const cards = [
     { key: "queue", label: "Kuyrukta Bekleyen", val: queueTotal, sub: "tıkla → yönet", grad: "from-sky-500/20 via-sky-500/5 to-transparent", ring: "ring-sky-500/40", txt: "text-sky-300", Icon: Server, onClick: onQueueClick, testid: "control-queue" },
-    { key: "spam1h", label: "Son 1 Saat Spam", val: spam1h, sub: "canlı", grad: "from-amber-500/20 via-amber-500/5 to-transparent", ring: "ring-amber-500/40", txt: "text-amber-300", Icon: ShieldAlert },
-    { key: "wpm", label: "Yakalama / dk", val: `${wpm}/dk`, sub: "günlük ort.", grad: "from-emerald-500/20 via-emerald-500/5 to-transparent", ring: "ring-emerald-500/40", txt: "text-emerald-300", Icon: Cpu },
-    { key: "engines", label: "Aktif Motorlar", val: `${s.engines_active ?? 0}/${s.engines_total ?? 0}`, sub: "SA · Bayes · ClamAV …", grad: "from-indigo-500/20 via-indigo-500/5 to-transparent", ring: "ring-indigo-500/40", txt: "text-indigo-300", Icon: Zap },
-    { key: "resellers", label: "Bayi Sayısı", val: resellersTotal || "-", sub: "aktif portallar", grad: "from-fuchsia-500/20 via-fuchsia-500/5 to-transparent", ring: "ring-fuchsia-500/40", txt: "text-fuchsia-300", Icon: Users },
-    { key: "geo", label: "Kaynak Ülke (1s)", val: countries, sub: "canlı saldırı haritası", grad: "from-rose-500/20 via-rose-500/5 to-transparent", ring: "ring-rose-500/40", txt: "text-rose-300", Icon: Activity },
+    { key: "spam1h", label: "Son 1 Saat Spam", val: spam1h, sub: "canlı → detay", grad: "from-amber-500/20 via-amber-500/5 to-transparent", ring: "ring-amber-500/40", txt: "text-amber-300", Icon: ShieldAlert, onClick: () => goTab("live") },
+    { key: "wpm", label: "Yakalama / dk", val: `${wpm}/dk`, sub: "trafik grafiği", grad: "from-emerald-500/20 via-emerald-500/5 to-transparent", ring: "ring-emerald-500/40", txt: "text-emerald-300", Icon: Cpu, onClick: () => goTab("traffic") },
+    { key: "engines", label: "Aktif Motorlar", val: `${s.engines_active ?? 0}/${s.engines_total ?? 0}`, sub: "SA · Bayes · ClamAV …", grad: "from-indigo-500/20 via-indigo-500/5 to-transparent", ring: "ring-indigo-500/40", txt: "text-indigo-300", Icon: Zap, onClick: () => nav("/panel/engines") },
+    { key: "resellers", label: "Bayi Sayısı", val: resellersTotal || "-", sub: "aktif portallar", grad: "from-fuchsia-500/20 via-fuchsia-500/5 to-transparent", ring: "ring-fuchsia-500/40", txt: "text-fuchsia-300", Icon: Users, onClick: () => nav("/panel/resellers-admin") },
+    { key: "geo", label: "Kaynak Ülke (1s)", val: countries, sub: "canlı saldırı haritası", grad: "from-rose-500/20 via-rose-500/5 to-transparent", ring: "ring-rose-500/40", txt: "text-rose-300", Icon: Activity, onClick: () => goTab("geo") },
   ];
 
   return (

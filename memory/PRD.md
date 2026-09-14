@@ -3697,6 +3697,59 @@ Aynı DB'de iki farklı schema aynı `db.lists` içinde yaşıyor, geçmiş yok,
 - Tabloda kolonlar: Liste (Beyaz/Kara badge), Tip (IP/Domain/E-posta), Değer, Not, **Kaynak** (UI/Motor/Legacy), Tarih, Silme butonu
 - Üstte ekleme formu (kind + entry_type + value + note)
 - Filtre bar: kind + entry_type + arama input
+
+
+## Feb 15, 2026 — v44.00.21 (part 2) — Feeds Expansion + NEVER_SYNCED Fix
+
+### 🎯 User Reports
+1. Liste Merkezi delete çalışmıyor
+2. Whitelist Geçmişi + eski Kara/Beyaz Liste menülerini kaldır
+3. Liste Merkezi'ne 4 tab yap (Tümü/Beyaz/Kara/Geçmiş)
+4. Spamhaus + SORBS NEVER_SYNCED — yeni feed'ler ekle
+5. Dashboard KPI kartları tıklanabilir olsun
+
+### 🛠 Fixes
+
+**1. Delete Bug (Liste Merkezi)**
+`${API}/api/lists-manager/delete` → **`/api` çift kez** vardı → 404. `client.post("/lists-manager/delete")` olarak değişti. Add + delete + hepsi düzeltildi. Error handling axios `.response.data.detail`'e geçildi (net hata mesajı).
+
+**2. Sidebar temizliği**
+- "Whitelist Geçmişi" kaldırıldı → `/whitelist-history` redirect: `/panel/lists-manager`
+- "Kara/Beyaz Liste (eski)" kaldırıldı → `/lists` redirect: `/panel/lists-manager`
+- Kullanılmayan `Lists` + `WhitelistHistory` import'ları temizlendi
+
+**3. Liste Merkezi Tab Split (4 sekme)**
+- **Tümü**: hepsi (default)
+- **Beyaz Liste**: whitelist filtered (yeşil)
+- **Kara Liste**: blacklist filtered (kırmızı)
+- **Geçmiş**: audit log
+Filter bar'daki kind seçici kaldırıldı (tab seçimi zaten yapıyor). Kalan filtreler: tip + arama.
+
+**4. Threat Intel Feeds — 5 yeni + Fix**
+Yeni: **SpamCop BL, PSBL (Passive SBL), DroneBL, Manitu iX, CBL (Composite)**. Toplam 11 feed.
+
+**NEVER_SYNCED root cause**: `_sync_feed` sadece `client_ip` alanına bakıyordu, private IP filtresi yoktu. Sunucudaki mail'lerin çoğunun client_ip'si `10.88.0.4` (container internal) — DNSBL bunu asla listelemez, hep 0 dönüyordu.
+
+**Fix**: Yeni ortak helper `_collect_recent_public_ips(hours=24, limit=50)`:
+- `client_ip` → `sender_ip` → `server_ip` → `source_ip` fallback (MongoDB $ifNull)
+- Private IP filtre: `10.x/127.x/169.254.x/192.168.x/172.16-31.x`
+- IPv6 skip (DNSBL ip6.arpa formatı gerekir, ayrı iş)
+- Octet sanity check
+Spamhaus + Barracuda + SORBS + UCEPROTECT + SpamCop + PSBL + DroneBL + Manitu + CBL hepsi bu helper'ı kullanır artık.
+
+**5. Dashboard KPI Cards — Tıklanabilir**
+`ControlBar.js` — her kartın onClick'i var artık:
+- Kuyruk → modal (mevcut)
+- Spam 1s → `/panel?tab=live`
+- Yakalama/dk → `/panel?tab=traffic`
+- Motorlar → `/panel/engines`
+- Bayi → `/panel/resellers-admin`
+- Ülke → `/panel?tab=geo`
+
+### 🧪 Tests — 10/10 ✅
+`test_v44_00_21_feeds_expansion.py` (4 test): 5 new feed keys, helper exists with private-IP filter, DNSBL map complete, `/api/threat-intel/feeds` returns ≥11.
+`test_v44_00_21_lists_manager.py` (6 test): 4 tabs verified, endpoints work, routes redirect.
+
 - 30s auto-refresh
 - data-testid'ler: `lists-manager-page`, `lm-add-btn`, `lm-tab-list`, `lm-tab-history`, `lm-filter-kind`, `lm-filter-type`, `lm-search`, `lm-delete-{value}`
 

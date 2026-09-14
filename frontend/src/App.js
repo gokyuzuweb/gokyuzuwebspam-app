@@ -44,7 +44,6 @@ import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import Quarantine from "@/pages/Quarantine";
 import PluginHealth from "@/pages/PluginHealth";
-import Lists from "@/pages/Lists";
 import ListsManager from "@/pages/ListsManager";
 import Rules from "@/pages/Rules";
 import Engines from "@/pages/Engines";
@@ -83,7 +82,6 @@ import PlanAnalytics from "@/pages/PlanAnalytics";
 import Subscription from "@/pages/Subscription";
 import PlanConfig from "@/pages/PlanConfig";
 import BayiServer from "@/pages/BayiServer";
-import WhitelistHistory from "@/pages/WhitelistHistory";
 import LandingCMS from "@/pages/LandingCMS";
 import Marketplace from "@/pages/Marketplace";
 import BounceDigest from "@/pages/BounceDigest";
@@ -124,14 +122,12 @@ const NAV = [
   // 🛡️ KORUMA
   { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine", group: "koruma", feature: "quarantine_view" },
   { to: "/panel/lists-manager", key: "lists_manager", icon: ListChecks, testid: "nav-lists-manager", label: "Liste Merkezi", group: "koruma", feature: "blacklist_check" },
-  { to: "/panel/lists", key: "lists", icon: ListChecks, testid: "nav-lists", label: "Kara/Beyaz Liste (eski)", group: "koruma", feature: "blacklist_check" },
   { to: "/panel/blacklist", key: "blacklist", icon: Radar, testid: "nav-blacklist", label: "IP Blacklist Çıkışı", group: "koruma", feature: "blacklist_check" },
   { to: "/panel/rules", key: "rules", icon: Wrench, testid: "nav-rules", label: "Kurallar", group: "koruma", feature: "custom_rules" },
   { to: "/panel/engines", key: "engines", icon: Cpu, testid: "nav-engines", label: "Motorlar", group: "koruma", feature: "engine_toggle" },
   { to: "/panel/security", key: "security", icon: Bug, testid: "nav-security", label: "Güvenlik", group: "koruma", feature: "security_view" },
   // 📨 POSTA
   { to: "/panel/outbound", key: "outbound", icon: ArrowUpRight, testid: "nav-outbound", label: "Giden Posta", group: "posta", feature: "outbound_view" },
-  { to: "/panel/whitelist-history", key: "whitelist_history", icon: BadgeCheck, testid: "nav-whitelist-history", label: "Whitelist Geçmişi", group: "posta", feature: "whitelist_history" },
   // 👥 KULLANICILAR & BAYİ
   { to: "/panel/users", key: "users", icon: Users, testid: "nav-users", label: "Kullanıcılar", group: "user", feature: "users_view" },
   { to: "/panel/resellers-admin", key: "resellers_admin", icon: Users, testid: "nav-resellers-admin", label: "Bayi Yönetimi", masterOnly: true, sellerOnly: true, group: "user" },
@@ -492,14 +488,14 @@ function Shell() {
             <Route path="/my-server" element={PG(BayiServer, "my_server", "Sunucumu Bağla")} />
             <Route path="/smtp-settings" element={PG(SmtpSettings, "smtp_settings", "SMTP Ayarları")} />
             <Route path="/reseller-branding" element={PG(ResellerBranding, "custom_branding", "Kendi Marka & Domain")} />
-            <Route path="/whitelist-history" element={PG(WhitelistHistory, "whitelist_history", "Whitelist Geçmişi")} />
+            <Route path="/whitelist-history" element={<Navigate to="/panel/lists-manager" replace />} />
             <Route path="/docs" element={PG(Docs, "docs_view", "Dokümantasyon")} />
             <Route path="/custom-domain" element={MO(CustomDomainGuide, "Kendi Domain'im")} />
             <Route path="/marketplace" element={PG(Marketplace, "marketplace", "İmza Marketplace")} />
             <Route path="/bounce-digest" element={PG(BounceDigest, "bounce_digest", "Bounce Digest")} />
             <Route path="/live-diagnostic" element={PG(LiveDiagnostic, "live_diagnostic", "Canlı Sunucu Tanı")} />
             <Route path="/quarantine" element={PG(Quarantine, "quarantine_view", "Karantina")} />
-            <Route path="/lists" element={PG(Lists, "blacklist_check", "Kara/Beyaz Liste")} />
+            <Route path="/lists" element={<Navigate to="/panel/lists-manager" replace />} />
             <Route path="/lists-manager" element={PG(ListsManager, "blacklist_check", "Liste Merkezi")} />
             <Route path="/rules" element={PG(Rules, "custom_rules", "Kural Editörü")} />
             <Route path="/engines" element={PG(Engines, "engine_toggle", "Motorlar")} />
