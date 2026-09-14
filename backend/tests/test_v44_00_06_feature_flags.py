@@ -11,12 +11,16 @@ Regresyonu şu senaryoda önler:
   3. Müşteri sayfayı açar → `_require_feature('new_feature')` 403 döner
 """
 from __future__ import annotations
+import os
 import re
 from pathlib import Path
 
-APP_JS = Path("/app/frontend/src/App.js")
-SERVER_PY = Path("/app/backend/server.py")
-PLAN_CONFIG_JS = Path("/app/frontend/src/pages/PlanConfig.js")
+# v44.00.19 — CI-safe path resolution: /app locally, $GITHUB_WORKSPACE in Actions.
+# Bu dosya .../tests/test_v44_00_06_feature_flags.py konumunda → parents[2] repo root.
+_REPO_ROOT = Path(os.environ.get("GITHUB_WORKSPACE") or Path(__file__).resolve().parents[2])
+APP_JS = _REPO_ROOT / "frontend/src/App.js"
+SERVER_PY = _REPO_ROOT / "backend/server.py"
+PLAN_CONFIG_JS = _REPO_ROOT / "frontend/src/pages/PlanConfig.js"
 
 
 def _extract_frontend_feature_keys() -> set[str]:
