@@ -159,6 +159,9 @@ export default function MailEventDetail({ event, onClose, onAction }) {
           </div>
         </div>
 
+        {/* v44.00.19 — 3rd Party Verdicts (Yandex/Gmail/SA header'ları) */}
+        <ThirdPartyPanel panel_verdict={e.verdict} panel_score={e.total_score} tp={e.third_party_verdicts} />
+
         {/* SENDER IP · COUNTRY · BLOCK */}
         <SenderIPPanel event={e} licenseKey={licenseKey} />
 
@@ -604,6 +607,93 @@ function AIExplainPanel({ event, isSpam }) {
         <p className="text-[10px] text-slate-500">
           Bu maili neden spam/temiz olarak sınıflandırdığımızı yapay zekaya sade Türkçe ile açıklat.
         </p>
+      )}
+    </div>
+  );
+}
+
+
+
+// v44.00.19 — 3rd Party Verdicts side-by-side comparison panel
+function ThirdPartyPanel({ panel_verdict, panel_score, tp }) {
+  if (!tp || Object.keys(tp).length === 0) return null;
+
+  // Provider guess for label
+  const provider = tp.provider_hint ||
+    (tp.yandex_spam ? "yandex" : (tp.sa_flag || tp.sa_score !== undefined ? "spamassassin" : "3rd-party"));
+
+  // Panel side
+  const panelClean = ["clean", "whitelisted"].includes(panel_verdict);
+  const panelBad   = ["spam", "high_spam", "virus", "blocked"].includes(panel_verdict);
+
+  // 3rd party judgement
+  let tpJudge = "unknown";
+  let tpColor = "#64748b";
+  if (tp.yandex_spam === "yes" || tp.sa_flag === "YES" || (tp.sa_score !== undefined && tp.sa_score >= 5)) {
+    tpJudge = "spam"; tpColor = "#f43f5e";
+  } else if (tp.yandex_spam === "no" || tp.sa_flag === "NO" || (tp.sa_score !== undefined && tp.sa_score < 5)) {
+    tpJudge = "clean"; tpColor = "#10b981";
+  }
+
+  // Agreement badge
+  let agree = null;
+  if (tpJudge !== "unknown") {
+    if ((panelClean && tpJudge === "clean") || (panelBad && tpJudge === "spam")) {
+      agree = { label: "MUTABIK", color: "#10b981" };
+    } else {
+      agree = { label: "ÇELİŞKİ", color: "#f59e0b" };
+    }
+  }
+
+  const authRow = ["spf", "dkim", "dmarc"].filter(k => tp[k]);
+
+  return (
+    <div className="px-5 py-3 border-b border-slate-800 bg-slate-900/30" data-testid="third-party-panel">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] text-slate-500 mono uppercase tracking-widest">3rd Party Analysis · {provider}</div>
+        {agree && (
+          <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase mono"
+                style={{ background: `${agree.color}22`, color: agree.color }}
+                data-testid="tp-agree-badge">
+            {agree.label}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 text-[11px] mono">
+        {/* Panel side */}
+        <div className="rounded border border-slate-800 bg-slate-900/40 px-3 py-2">
+          <div className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Panel Verdict</div>
+          <div className="text-slate-100 uppercase text-xs font-bold">{panel_verdict || "-"}</div>
+          <div className="text-slate-400 mt-0.5">skor {panel_score?.toFixed?.(2) ?? panel_score ?? "-"}</div>
+        </div>
+        {/* 3rd party side */}
+        <div className="rounded border border-slate-800 bg-slate-900/40 px-3 py-2" data-testid="tp-verdict-box">
+          <div className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Recipient / Upstream</div>
+          <div className="uppercase text-xs font-bold" style={{ color: tpColor }}>{tpJudge}</div>
+          <div className="text-slate-400 mt-0.5 text-[10px] flex flex-wrap gap-1.5">
+            {tp.yandex_spam && <span>yandex={tp.yandex_spam}</span>}
+            {tp.sa_flag && <span>sa={tp.sa_flag}</span>}
+            {tp.sa_score !== undefined && <span>score={tp.sa_score}</span>}
+            {tp.auto_submitted && <span className="text-amber-400">auto={tp.auto_submitted}</span>}
+          </div>
+        </div>
+      </div>
+
+      {authRow.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] mono">
+          {authRow.map(k => (
+            <span key={k}
+                  className="px-1.5 py-0.5 rounded"
+                  style={{
+                    background: tp[k] === "pass" ? "#10b98122" : "#f4335522",
+                    color:      tp[k] === "pass" ? "#10b981"   : "#f43f5e",
+                  }}
+                  data-testid={`tp-auth-${k}`}>
+              {k.toUpperCase()}={tp[k]}
+            </span>
+          ))}
+        </div>
       )}
     </div>
   );

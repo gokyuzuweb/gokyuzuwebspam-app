@@ -3550,3 +3550,41 @@ cd /root && curl -sSLO https://panel.gokyuzuhosting.com/whm-plugin/install.sh &&
 # veya WHM'de Plugin > Güncelle
 ```
 Kurulumdan sonra bir test virüsü (EICAR) gönderin → 30 sn içinde Master Panel'de "Blocked / Virus" pie diliminde görünmeli.
+
+
+
+## Feb 15, 2026 — v44.00.19 — Yandex Forward Loop Guard + 3rd Party Verdict Column
+
+### 🎯 User Requests (3)
+1. Yandex forward-loop whitelist edge-case doğrulama
+2. EICAR live test dokümantasyonu
+3. Panel verdict'in yanına recipient (Yandex/Gmail Postmaster) verdict'ini ekle → hangi taraf yanılıyor karşılaştır
+
+### 🛠 Backend Fix (`/plugin/scan-verdict`) — Upstream Trust Logic
+Önceki: `X-Yandex-Spam:` sadece not düşürüyor, score'u değiştirmezdi. Bounce/auto-reply headers hiç check edilmezdi.
+
+Yeni (v44.00.19):
+- **`X-Yandex-Spam: NO`** → `YANDEX_CLEAN`, score cap 4.9
+- **`X-Yandex-Spam: YES`** → `YANDEX_UPSTREAM_SPAM`, score ≥ 5.0
+- **`Auto-Submitted: auto-replied|auto-generated`** (RFC 3834) → `AUTO_SUBMITTED`, cap 4.9. Vacation/DSN/forward-loop bounce spam olarak sınıflandırılmaz.
+- **`Return-Path: <>` veya `From: MAILER-DAEMON`** → `BOUNCE_DSN`, cap 4.9
+
+### 🆕 3rd Party Verdict Extraction
+`_extract_third_party_verdicts(headers)` helper — parse eder:
+- **Authentication-Results (RFC 8601)**: SPF/DKIM/DMARC
+- **X-Yandex-Spam**, **X-Spam-Flag/Status/Score** (SA), **Auto-Submitted**
+- **ARC-Authentication-Results mx.google.com** → provider_hint gmail
+
+Mail-details response'a `third_party_verdicts` alanı eklendi.
+
+### 🖼 Frontend `ThirdPartyPanel` Component
+`MailEventDetail.js` yeni side-by-side comparison panel:
+- Panel Verdict vs Recipient/Upstream Verdict
+- MUTABIK/ÇELİŞKİ rozeti
+- SPF/DKIM/DMARC renkli chip'ler
+- data-testid: `third-party-panel`, `tp-agree-badge`, `tp-verdict-box`, `tp-auth-{spf|dkim|dmarc}`
+
+### 🧪 Tests — 11/11 ✅
+`/app/backend/tests/test_v44_00_19_third_party.py`
+
+### 📦 Version Bump → v44.00.19

@@ -1825,6 +1825,8 @@ async def quarantine_content(item_id: str):
     body_preview = doc.get("body_preview") or ""
     body_html = doc.get("body_html") or ""
     headers_full = doc.get("headers_full") or doc.get("headers") or doc.get("headers_preview") or ""
+    # v44.00.19 — 3rd-party verdict extraction (Yandex/Gmail/SA header'ları)
+    third_party = _extract_third_party_verdicts(headers_full)
     return {
         "id": doc.get("id"),
         "ts": doc.get("received_at") or doc.get("ingested_at"),
@@ -1844,8 +1846,72 @@ async def quarantine_content(item_id: str):
         "attachments": doc.get("attachments") or [],
         "action": doc.get("action"),
         "clam_verdict": doc.get("clam_verdict"),  # v43.23 — ClamAV verdict passthrough
+        "third_party_verdicts": third_party,  # v44.00.19 — Yandex/Gmail/SA verdicts
         "content_source": "db" if (headers_full or body_preview or body_html) else "none",
     }
+
+
+def _extract_third_party_verdicts(headers: str) -> dict:
+    """v44.00.19 — Gelen mail header'larından 3rd-party spam/auth verdict'lerini
+    parse eder. Panel verdict'inin yanında karşılaştırma için gösterilir.
+
+    Yakalanan header'lar:
+      - Authentication-Results (SPF/DKIM/DMARC)
+      - X-Spam-Flag, X-Spam-Score, X-Spam-Status (SpamAssassin)
+      - X-Yandex-Spam, X-Yandex-Spam-Status
+      - X-Google-Original-* / ARC-Authentication-Results (Gmail)
+      - Auto-Submitted (RFC 3834)
+    """
+    if not headers:
+        return {}
+    h = headers if isinstance(headers, str) else str(headers)
+    out: dict = {}
+
+    # SPF/DKIM/DMARC — Authentication-Results header (RFC 8601)
+    ar = re.search(r"^authentication-results:\s*(.+?)(?=\r?\n[A-Z]|\Z)", h, re.I | re.M | re.S)
+    if ar:
+        ar_str = ar.group(1).replace("\n", " ").replace("\r", " ")
+        for key in ("spf", "dkim", "dmarc"):
+            m = re.search(rf"\b{key}=(pass|fail|softfail|neutral|none|temperror|permerror)\b", ar_str, re.I)
+            if m:
+                out[key] = m.group(1).lower()
+
+    # Yandex
+    ym = re.search(r"^x-yandex-spam:\s*(\S+)", h, re.I | re.M)
+    if ym:
+        out["yandex_spam"] = ym.group(1).strip().lower()
+
+    # Gmail / Google
+    if re.search(r"^x-(google|gm)-message-state:", h, re.I | re.M) or \
+       re.search(r"^arc-authentication-results:.*mx\.google\.com", h, re.I | re.M):
+        out["provider_hint"] = "gmail"
+    elif "yandex" in h.lower():
+        out["provider_hint"] = "yandex"
+
+    # SpamAssassin
+    sf = re.search(r"^x-spam-flag:\s*(\S+)", h, re.I | re.M)
+    if sf:
+        out["sa_flag"] = sf.group(1).strip().upper()
+    ss = re.search(r"^x-spam-status:\s*(\S+).*?score=(-?\d+(?:\.\d+)?)", h, re.I | re.M | re.S)
+    if ss:
+        out["sa_status"] = ss.group(1).strip()
+        try:
+            out["sa_score"] = float(ss.group(2))
+        except Exception:
+            pass
+    sc = re.search(r"^x-spam-score:\s*(-?\d+(?:\.\d+)?)", h, re.I | re.M)
+    if sc and "sa_score" not in out:
+        try:
+            out["sa_score"] = float(sc.group(1))
+        except Exception:
+            pass
+
+    # RFC 3834 auto-submitted
+    asm = re.search(r"^auto-submitted:\s*(\S+)", h, re.I | re.M)
+    if asm:
+        out["auto_submitted"] = asm.group(1).strip().lower().rstrip(";")
+
+    return out
 
 
 class BulkAction(BaseModel):
@@ -4260,7 +4326,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.18"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.19"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -7219,8 +7285,31 @@ async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
         reasons.append("GTUBE")
 
     hdr_l = (payload.headers or "").lower()
-    if "x-yandex-spam:" in hdr_l:
-        reasons.append("YANDEX_LOOP_IGNORED")
+
+    # v44.00.19 — 3rd-party header respect (Yandex/Gmail/SA already scanned)
+    # Forward-loop / auto-reply / bounce edge cases + trust upstream verdicts.
+    upstream_trust_reason = None
+    # 1) Yandex: X-Yandex-Spam: YES/NO
+    _ym = re.search(r"x-yandex-spam:\s*(yes|no)", hdr_l)
+    if _ym:
+        if _ym.group(1) == "no":
+            upstream_trust_reason = "YANDEX_CLEAN"
+        else:
+            # Yandex zaten spam demiş → biz de spam sayalım, ama re-score etmeyelim
+            upstream_trust_reason = "YANDEX_SPAM"
+            score = max(score, 5.0)
+            reasons.append("YANDEX_UPSTREAM_SPAM")
+    # 2) Gmail Authentication-Results genelde başka header'a saklıysa da bunu
+    #    doğrudan bir spam signal olarak kullanmıyoruz; sadece 3rd-party column'da göstereceğiz.
+    # 3) Auto-Submitted (RFC 3834): vacation, DSN, forward-loop bounce
+    if re.search(r"auto-submitted:\s*(auto-replied|auto-generated|auto-notified)", hdr_l):
+        upstream_trust_reason = upstream_trust_reason or "AUTO_SUBMITTED"
+    # 4) Envelope-null bounce (Return-Path: <>) or MAILER-DAEMON
+    if re.search(r"return-path:\s*<>", hdr_l) or "mailer-daemon" in (payload.from_addr or "").lower():
+        upstream_trust_reason = upstream_trust_reason or "BOUNCE_DSN"
+
+    if upstream_trust_reason and upstream_trust_reason in ("YANDEX_CLEAN", "AUTO_SUBMITTED", "BOUNCE_DSN"):
+        reasons.append(upstream_trust_reason)
 
     from_l = (payload.from_addr or "").lower()
 
@@ -7286,6 +7375,10 @@ async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
     if is_ham_pattern:
         score = min(score, 4.9)
         reasons.append("HAM_PATTERN")
+
+    # v44.00.19 — upstream trust (Yandex clean, auto-reply, bounce) cap
+    if upstream_trust_reason in ("YANDEX_CLEAN", "AUTO_SUBMITTED", "BOUNCE_DSN"):
+        score = min(score, 4.9)
 
     if score >= 15:
         verdict = "high_spam"
