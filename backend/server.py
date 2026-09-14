@@ -739,6 +739,7 @@ async def _startup() -> None:
     asyncio.create_task(_monthly_auto_cleanup_task())
     asyncio.create_task(_license_expiry_alerts_task())
     asyncio.create_task(_daily_digest_task())  # v44.00.20 — daily ÇELİŞKİ digest
+    asyncio.create_task(_migrate_trusted_domains_to_lists())  # v44.00.20 — one-time UI sync
     asyncio.create_task(_pos_health_monitor_task())
     asyncio.create_task(_daily_violations_cleanup_task())
     asyncio.create_task(_threat_ratio_monitor_task())
@@ -1207,6 +1208,45 @@ async def _monthly_auto_cleanup_task():
 
 # v44.00.20 — Daily Digest task: master admin'e sabah 08:00 UTC (11:00 TR)
 # "24 saatte en çok çelişki yaşayan 5 gönderici" özet mail'i.
+
+# v44.00.20 — Mevcut `trusted_domains` kayıtlarını `db.lists` ile senkronize et (one-time).
+# UI eskiden ayrı koleksiyondan okuduğu için one-click whitelist ile eklenen kayıtlar
+# görünmüyordu; bu migration mevcut kayıtları UI collection'a mirror'lar.
+async def _migrate_trusted_domains_to_lists():
+    try:
+        await asyncio.sleep(15)  # startup sonrası kısa bekleme
+        cur = db.trusted_domains.find({}, {"_id": 0})
+        n = 0
+        import uuid as _uuid
+        async for td in cur:
+            dom = (td.get("domain") or "").strip().lower()
+            if not dom:
+                continue
+            list_type = "white" if td.get("kind") == "whitelist" else "black"
+            existing = await db.lists.find_one(
+                {"entry_type": "domain", "value": dom, "list_type": list_type, "scope": "global"},
+                {"_id": 0, "id": 1},
+            )
+            if existing:
+                continue
+            await db.lists.insert_one({
+                "id": str(_uuid.uuid4()),
+                "list_type": list_type,
+                "entry_type": "domain",
+                "value": dom,
+                "scope": "global",
+                "user": None,
+                "note": td.get("note") or "Migrated from trusted_domains (v44.00.20)",
+                "owner_license_key": None,
+                "created_at": td.get("created_at") or _iso(),
+            })
+            n += 1
+        if n > 0:
+            log.info("trusted_domains→lists migration: %d entries synced", n)
+    except Exception as ex:
+        log.warning("migrate_trusted_domains_to_lists failed: %s", ex)
+
+
 async def _daily_digest_task():
     """Her sabah 08:00 UTC'de dünkü ÇELİŞKİ mail'lerini gruplayıp özet gönderir.
     Çelişki = Panel spam dedi ama 3rd-party auth pass (false-positive kanıtı)."""
@@ -7416,10 +7456,27 @@ async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
     reasons: list[str] = []
 
     # v44.00.16 — DB'den whitelist/blacklist/ham-pattern oku
+    # v44.00.20 — İki koleksiyonu birleştir: `trusted_domains` (legacy) + `lists` (Master Panel UI)
     trusted_doms = [d.get("domain", "").lower() async for d in
                     db.trusted_domains.find({"kind": "whitelist"}, {"_id": 0, "domain": 1})]
     blocked_doms = [d.get("domain", "").lower() async for d in
                     db.trusted_domains.find({"kind": "blacklist"}, {"_id": 0, "domain": 1})]
+    # Master Panel "Beyaz Liste / Kara Liste" UI'dan eklenenler:
+    async for d in db.lists.find({"entry_type": "domain", "list_type": "white"}, {"_id": 0, "value": 1}):
+        v = (d.get("value") or "").lower()
+        if v: trusted_doms.append(v)
+    async for d in db.lists.find({"entry_type": "domain", "list_type": "black"}, {"_id": 0, "value": 1}):
+        v = (d.get("value") or "").lower()
+        if v: blocked_doms.append(v)
+    # Aynı domain hem e-posta hem IP olarak da yazılmış olabilir; e-posta = domain kısmı
+    async for d in db.lists.find({"entry_type": "email", "list_type": "white"}, {"_id": 0, "value": 1}):
+        v = (d.get("value") or "").lower()
+        dom = v.split("@")[-1] if "@" in v else v
+        if dom: trusted_doms.append(dom)
+    async for d in db.lists.find({"entry_type": "email", "list_type": "black"}, {"_id": 0, "value": 1}):
+        v = (d.get("value") or "").lower()
+        dom = v.split("@")[-1] if "@" in v else v
+        if dom: blocked_doms.append(dom)
     ham_patterns = [p.get("pattern", "").lower() async for p in
                     db.ham_patterns.find({}, {"_id": 0, "pattern": 1})]
 
@@ -7568,25 +7625,52 @@ class TrustedDomainIn(BaseModel):
 
 @api.post("/plugin/trusted-domains")
 async def add_trusted_domain(payload: TrustedDomainIn, request: Request, license_key: Optional[str] = None):
+    """v44.00.20 — Master Panel Beyaz/Kara Liste UI ile SENKRON.
+    Hem `db.trusted_domains` (scan-verdict için) hem `db.lists` (UI için) tarafına yazar."""
     await _require_master(request, license_key)
     dom = (payload.domain or "").strip().lower().lstrip("@")
     if not dom or "." not in dom:
         raise HTTPException(400, "Geçersiz domain")
     if payload.kind not in ("whitelist", "blacklist"):
         raise HTTPException(400, "kind must be whitelist|blacklist")
+    # 1) trusted_domains (scan-verdict + logtail için)
     await db.trusted_domains.update_one(
         {"domain": dom},
         {"$set": {"domain": dom, "kind": payload.kind,
                   "note": payload.note or "", "created_at": _iso()}},
         upsert=True,
     )
-    return {"ok": True, "domain": dom, "kind": payload.kind}
+    # 2) lists (Master Panel UI "Beyaz Liste / Kara Liste" için)
+    #    UI schema: entry_type=domain, value=dom, list_type=white|black, scope=global
+    list_type = "white" if payload.kind == "whitelist" else "black"
+    existing = await db.lists.find_one(
+        {"entry_type": "domain", "value": dom, "list_type": list_type, "scope": "global"},
+        {"_id": 0, "id": 1},
+    )
+    if not existing:
+        import uuid as _uuid
+        list_doc = {
+            "id": str(_uuid.uuid4()),
+            "list_type": list_type,
+            "entry_type": "domain",
+            "value": dom,
+            "scope": "global",
+            "user": None,
+            "note": payload.note or "Panel içinden tek-tık eklendi",
+            "owner_license_key": None,  # global master entry
+            "created_at": _iso(),
+        }
+        await db.lists.insert_one(list_doc)
+    return {"ok": True, "domain": dom, "kind": payload.kind, "synced_to_ui": True}
 
 
 @api.delete("/plugin/trusted-domains/{domain}")
 async def delete_trusted_domain(domain: str, request: Request, license_key: Optional[str] = None):
     await _require_master(request, license_key)
-    r = await db.trusted_domains.delete_one({"domain": domain.lower()})
+    dom = domain.lower()
+    r = await db.trusted_domains.delete_one({"domain": dom})
+    # Also remove from UI list (mirror)
+    await db.lists.delete_many({"entry_type": "domain", "value": dom})
     if r.deleted_count == 0:
         raise HTTPException(404, "Bulunamadı")
     return {"ok": True}
