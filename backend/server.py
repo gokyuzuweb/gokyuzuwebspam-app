@@ -7636,6 +7636,80 @@ async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
     return {"verdict": verdict, "score": round(score, 2), "reasons": reasons}
 
 
+
+@api.post("/plugin/trusted-domains/sync-to-ui")
+async def sync_trusted_to_ui(request: Request, license_key: Optional[str] = None):
+    """v44.00.20 — Manuel migration tetikleyici: `trusted_domains` → `db.lists`.
+    Startup task otomatik çalışıyor ama kullanıcı isterse elle de çalıştırabilir.
+    Idempotent: aynı kayıt tekrar eklenmez."""
+    await _require_master(request, license_key)
+    import uuid as _uuid
+    synced = 0
+    already = 0
+    sample = []
+    async for td in db.trusted_domains.find({}, {"_id": 0}):
+        dom = (td.get("domain") or "").strip().lower()
+        if not dom:
+            continue
+        list_type = "white" if td.get("kind") == "whitelist" else "black"
+        existing = await db.lists.find_one(
+            {"entry_type": "domain", "value": dom, "list_type": list_type, "scope": "global"},
+            {"_id": 0, "id": 1},
+        )
+        if existing:
+            already += 1
+            continue
+        await db.lists.insert_one({
+            "id": str(_uuid.uuid4()),
+            "list_type": list_type,
+            "entry_type": "domain",
+            "value": dom,
+            "scope": "global",
+            "user": None,
+            "note": td.get("note") or "Manual sync via /plugin/trusted-domains/sync-to-ui",
+            "owner_license_key": None,
+            "created_at": td.get("created_at") or _iso(),
+        })
+        synced += 1
+        if len(sample) < 10:
+            sample.append({"domain": dom, "kind": list_type})
+    return {
+        "ok": True,
+        "synced": synced,
+        "already_present": already,
+        "total_in_trusted_domains": synced + already,
+        "sample_synced": sample,
+    }
+
+
+@api.get("/plugin/trusted-domains/diag")
+async def trusted_domains_diag(request: Request, license_key: Optional[str] = None):
+    """v44.00.20 — Diagnostic: iki koleksiyonda ne var, sync durumu."""
+    await _require_master(request, license_key)
+    td_all = await db.trusted_domains.find({}, {"_id": 0}).to_list(500)
+    lists_white = await db.lists.find(
+        {"list_type": "white", "entry_type": "domain"}, {"_id": 0, "value": 1, "note": 1}
+    ).to_list(500)
+    lists_black = await db.lists.find(
+        {"list_type": "black", "entry_type": "domain"}, {"_id": 0, "value": 1}
+    ).to_list(500)
+    td_domains = {d.get("domain", "").lower() for d in td_all}
+    lists_domains = {d.get("value", "").lower() for d in lists_white} | \
+                    {d.get("value", "").lower() for d in lists_black}
+    only_in_td = sorted(td_domains - lists_domains)
+    only_in_lists = sorted(lists_domains - td_domains)
+    return {
+        "trusted_domains_total": len(td_all),
+        "trusted_domains_sample": td_all[:20],
+        "lists_white_total": len(lists_white),
+        "lists_black_total": len(lists_black),
+        "not_synced_yet": only_in_td,  # trusted_domains'te var, lists'te yok
+        "only_in_lists": only_in_lists,  # UI'dan eklenmiş, trusted_domains'te yok (opsiyonel)
+        "in_sync": len(only_in_td) == 0,
+    }
+
+
+
 # v44.00.16 — Trusted Domains (Whitelist/Blacklist) CRUD — master only
 @api.get("/plugin/trusted-domains")
 async def list_trusted_domains(request: Request, license_key: Optional[str] = None):
