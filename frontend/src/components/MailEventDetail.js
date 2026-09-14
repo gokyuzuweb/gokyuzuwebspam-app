@@ -160,7 +160,7 @@ export default function MailEventDetail({ event, onClose, onAction }) {
         </div>
 
         {/* v44.00.19 — 3rd Party Verdicts (Yandex/Gmail/SA header'ları) */}
-        <ThirdPartyPanel panel_verdict={e.verdict} panel_score={e.total_score} tp={e.third_party_verdicts} />
+        <ThirdPartyPanel panel_verdict={e.verdict} panel_score={e.total_score} tp={e.third_party_verdicts} from_addr={e.from_addr} onWhitelisted={() => qc.invalidateQueries()} />
 
         {/* SENDER IP · COUNTRY · BLOCK */}
         <SenderIPPanel event={e} licenseKey={licenseKey} />
@@ -615,8 +615,13 @@ function AIExplainPanel({ event, isSpam }) {
 
 
 // v44.00.19 — 3rd Party Verdicts side-by-side comparison panel
-function ThirdPartyPanel({ panel_verdict, panel_score, tp }) {
+// v44.00.20 — Whitelist one-click button on ÇELİŞKİ (disagree) verdict
+function ThirdPartyPanel({ panel_verdict, panel_score, tp, from_addr, onWhitelisted }) {
+  const [wlLoading, setWlLoading] = useState(false);
+  const [wlDone, setWlDone] = useState(false);
   if (!tp || Object.keys(tp).length === 0) return null;
+
+  const domain = (from_addr || "").split("@")[1]?.trim().toLowerCase() || null;
 
   // Provider guess for label
   const provider = tp.provider_hint ||
@@ -646,6 +651,34 @@ function ThirdPartyPanel({ panel_verdict, panel_score, tp }) {
   }
 
   const authRow = ["spf", "dkim", "dmarc"].filter(k => tp[k]);
+
+  // v44.00.20 — Whitelist one-click when ÇELİŞKİ + panel says spam/high_spam
+  const showWhitelistBtn =
+    !!domain &&
+    agree?.label === "ÇELİŞKİ" &&
+    (panelBad || panel_verdict === "spam" || panel_verdict === "high_spam") &&
+    tpJudge === "clean";
+
+  async function addToWhitelist() {
+    if (!domain || wlLoading) return;
+    setWlLoading(true);
+    try {
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/plugin/trusted-domains`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ domain, kind: "whitelist", note: "One-click from 3rd Party Panel disagreement" }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      setWlDone(true);
+      toast.success(`${domain} whitelist'e eklendi`);
+      if (onWhitelisted) onWhitelisted();
+    } catch (err) {
+      toast.error("Whitelist'e eklenemedi: " + err.message);
+    } finally {
+      setWlLoading(false);
+    }
+  }
 
   return (
     <div className="px-5 py-3 border-b border-slate-800 bg-slate-900/30" data-testid="third-party-panel">
@@ -693,6 +726,33 @@ function ThirdPartyPanel({ panel_verdict, panel_score, tp }) {
               {k.toUpperCase()}={tp[k]}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* v44.00.20 — Whitelist tek-tık butonu (ÇELİŞKİ + auth pass senaryosu) */}
+      {showWhitelistBtn && (
+        <div className="mt-3 pt-3 border-t border-slate-800">
+          <button
+            type="button"
+            disabled={wlLoading || wlDone}
+            onClick={addToWhitelist}
+            data-testid="tp-whitelist-btn"
+            className={`w-full text-xs font-bold mono uppercase tracking-wider py-2 rounded transition-all
+              ${wlDone
+                ? "bg-emerald-900/40 text-emerald-400 cursor-default"
+                : wlLoading
+                  ? "bg-slate-800 text-slate-500 cursor-wait"
+                  : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20"}`}
+          >
+            {wlDone
+              ? `✓ ${domain} whitelist'te`
+              : wlLoading
+                ? "Ekleniyor..."
+                : `✓ Bu gönderici güvenilir → ${domain} whitelist'e ekle`}
+          </button>
+          <div className="text-[9px] text-slate-500 mono uppercase tracking-widest mt-1.5 text-center">
+            SPF/DKIM pass · biz spam dedik → false-positive kanıtı
+          </div>
         </div>
       )}
     </div>

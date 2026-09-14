@@ -738,6 +738,7 @@ async def _startup() -> None:
     asyncio.create_task(_hourly_self_training_task())
     asyncio.create_task(_monthly_auto_cleanup_task())
     asyncio.create_task(_license_expiry_alerts_task())
+    asyncio.create_task(_daily_digest_task())  # v44.00.20 — daily ÇELİŞKİ digest
     asyncio.create_task(_pos_health_monitor_task())
     asyncio.create_task(_daily_violations_cleanup_task())
     asyncio.create_task(_threat_ratio_monitor_task())
@@ -1204,6 +1205,136 @@ async def _monthly_auto_cleanup_task():
         await asyncio.sleep(3600)
 
 
+# v44.00.20 — Daily Digest task: master admin'e sabah 08:00 UTC (11:00 TR)
+# "24 saatte en çok çelişki yaşayan 5 gönderici" özet mail'i.
+async def _daily_digest_task():
+    """Her sabah 08:00 UTC'de dünkü ÇELİŞKİ mail'lerini gruplayıp özet gönderir.
+    Çelişki = Panel spam dedi ama 3rd-party auth pass (false-positive kanıtı)."""
+    await asyncio.sleep(1200)  # startup'tan 20dk sonra
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.hour == 8:  # 08:00 UTC (Türkiye 11:00)
+                last = await db.settings.find_one({"_key": "daily_digest_last_run"}, {"_id": 0})
+                already = False
+                if last and last.get("date") == now.date().isoformat():
+                    already = True
+                if not already:
+                    r = await _run_daily_digest_once()
+                    await db.settings.update_one(
+                        {"_key": "daily_digest_last_run"},
+                        {"$set": {"_key": "daily_digest_last_run",
+                                  "date": now.date().isoformat(),
+                                  "result": r}},
+                        upsert=True,
+                    )
+                    log.info("daily-digest cron run: %s", r)
+        except Exception as ex:
+            log.warning("daily-digest cron error: %s", ex)
+        await asyncio.sleep(3600)  # her saat başı kontrol
+
+
+async def _run_daily_digest_once() -> dict:
+    """v44.00.20 — Son 24 saatteki mail event'lerinden ÇELİŞKİ olanları çıkart:
+    - Panel: spam/high_spam
+    - 3rd-party: SPF=pass VE (DKIM=pass VEYA yandex_spam=no)
+    Gönderici domain'ine göre grupla, en çok çelişki üretenlerin ilk 5'i.
+    Master admin'e HTML özet mail'i at.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    # Verdicts we consider "panel disagrees w/ auth"
+    cur = db.events.find({
+        "received_at": {"$gte": cutoff.isoformat()},
+        "verdict": {"$in": ["spam", "high_spam"]},
+    }, {"_id": 0}).sort("received_at", -1).limit(2000)
+    events = await cur.to_list(2000)
+
+    disagreements = []
+    for ev in events:
+        headers = ev.get("headers_full") or ev.get("headers") or ""
+        tp = _extract_third_party_verdicts(headers) if headers else {}
+        # DISAGREE = we said spam, but SPF or DKIM pass (or upstream said clean)
+        auth_ok = (tp.get("spf") == "pass" and tp.get("dkim") in ("pass", None)) \
+                  or tp.get("yandex_spam") == "no" \
+                  or tp.get("sa_flag") == "NO"
+        if not auth_ok:
+            continue
+        dom = ((ev.get("from") or ev.get("from_addr") or "").split("@")[-1] or "").lower()
+        if not dom:
+            continue
+        disagreements.append({
+            "domain": dom,
+            "from": ev.get("from") or ev.get("from_addr"),
+            "subject": (ev.get("subject") or "")[:120],
+            "score": ev.get("score") or ev.get("total_score") or 0,
+            "spf": tp.get("spf"), "dkim": tp.get("dkim"),
+        })
+
+    if not disagreements:
+        return {"sent": False, "reason": "no_disagreements"}
+
+    # Group by domain
+    by_domain: dict = {}
+    for d in disagreements:
+        b = by_domain.setdefault(d["domain"], {"count": 0, "samples": []})
+        b["count"] += 1
+        if len(b["samples"]) < 3:
+            b["samples"].append(d)
+    top5 = sorted(by_domain.items(), key=lambda kv: kv[1]["count"], reverse=True)[:5]
+
+    # Compose HTML
+    rows_html = ""
+    for dom, data in top5:
+        sample_html = "".join(
+            f'<div style="font-size:11px;color:#94a3b8;padding:2px 0;">'
+            f'<b>{s["from"]}</b>: {s["subject"] or "(konu yok)"} — skor {s["score"]}, SPF={s["spf"] or "-"}, DKIM={s["dkim"] or "-"}'
+            f'</div>' for s in data["samples"]
+        )
+        rows_html += (
+            f'<tr>'
+            f'<td style="padding:12px;border-bottom:1px solid #1e293b;">'
+            f'  <div style="font-size:14px;color:#f8fafc;font-weight:600;">{dom}</div>'
+            f'  <div style="font-size:11px;color:#f43f5e;margin-top:2px;">{data["count"]} ÇELİŞKİ mail</div>'
+            f'  <div style="margin-top:6px;">{sample_html}</div>'
+            f'</td>'
+            f'<td style="padding:12px;border-bottom:1px solid #1e293b;text-align:right;">'
+            f'  <a href="https://panel.gokyuzuhosting.com/master/whitelist?domain={dom}"'
+            f'     style="background:#10b981;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;font-size:11px;font-weight:600;">'
+            f'  Whitelist\'e Ekle</a>'
+            f'</td>'
+            f'</tr>'
+        )
+    html = f"""<html><body style="background:#020617;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;">
+<div style="max-width:640px;margin:0 auto;">
+<h1 style="color:#f8fafc;font-size:20px;">GökyüzüWebSpam — Günlük Çelişki Raporu</h1>
+<p style="color:#94a3b8;font-size:13px;">Son 24 saatte {len(disagreements)} mail panel'de <b>spam</b> olarak işaretlendi ancak SPF/DKIM auth <b>pass</b> döndü. Muhtemel false-positive'ler:</p>
+<table style="width:100%;background:#0f172a;border-radius:8px;border:1px solid #1e293b;margin-top:16px;">
+{rows_html}
+</table>
+<p style="color:#64748b;font-size:11px;margin-top:24px;">Whitelist'e eklerseniz bu domain'den gelen mail'ler doğrudan Inbox'a düşer.</p>
+</div></body></html>"""
+
+    cfg = await db.settings.find_one({"_key": "smtp"}, {"_id": 0}) or {}
+    ns = await db.settings.find_one({"_key": "notifications"}, {"_id": 0}) or {}
+    to_email = cfg.get("weekly_report_to") or ns.get("email_to") or cfg.get("from_addr")
+    if not to_email or not cfg.get("enabled"):
+        return {"sent": False, "reason": "smtp_not_configured", "disagreements": len(disagreements)}
+    try:
+        ok, via = await _send_email(
+            to_email,
+            f"[GökyüzüWebSpam] Günlük Çelişki Raporu — {len(disagreements)} false-positive adayı",
+            html,
+            from_addr=cfg.get("from_addr", "noreply@gokyuzuwebspam"),
+            html=True,
+        )
+        return {"sent": ok, "to": to_email, "via": via, "disagreements": len(disagreements), "top5": [d for d, _ in top5]}
+    except Exception as ex:
+        log.warning("daily digest email failed: %s", ex)
+        return {"sent": False, "reason": f"{type(ex).__name__}", "disagreements": len(disagreements)}
+
+
+
+
 async def _license_expiry_alerts_task():
     """Her sabah 09:00 UTC'de lisans bitiş kontrolü.
     30 gün kala bilgi, 14 gün kala uyarı, 3 gün kala kritik e-posta gönderir.
@@ -1455,6 +1586,15 @@ async def test_smtp_weekly(request: Request, license_key: Optional[str] = None):
         "summary": "Bu bir test mailidir. SMTP yapılandırması çalışıyor.",
     }
     return await _send_weekly_report_email(fake_report)
+
+
+@api.post("/ai/daily-digest/run")
+async def trigger_daily_digest(request: Request, license_key: Optional[str] = None):
+    """v44.00.20 — Manuel tetikleme: son 24 saat ÇELİŞKİ mail özet mail'i."""
+    await _require_master(request, license_key)
+    return await _run_daily_digest_once()
+
+
 
 
 @api.post("/ai/weekly-report/run")
@@ -3414,12 +3554,13 @@ async def _smart_from(license_key: Optional[str] = None) -> str:
     return f"noreply@{master}"
 
 
-async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "gokyuzuwebspam@localhost", owner_license_key: Optional[str] = None) -> tuple[bool, str]:
+async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "gokyuzuwebspam@localhost", owner_license_key: Optional[str] = None, html: bool = False) -> tuple[bool, str]:
     """Send email. Tries configured SMTP first, then falls back to local /usr/sbin/sendmail (Exim on WHM).
 
     v44.00.10 — `owner_license_key` verilirse o bayinin SMTP ayarları kullanılır;
     verilmezse master varsayılanı kullanılır. Böylece her bayi kendi SMTP
     relay'ini yapılandırabilir ve master'ınkinden bağımsız çalışır.
+    v44.00.20 — `html=True` → body already HTML, wrap etme.
     """
     if not to_addr:
         return False, "no_recipient"
@@ -3429,23 +3570,29 @@ async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "g
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["To"] = to_addr
-        text_part = body
-        html_part = (
-            "<html><body style='font-family:-apple-system,Segoe UI,sans-serif;"
-            "background:#0f172a;color:#e2e8f0;padding:24px;'>"
-            "<div style='max-width:640px;margin:0 auto;background:#1e293b;border-radius:8px;"
-            "padding:24px;border:1px solid #334155;'>"
-            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:16px;'>"
-            "<div style='width:32px;height:32px;background:linear-gradient(135deg,#6366f1,#f43f5e);"
-            "border-radius:6px;'></div>"
-            "<h2 style='margin:0;font-size:18px;color:#f1f5f9;'>GökyüzüWebSpam</h2></div>"
-            f"<pre style='white-space:pre-wrap;font-family:SF Mono,Menlo,monospace;font-size:13px;"
-            f"color:#cbd5e1;margin:0;'>{body}</pre>"
-            "<hr style='border:0;border-top:1px solid #334155;margin:16px 0;'>"
-            "<p style='color:#64748b;font-size:11px;margin:0;'>Bu e-posta GökyüzüWebSpam tarafından "
-            "otomatik olarak oluşturulmuştur. Panele erişmek için WHM &gt; Plugins bölümünü ziyaret edin.</p>"
-            "</div></body></html>"
-        )
+        if html:
+            # body is a full HTML document — attach as-is, plain part is a stripped version
+            import re as _re
+            text_part = _re.sub(r"<[^>]+>", "", body)[:2000]
+            html_part = body
+        else:
+            text_part = body
+            html_part = (
+                "<html><body style='font-family:-apple-system,Segoe UI,sans-serif;"
+                "background:#0f172a;color:#e2e8f0;padding:24px;'>"
+                "<div style='max-width:640px;margin:0 auto;background:#1e293b;border-radius:8px;"
+                "padding:24px;border:1px solid #334155;'>"
+                "<div style='display:flex;align-items:center;gap:8px;margin-bottom:16px;'>"
+                "<div style='width:32px;height:32px;background:linear-gradient(135deg,#6366f1,#f43f5e);"
+                "border-radius:6px;'></div>"
+                "<h2 style='margin:0;font-size:18px;color:#f1f5f9;'>GökyüzüWebSpam</h2></div>"
+                f"<pre style='white-space:pre-wrap;font-family:SF Mono,Menlo,monospace;font-size:13px;"
+                f"color:#cbd5e1;margin:0;'>{body}</pre>"
+                "<hr style='border:0;border-top:1px solid #334155;margin:16px 0;'>"
+                "<p style='color:#64748b;font-size:11px;margin:0;'>Bu e-posta GökyüzüWebSpam tarafından "
+                "otomatik olarak oluşturulmuştur. Panele erişmek için WHM &gt; Plugins bölümünü ziyaret edin.</p>"
+                "</div></body></html>"
+            )
         msg.attach(MIMEText(text_part, "plain", "utf-8"))
         msg.attach(MIMEText(html_part, "html", "utf-8"))
 

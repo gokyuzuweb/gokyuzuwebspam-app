@@ -701,6 +701,8 @@ export default function LiveMailEvents() {
                         {e.server_hostname && (
                           <div className="text-slate-600 text-[10px] mono truncate">{e.server_hostname}</div>
                         )}
+                        {/* v44.00.20 — SA rule chips + score band reason */}
+                        <ReasonChips event={e} />
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5">
@@ -725,4 +727,74 @@ export default function LiveMailEvents() {
       )}
     </Card>
   );
+
+// v44.00.20 — Reason chips: SA rule extract from spam_report + score band inference
+// Backend spam_report format: "1.6 MISSING_MID Missing Message-Id: header ..."
+// veya "Content analysis details: ... 1.6 MISSING_MID ... 0.5 SUBJ_ALL_CAPS ..."
+function ReasonChips({ event }) {
+  const score = event?.total_score ?? 0;
+  const scores = event?.scores || {};
+  const saReport = scores.sa_report || scores.spam_report || "";
+  const reasons = Array.isArray(scores.reasons) ? scores.reasons : [];
+
+  // Parse SA rules: format "1.6 RULE_NAME description..." (multi-line)
+  const chips = [];
+  // 1) Panel reasons (WHITELISTED, TR_PHISHING, YANDEX_CLEAN, AUTO_SUBMITTED, etc)
+  reasons.slice(0, 4).forEach((r) => {
+    const isBad = /PHISH|BLACKLIST|SPAM|VIRUS|SUSPICIOUS/i.test(r);
+    const isGood = /WHITELIST|CLEAN|HAM|AUTO_SUBMIT|BOUNCE|YANDEX_CLEAN/i.test(r);
+    chips.push({
+      key: r,
+      label: r.replace(/_/g, " "),
+      color: isBad ? "#f43f5e" : isGood ? "#10b981" : "#94a3b8",
+      pts: null,
+    });
+  });
+  // 2) SA rules from report (top 3 highest-scoring rules with names)
+  if (saReport) {
+    const ruleRegex = /(-?\d+\.\d+)\s+([A-Z][A-Z0-9_]{4,})\s/g;
+    const rules = [];
+    let m;
+    while ((m = ruleRegex.exec(saReport)) !== null) {
+      const pts = parseFloat(m[1]);
+      if (Math.abs(pts) < 0.05) continue;   // skip zero-weight
+      rules.push({ name: m[2], pts });
+      if (rules.length > 12) break;
+    }
+    rules.sort((a, b) => Math.abs(b.pts) - Math.abs(a.pts));
+    rules.slice(0, 3).forEach((r) => {
+      chips.push({
+        key: r.name,
+        label: r.name,
+        color: r.pts > 0.5 ? "#f43f5e" : r.pts > 0 ? "#f59e0b" : "#10b981",
+        pts: r.pts,
+      });
+    });
+  }
+  // 3) Score-band inference chip (only if no other reasons)
+  if (chips.length === 0) {
+    if (score >= 10) chips.push({ key: "band", label: "YÜKSEK RİSK", color: "#f43f5e", pts: null });
+    else if (score >= 5) chips.push({ key: "band", label: "ŞÜPHELİ", color: "#f59e0b", pts: null });
+    else if (score < 0) chips.push({ key: "band", label: "TEMİZ (auth pass)", color: "#10b981", pts: null });
+  }
+
+  if (chips.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-1" data-testid="live-event-reason-chips">
+      {chips.slice(0, 5).map((c) => (
+        <span
+          key={c.key}
+          className="text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded"
+          style={{ background: `${c.color}18`, color: c.color, border: `1px solid ${c.color}33` }}
+          title={c.pts !== null ? `${c.pts > 0 ? "+" : ""}${c.pts.toFixed(1)} puan` : c.label}
+          data-testid={`reason-chip-${c.key.toLowerCase()}`}
+        >
+          {c.pts !== null ? `${c.label} ${c.pts > 0 ? "+" : ""}${c.pts.toFixed(1)}` : c.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 }

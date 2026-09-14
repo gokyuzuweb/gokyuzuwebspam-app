@@ -3608,6 +3608,39 @@ Yeni `_spam_from_exim_log(mid)` fonksiyonu — tail son 5000 satırı tarayıp S
 cPanel `LocalSocket /run/clamav/clamd.sock` — probe path'e eklendi + systemd unit detection cPanel `clamd.service`.
 
 ### 🧪 Tests — 27/27 ✅
+
+
+## Feb 15, 2026 — v44.00.20 (part 2) — 3 User-Requested Features
+
+### 1️⃣ Whitelist Tek-Tık Butonu
+`ThirdPartyPanel` (MailEventDetail.js) — ÇELİŞKİ rozeti + panel spam + upstream clean koşulunda otomatik "✓ Bu gönderici güvenilir → {domain} whitelist'e ekle" butonu görünür. Tek tıkla `/api/plugin/trusted-domains` POST → domain trusted_domains DB'ye eklenir → toast + button "✓ {domain} whitelist'te" state'ine geçer.
+- data-testid: `tp-whitelist-btn`
+
+### 2️⃣ SA Warning Live Feed — Reason Chips
+`LiveMailEvents.js` içinde yeni `ReasonChips` component'i mail listesi Subject sütununun altına renkli chip'ler basar:
+- **Panel reasons** (WHITELISTED, TR_PHISHING, YANDEX_CLEAN, AUTO_SUBMITTED, BOUNCE_DSN) — renk semantiği: yeşil/kırmızı/gri
+- **SA rules** (top 3 en yüksek puanlı): MISSING_MID +1.6, SUBJ_ALL_CAPS +0.5, DOS_BODY_HIGH_NO_MID +3.4 gibi. Regex `spam_report` parse eder.
+- **Score-band fallback**: hiç reason yoksa YÜKSEK RİSK / ŞÜPHELİ / TEMİZ
+- data-testid: `live-event-reason-chips`, `reason-chip-{name}`
+
+### 3️⃣ Daily Digest — Master Admin Sabah Özet Mail'i
+- `_daily_digest_task()` her sabah 08:00 UTC (11:00 TR) çalışır
+- Son 24 saatte panel spam ama SPF/DKIM/Yandex clean olan mail'leri (ÇELİŞKİ) gruplar
+- Domain başına top-5 sıralar
+- HTML mail: her satırda domain + adet + son 3 örnek + "Whitelist'e Ekle" deep-link buton
+- Deep-link: `https://panel.gokyuzuhosting.com/master/whitelist?domain={dom}` → tek-tık ekleme UI'a atlar
+- SMTP `db.settings._key=smtp` config'iyle atar (mevcut altyapı)
+- Manuel test: `POST /api/ai/daily-digest/run`
+- `_send_email()` fonksiyonuna `html=True` parametresi eklendi (full HTML body support)
+
+### 🧪 Tests — 24/24 ✅
+`test_v44_00_20_features.py` (7 test):
+- Backend endpoint mevcut + master auth zorunlu
+- Startup task listesinde `_daily_digest_task`
+- Frontend whitelist button testid + endpoint call
+- Frontend ReasonChips component + SA regex + score-band labels
+- Digest HTML whitelist deep-link
+
 `test_v44_00_20_sa_log_warning.py` (6 test): SA warning parse, MID isolation, syntax, install.sh path check.
 
 ### 📦 v44.00.20 Bump
