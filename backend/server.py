@@ -4260,7 +4260,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.15"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.16"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -7196,31 +7196,44 @@ class ScanVerdictIn(BaseModel):
 @api.post("/plugin/scan-verdict")
 async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
     """Mail içeriğini skorlar → clean/spam/high_spam döner.
-    Exim system_filter her teslimat öncesi bunu çağırır. Kısa (max 500ms)
-    olmalı ki mail flow gecikmesin. Basit heuristics + Bayes-yakın skorlama.
-    Panel Verdict'i ile birebir aynı sonucu verir (aynı skor tablosunu kullanır)."""
+    v44.00.16: DB whitelist (`trusted_domains`) + ham patterns kullanır."""
     text = (payload.subject or "") + "\n" + (payload.body or "")
     text_l = text.lower()
     score = 0.0
     reasons: list[str] = []
 
-    # GTUBE test string — SA endüstri standardı
+    # v44.00.16 — DB'den whitelist/blacklist/ham-pattern oku
+    trusted_doms = [d.get("domain", "").lower() async for d in
+                    db.trusted_domains.find({"kind": "whitelist"}, {"_id": 0, "domain": 1})]
+    blocked_doms = [d.get("domain", "").lower() async for d in
+                    db.trusted_domains.find({"kind": "blacklist"}, {"_id": 0, "domain": 1})]
+    ham_patterns = [p.get("pattern", "").lower() async for p in
+                    db.ham_patterns.find({}, {"_id": 0, "pattern": 1})]
+
+    # Hard-coded fallback + DB
+    default_whitelist = {"gokyuzuhosting.com", "gokyuzuweb.com"}
+    all_whitelist = set(trusted_doms) | default_whitelist
+
     if "xjs*c4jdbqadn1.nsbn3*2idnen*gtube-standard-anti-ube-test-email*c.34x" in text_l:
         score = 999.0
         reasons.append("GTUBE")
 
-    # Yandex geri-dönüş header'ları — DÖNGÜYE SEBEP OLMASIN
     hdr_l = (payload.headers or "").lower()
     if "x-yandex-spam:" in hdr_l:
-        # Skorlamada YOKSAY — sadece işaretle
         reasons.append("YANDEX_LOOP_IGNORED")
 
-    # Whitelist domain'ler — asla spam sayılmasın
     from_l = (payload.from_addr or "").lower()
-    whitelist_doms = ["gokyuzuhosting.com", "gokyuzuweb.com"]
-    is_whitelisted = any(d in from_l for d in whitelist_doms)
 
-    # Basit içerik heuristics (spamc yerine hızlı fallback)
+    # Blacklist check — direkt HIGH_SPAM
+    if any(d in from_l for d in blocked_doms):
+        score += 20.0
+        reasons.append("BLACKLISTED")
+
+    is_whitelisted = any(d in from_l for d in all_whitelist)
+
+    # Ham pattern check — kullanıcı bu subject'i "not spam" olarak öğretti
+    is_ham_pattern = any(p and p in text_l for p in ham_patterns)
+
     spam_phrases = ["viagra", "casino", "win money", "click here to claim",
                     "verify your account", "urgent action required",
                     "you have won", "free bitcoin", "lottery winner"]
@@ -7229,7 +7242,6 @@ async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
             score += 3.0
             reasons.append(f"phrase:{p}")
 
-    # v44.00.14 — Türkçe phishing pattern'leri (mail kutusu / hesap / parola)
     tr_phishing = [
         ("[uyari]", 4.0), ("[uyarı]", 4.0),
         ("posta kutunuz dolu", 5.0), ("posta kutusu doldu", 5.0),
@@ -7246,38 +7258,35 @@ async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
             score += weight
             reasons.append(f"tr_phish:{phrase}")
 
-    # Sender-name spoofing — From: name'i To: domain'ine eşitse phishing
     to_l = (payload.to_addr or "").lower()
     if "@" in to_l:
         recipient_dom = to_l.split("@")[-1].strip(">").strip()
-        # From header genelde "Display Name <email@addr>" formatında.
-        # payload.from_addr içinde recipient_dom varsa ve gerçek sender farklıysa → spoofing
         from_raw = from_l
         if recipient_dom and recipient_dom in from_raw and "@" + recipient_dom not in from_raw:
             score += 5.0
             reasons.append(f"spoof_name:{recipient_dom}")
 
-    # Yalnız tek kelime konu + tek kelime body → düşük skor (test mail'i)
     if len(text.strip().split()) <= 2 and len(text.strip()) < 20:
         score += 0.5
         reasons.append("very_short")
 
-    # BÜYÜK HARF oranı > %70 → spam işareti
     letters = [c for c in text if c.isalpha()]
     if letters and sum(1 for c in letters if c.isupper()) / len(letters) > 0.7:
         score += 2.0
         reasons.append("all_caps")
 
-    # Çok sayıda link
     if text_l.count("http") > 8:
         score += 2.0
         reasons.append("many_links")
 
     if is_whitelisted:
-        score = min(score, 4.9)  # whitelist skoru 5'in altında tut
+        score = min(score, 4.9)
         reasons.append("WHITELISTED")
 
-    # Verdict eşikleri — cPanel SA ile senkron
+    if is_ham_pattern:
+        score = min(score, 4.9)
+        reasons.append("HAM_PATTERN")
+
     if score >= 15:
         verdict = "high_spam"
     elif score >= 5:
@@ -7285,7 +7294,6 @@ async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
     else:
         verdict = "clean"
 
-    # Audit — panel Message-ID takibi için
     try:
         await db.scan_verdicts.insert_one({
             "id": str(uuid.uuid4()),
@@ -7302,6 +7310,117 @@ async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
         pass
 
     return {"verdict": verdict, "score": round(score, 2), "reasons": reasons}
+
+
+# v44.00.16 — Trusted Domains (Whitelist/Blacklist) CRUD — master only
+@api.get("/plugin/trusted-domains")
+async def list_trusted_domains(request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    rows = await db.trusted_domains.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"items": rows, "count": len(rows)}
+
+
+class TrustedDomainIn(BaseModel):
+    domain: str
+    kind: str = "whitelist"  # whitelist | blacklist
+    note: Optional[str] = ""
+
+
+@api.post("/plugin/trusted-domains")
+async def add_trusted_domain(payload: TrustedDomainIn, request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    dom = (payload.domain or "").strip().lower().lstrip("@")
+    if not dom or "." not in dom:
+        raise HTTPException(400, "Geçersiz domain")
+    if payload.kind not in ("whitelist", "blacklist"):
+        raise HTTPException(400, "kind must be whitelist|blacklist")
+    await db.trusted_domains.update_one(
+        {"domain": dom},
+        {"$set": {"domain": dom, "kind": payload.kind,
+                  "note": payload.note or "", "created_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True, "domain": dom, "kind": payload.kind}
+
+
+@api.delete("/plugin/trusted-domains/{domain}")
+async def delete_trusted_domain(domain: str, request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    r = await db.trusted_domains.delete_one({"domain": domain.lower()})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Bulunamadı")
+    return {"ok": True}
+
+
+# v44.00.16 — Ham Patterns (Bayesian Learning) — mail Junk'tan Inbox'a taşındığında ekle
+class HamPatternIn(BaseModel):
+    pattern: str  # subject substring
+    source: Optional[str] = "manual"  # manual | user_moved_to_inbox
+    license_key: Optional[str] = None
+
+
+@api.post("/plugin/ham-pattern")
+async def add_ham_pattern(payload: HamPatternIn, request: Request = None):
+    """Ham pattern kaydet — sonraki mail'lerde bu pattern eşleşirse spam sayılmaz.
+    Master gerektirmez — logtail veya webmail plugin çağırabilir."""
+    pattern = (payload.pattern or "").strip().lower()
+    if not pattern or len(pattern) < 4:
+        raise HTTPException(400, "En az 4 karakterli pattern")
+    await db.ham_patterns.update_one(
+        {"pattern": pattern},
+        {"$set": {"pattern": pattern, "source": payload.source,
+                  "at": _iso(), "license_key": payload.license_key or ""},
+         "$inc": {"hit_count": 1}},
+        upsert=True,
+    )
+    return {"ok": True, "pattern": pattern}
+
+
+@api.get("/plugin/ham-patterns")
+async def list_ham_patterns(request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    rows = await db.ham_patterns.find({}, {"_id": 0}).sort("at", -1).to_list(200)
+    return {"items": rows}
+
+
+@api.delete("/plugin/ham-pattern/{pattern_id}")
+async def delete_ham_pattern(pattern_id: str, request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    r = await db.ham_patterns.delete_one({"pattern": pattern_id.lower()})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Bulunamadı")
+    return {"ok": True}
+
+
+# v44.00.16 — Verdict statistics (pie chart data) — master only
+@api.get("/plugin/verdict-stats")
+async def verdict_stats(request: Request, hours: int = 24, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    hours = max(1, min(hours, 720))  # 1-720 (30 gün)
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    pipeline = [
+        {"$match": {"at": {"$gte": since}}},
+        {"$group": {"_id": "$verdict", "count": {"$sum": 1},
+                    "avg_score": {"$avg": "$score"}}},
+    ]
+    buckets = {}
+    async for row in db.scan_verdicts.aggregate(pipeline):
+        buckets[row["_id"]] = {"count": row["count"],
+                                "avg_score": round(row.get("avg_score") or 0, 2)}
+
+    total = sum(b["count"] for b in buckets.values()) or 1
+    return {
+        "hours": hours,
+        "total": total,
+        "clean": buckets.get("clean", {"count": 0, "avg_score": 0}),
+        "spam": buckets.get("spam", {"count": 0, "avg_score": 0}),
+        "high_spam": buckets.get("high_spam", {"count": 0, "avg_score": 0}),
+        "clean_pct": round(buckets.get("clean", {"count": 0})["count"] / total * 100, 1),
+        "spam_pct": round(buckets.get("spam", {"count": 0})["count"] / total * 100, 1),
+        "high_spam_pct": round(buckets.get("high_spam", {"count": 0})["count"] / total * 100, 1),
+        "generated_at": _iso(),
+    }
 
 
 

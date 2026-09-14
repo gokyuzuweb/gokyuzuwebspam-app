@@ -454,6 +454,26 @@ export const api = {
   adminVersionChanges: (hours = 24, licenseKey) =>
     client.get(`/admin/version-changes`,
       { params: { hours, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
+
+  // v44.00.16 — Trusted domains (whitelist/blacklist) + ham patterns + verdict stats
+  trustedDomainsList: (licenseKey) =>
+    client.get(`/plugin/trusted-domains`,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  trustedDomainAdd: (body, licenseKey) =>
+    client.post(`/plugin/trusted-domains`, body,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  trustedDomainDelete: (domain, licenseKey) =>
+    client.delete(`/plugin/trusted-domains/${encodeURIComponent(domain)}`,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  hamPatternsList: (licenseKey) =>
+    client.get(`/plugin/ham-patterns`,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  hamPatternDelete: (pattern, licenseKey) =>
+    client.delete(`/plugin/ham-pattern/${encodeURIComponent(pattern)}`,
+      { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
+  verdictStats: (hours = 24, licenseKey) =>
+    client.get(`/plugin/verdict-stats`,
+      { params: { hours, ...(licenseKey ? { license_key: licenseKey } : {}) }, withCredentials: true }).then(r => r.data),
   adminEmailTemplates: (licenseKey) =>
     client.get(`/admin/email-templates`,
       { params: licenseKey ? { license_key: licenseKey } : {}, withCredentials: true }).then(r => r.data),
