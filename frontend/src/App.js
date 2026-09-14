@@ -45,6 +45,7 @@ import Dashboard from "@/pages/Dashboard";
 import Quarantine from "@/pages/Quarantine";
 import PluginHealth from "@/pages/PluginHealth";
 import Lists from "@/pages/Lists";
+import ListsManager from "@/pages/ListsManager";
 import Rules from "@/pages/Rules";
 import Engines from "@/pages/Engines";
 import SettingsPage from "@/pages/Settings";
@@ -122,7 +123,8 @@ const NAV = [
   { to: "/panel/master-live", key: "master_live", icon: Activity, testid: "nav-master-live", label: "Canlı Bayi Trafiği", masterOnly: true, sellerOnly: true, group: "izleme" },
   // 🛡️ KORUMA
   { to: "/panel/quarantine", key: "quarantine", icon: Inbox, testid: "nav-quarantine", group: "koruma", feature: "quarantine_view" },
-  { to: "/panel/lists", key: "lists", icon: ListChecks, testid: "nav-lists", label: "Kara/Beyaz Liste", group: "koruma", feature: "blacklist_check" },
+  { to: "/panel/lists-manager", key: "lists_manager", icon: ListChecks, testid: "nav-lists-manager", label: "Liste Merkezi", group: "koruma", feature: "blacklist_check" },
+  { to: "/panel/lists", key: "lists", icon: ListChecks, testid: "nav-lists", label: "Kara/Beyaz Liste (eski)", group: "koruma", feature: "blacklist_check" },
   { to: "/panel/blacklist", key: "blacklist", icon: Radar, testid: "nav-blacklist", label: "IP Blacklist Çıkışı", group: "koruma", feature: "blacklist_check" },
   { to: "/panel/rules", key: "rules", icon: Wrench, testid: "nav-rules", label: "Kurallar", group: "koruma", feature: "custom_rules" },
   { to: "/panel/engines", key: "engines", icon: Cpu, testid: "nav-engines", label: "Motorlar", group: "koruma", feature: "engine_toggle" },
@@ -498,6 +500,7 @@ function Shell() {
             <Route path="/live-diagnostic" element={PG(LiveDiagnostic, "live_diagnostic", "Canlı Sunucu Tanı")} />
             <Route path="/quarantine" element={PG(Quarantine, "quarantine_view", "Karantina")} />
             <Route path="/lists" element={PG(Lists, "blacklist_check", "Kara/Beyaz Liste")} />
+            <Route path="/lists-manager" element={PG(ListsManager, "blacklist_check", "Liste Merkezi")} />
             <Route path="/rules" element={PG(Rules, "custom_rules", "Kural Editörü")} />
             <Route path="/engines" element={PG(Engines, "engine_toggle", "Motorlar")} />
             <Route path="/outbound" element={PG(Outbound, "outbound_view", "Giden Posta")} />

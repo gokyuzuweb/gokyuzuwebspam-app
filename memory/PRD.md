@@ -3668,3 +3668,50 @@ Log: `trusted_domains→lists migration: 2 entries synced`
 `_daily_ioc_domain_extract_task()` her sabah 04:00 UTC (07:00 TR) URL feed'lerinden Domain IOC'lar çıkartır. Idempotent (`settings.ioc_domain_extract_last_run` dedupe).
 
 ### 🧪 Tests — 13/13 ✅ `test_v44_00_20_sync_and_cron.py`
+
+
+## Feb 15, 2026 — v44.00.21 — Liste Merkezi (Unified Lists Manager)
+
+### 🎯 User Request
+"whitelist blacklist 50 yerde var galiba hepsi bir yere bir module topla ve geçmişleri görelim elle düzeltme de olsun"
+
+### 🔴 Problem
+Tarihsel olarak 3 farklı schema/koleksiyon birikti:
+1. `db.lists` (entry_type + list_type=white/black) — UI "Kara/Beyaz Liste"
+2. `db.lists` (type + kind=whitelist/blacklist) — IP whitelist `/maintenance/*`
+3. `db.trusted_domains` (domain + kind) — legacy scan-verdict
+
+Aynı DB'de iki farklı schema aynı `db.lists` içinde yaşıyor, geçmiş yok, manuel düzeltme parçalı.
+
+### 🛠 Fix — 4 Yeni Endpoint + 1 Yeni Sayfa
+
+**Backend** (`server.py`):
+- `GET /api/lists-manager/unified?kind=&entry_type=&q=&limit=` — 3 kaynağı birleştirir, dedupe eder, filtre uygular
+- `POST /api/lists-manager/add` — hepsine mirror yazar (UI schema + trusted_domains eşleşen entry_type'a göre)
+- `POST /api/lists-manager/delete` — 3 kaynaktan hepsinden siler
+- `GET /api/lists-manager/history?limit=200` — audit log
+- Yeni koleksiyon: `db.lists_history` — her ekle/sil kaydı zaman damgasıyla
+
+**Frontend** (yeni `pages/ListsManager.js`):
+- Tek sayfa, iki sekme: **Kayıtlar** (500 satır), **Geçmiş** (200)
+- Tabloda kolonlar: Liste (Beyaz/Kara badge), Tip (IP/Domain/E-posta), Değer, Not, **Kaynak** (UI/Motor/Legacy), Tarih, Silme butonu
+- Üstte ekleme formu (kind + entry_type + value + note)
+- Filtre bar: kind + entry_type + arama input
+- 30s auto-refresh
+- data-testid'ler: `lists-manager-page`, `lm-add-btn`, `lm-tab-list`, `lm-tab-history`, `lm-filter-kind`, `lm-filter-type`, `lm-search`, `lm-delete-{value}`
+
+**App.js**:
+- Yeni route `/panel/lists-manager`
+- Sol sidebar: "Liste Merkezi" (üstte) + eski "Kara/Beyaz Liste (eski)" korundu (backward compat)
+
+### 🧪 Tests — 6/6 ✅
+`test_v44_00_21_lists_manager.py`:
+- 4 endpoint mevcut + auth zorunlu
+- Frontend page + data-testid'ler
+- Route + sidebar entry
+- 3 kaynak birleştirme + dedupe
+- Delete tüm kaynaklardan siler
+- lists_history collection kullanımı
+
+### 📦 v44.00.21 Bump
+

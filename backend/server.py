@@ -4540,7 +4540,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.20"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.21"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -7707,6 +7707,220 @@ async def trusted_domains_diag(request: Request, license_key: Optional[str] = No
         "only_in_lists": only_in_lists,  # UI'dan eklenmiş, trusted_domains'te yok (opsiyonel)
         "in_sync": len(only_in_td) == 0,
     }
+
+
+# =============================================================================
+# v44.00.21 — LİSTE MERKEZİ (Unified Lists Manager)
+# =============================================================================
+# Tarihsel olarak birden fazla whitelist/blacklist koleksiyonu birikti:
+#   1) db.lists (entry_type + value + list_type=white|black)     ← "Kara/Beyaz Liste" UI
+#   2) db.lists (type + value + kind=whitelist|blacklist)         ← IP whitelist /maintenance/*
+#   3) db.trusted_domains (domain + kind=whitelist|blacklist)     ← legacy scan-verdict
+# Bu endpoint hepsini birleştirip TEK bir liste döndürür + geçmişi tutar +
+# manuel elle düzeltmeye olanak sağlar.
+
+@api.get("/lists-manager/unified")
+async def lists_unified(request: Request, license_key: Optional[str] = None,
+                          kind: Optional[str] = None, entry_type: Optional[str] = None,
+                          q: Optional[str] = None, limit: int = 500):
+    """Tüm whitelist/blacklist kaynaklarını tek listede döner.
+    kind: whitelist | blacklist (opsiyonel filtre)
+    entry_type: ip | domain | email
+    q: değere göre substring arama"""
+    await _require_master(request, license_key)
+    kind_l = (kind or "").lower() or None
+    et_l = (entry_type or "").lower() or None
+    q_l = (q or "").strip().lower() or None
+
+    out: list = []
+    # 1) db.lists — Master UI schema (entry_type + list_type)
+    q_lists_a = {"entry_type": {"$exists": True}, "value": {"$exists": True}}
+    async for d in db.lists.find(q_lists_a, {"_id": 0}).sort("created_at", -1).limit(2000):
+        lt = d.get("list_type")
+        if lt == "white": k = "whitelist"
+        elif lt == "black": k = "blacklist"
+        else: continue
+        v = (d.get("value") or "").lower()
+        et = d.get("entry_type") or "domain"
+        out.append({
+            "source": "lists_ui",
+            "id": d.get("id"),
+            "kind": k,
+            "entry_type": et,
+            "value": v,
+            "note": d.get("note") or "",
+            "scope": d.get("scope") or "global",
+            "created_at": d.get("created_at"),
+            "created_by": d.get("owner_license_key") or "master",
+        })
+    # 2) db.lists — IP-only maintenance schema (type + kind)
+    q_lists_b = {"type": {"$exists": True}, "kind": {"$in": ["whitelist", "blacklist"]}}
+    async for d in db.lists.find(q_lists_b, {"_id": 0}).sort("created_at", -1).limit(2000):
+        v = (d.get("value") or "").lower()
+        out.append({
+            "source": "lists_maintenance",
+            "id": d.get("id"),
+            "kind": d.get("kind"),
+            "entry_type": d.get("type") or "ip",
+            "value": v,
+            "note": d.get("reason") or d.get("note") or "",
+            "scope": "global",
+            "created_at": d.get("created_at"),
+            "created_by": d.get("source") or d.get("license_key") or "system",
+        })
+    # 3) db.trusted_domains — legacy domain-only
+    async for d in db.trusted_domains.find({}, {"_id": 0}).sort("created_at", -1).limit(2000):
+        dom = (d.get("domain") or "").lower()
+        out.append({
+            "source": "trusted_domains",
+            "id": None,
+            "kind": d.get("kind"),
+            "entry_type": "domain",
+            "value": dom,
+            "note": d.get("note") or "",
+            "scope": "global",
+            "created_at": d.get("created_at"),
+            "created_by": "legacy",
+        })
+
+    # Filter
+    if kind_l in ("whitelist", "blacklist"):
+        out = [x for x in out if x["kind"] == kind_l]
+    if et_l in ("ip", "domain", "email"):
+        out = [x for x in out if x["entry_type"] == et_l]
+    if q_l:
+        out = [x for x in out if q_l in x["value"] or q_l in x.get("note", "").lower()]
+
+    # Dedupe: same (kind, entry_type, value) — keep first (most recent due to sort)
+    seen = set()
+    deduped = []
+    for x in out:
+        key = (x["kind"], x["entry_type"], x["value"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(x)
+
+    return {
+        "items": deduped[:limit],
+        "count": len(deduped),
+        "sources": {"lists_ui": sum(1 for x in deduped if x["source"] == "lists_ui"),
+                    "lists_maintenance": sum(1 for x in deduped if x["source"] == "lists_maintenance"),
+                    "trusted_domains": sum(1 for x in deduped if x["source"] == "trusted_domains")},
+    }
+
+
+class UnifiedListEntryIn(BaseModel):
+    kind: str  # whitelist | blacklist
+    entry_type: str  # ip | domain | email
+    value: str
+    note: Optional[str] = ""
+
+
+@api.post("/lists-manager/add")
+async def lists_unified_add(payload: UnifiedListEntryIn, request: Request,
+                              license_key: Optional[str] = None):
+    """Manuel ekleme — tüm ilgili kaynaklara yazar.
+    Domain/Email için: db.lists (UI) + db.trusted_domains (scan-verdict) — mirror
+    IP için: db.lists (UI) — tek yer
+    """
+    await _require_master(request, license_key)
+    kind = payload.kind.lower()
+    et = payload.entry_type.lower()
+    val = (payload.value or "").strip().lower()
+    note = payload.note or ""
+    if kind not in ("whitelist", "blacklist"):
+        raise HTTPException(400, "kind must be whitelist|blacklist")
+    if et not in ("ip", "domain", "email"):
+        raise HTTPException(400, "entry_type must be ip|domain|email")
+    if not val:
+        raise HTTPException(400, "Değer boş olamaz")
+
+    list_type = "white" if kind == "whitelist" else "black"
+    now = _iso()
+    import uuid as _uuid
+    # Idempotent upsert into db.lists (UI schema)
+    existing = await db.lists.find_one(
+        {"entry_type": et, "value": val, "list_type": list_type, "scope": "global"},
+        {"_id": 0, "id": 1},
+    )
+    if not existing:
+        await db.lists.insert_one({
+            "id": str(_uuid.uuid4()),
+            "list_type": list_type,
+            "entry_type": et,
+            "value": val,
+            "scope": "global",
+            "user": None,
+            "note": note or "Manual — Liste Merkezi",
+            "owner_license_key": None,
+            "created_at": now,
+        })
+    # Mirror to trusted_domains for domain/email
+    if et in ("domain", "email"):
+        dom = val.split("@")[-1] if "@" in val else val
+        if "." in dom:
+            await db.trusted_domains.update_one(
+                {"domain": dom},
+                {"$setOnInsert": {"domain": dom, "kind": kind, "note": note, "created_at": now}},
+                upsert=True,
+            )
+    # Audit history
+    await db.lists_history.insert_one({
+        "id": str(_uuid.uuid4()),
+        "action": "add",
+        "kind": kind, "entry_type": et, "value": val, "note": note,
+        "actor": "master", "ts": now,
+    })
+    return {"ok": True, "kind": kind, "entry_type": et, "value": val, "added": not existing}
+
+
+class UnifiedListDeleteIn(BaseModel):
+    kind: str
+    entry_type: str
+    value: str
+
+
+@api.post("/lists-manager/delete")
+async def lists_unified_delete(payload: UnifiedListDeleteIn, request: Request,
+                                 license_key: Optional[str] = None):
+    """Tek bir kayıt için — hangi kaynakta olursa olsun hepsinden sil."""
+    await _require_master(request, license_key)
+    kind = payload.kind.lower()
+    et = payload.entry_type.lower()
+    val = (payload.value or "").strip().lower()
+    list_type = "white" if kind == "whitelist" else "black"
+    removed = 0
+    # db.lists UI schema
+    r1 = await db.lists.delete_many({"entry_type": et, "value": val, "list_type": list_type})
+    removed += r1.deleted_count
+    # db.lists maintenance schema
+    r2 = await db.lists.delete_many({"type": et, "value": val, "kind": kind})
+    removed += r2.deleted_count
+    # db.trusted_domains (domain/email)
+    if et in ("domain", "email"):
+        dom = val.split("@")[-1] if "@" in val else val
+        r3 = await db.trusted_domains.delete_many({"domain": dom, "kind": kind})
+        removed += r3.deleted_count
+    import uuid as _uuid
+    await db.lists_history.insert_one({
+        "id": str(_uuid.uuid4()),
+        "action": "delete",
+        "kind": kind, "entry_type": et, "value": val,
+        "actor": "master", "removed_count": removed, "ts": _iso(),
+    })
+    return {"ok": True, "removed": removed}
+
+
+@api.get("/lists-manager/history")
+async def lists_unified_history(request: Request, license_key: Optional[str] = None,
+                                  limit: int = 200):
+    """Ekleme / silme geçmişi."""
+    await _require_master(request, license_key)
+    rows = await db.lists_history.find({}, {"_id": 0}).sort("ts", -1).limit(limit).to_list(limit)
+    return {"items": rows, "count": len(rows)}
+
+
 
 
 
