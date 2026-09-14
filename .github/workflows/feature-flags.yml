@@ -29,7 +29,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install pytest
-        run: pip install --quiet pytest
+        run: pip install --quiet pytest pytest-xdist
 
       - name: Run feature flag validation tests
         run: |
