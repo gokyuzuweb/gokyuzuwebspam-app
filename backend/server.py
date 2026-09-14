@@ -4260,7 +4260,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.14"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.15"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -7228,6 +7228,34 @@ async def plugin_scan_verdict(payload: ScanVerdictIn, request: Request = None):
         if p in text_l:
             score += 3.0
             reasons.append(f"phrase:{p}")
+
+    # v44.00.14 — Türkçe phishing pattern'leri (mail kutusu / hesap / parola)
+    tr_phishing = [
+        ("[uyari]", 4.0), ("[uyarı]", 4.0),
+        ("posta kutunuz dolu", 5.0), ("posta kutusu doldu", 5.0),
+        ("kotanız dolu", 4.5), ("depolama alanınız %", 4.5),
+        ("hesabınız askıya", 4.5), ("hesabınız kilitlend", 4.5),
+        ("parolanızı doğrula", 4.5), ("şifrenizi doğrula", 4.5),
+        ("son 24 saat", 2.5), ("acil işlem", 3.0),
+        ("mail hesabınız", 2.5), ("e-posta hesabınız", 2.5),
+        ("posta kutunuz askıya", 5.0), ("hesabınız silinecek", 4.5),
+        ("kimliğinizi doğrula", 4.0),
+    ]
+    for phrase, weight in tr_phishing:
+        if phrase in text_l:
+            score += weight
+            reasons.append(f"tr_phish:{phrase}")
+
+    # Sender-name spoofing — From: name'i To: domain'ine eşitse phishing
+    to_l = (payload.to_addr or "").lower()
+    if "@" in to_l:
+        recipient_dom = to_l.split("@")[-1].strip(">").strip()
+        # From header genelde "Display Name <email@addr>" formatında.
+        # payload.from_addr içinde recipient_dom varsa ve gerçek sender farklıysa → spoofing
+        from_raw = from_l
+        if recipient_dom and recipient_dom in from_raw and "@" + recipient_dom not in from_raw:
+            score += 5.0
+            reasons.append(f"spoof_name:{recipient_dom}")
 
     # Yalnız tek kelime konu + tek kelime body → düşük skor (test mail'i)
     if len(text.strip().split()) <= 2 and len(text.strip()) < 20:
