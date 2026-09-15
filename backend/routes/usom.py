@@ -29,7 +29,11 @@ from fastapi import APIRouter, HTTPException, Request
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 
-USOM_URL_FEED = "https://www.usom.gov.tr/url-list.txt"
+USOM_FEED_CANDIDATES = [
+    "https://www.usom.gov.tr/url-list.txt",
+    "https://usom.gov.tr/url-list.txt",
+    "https://www.usom.gov.tr/api/address.txt",
+]
 
 router = APIRouter(prefix="/threat-intel/usom", tags=["threat-intel-usom"])
 
@@ -42,42 +46,69 @@ def _iso() -> str:
 
 
 async def _require_master(request: Request, license_key: Optional[str] = None):
-    """Lightweight master check — reuse server.py's helper via HTTP header.
-    Simplified: require X-Master-Session cookie or valid license from server.py's session store."""
-    # Delegate to central auth by importing at call-time
     from server import _require_master as core_check
     return await core_check(request, license_key)
 
 
-async def _fetch_usom_urls() -> list[str]:
-    """USOM public URL feed'ini indir."""
-    try:
-        async with httpx.AsyncClient(
-            timeout=25, follow_redirects=True,
-            headers={"User-Agent": "GokyuzuWebSpam/v44.00.22 (Master Panel)"},
-        ) as h:
-            r = await h.get(USOM_URL_FEED)
-            if r.status_code != 200:
-                raise HTTPException(502, f"USOM feed HTTP {r.status_code}")
-            urls = []
-            for line in r.text.splitlines():
-                u = line.strip()
-                if not u or u.startswith("#"):
+# v44.00.22 — Valid URL/domain satırlarını tanımlar. HTML tag'lerini, boş
+# satırları, comment'leri, garbage'ı reddeder.
+_VALID_LINE_RE = re.compile(
+    r"^(https?://)?[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?)+"
+    r"(?::\d{1,5})?(?:/[^\s<>\"']*)?$",
+    re.IGNORECASE,
+)
+
+
+def _is_html_content(text: str) -> bool:
+    """First 500 char'da HTML sniff."""
+    head = text[:500].lstrip().lower()
+    return head.startswith(("<!doctype", "<html", "<?xml"))
+
+
+async def _fetch_usom_urls() -> tuple[list[str], str]:
+    """USOM public URL feed'ini dener (birden fazla adayı). Döner: (urls, source_url)."""
+    last_err = ""
+    async with httpx.AsyncClient(
+        timeout=25, follow_redirects=True,
+        headers={"User-Agent": "GokyuzuWebSpam/v44.00.22 (Master Panel)",
+                 "Accept": "text/plain, */*"},
+    ) as h:
+        for feed_url in USOM_FEED_CANDIDATES:
+            try:
+                r = await h.get(feed_url)
+                if r.status_code != 200:
+                    last_err = f"{feed_url} → HTTP {r.status_code}"
                     continue
-                # normalize: some entries omit scheme
-                if not u.startswith(("http://", "https://")):
-                    u = "http://" + u
-                urls.append(u)
-            return urls
-    except httpx.HTTPError as ex:
-        raise HTTPException(502, f"USOM feed unreachable: {ex}")
+                if _is_html_content(r.text):
+                    last_err = f"{feed_url} → HTML page (not URL list)"
+                    continue
+                urls: list = []
+                for line in r.text.splitlines():
+                    u = line.strip()
+                    if not u or u.startswith("#"):
+                        continue
+                    # Reject lines with HTML/JS residue
+                    if any(c in u for c in ("<", ">", '"', "'", "{", "}", "=")):
+                        continue
+                    # Must match valid URL pattern
+                    if not _VALID_LINE_RE.match(u):
+                        continue
+                    if not u.startswith(("http://", "https://")):
+                        u = "http://" + u
+                    urls.append(u)
+                if urls:
+                    return urls, feed_url
+                last_err = f"{feed_url} → no valid URLs after filter"
+            except httpx.HTTPError as ex:
+                last_err = f"{feed_url} → {ex}"
+    raise HTTPException(502, f"USOM feed'i çekilemedi: {last_err}")
 
 
 @router.post("/fetch")
 async def fetch_usom(request: Request, license_key: Optional[str] = None):
     """USOM zararlı URL listesini indir, IOC'lara + Kara Liste'ye yaz."""
     await _require_master(request, license_key)
-    urls = await _fetch_usom_urls()
+    urls, source_url = await _fetch_usom_urls()
     now = _iso()
     expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
     added_urls = 0
@@ -166,8 +197,31 @@ async def fetch_usom(request: Request, license_key: Optional[str] = None):
         "fetched_urls": len(urls),
         "new_urls": added_urls,
         "new_domains": added_domains,
+        "source_url": source_url,
         "synced_at": now,
     }
+
+
+@router.post("/cleanup")
+async def cleanup_usom(request: Request, license_key: Optional[str] = None):
+    """v44.00.22 — Kirli USOM IOC'ları temizle (HTML tag'i içeren, geçersiz format).
+    Önceki hatalı fetch'lerden kalan kayıtları siler."""
+    await _require_master(request, license_key)
+    # HTML tag / garbage içeren kayıtları bul
+    bad_pattern = {"$or": [
+        {"value": {"$regex": r"[<>\"'{}=]"}},
+        {"value": {"$regex": r"^https?://[<>]"}},
+        {"value": {"$regex": r"DOCTYPE|<html|<meta|<title|<head|<body|<script", "$options": "i"}},
+    ]}
+    filt = {"source": "usom", **bad_pattern}
+    r_ioc = await db.threat_iocs.delete_many(filt)
+    # Kara liste'den de temizle
+    r_list = await db.lists.delete_many({
+        "source_kind": "usom",
+        "value": {"$regex": r"[<>\"'{}=]"},
+    })
+    return {"ok": True, "removed_iocs": r_ioc.deleted_count,
+            "removed_from_lists": r_list.deleted_count}
 
 
 @router.get("/list")

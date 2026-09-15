@@ -1285,7 +1285,7 @@ async def _daily_usom_fetch_task():
                 last = await db.settings.find_one({"_key": "usom_last_run"}, {"_id": 0})
                 if not last or last.get("date") != today:
                     from routes.usom import _fetch_usom_urls
-                    urls = await _fetch_usom_urls()
+                    urls, source_url = await _fetch_usom_urls()
                     # Reuse fetch_usom logic by calling endpoint helper directly
                     # Simple inline version: just write via update_one loop
                     import uuid as _uuid

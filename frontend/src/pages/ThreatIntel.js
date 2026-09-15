@@ -444,6 +444,15 @@ function UsomTab() {
     onError: (e) => toast.error("USOM fetch hatası: " + (e.response?.data?.detail || e.message)),
   });
 
+  const cleanup = useMutation({
+    mutationFn: async () => (await client.post("/threat-intel/usom/cleanup")).data,
+    onSuccess: (d) => {
+      toast.success(`Temizlendi: ${d.removed_iocs} IOC + ${d.removed_from_lists} kara liste kaydı`);
+      qc.invalidateQueries({ queryKey: ["usom-list"] });
+    },
+    onError: (e) => toast.error("Temizleme hatası: " + (e.response?.data?.detail || e.message)),
+  });
+
   const delRow = useMutation({
     mutationFn: async (value) => (await client.post("/threat-intel/usom/delete", { value })).data,
     onSuccess: (d, value) => {
@@ -469,6 +478,12 @@ function UsomTab() {
             className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-60">
             <RefreshCw className={`w-4 h-4 ${fetchNow.isPending ? "animate-spin" : ""}`}/>
             {fetchNow.isPending ? "USOM verileri çekiliyor..." : "Şimdi Çek"}
+          </button>
+          <button onClick={() => window.confirm("HTML tag'i içeren bozuk USOM kayıtlarını sil?") && cleanup.mutate()}
+            disabled={cleanup.isPending} data-testid="usom-cleanup-btn"
+            className="px-3 py-2 rounded bg-rose-900/60 hover:bg-rose-900 text-rose-300 text-xs font-bold flex items-center gap-1.5 disabled:opacity-60"
+            title="Önceki hatalı fetch'lerden kalan bozuk kayıtları temizle">
+            <X className="w-3.5 h-3.5"/> Kirli Verileri Temizle
           </button>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="URL / domain'de ara..."
             data-testid="usom-search"
