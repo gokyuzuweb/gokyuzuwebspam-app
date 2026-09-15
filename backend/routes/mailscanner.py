@@ -284,6 +284,133 @@ async def delete_rule(rule_id: str, license_key: str = Query(..., min_length=8))
     return {"ok": True}
 
 
+# --- v44.00.39 — SpamAssassin Rule Score Overrides -----------------------
+# Turkce kurumsal MTA'lar icin MISSING_MID gibi kurallarin agirligini
+# license bazinda azaltir/sifirlar. Ingestion sirasinda uygulanir.
+_SA_PRESET_TURKISH_CORP: dict[str, float | None] = {
+    "MISSING_MID": 0.0,
+    "DOS_BODY_HIGH_NO_MID": 0.5,
+    "MISSING_MIMEOLE": 0.0,
+    "MISSING_HEADERS": 0.5,
+    "RDNS_NONE": 0.5,
+    "MIME_HTML_ONLY": 0.0,
+    "FREEMAIL_REPLYTO_END_DIGIT": 0.0,
+}
+
+_SA_PRESETS: dict[str, dict[str, float | None]] = {
+    "turkish-corp": _SA_PRESET_TURKISH_CORP,
+    "off": {},  # tum override'lari kaldir
+}
+
+
+class SAOverridesUpdate(BaseModel):
+    license_key: str = Field(..., min_length=8)
+    # {RULE_NAME: float | null}. null = kural devre disi (0 puan).
+    overrides: dict[str, Optional[float]] = Field(default_factory=dict)
+
+
+@router.get("/sa-overrides")
+async def get_sa_overrides(license_key: str = Query(..., min_length=8)):
+    """Aktif override map + presetler + son 7 gunde hitlemis top kurallar."""
+    doc = await db.mailscanner_config.find_one(
+        {"license_key": license_key},
+        {"_id": 0, "sa_score_overrides": 1},
+    ) or {}
+    overrides = doc.get("sa_score_overrides") or {}
+
+    # Son 7 gunde hitlemis kurallar (frekans + ortalama skor)
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    pipeline = [
+        {"$match": {
+            "license_key": license_key,
+            "ts": {"$gte": since},
+            "sa_rules": {"$exists": True, "$ne": []},
+        }},
+        {"$unwind": "$sa_rules"},
+        {"$group": {
+            "_id": "$sa_rules.name",
+            "hits": {"$sum": 1},
+            "avg_score": {"$avg": "$sa_rules.score"},
+        }},
+        {"$sort": {"hits": -1}},
+        {"$limit": 50},
+    ]
+    seen_rules: list[dict] = []
+    try:
+        async for row in db.mail_events.aggregate(pipeline):
+            seen_rules.append({
+                "name": row["_id"],
+                "hits": row["hits"],
+                "avg_score": round(row["avg_score"] or 0, 2),
+                "overridden": row["_id"] in overrides,
+                "override_value": overrides.get(row["_id"]),
+            })
+    except Exception:
+        pass
+
+    return {
+        "license_key": license_key,
+        "overrides": overrides,
+        "presets": list(_SA_PRESETS.keys()),
+        "preset_details": _SA_PRESETS,
+        "seen_rules_7d": seen_rules,
+    }
+
+
+@router.put("/sa-overrides")
+async def put_sa_overrides(payload: SAOverridesUpdate):
+    """Override map'i tumuyle degistirir (upsert)."""
+    # Basit sanity: kural adi format
+    import re
+    clean: dict[str, Optional[float]] = {}
+    for k, v in (payload.overrides or {}).items():
+        if not re.match(r"^[A-Z0-9_]{3,64}$", k or ""):
+            continue
+        if v is None:
+            clean[k] = None
+        else:
+            try:
+                fv = float(v)
+                # Guvenlik: -10..20 arasi (SA norm)
+                fv = max(-10.0, min(20.0, fv))
+                clean[k] = fv
+            except (TypeError, ValueError):
+                continue
+    await db.mailscanner_config.update_one(
+        {"license_key": payload.license_key},
+        {"$set": {"sa_score_overrides": clean, "updated_at": _iso()},
+         "$setOnInsert": {"license_key": payload.license_key, "created_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True, "overrides": clean, "count": len(clean)}
+
+
+@router.post("/sa-overrides/preset/{preset_name}")
+async def apply_sa_preset(
+    preset_name: str,
+    license_key: str = Query(..., min_length=8),
+    merge: bool = Query(False, description="True = mevcuta ekle, False = degistir"),
+):
+    """Hazir preset uygula. `turkish-corp` Turk kurumsal MTA'lar icin
+    onerilen ceza kuralı ayarlarını yükler. `off` tümünü kaldirir."""
+    if preset_name not in _SA_PRESETS:
+        raise HTTPException(404, f"Preset bulunamadi: {preset_name}")
+    preset = dict(_SA_PRESETS[preset_name])
+    final = preset
+    if merge:
+        current = (await db.mailscanner_config.find_one(
+            {"license_key": license_key}, {"_id": 0, "sa_score_overrides": 1}
+        ) or {}).get("sa_score_overrides") or {}
+        final = {**current, **preset}
+    await db.mailscanner_config.update_one(
+        {"license_key": license_key},
+        {"$set": {"sa_score_overrides": final, "updated_at": _iso()},
+         "$setOnInsert": {"license_key": license_key, "created_at": _iso()}},
+        upsert=True,
+    )
+    return {"ok": True, "preset": preset_name, "overrides": final, "count": len(final)}
+
+
 class UserPolicy(BaseModel):
     license_key: str = Field(..., min_length=8)
     user_email: str = Field(..., min_length=3, max_length=200)

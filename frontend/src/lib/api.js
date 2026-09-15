@@ -646,6 +646,16 @@ export const api = {
     client.post("/mailscanner/rules", { license_key: licenseKey, ...rule }).then(r => r.data),
   msRuleDelete: (licenseKey, ruleId) =>
     client.delete(`/mailscanner/rules/${ruleId}`, { params: { license_key: licenseKey } }).then(r => r.data),
+
+  // v44.00.39 — SpamAssassin rule score overrides (Turkce kurumsal fix)
+  msSaOverrides: (licenseKey) =>
+    client.get("/mailscanner/sa-overrides", { params: { license_key: licenseKey } }).then(r => r.data),
+  msSaOverridesPut: (licenseKey, overrides) =>
+    client.put("/mailscanner/sa-overrides", { license_key: licenseKey, overrides }).then(r => r.data),
+  msSaOverridesPreset: (licenseKey, preset, merge = false) =>
+    client.post(`/mailscanner/sa-overrides/preset/${preset}`, null,
+      { params: { license_key: licenseKey, merge } }).then(r => r.data),
+
   msPolicies: (licenseKey) =>
     client.get("/mailscanner/user-policy", { params: { license_key: licenseKey } }).then(r => r.data),
   msPolicyPut: (licenseKey, payload) =>

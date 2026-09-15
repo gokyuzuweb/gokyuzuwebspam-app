@@ -68,6 +68,16 @@ const HELP = {
       "Tıklama sayısı takip edilir — normal olmayan spike'ta alarm.",
     ],
   },
+  sa: {
+    what: "SpamAssassin cezalarını kural bazında ezerek false-positive'i azaltır. Türk kurumsal Postfix/qmail sunucuları genelde MISSING_MID, DOS_BODY_HIGH_NO_MID, RDNS_NONE gibi kurallara takılır — bu kuralları sıfırlayarak legit ihale/kurumsal maillerinin karantinaya düşmesini engellersin.",
+    how: [
+      "Hızlı Başlangıç: 'Türk Kurumsal Preset' butonuna bas — 7 kural otomatik yumuşatılır.",
+      "Son 7 gün tablosundan hangi kuralın sık hitlediğini gör; override değeri boş bırakılırsa (null) kural devre dışıdır (0 puan).",
+      "Bir kuralın override değerini örn. 0.5 yaparsan → skor tam ceza yerine 0.5 puan alır.",
+      "Değişiklikler yalnızca YENİ ingest edilen mailleri etkiler; eski karantinayı yeniden puanlamak için Events → Rescore kullan.",
+      "Sık hitliyor ama gerçekten spam değilse override et; gerçekten spam ise dokunma.",
+    ],
+  },
 };
 
 function HelpPanel({ tabKey }) {
@@ -145,6 +155,7 @@ export default function MailScanner() {
     { k: "config", l: "Yapılandırma",     i: Sliders,  t: "indigo" },
     { k: "stats",  l: "İstatistik",        i: BarChart, t: "cyan" },
     { k: "rules",  l: "Kurallar",          i: Filter,   t: "emerald" },
+    { k: "sa",     l: "SA Skor Ayarı",     i: Sliders,  t: "cyan" },
     { k: "bayes",  l: "Bayes",             i: Brain,    t: "amber" },
     { k: "policy", l: "Kullanıcı Politika", i: Users,   t: "fuchsia" },
     { k: "url",    l: "URL Koruma",        i: LinkIcon, t: "rose" },
@@ -194,6 +205,7 @@ export default function MailScanner() {
       {tab === "config" && <><ConfigTab/><HelpPanel tabKey="config"/></>}
       {tab === "stats"  && <><StatsTab/><HelpPanel tabKey="stats"/></>}
       {tab === "rules"  && <><RulesTab/><HelpPanel tabKey="rules"/></>}
+      {tab === "sa"     && <><SaOverridesTab/><HelpPanel tabKey="sa"/></>}
       {tab === "bayes"  && <><BayesTab/><HelpPanel tabKey="bayes"/></>}
       {tab === "policy" && <><PolicyTab/><HelpPanel tabKey="policy"/></>}
       {tab === "url"    && <><UrlTab/><HelpPanel tabKey="url"/></>}
@@ -598,6 +610,275 @@ function RulesTab() {
         </div>
       </CardBody>
     </Card>
+  );
+}
+
+// v44.00.39 — SpamAssassin Rule Score Overrides Tab
+function SaOverridesTab() {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ["ms-sa-overrides"],
+    queryFn: () => api.msSaOverrides(LICKEY()),
+  });
+  const [draft, setDraft] = useState({}); // {name: {value, enabled}}
+  const [newRule, setNewRule] = useState({ name: "", value: 0 });
+
+  // Server datasi degistiginde draft'i initialize et
+  useEffect(() => {
+    if (!q.data) return;
+    const d = {};
+    Object.entries(q.data.overrides || {}).forEach(([k, v]) => {
+      d[k] = { value: v === null ? "" : String(v), enabled: v !== null };
+    });
+    setDraft(d);
+  }, [q.data]);
+
+  const putMut = useMutation({
+    mutationFn: (overrides) => api.msSaOverridesPut(LICKEY(), overrides),
+    onSuccess: (r) => {
+      toast.success(`${r.count} override kaydedildi`);
+      qc.invalidateQueries({ queryKey: ["ms-sa-overrides"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Kaydedilemedi"),
+  });
+
+  const presetMut = useMutation({
+    mutationFn: ({ preset, merge }) => api.msSaOverridesPreset(LICKEY(), preset, merge),
+    onSuccess: (r) => {
+      toast.success(`${r.preset} preset uygulandı — ${r.count} kural`);
+      qc.invalidateQueries({ queryKey: ["ms-sa-overrides"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Preset uygulanamadı"),
+  });
+
+  const save = () => {
+    const payload = {};
+    Object.entries(draft).forEach(([k, v]) => {
+      if (!v.enabled) {
+        payload[k] = null;
+      } else {
+        const n = Number(v.value);
+        if (!Number.isNaN(n)) payload[k] = n;
+      }
+    });
+    putMut.mutate(payload);
+  };
+
+  const addRule = () => {
+    const name = (newRule.name || "").trim().toUpperCase().replace(/\s+/g, "_");
+    if (!/^[A-Z0-9_]{3,64}$/.test(name)) {
+      toast.error("Kural adı A-Z, 0-9, _ karakterlerinden oluşmalı (3-64)");
+      return;
+    }
+    setDraft({ ...draft, [name]: { value: String(newRule.value), enabled: true } });
+    setNewRule({ name: "", value: 0 });
+  };
+
+  const removeRule = (name) => {
+    const d = { ...draft };
+    delete d[name];
+    setDraft(d);
+  };
+
+  const seen = q.data?.seen_rules_7d || [];
+
+  return (
+    <div className="space-y-3" data-testid="sa-overrides-tab">
+      <Card>
+        <CardHeader
+          title="SpamAssassin Kural Skor Ayarları"
+          subtitle="Türk kurumsal MTA'lardan (Postfix/qmail) gelen legit mailleri false-positive yapan SA kurallarını yumuşat"
+        />
+        <CardBody className="space-y-4">
+          {/* Preset butonlari */}
+          <div className="flex flex-wrap gap-2 p-3 bg-slate-950/50 border border-slate-800 rounded-md">
+            <button
+              data-testid="sa-preset-tr-corp"
+              onClick={() => presetMut.mutate({ preset: "turkish-corp", merge: false })}
+              disabled={presetMut.isPending}
+              className="text-xs px-3 py-1.5 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30 disabled:opacity-40"
+            >
+              <Sparkles className="w-3 h-3 inline mr-1" />Türk Kurumsal Preset Uygula
+            </button>
+            <button
+              data-testid="sa-preset-tr-corp-merge"
+              onClick={() => presetMut.mutate({ preset: "turkish-corp", merge: true })}
+              disabled={presetMut.isPending}
+              className="text-xs px-3 py-1.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-40"
+            >
+              + Mevcut Üzerine Ekle
+            </button>
+            <button
+              data-testid="sa-preset-off"
+              onClick={() => {
+                if (window.confirm("Tüm override'lar silinecek. Emin misin?")) {
+                  presetMut.mutate({ preset: "off", merge: false });
+                }
+              }}
+              disabled={presetMut.isPending}
+              className="text-xs px-3 py-1.5 rounded-md bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 disabled:opacity-40"
+            >
+              <Trash2 className="w-3 h-3 inline mr-1" />Tümünü Kaldır
+            </button>
+            <div className="flex-1"></div>
+            <button
+              data-testid="sa-save"
+              onClick={save}
+              disabled={putMut.isPending}
+              className="text-xs px-3 py-1.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-40"
+            >
+              Değişiklikleri Kaydet
+            </button>
+          </div>
+
+          {/* Aktif overrides */}
+          <div>
+            <div className="text-xs text-slate-400 font-semibold mb-2">
+              Aktif Override'lar ({Object.keys(draft).length})
+            </div>
+            {Object.keys(draft).length === 0 && (
+              <div className="text-sm text-slate-500 text-center py-4 border border-dashed border-slate-800 rounded-md">
+                Henüz override yok. Bir preset uygula veya aşağıdan manuel ekle.
+              </div>
+            )}
+            <div className="space-y-1">
+              {Object.entries(draft).map(([name, cfg]) => (
+                <div
+                  key={name}
+                  data-testid={`sa-override-row-${name}`}
+                  className="flex items-center gap-2 border border-slate-800 rounded-md p-2 bg-slate-950/40"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-slate-100 mono">{name}</div>
+                  </div>
+                  <label className="flex items-center gap-1 text-[11px] text-slate-400">
+                    <input
+                      type="checkbox"
+                      data-testid={`sa-enabled-${name}`}
+                      checked={cfg.enabled}
+                      onChange={(e) =>
+                        setDraft({ ...draft, [name]: { ...cfg, enabled: e.target.checked } })
+                      }
+                    />
+                    Skorla
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    disabled={!cfg.enabled}
+                    data-testid={`sa-value-${name}`}
+                    value={cfg.value}
+                    onChange={(e) =>
+                      setDraft({ ...draft, [name]: { ...cfg, value: e.target.value } })
+                    }
+                    className="w-20 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-sm mono disabled:opacity-40"
+                    placeholder="0.0"
+                  />
+                  <button
+                    onClick={() => removeRule(name)}
+                    className="text-slate-500 hover:text-rose-400"
+                    data-testid={`sa-remove-${name}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Manuel ekle */}
+          <div className="flex items-center gap-2 p-3 bg-slate-950/50 border border-slate-800 rounded-md">
+            <input
+              data-testid="sa-new-name"
+              value={newRule.name}
+              onChange={(e) => setNewRule({ ...newRule, name: e.target.value })}
+              placeholder="RULE_NAME (örn: MISSING_MID)"
+              className="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm mono uppercase"
+            />
+            <input
+              type="number"
+              step="0.1"
+              data-testid="sa-new-value"
+              value={newRule.value}
+              onChange={(e) => setNewRule({ ...newRule, value: Number(e.target.value) })}
+              placeholder="0.0"
+              className="w-24 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm mono"
+            />
+            <button
+              data-testid="sa-new-add"
+              onClick={addRule}
+              className="text-xs px-3 py-1.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30"
+            >
+              <Plus className="w-3 h-3 inline mr-1" />Kural Ekle
+            </button>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Son 7 gunde gorulen kurallar */}
+      <Card>
+        <CardHeader
+          title="Son 7 Gün — En Sık Hitleyen Kurallar"
+          subtitle="Buradan hızlı ekleme yapabilirsiniz. 'Override et' butonuyla kuralı listeye ekleyin."
+        />
+        <CardBody>
+          {seen.length === 0 && (
+            <div className="text-sm text-slate-500 text-center py-4">
+              Bu lisans için son 7 günde SA kuralı hit'i bulunamadı.
+            </div>
+          )}
+          {seen.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="sa-seen-table">
+                <thead className="text-[11px] text-slate-500 uppercase">
+                  <tr className="border-b border-slate-800">
+                    <th className="text-left p-2">Kural</th>
+                    <th className="text-right p-2">Hit (7g)</th>
+                    <th className="text-right p-2">Ort. Skor</th>
+                    <th className="text-right p-2">Durum</th>
+                    <th className="text-right p-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {seen.map((r) => (
+                    <tr key={r.name} className="border-b border-slate-900 hover:bg-slate-900/40">
+                      <td className="p-2 mono text-slate-100">{r.name}</td>
+                      <td className="p-2 text-right text-slate-300">{r.hits}</td>
+                      <td className="p-2 text-right text-slate-300 mono">{r.avg_score?.toFixed(1)}</td>
+                      <td className="p-2 text-right">
+                        {r.overridden ? (
+                          <Badge tone="success">
+                            {r.override_value === null ? "off" : r.override_value.toFixed(1)}
+                          </Badge>
+                        ) : (
+                          <Badge tone="default">orijinal</Badge>
+                        )}
+                      </td>
+                      <td className="p-2 text-right">
+                        {!r.overridden && (
+                          <button
+                            data-testid={`sa-quick-add-${r.name}`}
+                            onClick={() =>
+                              setDraft({
+                                ...draft,
+                                [r.name]: { value: "0", enabled: true },
+                              })
+                            }
+                            className="text-[11px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25"
+                          >
+                            Override
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardBody>
+      </Card>
+    </div>
   );
 }
 

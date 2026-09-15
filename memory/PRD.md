@@ -14,6 +14,52 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 27, v44.00.39) — SA Kural Skor Override Sistemi ✅
+
+### 🐛 Kullanıcı raporu (devam)
+v44.00.38 whitelist fix'i whitelist'teki domain için sorunu çözdü ancak kök neden — kötü yapılandırılmış Türk kurumsal Postfix/qmail sunucularının `MISSING_MID` (1.4), `DOS_BODY_HIGH_NO_MID` (2.8), `RDNS_NONE` (1.0) gibi SA kurallarına takılıp legit mailleri karantinaya göndermesi — **whitelist dışı** kurumsal göndericiler için hala geçerliydi. Kullanıcı: "tamam düzelt o zaman update yapalım".
+
+### 🎯 Çözüm — SpamAssassin Rule Score Overrides (per-license + global)
+Her lisansın kendi override tablosunu tutabilmesi ve bir preset butonuyla anında "Türk kurumsal MTA'lar" senaryosuna geçebilmesi.
+
+**Backend (`routes/events.py`)** — ingest sırasında:
+1. `X-Spam-Report` (per-rule skor: `*  1.4 MISSING_MID Missing Message-Id`) ve `X-Spam-Status` (`tests=MISSING_MID,BAYES_50,...`) header'larından hit'leyen kuralları parse eder → `_parse_sa_rules()`.
+2. `_load_sa_overrides(license_key)` global (`settings._key='sa_score_overrides'`) + per-license (`mailscanner_config.sa_score_overrides`) override map'lerini birleştirir (license precedence).
+3. `_apply_sa_score_overrides(rules, overrides, sa_score)` her hit'in original skorunu override değeriyle değiştirir → yeni total skor = original − Σ(orig) + Σ(override). `null` = kural disable (0 puan).
+4. Adjusted skor `doc.total_score`'a yazılır; audit için `total_score_pre_override`, `sa_score_delta`, `sa_rules[]`, `sa_overrides_applied=true` eklenir. Verdict recalc bu skoru kullanır → threshold altına düşen legit mail karantinadan kurtulur.
+
+**Backend (`routes/mailscanner.py`)** — yeni endpoint'ler:
+- `GET  /api/mailscanner/sa-overrides?license_key=` → aktif overrides + presetler + son 7 gün hit istatistikleri (name/hits/avg_score/overridden).
+- `PUT  /api/mailscanner/sa-overrides` → override map upsert. Rule adı `^[A-Z0-9_]{3,64}$` regex'ine uymayanlar reddedilir; skor -10..20 clamp'lenir.
+- `POST /api/mailscanner/sa-overrides/preset/{turkish-corp|off}?merge=` → hazır preset uygula (replace veya merge).
+
+**Preset `turkish-corp`** (7 kural):
+```
+MISSING_MID: 0.0            DOS_BODY_HIGH_NO_MID: 0.5   MISSING_MIMEOLE: 0.0
+MISSING_HEADERS: 0.5        RDNS_NONE: 0.5              MIME_HTML_ONLY: 0.0
+FREEMAIL_REPLYTO_END_DIGIT: 0.0
+```
+Örnek etki: 6.0 SA skoru → 6.0 − 1.4 − 2.3 − 0.5 = **1.8** → `clean`.
+
+**Frontend (`pages/MailScanner.js`)** — Yeni "SA Skor Ayarı" tab (7. sekme):
+- 3 preset butonu (Türk Kurumsal / + Merge / Tümünü Kaldır)
+- Aktif override tablosu: her satırda checkbox (skorla/disable), skor input, sil butonu
+- Manuel ekleme formu: RULE_NAME + skor
+- Son 7 gün en sık hit tablosu (name/hits/avg_score/durum badge) + "Override" quick-add butonu
+- Kapsamlı HELP paneli
+
+**Tests**: `tests/test_v44_00_39_sa_score_overrides.py` — 6 test, hepsi PASS:
+- Baseline parse (override yok, sa_rules dolu)
+- turkish-corp preset uygulaması + skor 6.0 → <3 düşer
+- GET seen_rules_7d
+- Manual PUT + apply
+- Preset `off` temizler
+- Invalid rule name filter
+
+**Verification**: Backend testleri 10/10 PASS. Frontend UI screenshot (desktop 1920x800 + mobile 390x844) tab render'ı doğruladı.
+
+
+
 ## Feb 15, 2026 (Session 26, v44.00.38) — Whitelist Enforcement Fix (Kritik) ✅
 
 ### 🐛 Kullanıcı raporu

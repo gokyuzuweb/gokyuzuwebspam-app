@@ -19,6 +19,148 @@ log = logging.getLogger("events")
 router = APIRouter(prefix="/events", tags=["events"])
 
 
+# v44.00.39 — SpamAssassin Rule Score Overrides ------------------------------
+# Kotu yapilandirilmis Turkce kurumsal Postfix/qmail sunuculari legit mail
+# gonderirken bile MISSING_MID (1.4), DOS_BODY_HIGH_NO_MID (2.8) gibi kurallara
+# takiliyor. Bu kural agirliklarini license bazinda (ya da global) override
+# etmek false-positive'i onemli olcude azaltiyor.
+#
+# Header formatlari:
+#   1) X-Spam-Report:
+#        *  1.4 MISSING_MID Missing Message-Id: header
+#        *  2.8 DOS_BODY_HIGH_NO_MID High-bit body & no Message-Id
+#   2) X-Spam-Status:
+#        Yes, score=6.0 required=5.0 tests=BAYES_50,MISSING_MID,DOS_BODY_HIGH_NO_MID
+#      (bu formatta per-rule skor yok, yalnizca isim var → override'lar yalnizca
+#       0 (disable) semantikte anlamli olur; scored formatta 1) tercih edilir.)
+#
+# Turk kurumsal sunucular icin varsayilan onerilen preset:
+_SA_PRESET_TURKISH_CORP: dict[str, float | None] = {
+    # RFC-old Postfix'ler Message-Id koymuyor → cezalandirma
+    "MISSING_MID": 0.0,
+    # High-bit body (Turkce karakterler UTF-8 encode edilmeden) + no MID
+    "DOS_BODY_HIGH_NO_MID": 0.5,   # 2.8 → 0.5
+    # X-Mailer eksikligi kurumsal MTA'larda cok yaygin
+    "MISSING_MIMEOLE": 0.0,
+    "MISSING_HEADERS": 0.5,
+    # Reverse DNS PTR eksikligi bircok cPanel bayisinde var
+    "RDNS_NONE": 0.5,
+    # HTML olmadan MIME multipart (Outlook kurumsal signature'lari)
+    "MIME_HTML_ONLY": 0.0,
+    # Reply-To adres ile From adres farkli (kurumsal shared mailbox)
+    "FREEMAIL_REPLYTO_END_DIGIT": 0.0,
+}
+
+
+# X-Spam-Report line: "  *  1.4 MISSING_MID Missing Message-Id"
+_SA_REPORT_LINE = re.compile(
+    r"^\s*\*?\s*(-?\d+(?:\.\d+)?)\s+([A-Z0-9_]{3,64})\b",
+    re.MULTILINE,
+)
+# X-Spam-Status tests= line
+_SA_TESTS_LINE = re.compile(r"tests=([A-Z0-9_,\s]+)", re.IGNORECASE)
+
+
+def _parse_sa_rules(headers: str) -> list[dict]:
+    """Extract [{name, score}] from X-Spam-Report + X-Spam-Status.
+
+    Deduplicate by name (Report is authoritative; Status is fallback).
+    """
+    if not headers:
+        return []
+    rules: dict[str, float | None] = {}
+    # 1) X-Spam-Report — per-line score var
+    #    Bir header degeri birden fazla satira yayilabilir; whole blob'da
+    #    pattern hepsini yakalar. Ancak X-Spam-Report bolgesini once izole
+    #    edip diger ustune uyabilecek satirlarla karismasin.
+    report_match = re.search(
+        r"^X-Spam-Report:\s*(.*?)(?=^\S+:|\Z)",
+        headers,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    )
+    if report_match:
+        block = report_match.group(1)
+        for m in _SA_REPORT_LINE.finditer(block):
+            try:
+                sc = float(m.group(1))
+                name = m.group(2)
+                # Ilk gorulen skorlu satiri koru
+                if name not in rules:
+                    rules[name] = sc
+            except (TypeError, ValueError):
+                continue
+    # 2) X-Spam-Status tests= — sadece isim listesi
+    status_match = re.search(
+        r"^X-Spam-Status:\s*(.*?)(?=^\S+:|\Z)",
+        headers,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    )
+    if status_match:
+        st = status_match.group(1)
+        tm = _SA_TESTS_LINE.search(st)
+        if tm:
+            for name in tm.group(1).split(","):
+                name = name.strip().upper()
+                if name and name not in rules:
+                    rules[name] = None  # score bilinmiyor
+    return [{"name": k, "score": v} for k, v in rules.items()]
+
+
+def _apply_sa_score_overrides(
+    rules: list[dict],
+    overrides: dict[str, Any] | None,
+    original_total: float | None,
+) -> tuple[float | None, list[dict], float]:
+    """Recompute SA total score using override map.
+
+    Returns (adjusted_total, annotated_rules, delta).
+    - Kural score bilinmiyorsa (Status-only), delta uygulanamaz → override
+      yalnizca 0 (disable) semantikte cikar: score None ise etkisiz.
+    - override_value None = kural devre disi (0 puan).
+    - Adjusted total = original - sum(original_score) + sum(override_score).
+    - Original_total None ise None dondurulur (SA skoru zaten yok).
+    """
+    if not rules or not overrides:
+        return (original_total, rules, 0.0)
+    annotated: list[dict] = []
+    delta = 0.0
+    for r in rules:
+        name = r.get("name")
+        orig = r.get("score")
+        entry = {"name": name, "score": orig, "override": None, "final": orig}
+        if name in overrides:
+            ov = overrides.get(name)
+            new_val = 0.0 if ov is None else float(ov)
+            entry["override"] = new_val
+            entry["final"] = new_val
+            if orig is not None:
+                delta += (new_val - float(orig))
+            # else: skor bilinmiyor → delta hesabina katilamaz; UI'da uyari cikacak.
+        annotated.append(entry)
+    if original_total is None:
+        return (None, annotated, delta)
+    adjusted = max(-10.0, float(original_total) + delta)
+    return (adjusted, annotated, delta)
+
+
+async def _load_sa_overrides(license_key: str) -> dict[str, Any]:
+    """Merge global (settings._key='sa_score_overrides') + per-license
+    (mailscanner_config.sa_score_overrides). Per-license precedence.
+    """
+    merged: dict[str, Any] = {}
+    try:
+        g = await db.settings.find_one({"_key": "sa_score_overrides"}, {"_id": 0}) or {}
+        merged.update(g.get("overrides") or {})
+    except Exception:
+        pass
+    try:
+        c = await db.mailscanner_config.find_one({"license_key": license_key}, {"_id": 0}) or {}
+        merged.update(c.get("sa_score_overrides") or {})
+    except Exception:
+        pass
+    return merged
+
+
 class MailEvent(BaseModel):
     license_key: str = Field(..., min_length=8)
     server_ip: Optional[str] = None
@@ -336,6 +478,25 @@ async def ingest_event(evt: MailEvent, request: Request):
         sa_score = None
     if sa_score is not None:
         doc["total_score"] = sa_score
+        # v44.00.39 — SpamAssassin rule score overrides (Turkce kurumsal fix)
+        # Header'lardan kural hit'lerini parse et, license/global override
+        # tablosunu uygula, SA skorunu yeniden hesapla. Boylece MISSING_MID
+        # gibi ceza kurallari legit corporate MTA'lar icin false-positive
+        # yaratmaz.
+        try:
+            _sa_rules_hit = _parse_sa_rules(headers)  # 'headers' zaten yukarida hazir
+            _sa_ov = await _load_sa_overrides(evt.license_key)
+            _adj, _ann, _delta = _apply_sa_score_overrides(_sa_rules_hit, _sa_ov, sa_score)
+            if _ann:
+                doc["sa_rules"] = _ann
+            if _sa_ov and _adj is not None and abs(_delta) > 0.0001:
+                doc["total_score_pre_override"] = sa_score
+                doc["sa_score_delta"] = round(_delta, 2)
+                sa_score = _adj
+                doc["total_score"] = sa_score
+                doc["sa_overrides_applied"] = True
+        except Exception as _sa_ex:
+            log.warning("sa override skip: %s", _sa_ex)
         # Sadece SA skoru düşük olduğu halde plugin yüksek verdict yolladıysa
         # düzelt. Virus/phish gibi gerçek tehdit verdict'lerini KORU.
         cur_verdict = (doc.get("verdict") or "").lower()
