@@ -239,8 +239,14 @@ sub _process_line {
         $scores{sa_report}    = substr($spam_report, 0, 500) if defined $spam_report;
         $scores{virus_name}   = $virus_name if defined $virus_name;
 
-        # NEW: read body/attachments/headers from Exim spool if available
-        my ($headers_full, $body_preview, $attachments) = _spool_content($mid);
+        # v44.00.21 — read body/attachments/headers from Exim spool with retry
+        # -D dosyası arrival satırından 100-500ms sonra yazılabiliyor; retry ile bekle.
+        my ($headers_full, $body_preview, $attachments);
+        for my $attempt (1..6) {
+            ($headers_full, $body_preview, $attachments) = _spool_content($mid);
+            last if defined $body_preview || defined $headers_full;
+            select(undef, undef, undef, 0.4) if $attempt < 6;  # 400ms
+        }
 
         _post_event({
             license_key     => $license,
@@ -480,7 +486,7 @@ sub _spam_from_spool {
 # by parsing the -H (headers) and -D (data/body) spool files.
 sub _spool_content {
     my ($mid) = @_;
-    my ($headers_full, $body_preview);
+    my ($headers_full, $body_preview, $body_html);
     my @attachments;
     for my $sub ('', map { "$_/" } 0..9, 'A'..'F') {
         my $h_path = "$spool/${sub}${mid}-H";
@@ -503,21 +509,26 @@ sub _spool_content {
             }
         }
         if (-r $d_path) {
-            # Read body (starts after first line which is the message id)
+            # v44.00.21 — Full body read (up to 32KB for HTML mails)
             if (open my $df, '<', $d_path) {
                 my $buf = '';
                 <$df>;  # skip first metadata line
                 while (my $l = <$df>) {
                     $buf .= $l;
-                    last if length($buf) > 4096;   # 4KB preview
+                    last if length($buf) > 32768;  # 32KB cap
                 }
                 close $df;
-                # Cheap MIME peek: if body is multipart, extract only the first text part
+                # Multipart: extract both text/plain and text/html
                 if ($buf =~ /^\s*--[-A-Za-z0-9]+/m) {
-                    if ($buf =~ /Content-Type:\s*text\/plain[^\r\n]*\r?\n\r?\n(.*?)(?:\r?\n--)/msi) {
-                        $body_preview = substr($1, 0, 4096);
-                    } else {
-                        $body_preview = substr($buf, 0, 2048);
+                    if ($buf =~ /Content-Type:\s*text\/plain[^\r\n]*\r?\n(?:[A-Z][^\r\n]*\r?\n)*\r?\n(.*?)(?:\r?\n--[-A-Za-z0-9]+)/msi) {
+                        $body_preview = substr($1, 0, 8192);
+                    }
+                    if ($buf =~ /Content-Type:\s*text\/html[^\r\n]*\r?\n(?:[A-Z][^\r\n]*\r?\n)*\r?\n(.*?)(?:\r?\n--[-A-Za-z0-9]+)/msi) {
+                        $body_html = substr($1, 0, 16384);
+                    }
+                    # Fallback if neither text/plain nor text/html matched
+                    if (!defined $body_preview && !defined $body_html) {
+                        $body_preview = substr($buf, 0, 4096);
                     }
                     # Extract attachment filenames (best-effort)
                     my @segs = split /\r?\n--/, $buf;
@@ -531,13 +542,13 @@ sub _spool_content {
                         }
                     }
                 } else {
-                    $body_preview = substr($buf, 0, 4096);
+                    $body_preview = substr($buf, 0, 8192);
                 }
             }
         }
-        last if defined $headers_full || defined $body_preview;
+        last if defined $headers_full || defined $body_preview || defined $body_html;
     }
-    return ($headers_full, $body_preview, scalar(@attachments) ? \@attachments : undef);
+    return ($headers_full, $body_preview, $body_html, scalar(@attachments) ? \@attachments : undef);
 }
 
 sub _post_event {

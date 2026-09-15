@@ -387,6 +387,20 @@ run "systemctl enable --now mailshield-quarantine.timer || true"
 # ═══════════════════════════════════════════════════════════════════
 # v44.00.01 — Otomatik Exim Push Timer + gwsm-update Komutu (BAYI)
 # ═══════════════════════════════════════════════════════════════════
+# v44.00.22 — DMARC Aggregate Fetcher (postmaster mailbox → Master Panel push)
+if [[ $DRY_RUN -eq 0 ]]; then
+  install -m 0755 "$SRC/scripts/mailshield-dmarc-fetch" "$INSTALL_DIR/bin/mailshield-dmarc-fetch"
+  # /etc/mailshield/mailshield.conf içinde MAILSHIELD_LICENSE zaten var; ekstra environ
+  if [[ -n "$LICENSE_KEY" ]]; then
+    grep -q "^MAILSHIELD_LICENSE=" "$ETC_DIR/mailshield.conf" 2>/dev/null || \
+      echo "MAILSHIELD_LICENSE=$LICENSE_KEY" >> "$ETC_DIR/mailshield.conf"
+    grep -q "^MAILSHIELD_API=" "$ETC_DIR/mailshield.conf" 2>/dev/null || \
+      echo "MAILSHIELD_API=${DEFAULT_LS:-https://panel.gokyuzuhosting.com}/api" >> "$ETC_DIR/mailshield.conf"
+    systemctl enable --now mailshield-dmarc-fetch.timer 2>/dev/null || true
+    echo "    ✓ DMARC agg fetcher timer aktif (her 6 saatte bir)"
+  fi
+fi
+
 echo "==> Exim push timer kurulumu (5 dk'da bir master'a mail metriği push eder)"
 # v44.00.11 — Bağımsız heartbeat script dosyası. Systemd ExecStart içinde
 # karmaşık bash escape'i yerine ayrı bir .sh çağırmak daha güvenli (systemd

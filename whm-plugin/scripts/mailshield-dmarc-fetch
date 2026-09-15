@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""GökyüzüWebSpam DMARC Aggregate Report Fetcher — v44.00.21
+=========================================================
+
+cPanel sunucusundaki tüm domain'lerin `postmaster@<domain>` Maildir'inde biriken
+Yahoo/Google/Microsoft/Yandex DMARC agregat raporlarını toplar, XML'i parse eder
+ve Master Panel'in `/api/threat-intel/dmarc/ingest` endpoint'ine push eder.
+
+Çalıştırma:
+    /opt/mailshield/bin/mailshield-dmarc-fetch --license MS-XXXXX
+    (systemd timer bunu her 6 saatte bir çalıştırır)
+
+DMARC agg reports:
+    - Konu format: "Report domain: <domain> Submitter: <isp> Report-ID: <id>"
+    - Attachment: `.xml.gz`, `.zip` veya doğrudan `.xml`
+    - Yapı: <feedback><report_metadata>...</report_metadata>
+                       <policy_published>...</policy_published>
+                       <record>*</record></feedback>
+"""
+from __future__ import annotations
+import argparse
+import base64
+import email
+import email.policy
+import gzip
+import io
+import json
+import os
+import re
+import ssl
+import subprocess
+import sys
+import urllib.request
+import xml.etree.ElementTree as ET
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterator, Optional
+
+DEFAULT_API = "https://panel.gokyuzuhosting.com/api"
+STATE_FILE = "/var/lib/mailshield/dmarc-fetch-state.json"
+
+
+def log(msg: str) -> None:
+    print(f"[dmarc-fetch] {datetime.now().isoformat(timespec='seconds')} {msg}", flush=True)
+
+
+def list_domains() -> list[str]:
+    """cPanel WHM API üzerinden sunucu domain listesini al."""
+    try:
+        out = subprocess.check_output(
+            ["whmapi1", "--output=json", "get_domain_info"],
+            timeout=30, stderr=subprocess.DEVNULL,
+        )
+        data = json.loads(out.decode())
+        rows = (data.get("data") or {}).get("domains") or []
+        doms = sorted({(r.get("domain") or "").lower() for r in rows if r.get("domain")})
+        return [d for d in doms if d]
+    except Exception as ex:
+        log(f"whmapi1 fail, /etc/localdomains fallback: {ex}")
+        try:
+            return [l.strip().lower() for l in open("/etc/localdomains") if l.strip()]
+        except Exception:
+            return []
+
+
+def maildir_paths_for(domain: str) -> list[Path]:
+    """Postmaster mailbox path'lerini bul.
+    cPanel format: /home/<user>/mail/<domain>/postmaster/{cur,new}/
+    """
+    paths: list[Path] = []
+    # Find /home/<user>/mail/<domain>
+    for home in Path("/home").iterdir() if Path("/home").exists() else []:
+        if not home.is_dir():
+            continue
+        mail_d = home / "mail" / domain / "postmaster"
+        if mail_d.is_dir():
+            for sub in ("new", "cur"):
+                sd = mail_d / sub
+                if sd.is_dir():
+                    paths.append(sd)
+    return paths
+
+
+def is_dmarc_report(subject: str) -> bool:
+    if not subject:
+        return False
+    s = subject.lower()
+    return ("report domain:" in s or "dmarc" in s or
+            "dmarc-report" in s or "aggregate" in s.replace("aggregate", "aggregate"))
+
+
+def extract_xml_bytes(msg: email.message.EmailMessage) -> Iterator[bytes]:
+    """Bir e-postadan tüm DMARC XML dosyalarını çıkart (gz/zip/xml)."""
+    for part in msg.walk():
+        ctype = (part.get_content_type() or "").lower()
+        fname = (part.get_filename() or "").lower()
+        try:
+            payload = part.get_payload(decode=True)
+        except Exception:
+            continue
+        if not payload:
+            continue
+
+        if fname.endswith(".xml.gz") or ctype == "application/gzip":
+            try:
+                yield gzip.decompress(payload)
+            except Exception as e:
+                log(f"gz decompress fail: {e}")
+        elif fname.endswith(".zip") or ctype == "application/zip":
+            try:
+                with zipfile.ZipFile(io.BytesIO(payload)) as z:
+                    for n in z.namelist():
+                        if n.lower().endswith(".xml"):
+                            yield z.read(n)
+            except Exception as e:
+                log(f"zip open fail: {e}")
+        elif fname.endswith(".xml") or ctype == "application/xml" or ctype == "text/xml":
+            yield payload
+
+
+def parse_dmarc_xml(xml_bytes: bytes) -> Optional[dict]:
+    """DMARC XML → summary dict."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as e:
+        log(f"xml parse fail: {e}")
+        return None
+    # Namespace-agnostic XPath helpers
+    def txt(node, path):
+        n = node.find(path)
+        return n.text.strip() if (n is not None and n.text) else ""
+
+    meta = root.find("report_metadata") or root.find("{*}report_metadata")
+    pol  = root.find("policy_published") or root.find("{*}policy_published")
+    if meta is None or pol is None:
+        return None
+
+    domain = txt(pol, "domain") or txt(pol, "{*}domain")
+    org    = txt(meta, "org_name") or txt(meta, "{*}org_name")
+    rid    = txt(meta, "report_id") or txt(meta, "{*}report_id")
+    if not domain:
+        return None
+
+    total = 0
+    dmarc_pass = spf_pass = dkim_pass = 0
+    for rec in root.findall("record") + root.findall("{*}record"):
+        row = rec.find("row") or rec.find("{*}row")
+        if row is None:
+            continue
+        try:
+            count = int(txt(row, "count") or txt(row, "{*}count") or "0")
+        except ValueError:
+            count = 0
+        total += count
+        policy = row.find("policy_evaluated") or row.find("{*}policy_evaluated")
+        if policy is None:
+            continue
+        dkim_r = txt(policy, "dkim") or txt(policy, "{*}dkim")
+        spf_r  = txt(policy, "spf")  or txt(policy, "{*}spf")
+        # DMARC pass = either DKIM aligned OR SPF aligned
+        if dkim_r.lower() == "pass":
+            dkim_pass += count
+        if spf_r.lower() == "pass":
+            spf_pass += count
+        if dkim_r.lower() == "pass" or spf_r.lower() == "pass":
+            dmarc_pass += count
+
+    return {
+        "domain": domain.lower(),
+        "org_name": org,
+        "report_id": rid,
+        "total_msgs": total,
+        "dmarc_pass": dmarc_pass,
+        "spf_pass": spf_pass,
+        "dkim_pass": dkim_pass,
+    }
+
+
+def load_state() -> dict:
+    try:
+        return json.loads(Path(STATE_FILE).read_text())
+    except Exception:
+        return {}
+
+
+def save_state(state: dict) -> None:
+    p = Path(STATE_FILE)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(state, indent=2))
+
+
+def post_ingest(api_base: str, license_key: str, payload: dict) -> bool:
+    url = api_base.rstrip("/") + "/threat-intel/dmarc/ingest"
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=data,
+                                 headers={"Content-Type": "application/json",
+                                          "X-License-Key": license_key,
+                                          "User-Agent": "GWS-DMARC-Fetch/v44.00.21"})
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+            return r.status == 200
+    except Exception as e:
+        log(f"ingest fail: {e}")
+        return False
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--license", default=os.environ.get("MAILSHIELD_LICENSE", ""))
+    ap.add_argument("--api", default=os.environ.get("MAILSHIELD_API", DEFAULT_API))
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    if not args.license:
+        log("HATA: --license MS-XXXXX gerekli (veya MAILSHIELD_LICENSE env)")
+        return 2
+
+    domains = list_domains()
+    log(f"found {len(domains)} domains on server")
+
+    state = load_state()
+    processed_ids = set(state.get("processed_ids", []))
+    total_reports = 0
+    total_ingested = 0
+    for domain in domains:
+        mdirs = maildir_paths_for(domain)
+        if not mdirs:
+            continue
+        for mdir in mdirs:
+            for f in mdir.iterdir():
+                if not f.is_file():
+                    continue
+                try:
+                    msg = email.message_from_bytes(f.read_bytes(),
+                                                    policy=email.policy.default)
+                except Exception:
+                    continue
+                subj = msg.get("Subject", "")
+                if not is_dmarc_report(subj):
+                    continue
+                for xml_bytes in extract_xml_bytes(msg):
+                    total_reports += 1
+                    summary = parse_dmarc_xml(xml_bytes)
+                    if not summary:
+                        continue
+                    rid = f"{summary['domain']}:{summary['org_name']}:{summary['report_id']}"
+                    if rid in processed_ids:
+                        continue
+                    if args.dry_run:
+                        log(f"DRY: would ingest {rid} → {summary['total_msgs']} msgs")
+                    else:
+                        ok = post_ingest(args.api, args.license, summary)
+                        if ok:
+                            total_ingested += 1
+                            processed_ids.add(rid)
+                            log(f"✓ ingested {rid} ({summary['total_msgs']} msgs)")
+    # Keep last 5000 ids to avoid unbounded growth
+    state["processed_ids"] = list(processed_ids)[-5000:]
+    state["last_run"] = datetime.now(timezone.utc).isoformat()
+    state["last_ingested"] = total_ingested
+    save_state(state)
+
+    log(f"DONE: {total_reports} reports found, {total_ingested} ingested")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

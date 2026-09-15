@@ -3748,6 +3748,48 @@ Spamhaus + Barracuda + SORBS + UCEPROTECT + SpamCop + PSBL + DroneBL + Manitu + 
 
 ### 🧪 Tests — 10/10 ✅
 `test_v44_00_21_feeds_expansion.py` (4 test): 5 new feed keys, helper exists with private-IP filter, DNSBL map complete, `/api/threat-intel/feeds` returns ≥11.
+
+
+## Feb 15, 2026 — v44.00.22 — DMARC Fetcher + NEVER_SYNCED HTTP Fallback
+
+### 🎯 User Requests
+1. "sunucuda domainlerin dmarc raporlarını çekmiyor çeksin" — gerçek DMARC agregat raporlarını çek
+2. "never_synced yazan verileri doğru almıyor" — Spamhaus/SORBS/DroneBL/Manitu/CBL feed'leri
+
+### 🛠 Fix 1 — DMARC Aggregate Fetcher (Sunucu Tarafı)
+**Yeni script**: `/opt/mailshield/bin/mailshield-dmarc-fetch` (Python 3)
+- `whmapi1 get_domain_info` ile server'daki tüm domain'leri listeler
+- Her domain için `/home/<user>/mail/<domain>/postmaster/{cur,new}/` Maildir'lerini tarar
+- Konu match: "Report Domain:", "dmarc", "aggregate" içeren mail'ler
+- Attachment: `.xml.gz` (gzip), `.zip`, direkt `.xml` — hepsi parse edilir
+- DMARC XML parse: `<feedback>/<record>/<row>/<policy_evaluated>/{spf,dkim}` — total_msgs, dmarc_pass, spf_pass, dkim_pass agrege
+- `POST /api/threat-intel/dmarc/ingest` ile Master Panel'e push
+- State file `/var/lib/mailshield/dmarc-fetch-state.json` — dup detection (report_id bazlı, son 5000 kayıt)
+- **Systemd**: `mailshield-dmarc-fetch.timer` — `OnBootSec=15min OnUnitActiveSec=6h`
+- `install.sh` otomatik enable eder, `mailshield.conf`'a `MAILSHIELD_LICENSE` + `MAILSHIELD_API` ekler
+- Log: `/var/log/mailshield/dmarc-fetch.log`
+
+### 🛠 Fix 2 — NEVER_SYNCED Feeds (HTTP Fallback)
+**Root cause**: DNSBL feed'leri (Spamhaus ZEN, SORBS, DroneBL, Manitu, CBL) 24s spam trafiği IP'lerini DNS'e sorguluyor. Sunucuda spam kaynak IP azsa (private IP 10.x çoğunluk), query havuzu boş → 0 IOC → NEVER_SYNCED.
+
+**Fix**:
+- **Spamhaus**: `https://www.spamhaus.org/drop/drop_v4.json` direkt HTTP fetch — DROP list'teki ilk 200 CIDR'in base IP'leri IOC'a yazılır (public, no rate limit)
+- **SORBS/DroneBL/Manitu/CBL/UCEPROTECT ve tümü**: local traffic <10 IP ise `https://lists.blocklist.de/lists/all.txt` fallback — ilk 200 IPv4 DNSBL query havuzuna eklenir
+
+### 🧪 Tests — 8/8 ✅
+`test_v44_00_22_dmarc_and_feeds_fix.py`:
+- DMARC fetcher script mevcut + tüm helper fonksiyonları
+- systemd .service + .timer (6h)
+- Spamhaus DROP JSON URL kullanımı
+- blocklist.de fallback trigger condition (`< 10`)
+
+### 📦 v44.00.22 Bump
+
+### 🧑‍💻 Deploy
+1. **Save to GitHub** → Master Panel deploy (backend feed fix aktif olur)
+2. **Sunucuda `sudo gwsm-update`** → yeni DMARC fetcher + systemd timer kurulur
+3. **İlk çalıştırmayı görmek için**: `systemctl start mailshield-dmarc-fetch.service && journalctl -u mailshield-dmarc-fetch -n 50`
+
 `test_v44_00_21_lists_manager.py` (6 test): 4 tabs verified, endpoints work, routes redirect.
 
 - 30s auto-refresh

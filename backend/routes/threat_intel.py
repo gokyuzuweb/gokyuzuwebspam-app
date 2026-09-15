@@ -389,37 +389,48 @@ async def trigger_sync(feed_key: str):
                 else:
                     errors.append(f"URLhaus http {r.status_code}")
         elif feed_key == "spamhaus_zen":
-            # v44.00.21 — Spamhaus ZEN DNS lookup. sender_ip/client_ip'nin herhangi biri dolu olan
-            # public IP'leri sorgu. Private IP'leri (10.x/172.x/192.x/127.x) filtrele.
-            import socket
+            # v44.00.22 — Spamhaus DROP list (HTTP-based, no DNS rate limit).
+            # Fallback: local traffic'ten public IP yoksa, blocklist.de + DROP feed'i kullan.
+            import httpx, socket, re as _re
             top_ips = await _collect_recent_public_ips()
-            for ip in top_ips:
-                try:
-                    parts = ip.split(".")
-                    if len(parts) != 4:
-                        continue
-                    q = ".".join(reversed(parts)) + ".zen.spamhaus.org"
-                    result = socket.gethostbyname_ex(q)  # NXDOMAIN → raises
-                    codes = result[2]  # list of 127.0.0.x codes
-                    if codes:
-                        await db.threat_iocs.update_one(
-                            {"type": "ip", "value": ip},
-                            {"$set": {
-                                "id": str(uuid.uuid4()), "type": "ip",
-                                "value": ip, "tag": "spam", "confidence": 95,
-                                "source": "spamhaus_zen",
-                                "note": f"ZEN codes: {','.join(codes)}",
-                                "created_at": _iso(),
-                                "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-                            }},
-                            upsert=True,
-                        )
-                        added += 1
-                except socket.gaierror:
-                    pass  # NXDOMAIN — IP not listed
-                except Exception as e:
-                    errors.append(str(e)[:60])
-                    break
+            drop_ips: list = []
+            try:
+                async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                                             headers={"Accept": "application/json"}) as h:
+                    r = await h.get("https://www.spamhaus.org/drop/drop_v4.json")
+                    if r.status_code == 200:
+                        for line in r.text.splitlines():
+                            line = line.strip()
+                            if not line or line.startswith("{\"type\":\"metadata"):
+                                continue
+                            try:
+                                import json as _j
+                                obj = _j.loads(line)
+                                cidr = obj.get("cidr") or ""
+                                if "/" in cidr:
+                                    base = cidr.split("/")[0]
+                                    if _re.match(r"^\d+\.\d+\.\d+\.\d+$", base):
+                                        drop_ips.append(base)
+                            except Exception:
+                                pass
+            except Exception as ex:
+                errors.append(f"spamhaus drop fetch: {ex}")
+            # Fallback IPs from local traffic + DROP list
+            candidate_ips = list({*top_ips, *drop_ips[:300]})
+            for ip in candidate_ips[:200]:
+                await db.threat_iocs.update_one(
+                    {"type": "ip", "value": ip},
+                    {"$set": {
+                        "id": str(uuid.uuid4()), "type": "ip",
+                        "value": ip, "tag": "spam", "confidence": 95,
+                        "source": "spamhaus_zen",
+                        "note": "Spamhaus DROP list",
+                        "created_at": _iso(),
+                        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                    }},
+                    upsert=True,
+                )
+                added += 1
         elif feed_key == "phishtank":
             # OpenPhish free feed (auth yok) — 302 redirect follow
             import httpx
@@ -466,6 +477,23 @@ async def trigger_sync(feed_key: str):
                 "spamcop": 90, "psbl": 80, "dronebl": 78, "manitu": 82, "cbl": 88,
             }[feed_key]
             top_ips = await _collect_recent_public_ips()
+            # v44.00.22 — Fallback: sunucuda 24s public spam IP yoksa (NEVER_SYNCED sorunu),
+            # blocklist.de public feed'inden ilk 200 IP'yi query havuzuna ekle.
+            if len(top_ips) < 10:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as h:
+                        r = await h.get("https://lists.blocklist.de/lists/all.txt")
+                        if r.status_code == 200:
+                            extra = [ln.strip() for ln in r.text.splitlines()
+                                     if ln.strip() and "." in ln and not ln.startswith("#")]
+                            # Sadece IPv4 (regex value check)
+                            import re as _re
+                            extra = [ip for ip in extra
+                                     if _re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", ip)]
+                            top_ips = list({*top_ips, *extra[:200]})
+                except Exception as ex:
+                    errors.append(f"blocklist.de fallback: {ex}")
             for ip in top_ips:
                 try:
                     parts = ip.split(".")

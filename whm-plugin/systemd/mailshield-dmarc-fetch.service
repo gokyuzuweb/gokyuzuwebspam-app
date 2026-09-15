@@ -1,0 +1,10 @@
+[Unit]
+Description=GökyüzüWebSpam DMARC Aggregate Report Fetcher
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/mailshield/mailshield.conf
+ExecStart=/opt/mailshield/bin/mailshield-dmarc-fetch --license ${MAILSHIELD_LICENSE:-} --api ${MAILSHIELD_API:-https://panel.gokyuzuhosting.com/api}
+StandardOutput=append:/var/log/mailshield/dmarc-fetch.log
+StandardError=append:/var/log/mailshield/dmarc-fetch.log
