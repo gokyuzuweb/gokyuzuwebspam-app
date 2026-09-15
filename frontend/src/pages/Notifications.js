@@ -1,11 +1,152 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Bell, Send, MessageSquare, Zap, Mail, Server, ShieldAlert, Mails } from "lucide-react";
+import { Save, Bell, Send, MessageSquare, Zap, Mail, Server, ShieldAlert, Mails, Inbox, Skull, CheckCheck, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
-import { api } from "@/lib/api";
+import { api, client } from "@/lib/api";
 import { useT } from "@/i18n";
 import SmtpSettings from "@/components/SmtpSettings";
+
+// v44.00.26 — Kritik Alarmlar Kutusu (DMARC saldırıları vb.)
+function NotificationInboxPanel() {
+  const qc = useQueryClient();
+  const [filter, setFilter] = useState("all"); // all | dmarc_attack | unread
+  const list = useQuery({
+    queryKey: ["notif-inbox", filter],
+    queryFn: async () => {
+      const p = new URLSearchParams({ limit: "50" });
+      if (filter === "unread") p.set("unread_only", "true");
+      else if (filter !== "all") p.set("kind", filter);
+      return (await client.get(`/notifications/inbox?${p.toString()}`)).data;
+    },
+    refetchInterval: 30000,
+  });
+  const markRead = useMutation({
+    mutationFn: (id) => client.post(`/notifications/inbox/${id}/read`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["notif-inbox"] }),
+  });
+  const markAll = useMutation({
+    mutationFn: (kind) => client.post(`/notifications/inbox/read-all${kind ? `?kind=${kind}` : ""}`),
+    onSuccess: (r) => {
+      toast.success(`${r.data.marked} bildirim okundu`);
+      qc.invalidateQueries({ queryKey: ["notif-inbox"] });
+    },
+  });
+  const items = list.data?.items || [];
+  const unread = list.data?.unread || 0;
+  const kinds = list.data?.kinds || {};
+  const dmarcCount = kinds.dmarc_attack || 0;
+
+  const iconFor = (kind) => {
+    if (kind === "dmarc_attack") return <Skull className="w-4 h-4 text-rose-400" />;
+    if (kind === "attack") return <Zap className="w-4 h-4 text-amber-400" />;
+    if (kind === "bounce_digest") return <Mail className="w-4 h-4 text-cyan-400" />;
+    return <Bell className="w-4 h-4 text-slate-400" />;
+  };
+  const styleFor = (n) => {
+    const kind = n.kind;
+    if (kind === "dmarc_attack") {
+      const highSev = n.severity === "high" || (n.meta?.fail_pct >= 90);
+      return highSev
+        ? "border-l-4 border-l-rose-500 bg-rose-500/10 border-rose-500/30"
+        : "border-l-4 border-l-amber-500 bg-amber-500/10 border-amber-500/30";
+    }
+    return "border-slate-800 bg-slate-950/40";
+  };
+
+  return (
+    <Card data-testid="notif-inbox-panel">
+      <CardHeader
+        title={<span className="flex items-center gap-2">
+          <Inbox className="w-4 h-4 text-indigo-400" /> Kritik Alarm Kutusu
+          {unread > 0 && <span className="mono text-[10px] px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40">{unread} okunmamış</span>}
+        </span>}
+        subtitle={dmarcCount > 0
+          ? `⚠ ${dmarcCount} DMARC saldırı alarmı · genel ${items.length} bildirim`
+          : `${items.length} bildirim`}
+        right={unread > 0 && (
+          <button onClick={() => markAll.mutate(null)} data-testid="notif-inbox-read-all"
+                  className="text-[11px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1">
+            <CheckCheck className="w-3 h-3" /> Tümünü okudum
+          </button>
+        )}
+      />
+      <CardBody>
+        <div className="flex gap-1 mb-3 border-b border-slate-800 -mx-4 px-4 pb-2">
+          {[
+            { k: "all", lbl: `Tümü (${items.length})` },
+            { k: "unread", lbl: `Okunmamış (${unread})` },
+            { k: "dmarc_attack", lbl: `🎯 DMARC (${dmarcCount})` },
+          ].map(t => (
+            <button key={t.k} onClick={() => setFilter(t.k)}
+                    data-testid={`notif-filter-${t.k}`}
+                    className={`text-xs px-2.5 py-1 rounded ${
+                      filter === t.k
+                        ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40"
+                        : "text-slate-500 hover:text-slate-300"
+                    }`}>{t.lbl}</button>
+          ))}
+        </div>
+        {items.length === 0 ? (
+          <div className="text-center py-8 text-slate-500 text-sm">
+            <Bell className="w-6 h-6 mx-auto mb-2 opacity-40" />
+            {filter === "dmarc_attack"
+              ? "Henüz DMARC saldırı alarmı yok — domain'leriniz güvenli görünüyor 🎉"
+              : "Bildirim yok"}
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[520px] overflow-y-auto">
+            {items.map(n => (
+              <div key={n.id} data-testid={`notif-item-${n.id}`}
+                   className={`p-3 rounded-md border ${styleFor(n)} ${!n.read ? "" : "opacity-60"}`}>
+                <div className="flex items-start gap-2">
+                  <div className="mt-0.5 shrink-0">{iconFor(n.kind)}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <div className="text-sm font-bold text-slate-100 flex-1">{n.subject}</div>
+                      <div className="text-[10px] text-slate-500 shrink-0 mono">
+                        {new Date(n.created_at).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}
+                      </div>
+                    </div>
+                    {/* DMARC özel meta gösterimi */}
+                    {n.kind === "dmarc_attack" && n.meta && (
+                      <div className="flex flex-wrap gap-1.5 mb-2 text-[11px] mono">
+                        <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-200">
+                          🌐 {n.meta.domain}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded border ${
+                          n.meta.fail_pct >= 90
+                            ? "bg-rose-500/20 border-rose-500/50 text-rose-300"
+                            : "bg-amber-500/20 border-amber-500/50 text-amber-300"}`}>
+                          %{n.meta.fail_pct} FAIL
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-400">
+                          {(n.meta.total_msgs || 0).toLocaleString()} mesaj / {n.meta.period_days || 7}g
+                        </span>
+                        <a href={`/panel/threat-intel`} target="_blank" rel="noreferrer"
+                           className="ml-auto text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 flex items-center gap-1">
+                          <ExternalLink className="w-3 h-3" /> DMARC Detayına Git
+                        </a>
+                      </div>
+                    )}
+                    <div className="text-[11px] text-slate-400 whitespace-pre-wrap line-clamp-6">{n.body}</div>
+                    {!n.read && (
+                      <button onClick={() => markRead.mutate(n.id)}
+                              data-testid={`notif-read-${n.id}`}
+                              className="mt-2 text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                        ✓ Okundu işaretle
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
 
 function Toggle({ checked, onChange, testid }) {
   return (
@@ -74,6 +215,7 @@ export default function Notifications() {
   return (
     <div className="p-6 grid grid-cols-12 gap-6">
       <div className="col-span-12 lg:col-span-8 space-y-4">
+        <NotificationInboxPanel />
         <SmtpSettings />
         <Card>
           <CardHeader

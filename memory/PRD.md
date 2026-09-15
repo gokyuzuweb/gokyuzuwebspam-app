@@ -14,6 +14,61 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 25, v44.00.27) — 4 Follow-up Pack: USOM Cron + DMARC UI + Rule Auto-Disable + GeoIP UI ✅
+
+### 🎯 (1) USOM Otomatik Cron Yenilendi
+- `_daily_usom_fetch_task` içinde eski `_fetch_usom_urls` (TXT feed, çalışmıyordu) → **yeni `_fetch_usom_iocs`** (JSON API) kullanılıyor
+- Her gün 03:00 UTC'de:
+  - 500 IOC çekilir (25 sayfa × 20)
+  - Multi-type: `domain` / `url` / `ip`
+  - Auto-blacklist mantığı cron'a taşındı (aynı endpoint kodu inline)
+  - `settings.usom_last_run` içinde `added_urls/domains/ips/to_blacklist` metrikleri kaydedilir
+
+### 🎯 (2) DMARC Attack Notification UI (Bildirim Kutusu)
+- **Backend** yeni endpoint'ler: `GET /api/notifications/inbox`, `POST /api/notifications/inbox/{id}/read`, `POST /api/notifications/inbox/read-all`
+- **Frontend `NotificationInboxPanel`** (Notifications sayfası en üstünde):
+  - 3 filter tab: **Tümü / Okunmamış / 🎯 DMARC** (her tab sayaç badge'i ile)
+  - DMARC alarm satırı: **kırmızı sol-border** (`border-l-rose-500`), Skull ikonu, meta badge'ler (🌐 domain · %fail_pct · mesaj sayısı / gün)
+  - "DMARC Detayına Git" external link → `/panel/threat-intel`
+  - Severity=high → daha koyu kırmızı arka plan
+  - Read/unread ayrımı (okunmuş satırlar %60 opacity)
+  - "✓ Okundu işaretle" + toplu "Tümünü okudum" butonları
+- Doğrulandı: 204 okunmamış, DMARC filter'da alarm doğru render ediliyor
+
+### 🎯 (3) Rule Performance Auto-Disable UI
+- **`RulePerformanceCard` geliştirildi**:
+  - Auto-Disable config bar: ☑ Toggle + gün input (1-365) + 💾 Kaydet butonu (amber border, uyarı style)
+  - Header sayaçları: `enabled/healthy/zero_hit/auto_disabled`
+  - 3 view mode: **Sadece 0-hit / Tümü / 🚫 Auto-Disabled**
+  - Auto-disabled satırlarda **↺ Tekrar Aktif** (re-enable) butonu — silme değil revert
+  - Row styling: enabled+zero-hit → amber bg, disabled → rose bg + %70 opacity
+  - Config persistence: `mailscanner_config.rule_auto_disable_enabled/days`
+- **Endpoint'ler**: `POST /rule-performance/config` (kaydet), `POST /rule-performance/enable/{id}` (revert)
+- Doğrulandı: config bar mükemmel render, 14 gün varsayılan, "silme değil, revert edilebilir" açıklama
+
+### 🎯 (4) GeoIP Suggestions UI (Country Tab)
+- **Country tab'ında yeni "Akıllı Öneri" paneli**:
+  - Indigo border/bg, ✨ Sparkles ikonu, açıklayıcı subtitle
+  - **⚡ Hepsini Engelle (N)** toplu blok butonu (sağ üst, onay modal ile)
+  - Her ülke kartı: bayrak emoji + Türkçe adı + `spam_count`/`unique_ips` metrik + tekil "Engelle" butonu
+  - Zaten engelli ülkeler otomatik filtrelenir (unique_ips = 0)
+  - `refetchInterval` yok, `staleTime: 60s` (light polling)
+- Live test doğrulandı: 🇺🇸 ABD 31 spam/17 IP, 🇷🇺 Rusya 9/3, 🇳🇱 Hollanda 9/5, 🇶🇦 QA 6/2, 🇸🇪 İsveç 6/2
+
+### 📊 Test Coverage
+- `test_v44_00_27_cron_and_ui.py`: 6/6 ✅
+  - USOM cron new API kullanımı
+  - Notifications inbox 3 endpoint
+  - Rule perf auto-disable config + re-enable endpoint
+  - Frontend: NotificationInboxPanel + Skull + DMARC styling
+  - Frontend: rule-perf-auto-toggle + days input + reenable + disabled view
+  - Frontend: cb-suggest-bulk + cb-suggestion + Akıllı Öneri text
+
+### 📦 Version Bump
+`v44.00.26` → `v44.00.27`
+
+
+
 ## Feb 15, 2026 (Session 25, v44.00.26) — USOM Yeni API + Silme Fix + Auto Blacklist ✅
 
 ### 🎯 (1) Silme Bug Fix (P0 - kullanıcı raporu)

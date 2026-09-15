@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   PieChart, Pie, Cell, LineChart, Line, Legend,
 } from "recharts";
-import { api } from "@/lib/api";
+import { api, client } from "@/lib/api";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import { Filter, Brain, Sliders, Users, Trash2, Plus, Beaker, Link as LinkIcon, Sparkles, Info, TrendingUp, Mail, Globe2 } from "lucide-react";
@@ -1251,7 +1251,7 @@ function LearnTab() {
   );
 }
 
-// v44.00.25 — AI Rule Performance Loop UI
+// v44.00.25/26 — AI Rule Performance Loop UI + Auto-Disable Config
 function RulePerformanceCard() {
   const qc = useQueryClient();
   const list = useQuery({
@@ -1275,20 +1275,57 @@ function RulePerformanceCard() {
       qc.invalidateQueries({ queryKey: ["ms-rules"] });
     },
   });
+  // v44.00.26 — Auto-disable config
+  const configMut = useMutation({
+    mutationFn: (payload) => client.post(
+      `/mailscanner/ai/rule-performance/config?license_key=${encodeURIComponent(LICKEY())}`, payload
+    ).then(r => r.data),
+    onSuccess: () => {
+      toast.success("Otomatik disable ayarı kaydedildi");
+      qc.invalidateQueries({ queryKey: ["ms-rule-perf"] });
+    },
+  });
+  const reEnable = useMutation({
+    mutationFn: (ruleId) => client.post(
+      `/mailscanner/ai/rule-performance/enable/${ruleId}?license_key=${encodeURIComponent(LICKEY())}`
+    ).then(r => r.data),
+    onSuccess: () => {
+      toast.success("Kural tekrar aktif edildi");
+      qc.invalidateQueries({ queryKey: ["ms-rule-perf"] });
+    },
+  });
+
   const [showAll, setShowAll] = useState(false);
+  const [showDisabled, setShowDisabled] = useState(false);
   const items = list.data?.items || [];
-  const zeroHit = items.filter(r => (r.hits_last_check || 0) === 0 && r.hits_last_check_at);
-  const visible = showAll ? items : zeroHit;
+  const cfg = list.data?.config || { auto_disable_enabled: true, auto_disable_days: 14 };
+  const [localCfg, setLocalCfg] = useState(cfg);
+  useEffect(() => { setLocalCfg(cfg); }, [cfg.auto_disable_enabled, cfg.auto_disable_days]);
+
+  const enabledItems = items.filter(r => r.enabled);
+  const autoDisabled = items.filter(r => !r.enabled && r.auto_disabled_at);
+  const zeroHit = enabledItems.filter(r => (r.hits_last_check || 0) === 0 && r.hits_last_check_at);
+  let visible;
+  if (showDisabled) visible = autoDisabled;
+  else if (showAll) visible = enabledItems;
+  else visible = zeroHit;
+
   return (
     <Card>
       <CardHeader
         title={<span className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-amber-400"/> Kural Performans Loop</span>}
-        subtitle={`Toplam ${list.data?.total || 0} aktif kural · ${list.data?.healthy || 0} sağlıklı · ${list.data?.zero_hit || 0} sıfır-hit`}
+        subtitle={`${list.data?.total || 0} kural · ${list.data?.enabled || 0} aktif · ${list.data?.healthy || 0} sağlıklı · ${list.data?.zero_hit || 0} sıfır-hit · ${list.data?.auto_disabled || 0} otomatik-disable`}
         right={
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowAll(!showAll)} data-testid="rule-perf-toggle"
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            <button onClick={() => { setShowAll(!showAll); setShowDisabled(false); }} data-testid="rule-perf-toggle"
                     className="text-[11px] px-2 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700">
-              {showAll ? "Sadece 0-hit göster" : "Tümünü göster"}
+              {showAll ? "Sadece 0-hit" : "Tümünü göster"}
+            </button>
+            <button onClick={() => { setShowDisabled(!showDisabled); setShowAll(false); }} data-testid="rule-perf-disabled"
+                    className={`text-[11px] px-2 py-1 rounded border ${
+                      showDisabled ? "bg-rose-500/20 text-rose-300 border-rose-500/40" : "bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700"
+                    }`}>
+              🚫 Auto-Disabled ({list.data?.auto_disabled || 0})
             </button>
             <button onClick={() => scan.mutate()} disabled={scan.isPending} data-testid="rule-perf-scan"
                     className="text-xs px-2.5 py-1.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 disabled:opacity-40">
@@ -1298,40 +1335,88 @@ function RulePerformanceCard() {
         }
       />
       <CardBody>
+        {/* v44.00.26 — Auto-Disable Config Bar */}
+        <div className="mb-3 p-2.5 rounded border border-amber-500/20 bg-amber-500/5 flex flex-wrap items-center gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <input type="checkbox" data-testid="rule-perf-auto-toggle"
+                   checked={!!localCfg.auto_disable_enabled}
+                   onChange={e => setLocalCfg({ ...localCfg, auto_disable_enabled: e.target.checked })}
+                   className="rounded border-slate-600 bg-slate-950" />
+            <span className="text-slate-200 font-semibold">Otomatik Disable</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-slate-400">
+            <span>0-hit süresi:</span>
+            <input type="number" min="1" max="365" data-testid="rule-perf-days"
+                   value={localCfg.auto_disable_days ?? 14}
+                   onChange={e => setLocalCfg({ ...localCfg, auto_disable_days: parseInt(e.target.value || "14") })}
+                   disabled={!localCfg.auto_disable_enabled}
+                   className="w-16 bg-slate-950 border border-slate-700 rounded px-2 py-0.5 mono text-center disabled:opacity-40" />
+            <span>gün</span>
+          </div>
+          <button data-testid="rule-perf-config-save"
+                  onClick={() => configMut.mutate({ enabled: !!localCfg.auto_disable_enabled, days: parseInt(localCfg.auto_disable_days || 14) })}
+                  disabled={configMut.isPending || (localCfg.auto_disable_enabled === cfg.auto_disable_enabled && localCfg.auto_disable_days === cfg.auto_disable_days)}
+                  className="ml-auto text-[11px] px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-40">
+            💾 Kaydet
+          </button>
+          <span className="text-[10px] text-slate-500 basis-full">
+            {localCfg.auto_disable_enabled
+              ? `${localCfg.auto_disable_days || 14}+ gündür 0-hit olan kurallar günlük cron tarafından otomatik disable edilir (silme değil, revert edilebilir).`
+              : "Otomatik disable KAPALI — kurallar manuel yönetilecek."}
+          </span>
+        </div>
+
         {list.isLoading ? (
           <div className="text-slate-500 text-sm text-center py-4">Yükleniyor…</div>
         ) : items.length === 0 ? (
           <div className="text-slate-500 text-sm text-center py-6">Henüz onaylanmış kural yok — AI önerilerini onaylayınca burada takip edilecek.</div>
         ) : visible.length === 0 ? (
-          <div className="text-emerald-400 text-sm text-center py-4">✓ Tüm kurallar aktif hit alıyor — 0-hit kural yok</div>
+          <div className="text-emerald-400 text-sm text-center py-4">
+            {showDisabled ? "Auto-disabled kural yok" : "✓ Tüm kurallar aktif hit alıyor — 0-hit kural yok"}
+          </div>
         ) : (
           <div className="max-h-64 overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="text-[10px] uppercase text-slate-500">
+              <thead className="text-[10px] uppercase text-slate-500 sticky top-0 bg-slate-950">
                 <tr>
                   <th className="text-left px-2 py-1.5">Kural</th>
                   <th className="text-left px-2 py-1.5">Pattern</th>
                   <th className="text-right px-2 py-1.5">Skor</th>
                   <th className="text-right px-2 py-1.5">7g Hit</th>
-                  <th className="text-right px-2 py-1.5">Ölçüm</th>
+                  <th className="text-right px-2 py-1.5">Durum</th>
                   <th className="text-right px-2 py-1.5">İşlem</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {visible.map(r => {
                   const zero = (r.hits_last_check || 0) === 0;
+                  const disabledRow = !r.enabled;
                   return (
                     <tr key={r.id} data-testid={`rule-perf-row-${r.id}`}
-                        className={zero ? "bg-rose-500/5" : "hover:bg-slate-800/40"}>
+                        className={disabledRow ? "bg-rose-500/10 opacity-70" : zero ? "bg-amber-500/5" : "hover:bg-slate-800/40"}>
                       <td className="px-2 py-1.5 text-slate-200 truncate max-w-[180px]" title={r.name}>{r.name}</td>
                       <td className="px-2 py-1.5 mono text-slate-500 text-[10px] truncate max-w-[220px]" title={r.pattern}>{r.pattern}</td>
                       <td className="px-2 py-1.5 text-right mono text-slate-300">{(r.score || 0).toFixed(1)}</td>
                       <td className={`px-2 py-1.5 text-right mono ${zero ? "text-rose-300" : "text-emerald-300"}`}>{r.hits_last_check || 0}</td>
-                      <td className="px-2 py-1.5 text-right text-[10px] mono text-slate-600">
-                        {r.hits_last_check_at ? new Date(r.hits_last_check_at).toLocaleDateString("tr-TR") : "—"}
+                      <td className="px-2 py-1.5 text-right text-[10px]">
+                        {disabledRow ? (
+                          <span className="mono text-rose-300" title={r.auto_disable_reason}>
+                            🚫 Auto-disabled
+                            {r.auto_disabled_at && <div className="text-slate-500 text-[9px]">{new Date(r.auto_disabled_at).toLocaleDateString("tr-TR")}</div>}
+                          </span>
+                        ) : (
+                          <span className="mono text-slate-500">
+                            {r.hits_last_check_at ? new Date(r.hits_last_check_at).toLocaleDateString("tr-TR") : "—"}
+                          </span>
+                        )}
                       </td>
-                      <td className="px-2 py-1.5 text-right">
-                        {zero && (
+                      <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                        {disabledRow ? (
+                          <button onClick={() => reEnable.mutate(r.id)} data-testid={`rule-perf-reenable-${r.id}`}
+                                  className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30">
+                            ↺ Tekrar Aktif
+                          </button>
+                        ) : zero && (
                           <button onClick={() => window.confirm(`"${r.name}" kaldırılsın mı?`) && remove.mutate(r.id)}
                                   data-testid={`rule-perf-remove-${r.id}`}
                                   className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30">
