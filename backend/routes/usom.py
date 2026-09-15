@@ -391,13 +391,195 @@ async def list_usom(request: Request, q: Optional[str] = None,
     if q_l:
         filt["value"] = {"$regex": re.escape(q_l), "$options": "i"}
     rows = await db.threat_iocs.find(filt, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
-    state = await db.threat_intel_feeds.find_one({"key": "usom"}, {"_id": 0}) or {}
+    state = await db.settings.find_one({"_key": "usom_last_run"}, {"_id": 0}) or {}
     return {
         "items": rows,
         "count": len(rows),
-        "last_sync_at": state.get("last_sync_at"),
-        "total_fetched": state.get("total_fetched", 0),
+        "last_sync_at": state.get("at"),
+        "total_fetched": state.get("count", 0),
+        "added_urls": state.get("added_urls", 0),
+        "added_domains": state.get("added_domains", 0),
+        "added_ips": state.get("added_ips", 0),
+        "added_to_blacklist": state.get("added_to_blacklist", 0),
     }
+
+
+# v44.00.29 — USOM İstatistik: tag/desc_code breakdown, kritiklik histogramı
+@router.get("/stats")
+async def usom_stats(request: Request, license_key: Optional[str] = None):
+    """USOM IOC'ları için detaylı istatistik: type/tag/criticality/desc_code breakdown."""
+    await _require_master(request, license_key)
+    # Type breakdown
+    types: dict[str, int] = {}
+    async for r in db.threat_iocs.aggregate([
+        {"$match": {"source": "usom"}},
+        {"$group": {"_id": "$type", "c": {"$sum": 1}}}
+    ]):
+        types[r["_id"] or "other"] = r["c"]
+    # Tag breakdown (phishing/malware/ransomware/spam vb.)
+    tags: dict[str, int] = {}
+    async for r in db.threat_iocs.aggregate([
+        {"$match": {"source": "usom"}},
+        {"$group": {"_id": "$tag", "c": {"$sum": 1}}},
+        {"$sort": {"c": -1}}, {"$limit": 15},
+    ]):
+        tags[r["_id"] or "unknown"] = r["c"]
+    # Criticality histogramı (1-5)
+    crit: dict[int, int] = {i: 0 for i in range(1, 6)}
+    async for r in db.threat_iocs.aggregate([
+        {"$match": {"source": "usom", "criticality": {"$exists": True}}},
+        {"$group": {"_id": "$criticality", "c": {"$sum": 1}}}
+    ]):
+        crit[int(r["_id"] or 0)] = r["c"]
+    # Auto-blacklist sayacı
+    bl_count = await db.lists.count_documents({"source": "usom_auto"})
+    total = sum(types.values())
+    state = await db.settings.find_one({"_key": "usom_last_run"}, {"_id": 0}) or {}
+    return {
+        "total": total,
+        "types": types,
+        "tags": tags,
+        "criticality": crit,
+        "blacklist_count": bl_count,
+        "last_sync_at": state.get("at"),
+        "last_source": state.get("source"),
+    }
+
+
+# v44.00.29 — Manuel cron trigger + domain-extraction refresh
+@router.post("/cron-refresh")
+async def usom_manual_cron_refresh(request: Request, license_key: Optional[str] = None):
+    """Cron'un günlük yaptığı işi ŞİMDİ tetikler:
+    - JSON API'den güncel IOC'ları çek
+    - URL tipindeki IOC'lardan domain çıkart → domain IOC + otomatik karaliste ekle
+    - Sync state'i güncelle (settings.usom_last_run)
+    """
+    await _require_master(request, license_key)
+    # 1) Fresh fetch
+    items, source_url = await _fetch_usom_iocs()
+    now = _iso()
+    expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+
+    added_urls = added_domains = added_ips = added_bl = 0
+    domain_extracted = 0
+    seen_domains: set = set()
+
+    for it in items:
+        val = it["value"]; typ = it["type"]; tag = it["tag"]
+        conf = min(99, 70 + it["criticality"] * 6)
+        note = (f"USOM {it['desc_code']} · seviye {it['criticality']}"
+                if it["desc_code"] else "USOM Zararlı Bağlantı Listesi")
+        r_ioc = await db.threat_iocs.update_one(
+            {"type": typ, "value": val},
+            {"$setOnInsert": {"id": str(uuid.uuid4()), "type": typ, "value": val,
+                              "tag": tag, "confidence": conf, "source": "usom",
+                              "feed": "usom-json-api", "note": note,
+                              "created_at": now, "expires_at": expires,
+                              "usom_id": it.get("usom_id"),
+                              "criticality": it["criticality"]},
+             "$set": {"last_seen_at": now}}, upsert=True)
+        if r_ioc.upserted_id:
+            if typ == "url": added_urls += 1
+            elif typ == "domain": added_domains += 1
+            elif typ == "ip": added_ips += 1
+
+        # URL / Domain → auto blacklist
+        host = None
+        if typ == "domain":
+            host = val
+        elif typ == "url":
+            try:
+                u = val if val.startswith(("http://", "https://")) else f"http://{val}"
+                host = (urlparse(u).hostname or "").lower()
+            except Exception:
+                host = None
+        if host and "." in host and not re.match(r"^\d+\.\d+\.\d+\.\d+$", host) \
+                and host not in seen_domains:
+            seen_domains.add(host)
+            # URL'lerden domain'i IOC olarak da ekle
+            if typ == "url":
+                r_dom = await db.threat_iocs.update_one(
+                    {"type": "domain", "value": host},
+                    {"$setOnInsert": {"id": str(uuid.uuid4()), "type": "domain",
+                                      "value": host, "tag": tag,
+                                      "confidence": max(80, conf - 5),
+                                      "source": "usom", "feed": "usom-json-api",
+                                      "note": f"USOM URL'in domain'i · {it['desc_code'] or 'zararlı'}",
+                                      "created_at": now, "expires_at": expires},
+                     "$set": {"last_seen_at": now}}, upsert=True)
+                if r_dom.upserted_id:
+                    added_domains += 1
+                    domain_extracted += 1
+            existing = await db.lists.find_one(
+                {"entry_type": "domain", "value": host, "list_type": "black"},
+                {"_id": 0, "id": 1})
+            if not existing:
+                await db.lists.insert_one({
+                    "id": str(uuid.uuid4()), "list_type": "black",
+                    "entry_type": "domain", "value": host,
+                    "scope": "global", "user": None,
+                    "note": f"USOM otomatik ekleme · {tag}",
+                    "source": "usom_auto", "created_at": now})
+                added_bl += 1
+        if typ == "ip":
+            existing_ip = await db.lists.find_one(
+                {"entry_type": "ip", "value": val, "list_type": "black"},
+                {"_id": 0, "id": 1})
+            if not existing_ip:
+                await db.lists.insert_one({
+                    "id": str(uuid.uuid4()), "list_type": "black",
+                    "entry_type": "ip", "value": val,
+                    "scope": "global", "user": None,
+                    "note": f"USOM otomatik ekleme · {tag}",
+                    "source": "usom_auto", "created_at": now})
+                added_bl += 1
+
+    # 2) Mevcut URL-tipli IOC'lardan domain extraction (henüz karalisteye eklenmemişleri)
+    async for url_ioc in db.threat_iocs.find(
+        {"source": "usom", "type": "url"},
+        {"_id": 0, "value": 1, "tag": 1, "criticality": 1, "desc_code": 1}
+    ):
+        try:
+            u = url_ioc["value"]
+            if not u.startswith(("http://", "https://")):
+                u = "http://" + u
+            host = (urlparse(u).hostname or "").lower()
+        except Exception:
+            continue
+        if not host or "." not in host or re.match(r"^\d+\.\d+\.\d+\.\d+$", host):
+            continue
+        if host in seen_domains:
+            continue
+        seen_domains.add(host)
+        existing = await db.lists.find_one(
+            {"entry_type": "domain", "value": host, "list_type": "black"},
+            {"_id": 0, "id": 1})
+        if not existing:
+            await db.lists.insert_one({
+                "id": str(uuid.uuid4()), "list_type": "black",
+                "entry_type": "domain", "value": host,
+                "scope": "global", "user": None,
+                "note": f"USOM URL host extraction · {url_ioc.get('tag') or 'zararlı'}",
+                "source": "usom_auto", "created_at": now})
+            added_bl += 1
+            domain_extracted += 1
+
+    await db.settings.update_one(
+        {"_key": "usom_last_run"},
+        {"$set": {"_key": "usom_last_run",
+                  "date": datetime.now(timezone.utc).date().isoformat(),
+                  "count": len(items), "added_urls": added_urls,
+                  "added_domains": added_domains, "added_ips": added_ips,
+                  "added_to_blacklist": added_bl,
+                  "domain_extracted": domain_extracted,
+                  "source": source_url, "at": now,
+                  "trigger": "manual_cron_refresh"}},
+        upsert=True)
+    return {"ok": True, "total_fetched": len(items),
+            "added_urls": added_urls, "added_domains": added_domains,
+            "added_ips": added_ips, "added_to_blacklist": added_bl,
+            "domain_extracted": domain_extracted,
+            "source": source_url, "at": now}
 
 
 class UsomDeleteIn(BaseModel):

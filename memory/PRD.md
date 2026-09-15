@@ -14,6 +14,65 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 25, v44.00.29 + v44.00.30) — DMARC Dashboard + Global Feed Status Overhaul + USOM Pagination ✅
+
+### 🎯 (1) DMARC Dashboard + Hosted Filter (v44.00.29 + v44.00.30)
+Kullanıcı: "sunucuda domainleri göstersin" + "kaç domain var kaçı sorguladı vs gibi dashboard"
+
+- **Backend `/dmarc/summary` genişletildi** (v44.00.29):
+  - `license_key` + `only_hosted=true` parametreleri
+  - Sunucudaki hosted domain'ler `mail_events.to_addr`'ın domain kısmından çıkarılıyor (son 90g, min 2 mail)
+  - Gmail/Yahoo/Outlook gibi common_free provider'lar filtrelenir
+  - `hosted_without_reports`: hosted ama DMARC raporu olmayan domain'ler (spoof riski)
+- **Frontend `DmarcDashboard` KPI bloğu** (v44.00.30):
+  - 🌐 Hosted Domain, ✓ DMARC Var, ⚠ Rapor Yok, 📄 Toplam Rapor, 📬 Analiz Edilen Mail, 🎯 Ort. DMARC Pass %, ✕ Fail Mesaj
+  - **DMARC Kapsam Oranı** progress bar (renkli: %80+ yeşil, %40+ amber, altında kırmızı)
+  - **En Riskli 3 Domain** (düşük DMARC pass) + **En Sağlıklı 3 Domain** side-by-side kutular
+- **Toggle**: "Sadece sunucumdaki domain'ler" checkbox (varsayılan açık)
+- **Uyarı paneli**: 20+ hosted ama DMARC yok → amber uyarı + domain chip'leri
+- **Live doğrulandı**: 111 hosted domain tespit, akcayhirdavat/asyayat/atlantisplc/aydogdudenizcilik/aygemi vb.
+
+### 🎯 (2) Global Feed Status Genişletmesi (v44.00.30)
+Kullanıcı: "SORBS DNSBL, DroneBL, Manitu iX, CBL (Composite) never_synced yazıyor düzelt"
+
+- **Root cause**: Backend `status = "ok" if ioc_count > 0 else "never_synced"` yanlış semantik. Feed sync olmuş ama eşleşme bulamamış olabilir (clean IP havuzu) → yine de "never_synced" gösteriliyordu.
+- **Fix**: Yeni `threat_intel_feeds` tracking + 5-state status:
+  - `never_synced` → Hiç denenmedi (kırmızı, "SYNC BEKLEMEDE")
+  - `ok` → Sync başarılı + eşleşme var (yeşil, "AKTİF")
+  - `clean` → Sync başarılı, eşleşme yok (mavi, "TEMİZ" — bu iyi!)
+  - `stale` → 24s+ eski, eşleşme yok (amber, "GÜNCEL DEĞİL")
+  - `error` → Son sync başarısız (kırmızı, "HATA" + hover'da hata mesajı)
+- **Sync endpoint** artık her çalıştığında `threat_intel_feeds.last_sync_at + last_sync_status + last_error` güncelliyor
+- **Live doğrulandı**: DroneBL 64 IOC (AKTİF), CBL 2 IOC (AKTİF), SORBS+Manitu (TEMİZ — sync başarılı, sunucuda eşleşme yok)
+
+### 🎯 (3) USOM Sayfalama + Row Numbers + Toplam Sayaç (v44.00.29)
+Kullanıcı: "50'li satırlar halinde toplam kaç domain var yazsın"
+
+- **Frontend `UsomPagedTable`** yeni bileşen:
+  - **Header sayaç**: "500 toplam kayıt · 🌐 455 domain · 📡 45 IP"
+  - Sayfa seçici: **25/50/100/250 satır** dropdown (varsayılan 50)
+  - **Row numarası**: her satırın başında `1, 2, 3...` (global sıralı, sayfaya göre değişir)
+  - Pagination bar: «İlk‹ Önceki 1 2 3 … 9 10 Sonraki › Son» + akıllı ellipsis (page ±2)
+  - "500 kayıttan 51-100 arası" göstergesi
+- Search input filter'ında pagination resetler
+
+### 🎯 (4) USOM Stats Card + Manuel Cron Refresh (v44.00.29)
+- **Backend `/threat-intel/usom/stats`** yeni endpoint: total, types breakdown, tags breakdown, criticality histogramı, blacklist_count, last_sync_at, last_source
+- **Backend `/threat-intel/usom/cron-refresh`**: fetch + URL→domain extraction + karaliste sync manuel tetikleme
+- **Frontend USOM tab başlığında Stats Dashboard**:
+  - 5 KPI: Toplam IOC (500), Kara Liste (499), 🎣 Phishing (289), 🦠 Malware (192), 🔒 Ransomware
+  - Kritiklik histogramı: Sv.1-5 renk kodlu bar chart (Sv.4+ kırmızı, Sv.3 amber, Sv.1-2 cyan)
+- **⚡ Cron'u Şimdi Çalıştır** butonu (cyan, `usom-cron-refresh-btn`)
+
+### 📊 Test Coverage
+- `test_v44_00_30_dmarc_dashboard_feeds.py`: 4/4 ✅
+- Toplam yeni testler (v23-30): ~25 pytest dosyası, 60+ testcase geçiyor
+
+### 📦 Version Bump
+`v44.00.28` → **`v44.00.30`**
+
+
+
 ## Feb 15, 2026 (Session 25, v44.00.28) — USOM UI License Fix ✅
 
 ### 🎯 USOM Tab Boş Görünüyordu — Root Cause & Fix

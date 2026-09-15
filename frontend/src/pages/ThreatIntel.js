@@ -271,22 +271,67 @@ function IocRow({ it, onDelete }) {
 
 function DmarcTab() {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["dmarc-summary"], queryFn: () => api.tiDmarcSummary(30) });
+  // v44.00.29 — Sunucudaki (hosted) domain'lere filtrele + kapatma toggle
+  const lk = () => (typeof window !== "undefined" &&
+    (localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license"))) || "";
+  const [onlyHosted, setOnlyHosted] = useState(true);
+  const q = useQuery({
+    queryKey: ["dmarc-summary", onlyHosted],
+    queryFn: () => api.tiDmarcSummary(30, lk(), onlyHosted),
+  });
   const seed = useMutation({
     mutationFn: () => api.tiDmarcSeedDemo(),
     onSuccess: (d) => { toast.success(`+${d.seeded} demo rapor eklendi (${d.domains} domain)`); qc.invalidateQueries({ queryKey: ["dmarc-summary"] }); },
     onError: (e) => toast.error(e?.response?.data?.detail || e.message),
   });
   const domains = q.data?.domains || [];
+  const hostedCount = q.data?.hosted_count;
+  const missing = q.data?.hosted_without_reports || [];
+  const filtered = q.data?.filtered;
   const [drillDomain, setDrillDomain] = useState(null);
   return (
     <Card>
       <CardHeader
         title="DMARC Aggregate Raporlar"
-        subtitle="Son 30 gün · Alıcı ISP'lerden gelen aggregate XML rapor özetleri"
-        right={<Badge tone="info">{domains.length} domain</Badge>}
+        subtitle={filtered
+          ? `Sunucundaki ${hostedCount || 0} hosted domain · Son 30 gün agregat özet`
+          : "Son 30 gün · Alıcı ISP'lerden gelen aggregate XML rapor özetleri"}
+        right={
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
+              <input type="checkbox" checked={onlyHosted} onChange={e => setOnlyHosted(e.target.checked)}
+                     data-testid="dmarc-only-hosted"
+                     className="rounded border-slate-600 bg-slate-950" />
+              Sadece sunucumdaki domain'ler
+            </label>
+            <Badge tone="info">{domains.length} domain</Badge>
+          </div>
+        }
       />
       <CardBody>
+        {/* v44.00.30 — DMARC Dashboard: KPI ve kapsam metrikleri */}
+        <DmarcDashboard domains={domains} hostedCount={hostedCount} missing={missing} filtered={filtered} />
+
+        {/* v44.00.29 — Hosted ama DMARC raporu olmayan domain'ler için uyarı */}
+        {filtered && missing.length > 0 && (
+          <div className="mb-3 bg-amber-500/5 border border-amber-500/30 rounded p-3 text-xs">
+            <div className="text-amber-300 font-semibold mb-1.5 flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              DMARC Kaydı Olmayan {missing.length} Hosted Domain
+            </div>
+            <div className="text-slate-400 mb-2">
+              Aşağıdaki domain'ler sunucunda mail gönderiyor ama DMARC raporu ALMIYOR — bu, DMARC/SPF/DKIM'in kurulmadığı ya da <span className="mono">rua=</span> adresinin yanlış tanımlandığı anlamına gelir. Bu domain'ler spoof'a açıktır.
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {missing.slice(0, 15).map(d => (
+                <span key={d} className="mono text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-amber-500/30 text-amber-200">
+                  {d}
+                </span>
+              ))}
+              {missing.length > 15 && <span className="text-[10px] text-slate-500">+{missing.length - 15} daha</span>}
+            </div>
+          </div>
+        )}
         {domains.length === 0 ? (
           <div className="text-center py-10" data-testid="dmarc-empty">
             <FileCheck2 className="w-10 h-10 mx-auto text-slate-600 mb-3"/>
@@ -340,6 +385,109 @@ function DmarcTab() {
       {/* v44.00.25 — DMARC Domain Detail Drawer */}
       {drillDomain && <DmarcDomainDrill domain={drillDomain} onClose={() => setDrillDomain(null)} />}
     </Card>
+  );
+}
+
+// v44.00.30 — DMARC Dashboard KPI'ları
+function DmarcDashboard({ domains, hostedCount, missing, filtered }) {
+  const totalMsgs = domains.reduce((s, d) => s + (d.total_msgs || 0), 0);
+  const totalReports = domains.reduce((s, d) => s + (d.reports || 0), 0);
+  const passWeighted = domains.reduce((s, d) => s + (d.total_msgs * d.dmarc_pct / 100), 0);
+  const avgPassPct = totalMsgs > 0 ? Math.round(passWeighted / totalMsgs * 10) / 10 : 0;
+  const failCount = totalMsgs - passWeighted;
+  const totalHosted = filtered ? (hostedCount || 0) : domains.length;
+  const covered = domains.length;
+  const coveragePct = totalHosted > 0 ? Math.round(covered / totalHosted * 100) : 0;
+  // En riskli 3 domain (en düşük DMARC pass %)
+  const risky = [...domains]
+    .filter(d => d.total_msgs >= 50)
+    .sort((a, b) => a.dmarc_pct - b.dmarc_pct)
+    .slice(0, 3);
+  // En sağlıklı 3 domain
+  const healthy = [...domains]
+    .filter(d => d.total_msgs >= 50)
+    .sort((a, b) => b.dmarc_pct - a.dmarc_pct)
+    .slice(0, 3);
+
+  const kpi = (label, val, sub, tone = "text-slate-100", icon = null) => (
+    <div className="bg-slate-950/60 border border-slate-800 rounded p-3">
+      <div className="text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-1">{icon}{label}</div>
+      <div className={`mono text-2xl ${tone} mt-0.5`}>{val}</div>
+      {sub && <div className="text-[10px] text-slate-500 mt-0.5">{sub}</div>}
+    </div>
+  );
+
+  if (domains.length === 0 && (missing?.length || 0) === 0) return null;
+
+  return (
+    <div className="mb-4 space-y-3" data-testid="dmarc-dashboard">
+      {/* KPI Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+        {filtered && kpi("Hosted Domain", totalHosted.toLocaleString("tr-TR"), "sunucunda barınan", "text-indigo-300", "🌐")}
+        {kpi("DMARC Var", covered.toLocaleString("tr-TR"), filtered ? `%${coveragePct} kapsam` : "raporlu domain", "text-emerald-300", "✓")}
+        {filtered && missing?.length > 0 && kpi("Rapor Yok", missing.length.toLocaleString("tr-TR"), "spoof riski", "text-rose-300", "⚠")}
+        {kpi("Toplam Rapor", totalReports.toLocaleString("tr-TR"), "30 gün agregat", "text-cyan-300", "📄")}
+        {kpi("Analiz Edilen Mail", totalMsgs.toLocaleString("tr-TR"), "toplam mesaj", "text-slate-100", "📬")}
+        {kpi("Ort. DMARC Pass", `%${avgPassPct}`,
+              avgPassPct >= 90 ? "harika" : avgPassPct >= 70 ? "iyileştir" : "kritik",
+              avgPassPct >= 90 ? "text-emerald-300" : avgPassPct >= 70 ? "text-amber-300" : "text-rose-300", "🎯")}
+        {failCount > 0 && kpi("Fail Mesaj", Math.round(failCount).toLocaleString("tr-TR"), "başarısız", "text-rose-300", "✕")}
+      </div>
+
+      {/* Kapsam Progress Bar */}
+      {filtered && totalHosted > 0 && (
+        <div className="p-2 bg-slate-950/40 border border-slate-800 rounded">
+          <div className="flex items-center justify-between text-[11px] mb-1">
+            <span className="text-slate-300">DMARC Kapsam Oranı</span>
+            <span className={`mono ${coveragePct >= 80 ? "text-emerald-300" : coveragePct >= 40 ? "text-amber-300" : "text-rose-300"}`}>
+              {covered} / {totalHosted} domain · %{coveragePct}
+            </span>
+          </div>
+          <div className="h-2 bg-slate-900 rounded overflow-hidden">
+            <div className={`h-full transition-all ${coveragePct >= 80 ? "bg-emerald-500" : coveragePct >= 40 ? "bg-amber-500" : "bg-rose-500"}`}
+                 style={{ width: `${coveragePct}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Top Risky + Top Healthy */}
+      {(risky.length > 0 || healthy.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {risky.length > 0 && (
+            <div className="p-2.5 rounded border border-rose-500/20 bg-rose-500/5">
+              <div className="text-[10px] uppercase text-rose-300 mb-1.5 font-semibold flex items-center gap-1">
+                ⚠ En Riskli Domain'ler (düşük DMARC pass)
+              </div>
+              <div className="space-y-1">
+                {risky.map(d => (
+                  <div key={d.domain} className="flex items-center gap-2 text-[11px]">
+                    <span className="mono text-slate-200 flex-1 truncate">{d.domain}</span>
+                    <span className="mono text-slate-500">{d.total_msgs.toLocaleString("tr-TR")} mail</span>
+                    <span className="mono text-rose-300 font-bold w-12 text-right">%{d.dmarc_pct}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {healthy.length > 0 && (
+            <div className="p-2.5 rounded border border-emerald-500/20 bg-emerald-500/5">
+              <div className="text-[10px] uppercase text-emerald-300 mb-1.5 font-semibold flex items-center gap-1">
+                ✓ En Sağlıklı Domain'ler (yüksek DMARC pass)
+              </div>
+              <div className="space-y-1">
+                {healthy.map(d => (
+                  <div key={d.domain} className="flex items-center gap-2 text-[11px]">
+                    <span className="mono text-slate-200 flex-1 truncate">{d.domain}</span>
+                    <span className="mono text-slate-500">{d.total_msgs.toLocaleString("tr-TR")} mail</span>
+                    <span className="mono text-emerald-300 font-bold w-12 text-right">%{d.dmarc_pct}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -540,14 +688,23 @@ function FeedsTab() {
 
       {/* Feed Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-      {(q.data?.items || []).map(f => (
+      {(q.data?.items || []).map(f => {
+        // v44.00.30 — Genişletilmiş status: ok / clean / stale / error / never_synced
+        const statusStyle = {
+          ok:           { tone: "success", label: "AKTİF",   help: "Sync başarılı, eşleşme var" },
+          clean:        { tone: "info",    label: "TEMİZ",   help: "Sync başarılı, sunucunda eşleşme yok — bu iyi bir işaret" },
+          stale:        { tone: "warning", label: "GÜNCEL DEĞİL", help: "24 saatten uzun süredir sync olmadı" },
+          error:        { tone: "danger",  label: "HATA",    help: "Son sync başarısız oldu" },
+          never_synced: { tone: "danger",  label: "SYNC BEKLEMEDE", help: "Henüz hiç sync olmadı — 'Şimdi Senkronize Et' butonuna basın" },
+        }[f.status] || { tone: "danger", label: f.status, help: "" };
+        return (
         <div key={f.key} data-testid={`feed-${f.key}`} className="border border-slate-800 bg-slate-900/40 rounded-lg p-4 hover:border-indigo-500/40 transition-colors">
           <div className="flex items-start justify-between mb-2">
             <div>
               <div className="text-slate-100 font-semibold text-sm">{f.name}</div>
               <a href={f.url} target="_blank" rel="noopener noreferrer" className="text-[10px] mono text-indigo-400 hover:underline">{f.url}</a>
             </div>
-            <Badge tone={f.status === "ok" ? "success" : "danger"}>{f.status}</Badge>
+            <Badge tone={statusStyle.tone} title={statusStyle.help}>{statusStyle.label}</Badge>
           </div>
           <div className="grid grid-cols-2 gap-2 text-[11px] mono mb-3">
             <div><span className="text-slate-500">IOC:</span> <span className="text-slate-100">{f.ioc_count.toLocaleString()}</span></div>
@@ -555,13 +712,22 @@ function FeedsTab() {
             <div className="col-span-2 text-slate-500">
               Son senk: <span className="text-slate-400">{new Date(f.last_synced_at).toLocaleTimeString("tr-TR")}</span>
             </div>
+            {f.status === "clean" && (
+              <div className="col-span-2 text-[10px] text-cyan-400" title={statusStyle.help}>
+                ℹ Sunucunda listelenen IP yok — feed aktif, sadece eşleşme bulamadı.
+              </div>
+            )}
+            {f.last_error && (
+              <div className="col-span-2 text-[10px] text-rose-400 truncate" title={f.last_error}>⚠ {f.last_error}</div>
+            )}
           </div>
           <button data-testid={`feed-sync-${f.key}`} onClick={() => sync.mutate(f.key)} disabled={sync.isPending}
                   className="w-full text-xs py-1.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-40">
             <Zap className="w-3 h-3 inline mr-1"/>Şimdi Senkronize Et
           </button>
         </div>
-      ))}
+        );
+      })}
       </div>
     </div>
   );
@@ -658,6 +824,13 @@ function UsomTab() {
       return (await client.get(`/threat-intel/usom/list?${params}`)).data;
     },
   });
+  // v44.00.29 — İstatistik dashboard
+  const stats = useQuery({
+    queryKey: ["usom-stats"],
+    queryFn: async () =>
+      (await client.get(`/threat-intel/usom/stats?license_key=${encodeURIComponent(lk())}`)).data,
+    refetchInterval: 60000,
+  });
 
   const fetchNow = useMutation({
     mutationFn: async () => (await client.post(`/threat-intel/usom/fetch?license_key=${encodeURIComponent(lk())}`)).data,
@@ -666,9 +839,26 @@ function UsomTab() {
       const totalNew = (d.added_urls || 0) + (d.added_domains || 0) + (d.added_ips || 0);
       toast.success(`✓ USOM: ${d.total_fetched} IOC · ${totalNew} yeni · ${d.added_to_blacklist || 0} kara liste ekleme`);
       qc.invalidateQueries({ queryKey: ["usom-list"] });
+      qc.invalidateQueries({ queryKey: ["usom-stats"] });
       qc.invalidateQueries({ queryKey: ["lists-manager-unified"] });
     },
     onError: (e) => toast.error("USOM fetch hatası: " + (e.response?.data?.detail || e.message)),
+  });
+
+  // v44.00.29 — Manuel cron refresh (fetch + URL→domain extraction + karaliste sync)
+  const cronRefresh = useMutation({
+    mutationFn: async () =>
+      (await client.post(`/threat-intel/usom/cron-refresh?license_key=${encodeURIComponent(lk())}`)).data,
+    onSuccess: (d) => {
+      toast.success(
+        `⚡ Cron simüle edildi: ${d.total_fetched} IOC · ${d.added_to_blacklist} yeni karaliste · ${d.domain_extracted} URL'den domain çıkarıldı`,
+        { duration: 6000 }
+      );
+      qc.invalidateQueries({ queryKey: ["usom-list"] });
+      qc.invalidateQueries({ queryKey: ["usom-stats"] });
+      qc.invalidateQueries({ queryKey: ["lists-manager-unified"] });
+    },
+    onError: (e) => toast.error("Cron refresh hatası: " + (e.response?.data?.detail || e.message)),
   });
 
   const cleanup = useMutation({
@@ -676,6 +866,7 @@ function UsomTab() {
     onSuccess: (d) => {
       toast.success(`Temizlendi: ${d.removed_iocs} IOC + ${d.removed_from_lists} kara liste kaydı`);
       qc.invalidateQueries({ queryKey: ["usom-list"] });
+      qc.invalidateQueries({ queryKey: ["usom-stats"] });
     },
     onError: (e) => toast.error("Temizleme hatası: " + (e.response?.data?.detail || e.message)),
   });
@@ -686,6 +877,7 @@ function UsomTab() {
     onSuccess: (d, value) => {
       toast.success(`${value} silindi (${d.removed_iocs + d.removed_from_lists} kayıt)`);
       qc.invalidateQueries({ queryKey: ["usom-list"] });
+      qc.invalidateQueries({ queryKey: ["usom-stats"] });
     },
     onError: (e) => toast.error("Silinemedi: " + (e.response?.data?.detail || e.message)),
   });
@@ -700,12 +892,74 @@ function UsomTab() {
         subtitle="Ulusal Siber Olaylara Müdahale Merkezi listesi — otomatik günlük fetch + manuel arama/silme"
       />
       <CardBody>
-        <div className="flex items-center gap-3 mb-4">
+        {/* v44.00.29 — Stats Dashboard */}
+        {stats.data && stats.data.total > 0 && (
+          <div className="mb-4 grid grid-cols-2 md:grid-cols-5 gap-2">
+            <div className="bg-slate-900 border border-slate-800 rounded p-3">
+              <div className="text-[10px] uppercase text-slate-500">Toplam IOC</div>
+              <div className="mono text-2xl text-indigo-300">{(stats.data.total || 0).toLocaleString("tr-TR")}</div>
+              <div className="text-[9px] text-slate-600 mt-0.5">
+                {Object.entries(stats.data.types || {}).map(([k, v]) => `${k}:${v}`).join(" · ")}
+              </div>
+            </div>
+            <div className="bg-rose-500/5 border border-rose-500/20 rounded p-3">
+              <div className="text-[10px] uppercase text-slate-500">Kara Liste</div>
+              <div className="mono text-2xl text-rose-300">{(stats.data.blacklist_count || 0).toLocaleString("tr-TR")}</div>
+              <div className="text-[9px] text-slate-600 mt-0.5">otomatik ekleme</div>
+            </div>
+            {["phishing", "malware", "ransomware"].map(tagKey => (
+              <div key={tagKey} className="bg-slate-900 border border-slate-800 rounded p-3">
+                <div className="text-[10px] uppercase text-slate-500">
+                  {tagKey === "phishing" && "🎣 Phishing"}
+                  {tagKey === "malware" && "🦠 Malware"}
+                  {tagKey === "ransomware" && "🔒 Ransomware"}
+                </div>
+                <div className="mono text-xl text-amber-300">{(stats.data.tags?.[tagKey] || 0).toLocaleString("tr-TR")}</div>
+                <div className="text-[9px] text-slate-600 mt-0.5">
+                  {stats.data.total > 0 ? `%${Math.round((stats.data.tags?.[tagKey] || 0) / stats.data.total * 100)}` : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Criticality histogramı */}
+        {stats.data?.criticality && Object.values(stats.data.criticality).some(v => v > 0) && (
+          <div className="mb-4 bg-slate-950/40 border border-slate-800 rounded p-2 flex items-center gap-2">
+            <span className="text-[10px] uppercase text-slate-500 mono shrink-0">Kritiklik:</span>
+            {[1,2,3,4,5].map(lvl => {
+              const val = stats.data.criticality[lvl] || 0;
+              const max = Math.max(...Object.values(stats.data.criticality));
+              const w = max > 0 ? Math.max(4, (val / max) * 100) : 0;
+              const c = lvl >= 4 ? "bg-rose-500" : lvl === 3 ? "bg-amber-500" : "bg-cyan-500";
+              return (
+                <div key={lvl} className="flex-1 flex flex-col items-center">
+                  <div className="w-full bg-slate-800 rounded h-6 relative overflow-hidden">
+                    <div className={`h-full ${c} transition-all`} style={{width: `${w}%`}}/>
+                    <span className="absolute inset-0 flex items-center justify-center text-[10px] mono text-white font-bold">
+                      {val > 0 && val.toLocaleString("tr-TR")}
+                    </span>
+                  </div>
+                  <div className="text-[9px] text-slate-600 mono mt-0.5">Sv.{lvl}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3 mb-4 flex-wrap">
           <button onClick={() => fetchNow.mutate()} disabled={fetchNow.isPending}
             data-testid="usom-fetch-btn"
             className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-60">
             <RefreshCw className={`w-4 h-4 ${fetchNow.isPending ? "animate-spin" : ""}`}/>
             {fetchNow.isPending ? "USOM verileri çekiliyor..." : "Şimdi Çek"}
+          </button>
+          {/* v44.00.29 — Manuel cron refresh */}
+          <button onClick={() => cronRefresh.mutate()} disabled={cronRefresh.isPending}
+            data-testid="usom-cron-refresh-btn"
+            title="Fetch + URL'lerden domain çıkart + karalisteye ekle (günlük cron'un yaptığı işi tetikler)"
+            className="px-3 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-60">
+            <Zap className={`w-3.5 h-3.5 ${cronRefresh.isPending ? "animate-pulse" : ""}`}/>
+            {cronRefresh.isPending ? "Cron çalışıyor..." : "⚡ Cron'u Şimdi Çalıştır"}
           </button>
           <button onClick={() => window.confirm("HTML tag'i içeren bozuk USOM kayıtlarını sil?") && cleanup.mutate()}
             disabled={cleanup.isPending} data-testid="usom-cleanup-btn"
@@ -715,7 +969,7 @@ function UsomTab() {
           </button>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="URL / domain'de ara..."
             data-testid="usom-search"
-            className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm mono"/>
+            className="flex-1 min-w-[200px] bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm mono"/>
           <div className="text-[11px] text-slate-500 mono whitespace-nowrap">
             {items.length} kayıt {lastSync && `· son sync: ${new Date(lastSync).toLocaleString("tr-TR")}`}
           </div>
@@ -726,47 +980,7 @@ function UsomTab() {
             {q ? "Bu arama için sonuç yok." : 'Henüz USOM verisi çekilmedi. Üstteki "Şimdi Çek" butonuna basın.'}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
-                  <th className="px-3 py-2 text-left">Tip</th>
-                  <th className="px-3 py-2 text-left">Adres</th>
-                  <th className="px-3 py-2 text-left">Tarih</th>
-                  <th className="px-3 py-2 text-left">Açıklama</th>
-                  <th className="px-3 py-2 text-left">Kaynak</th>
-                  <th className="px-3 py-2 text-right">İşlem</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((r) => (
-                  <tr key={`${r.type}-${r.value}`} className="border-b border-slate-800/60 hover:bg-slate-900/40"
-                      data-testid={`usom-row-${r.value}`}>
-                    <td className="px-3 py-2">
-                      <span className="text-[9px] mono uppercase px-1.5 py-0.5 rounded"
-                            style={{ background: r.type === "url" ? "#f43f5522" : "#22d3ee22",
-                                     color: r.type === "url" ? "#f43f5e" : "#22d3ee" }}>
-                        {r.type === "url" ? "URL" : "Domain"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 mono text-slate-100 break-all max-w-[440px]">{r.value}</td>
-                    <td className="px-3 py-2 text-[10px] text-slate-500 mono whitespace-nowrap">
-                      {r.created_at ? new Date(r.created_at).toLocaleString("tr-TR") : "-"}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-slate-400 max-w-[220px] truncate" title={r.note}>{r.note || "USOM"}</td>
-                    <td className="px-3 py-2 text-[10px] text-indigo-300 mono">{r.source}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button onClick={() => window.confirm(`${r.value} kaldırılsın mı?`) && delRow.mutate(r.value)}
-                        disabled={delRow.isPending} data-testid={`usom-del-${r.value}`}
-                        className="p-1 rounded hover:bg-rose-500/20 text-rose-400 disabled:opacity-40">
-                        <X className="w-4 h-4"/>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <UsomPagedTable items={items} delRow={delRow} q={q} />
         )}
 
         <div className="mt-4 p-3 rounded bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 leading-relaxed">
@@ -777,6 +991,126 @@ function UsomTab() {
         </div>
       </CardBody>
     </Card>
+  );
+}
+
+// v44.00.29 — Sayfalanmış USOM tablosu (50 satır/sayfa, satır numarası, toplam)
+function UsomPagedTable({ items, delRow, q }) {
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  useEffect(() => { setPage(0); }, [q, items.length]);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const start = page * pageSize;
+  const end = Math.min(start + pageSize, items.length);
+  const pageItems = items.slice(start, end);
+  const goto = (p) => setPage(Math.max(0, Math.min(totalPages - 1, p)));
+
+  const domainCount = items.filter(r => r.type === "domain").length;
+  const urlCount = items.filter(r => r.type === "url").length;
+  const ipCount = items.filter(r => r.type === "ip").length;
+
+  return (
+    <>
+      {/* Sayaç header */}
+      <div className="flex flex-wrap items-center gap-3 mb-2 px-1 text-xs">
+        <span className="mono text-slate-300">
+          <b className="text-indigo-300">{items.length.toLocaleString("tr-TR")}</b> toplam kayıt
+        </span>
+        {domainCount > 0 && <span className="mono text-cyan-400">🌐 {domainCount.toLocaleString("tr-TR")} domain</span>}
+        {urlCount > 0 && <span className="mono text-rose-400">🔗 {urlCount.toLocaleString("tr-TR")} URL</span>}
+        {ipCount > 0 && <span className="mono text-amber-400">📡 {ipCount.toLocaleString("tr-TR")} IP</span>}
+        <span className="ml-auto text-slate-500 mono">
+          Gösterilen: <b className="text-slate-200">{(start + 1).toLocaleString("tr-TR")}-{end.toLocaleString("tr-TR")}</b> · Sayfa {page + 1}/{totalPages}
+        </span>
+        <select value={pageSize} onChange={(e) => { setPageSize(parseInt(e.target.value)); setPage(0); }}
+                data-testid="usom-page-size"
+                className="bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-xs">
+          <option value={25}>25 satır</option>
+          <option value={50}>50 satır</option>
+          <option value={100}>100 satır</option>
+          <option value={250}>250 satır</option>
+        </select>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-800 bg-slate-950/40">
+              <th className="px-2 py-2 text-right w-12">#</th>
+              <th className="px-3 py-2 text-left">Tip</th>
+              <th className="px-3 py-2 text-left">Adres</th>
+              <th className="px-3 py-2 text-left">Tarih</th>
+              <th className="px-3 py-2 text-left">Açıklama</th>
+              <th className="px-3 py-2 text-left">Kaynak</th>
+              <th className="px-3 py-2 text-right">İşlem</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageItems.map((r, i) => (
+              <tr key={`${r.type}-${r.value}`} className="border-b border-slate-800/60 hover:bg-slate-900/40"
+                  data-testid={`usom-row-${r.value}`}>
+                <td className="px-2 py-2 text-right mono text-[10px] text-slate-500">{start + i + 1}</td>
+                <td className="px-3 py-2">
+                  <span className="text-[9px] mono uppercase px-1.5 py-0.5 rounded"
+                        style={{ background: r.type === "url" ? "#f43f5522" : r.type === "ip" ? "#f59e0b22" : "#22d3ee22",
+                                 color: r.type === "url" ? "#f43f5e" : r.type === "ip" ? "#f59e0b" : "#22d3ee" }}>
+                    {r.type === "url" ? "URL" : r.type === "ip" ? "IP" : "Domain"}
+                  </span>
+                </td>
+                <td className="px-3 py-2 mono text-slate-100 break-all max-w-[440px]">{r.value}</td>
+                <td className="px-3 py-2 text-[10px] text-slate-500 mono whitespace-nowrap">
+                  {r.created_at ? new Date(r.created_at).toLocaleString("tr-TR") : "-"}
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-400 max-w-[220px] truncate" title={r.note}>{r.note || "USOM"}</td>
+                <td className="px-3 py-2 text-[10px] text-indigo-300 mono">{r.source}</td>
+                <td className="px-3 py-2 text-right">
+                  <button onClick={() => window.confirm(`${r.value} kaldırılsın mı?`) && delRow.mutate(r.value)}
+                    disabled={delRow.isPending} data-testid={`usom-del-${r.value}`}
+                    className="p-1 rounded hover:bg-rose-500/20 text-rose-400 disabled:opacity-40">
+                    <X className="w-4 h-4"/>
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination bar */}
+      <div className="mt-3 flex items-center justify-between gap-2 flex-wrap text-xs">
+        <div className="text-slate-500 mono">
+          {items.length.toLocaleString("tr-TR")} kayıttan {(start + 1).toLocaleString("tr-TR")}-{end.toLocaleString("tr-TR")} arası
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={() => goto(0)} disabled={page === 0} data-testid="usom-first"
+                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 mono">« İlk</button>
+          <button onClick={() => goto(page - 1)} disabled={page === 0} data-testid="usom-prev"
+                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 mono">‹ Önceki</button>
+          {Array.from({ length: totalPages }, (_, i) => i)
+            .filter(i => i === 0 || i === totalPages - 1 || Math.abs(i - page) <= 2)
+            .reduce((acc, i, idx, arr) => {
+              if (idx > 0 && i - arr[idx - 1] > 1) acc.push(-1); // ellipsis marker
+              acc.push(i);
+              return acc;
+            }, [])
+            .map((p, idx) => p === -1
+              ? <span key={`e${idx}`} className="text-slate-600 mono px-1">…</span>
+              : (
+                <button key={p} onClick={() => goto(p)} data-testid={`usom-page-${p+1}`}
+                        className={`px-2.5 py-1 rounded mono min-w-[32px] ${
+                          p === page
+                            ? "bg-indigo-500/30 text-indigo-100 border border-indigo-500/50 font-bold"
+                            : "bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        }`}>{p + 1}</button>
+              )
+            )}
+          <button onClick={() => goto(page + 1)} disabled={page >= totalPages - 1} data-testid="usom-next"
+                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 mono">Sonraki ›</button>
+          <button onClick={() => goto(totalPages - 1)} disabled={page >= totalPages - 1} data-testid="usom-last"
+                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 mono">Son »</button>
+        </div>
+      </div>
+    </>
   );
 }
 

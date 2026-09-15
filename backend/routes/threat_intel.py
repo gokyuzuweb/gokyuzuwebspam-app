@@ -302,20 +302,69 @@ async def ingest_dmarc(payload: DMARCReport):
 
 
 @router.get("/dmarc/summary")
-async def dmarc_summary(days: int = Query(30, ge=1, le=180)):
+async def dmarc_summary(days: int = Query(30, ge=1, le=180),
+                        license_key: str | None = Query(None),
+                        only_hosted: bool = Query(True)):
+    """v44.00.29 — license_key verilirse sadece o sunucuda barınan domain'leri (to_addr right-side)
+    ait DMARC raporlarını döner. only_hosted=false ile tüm rapor havuzu görülebilir."""
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    hosted_domains: set[str] | None = None
+    if license_key and only_hosted:
+        # v44.00.30 fix — Sunucudaki hosted domain'leri ÇOKLU kaynaktan çıkart:
+        #  1. mail_events.to_addr (gelen mail'lerin alıcı domain'i = hosted)
+        #  2. mail_events.from_addr (bu sunucudan giden mailin gönderici domain'i = hosted)
+        # 180 gün pencere, min 1 mail (kullanıcı 188 dedi, önceki 111 çıkıyordu → gevşettik)
+        hosted_since = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
+        common_free = {
+            "gmail.com", "yahoo.com", "yahoo.com.tr", "hotmail.com",
+            "outlook.com", "outlook.com.tr", "icloud.com", "mail.com",
+            "yandex.com", "yandex.com.tr", "yandex.ru", "aol.com",
+            "protonmail.com", "gmx.com", "hey.com", "live.com",
+            "msn.com", "me.com", "fastmail.com", "zoho.com",
+        }
+        hosted_domains = set()
+        # to_addr (in) — server'ın hosted olduğu domain'ler
+        async for r in db.mail_events.aggregate([
+            {"$match": {"license_key": license_key,
+                        "ingested_at": {"$gte": hosted_since},
+                        "to_addr": {"$regex": "@"}}},
+            {"$project": {"dom": {"$toLower": {
+                "$arrayElemAt": [{"$split": ["$to_addr", "@"]}, 1]}}}},
+            {"$group": {"_id": "$dom", "c": {"$sum": 1}}},
+            {"$match": {"c": {"$gte": 1}}},
+        ]):
+            d = (r["_id"] or "").strip().lower().rstrip(".")
+            if d and "." in d and d not in common_free:
+                hosted_domains.add(d)
+        # from_addr (out) — bu sunucudan giden mailler (direction filter'ı olmadan — güvenli)
+        async for r in db.mail_events.aggregate([
+            {"$match": {"license_key": license_key,
+                        "ingested_at": {"$gte": hosted_since},
+                        "from_addr": {"$regex": "@"}}},
+            {"$project": {"dom": {"$toLower": {
+                "$arrayElemAt": [{"$split": ["$from_addr", "@"]}, 1]}}}},
+            {"$group": {"_id": "$dom", "c": {"$sum": 1}}},
+            {"$match": {"c": {"$gte": 3}}},  # tekil spam mail'i dahil etme
+        ]):
+            d = (r["_id"] or "").strip().lower().rstrip(".")
+            if d and "." in d and d not in common_free:
+                hosted_domains.add(d)
+
+    match: dict = {"received_at": {"$gte": since}}
+    if hosted_domains is not None:
+        match["domain"] = {"$in": list(hosted_domains)}
+
     pipeline = [
-        {"$match": {"received_at": {"$gte": since}}},
+        {"$match": match},
         {"$group": {
-            "_id": "$domain",
-            "reports": {"$sum": 1},
+            "_id": "$domain", "reports": {"$sum": 1},
             "total_msgs": {"$sum": "$total_msgs"},
             "dmarc_pass": {"$sum": "$dmarc_pass"},
             "spf_pass": {"$sum": "$spf_pass"},
             "dkim_pass": {"$sum": "$dkim_pass"},
         }},
-        {"$sort": {"total_msgs": -1}},
-        {"$limit": 50},
+        {"$sort": {"total_msgs": -1}}, {"$limit": 50},
     ]
     domains = []
     async for row in db.dmarc_reports.aggregate(pipeline):
@@ -327,7 +376,20 @@ async def dmarc_summary(days: int = Query(30, ge=1, le=180)):
             "spf_pct":   round(row["spf_pass"] / tot * 100, 1),
             "dkim_pct":  round(row["dkim_pass"] / tot * 100, 1),
         })
-    return {"days": days, "domains": domains, "count": len(domains)}
+    # v44.00.29 — Sunucuda olan ama DMARC raporu OLMAYAN domain'leri de ekle
+    # (kullanıcıya "Bu domain'in DMARC'ı yok" uyarısı için)
+    domains_with_reports = {d["domain"] for d in domains}
+    missing = []
+    if hosted_domains is not None:
+        for d in hosted_domains:
+            if d not in domains_with_reports:
+                missing.append(d)
+    return {
+        "days": days, "domains": domains, "count": len(domains),
+        "hosted_count": len(hosted_domains) if hosted_domains is not None else None,
+        "hosted_without_reports": sorted(missing)[:20],
+        "filtered": license_key is not None and only_hosted,
+    }
 
 
 # v44.00.25 — DMARC Per-Domain Breakdown (kullanıcı: "domain başına breakdown göster")
@@ -408,32 +470,69 @@ GLOBAL_FEEDS = [
 
 @router.get("/feeds")
 async def list_feeds():
-    """Global feed sync durumu — gerçek DB'den IOC sayısı okunur."""
+    """Global feed sync durumu — gerçek DB'den IOC sayısı + threat_intel_feeds sync tracking."""
     now = datetime.now(timezone.utc)
     items = []
     for f in GLOBAL_FEEDS:
-        # Gerçek IOC sayısını threat_iocs koleksiyonundan çek
         ioc_count = await db.threat_iocs.count_documents({"source": f["key"]})
-        # last_synced_at: bu source için en son eklenen IOC'nin created_at'i
-        last_doc = await db.threat_iocs.find_one(
-            {"source": f["key"]},
-            {"created_at": 1, "_id": 0},
-            sort=[("created_at", -1)],
+        # v44.00.30 — feed_sync_log'dan son çalışma zamanı (IOC olmasa bile sync yapıldı bilgisi)
+        sync_track = await db.threat_intel_feeds.find_one(
+            {"key": f["key"]},
+            {"_id": 0, "last_sync_at": 1, "last_sync_status": 1, "last_error": 1},
         )
-        last_synced = last_doc.get("created_at") if last_doc else None
-        next_sync = None
-        if last_synced:
+        last_sync = None
+        sync_status = None
+        last_error = None
+        if sync_track:
+            last_sync = sync_track.get("last_sync_at")
+            sync_status = sync_track.get("last_sync_status")
+            last_error = sync_track.get("last_error")
+        # IOC'lardan da bir fallback zamanı çıkart (eski davranışla uyumluluk)
+        if not last_sync:
+            last_doc = await db.threat_iocs.find_one(
+                {"source": f["key"]}, {"created_at": 1, "_id": 0},
+                sort=[("created_at", -1)])
+            last_sync = last_doc.get("created_at") if last_doc else None
+
+        # Status hesabı:
+        #  never_synced → hiç sync denenmedi
+        #  ok           → sync başarılı + IOC var
+        #  clean        → sync başarılı ama eşleşme yok (temiz IP havuzu)
+        #  error        → son sync başarısız
+        #  stale        → son sync 24s'den eski
+        if not last_sync:
+            status = "never_synced"
+        elif sync_status == "error":
+            status = "error"
+        else:
             try:
-                last_dt = datetime.fromisoformat(last_synced.replace("Z", "+00:00"))
+                last_dt = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                age_h = (now - last_dt).total_seconds() / 3600
+                if age_h > 24 and ioc_count == 0:
+                    status = "stale"
+                elif ioc_count == 0:
+                    status = "clean"
+                else:
+                    status = "ok"
+            except Exception:
+                status = "ok" if ioc_count > 0 else "never_synced"
+
+        next_sync = None
+        if last_sync:
+            try:
+                last_dt = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
                 next_sync = (last_dt + timedelta(minutes=f["interval_min"])).isoformat()
             except Exception:
                 pass
         items.append({
             **f,
-            "last_synced_at": last_synced or (now - timedelta(days=999)).isoformat(),
+            "last_synced_at": last_sync or (now - timedelta(days=999)).isoformat(),
             "next_sync_at": next_sync or now.isoformat(),
-            "status": "ok" if ioc_count > 0 else "never_synced",
+            "status": status,
             "ioc_count": ioc_count,
+            "last_error": last_error,
         })
     return {"items": items, "count": len(items)}
 
@@ -697,6 +796,21 @@ async def trigger_sync(feed_key: str):
             errors.append(f"Bilinmeyen feed: {feed_key}")
     except Exception as ex:
         errors.append(f"{type(ex).__name__}: {str(ex)[:80]}")
+    # v44.00.30 — Her sync (added=0 olsa bile) tracking'e kaydedilir → status "never_synced" değil "clean"/"ok"
+    try:
+        await db.threat_intel_feeds.update_one(
+            {"key": feed_key},
+            {"$set": {
+                "key": feed_key,
+                "last_sync_at": _iso(),
+                "last_sync_added": added,
+                "last_sync_status": "error" if errors else "ok",
+                "last_error": ("; ".join(errors))[:200] if errors else None,
+            }},
+            upsert=True,
+        )
+    except Exception:
+        pass
     return {"ok": True, "feed": feed_key, "added": added, "errors": errors}
 
 

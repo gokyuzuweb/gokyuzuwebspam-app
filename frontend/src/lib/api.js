@@ -822,7 +822,10 @@ export const api = {
   pluginSignalLog: (limit = 20) => client.get("/plugin/signal-log", { params: { limit } }).then(r => r.data),
   userEmailAddresses: (username) => client.get(`/users/${username}/email-addresses`).then(r => r.data),
   bayesTrainManual: (kind, samples) => client.post("/mailscanner/bayes/train-manual", { kind, samples }).then(r => r.data),
-  tiDmarcSummary: (days = 30) => client.get("/threat-intel/dmarc/summary", { params: { days } }).then(r => r.data),
+  tiDmarcSummary: (days = 30, licenseKey = "", onlyHosted = true) =>
+    client.get("/threat-intel/dmarc/summary", {
+      params: { days, ...(licenseKey ? { license_key: licenseKey, only_hosted: onlyHosted } : {}) }
+    }).then(r => r.data),
   tiDmarcIngest: (payload) => client.post("/threat-intel/dmarc/ingest", payload).then(r => r.data),
   tiFeeds: () => client.get("/threat-intel/feeds").then(r => r.data),
   tiFeedSync: (key) => client.post(`/threat-intel/feeds/${key}/sync`).then(r => r.data),
