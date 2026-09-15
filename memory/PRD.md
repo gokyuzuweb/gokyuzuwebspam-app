@@ -14,6 +14,58 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 26, v44.00.37) — ThreatIntel Refactor + DNS Cache + AI Email + Trend Chart ✅
+
+### 🎯 (1) ThreatIntel.js Refactor (1535 → 64 satır)
+- Yeni klasör: `/app/frontend/src/pages/threat-intel/`
+- 5 alt-tab dosyası:
+  - **`IocTab.js`** (208 satır) — IocTab + IocRow · IOC feed + hits drill
+  - **`DmarcTab.js`** (561 satır) — DmarcTab + DmarcDashboard + DmarcDomainDrill + DmarcSetupWizard + DnsRecord
+  - **`FeedsTab.js`** (128 satır) — Global feeds + custom feed CRUD
+  - **`ComplianceTab.js`** (81 satır) — Compliance + StatCounter
+  - **`UsomTab.js`** (526 satır) — UsomTab + UsomFetchProgress + UsomPagedTable
+- **`ThreatIntel.js`** artık sadece tab shell (64 satır) — 5 alt bileşeni import edip switch yapıyor.
+- Named exports (`export function IocTab` vb.), `StatCounter` shared export ComplianceTab'tan
+- Live doğrulandı: 5 tab da render OK, hiç runtime error yok
+
+### 🎯 (2) DNS Verify Cache (60sn TTL)
+- **`db.dns_verify_cache`** collection: `{domain, checked_at, ...result}`
+- `GET /api/ai/dmarc-verify?domain=X`:
+  - Cache hit (60sn içinde): DB'den döner, `from_cache: true` flag
+  - Cache miss: canlı DNS sorgu, sonucu upsert
+- Live doğrulandı: 2. çağrıda `from_cache=True`
+
+### 🎯 (3) AI Rapor Email (Günlük Cron PDF Attach)
+- `_send_email()` fonksiyonuna `attachments: list[(fname, bytes, mime)]` desteği eklendi (MIMEApplication)
+- **`_render_report_pdf(doc)`** shared helper: hem endpoint hem cron ortak PDF üretir
+- Cron `_daily_ai_analysis_task` her sabah 08:00 UTC sonrası:
+  - `MASTER_ADMIN_EMAIL` env veya `settings.master_email` fallback
+  - Rapor + PDF ekli mail: subject `[GWS Saglik] {score}/100 · {tarih}`, düşüş varsa "DUSUS: -N" bilgisi
+- Live doğrulandı: PDF endpoint hâlâ %PDF-1.4 magic üretiyor (5074 byte)
+
+### 🎯 (4) AI Zaman Serisi Grafik (Son 30 Rapor)
+- **`AiHealthTrend`** component (`components/AiSystemAnalysisButton.js`):
+  - `/ai/system-analysis/history?limit=30` sorgusu → filter `health_score` not null
+  - Recharts LineChart: mor renk, 0-100 Y ekseni, tarih X ekseni, tooltip
+  - Trend indikatörü: ▲/▼/▬ + delta + min/max
+- Modal içinde raporun ÜSTÜNDE render edilir (kullanıcı önce trend'i, sonra detayı görür)
+- Live doğrulandı: 3 skor (52→72→62) mor line ile render, ▼ -10 (düşüş) · min 52 · max 72
+
+### 📊 Test Coverage
+`test_v44_00_37_refactor_cache_email_trend.py`: **6/6 ✅**
+- ThreatIntel.js < 100 satır + 5 alt-tab import
+- 5 alt-tab dosyası export named function
+- DNS cache hit (2. çağrı from_cache=true)
+- AI email helper cron içinde tanımlı (_render_report_pdf + MASTER_ADMIN_EMAIL)
+- _send_email attachments desteği (MIMEApplication)
+- AiHealthTrend component (LineChart + history endpoint)
+
+### 📦 Version Bump
+`v44.00.36` → **`v44.00.37`**
+
+---
+
+
 ## Feb 15, 2026 (Session 26, v44.00.36) — AI Cron + DNS Doğrulama + PDF Export ✅
 
 ### 🎯 (1) AI Rapor Zamanlaması + Skor Düşüşü Alarmı

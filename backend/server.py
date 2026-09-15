@@ -4011,20 +4011,22 @@ async def _smart_from(license_key: Optional[str] = None) -> str:
     return f"noreply@{master}"
 
 
-async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "gokyuzuwebspam@localhost", owner_license_key: Optional[str] = None, html: bool = False) -> tuple[bool, str]:
+async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "gokyuzuwebspam@localhost", owner_license_key: Optional[str] = None, html: bool = False, attachments: Optional[list] = None) -> tuple[bool, str]:
     """Send email. Tries configured SMTP first, then falls back to local /usr/sbin/sendmail (Exim on WHM).
 
     v44.00.10 — `owner_license_key` verilirse o bayinin SMTP ayarları kullanılır;
     verilmezse master varsayılanı kullanılır. Böylece her bayi kendi SMTP
     relay'ini yapılandırabilir ve master'ınkinden bağımsız çalışır.
     v44.00.20 — `html=True` → body already HTML, wrap etme.
+    v44.00.37 — `attachments=[(filename, bytes, mime_type), ...]` PDF vs. attach.
     """
     if not to_addr:
         return False, "no_recipient"
     try:
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
-        msg = MIMEMultipart("alternative")
+        from email.mime.application import MIMEApplication
+        msg = MIMEMultipart("mixed") if attachments else MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["To"] = to_addr
         if html:
@@ -4052,6 +4054,19 @@ async def _send_email(to_addr: str, subject: str, body: str, from_addr: str = "g
             )
         msg.attach(MIMEText(text_part, "plain", "utf-8"))
         msg.attach(MIMEText(html_part, "html", "utf-8"))
+        # v44.00.37 — Attachments (PDF vs.)
+        if attachments:
+            for att in attachments:
+                try:
+                    if isinstance(att, tuple) and len(att) >= 2:
+                        fname, blob = att[0], att[1]
+                        mime = att[2] if len(att) > 2 else "application/octet-stream"
+                        maintype, _, subtype = mime.partition("/")
+                        part = MIMEApplication(blob, _subtype=subtype or "octet-stream")
+                        part.add_header("Content-Disposition", "attachment", filename=fname)
+                        msg.attach(part)
+                except Exception as _e:
+                    log.warning("attachment add failed: %s", _e)
 
         # 1) Try configured SMTP relay (only if manuel mode + host set)
         cfg = await _smtp_settings(owner_license_key)
@@ -4972,7 +4987,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.36"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.37"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:

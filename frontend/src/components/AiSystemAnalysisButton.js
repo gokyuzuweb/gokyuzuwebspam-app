@@ -1,9 +1,13 @@
 // v44.00.35 — AI System Analysis Modal (Claude Sonnet 4.6)
+// v44.00.37 — + AI Health Trend mini line chart
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Sparkles, X, Loader2, RefreshCw, Download } from "lucide-react";
+import { Sparkles, X, Loader2, RefreshCw, Download, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { client } from "@/lib/api";
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+} from "recharts";
 
 // Markdown → basit HTML render (external lib istemeden headings/lists/bold)
 function renderMd(md) {
@@ -76,8 +80,7 @@ export default function AiSystemAnalysisButton() {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
              onClick={(e) => e.target === e.currentTarget && setOpen(false)}
              data-testid="ai-system-modal">
-          <div className="bg-slate-950 border border-slate-800 rounded-lg max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
-            <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-800 bg-gradient-to-r from-fuchsia-900/20 to-indigo-900/20">
+          <div className="bg-slate-950 border border-slate-800 rounded-lg max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">            <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-800 bg-gradient-to-r from-fuchsia-900/20 to-indigo-900/20">
               <Sparkles className="w-5 h-5 text-fuchsia-400" />
               <div className="flex-1">
                 <div className="text-sm font-bold text-fuchsia-200">AI Sistem Sağlık Analizi</div>
@@ -129,6 +132,8 @@ export default function AiSystemAnalysisButton() {
                   <div className="text-[11px] mono text-slate-500 mb-3">
                     Üretilme: {new Date(report.generated_at).toLocaleString("tr-TR")} · Model: {report.model}
                   </div>
+                  {/* v44.00.37 — Sağlık Skoru Trend Grafiği (son 30 rapor) */}
+                  <AiHealthTrend />
                   <div className="prose prose-invert prose-sm max-w-none space-y-1"
                        data-testid="ai-system-report"
                        dangerouslySetInnerHTML={{ __html: renderMd(report.report_markdown) }} />
@@ -139,5 +144,54 @@ export default function AiSystemAnalysisButton() {
         </div>
       )}
     </>
+  );
+}
+
+// v44.00.37 — Son 30 rapor sağlık skoru trend grafiği
+function AiHealthTrend() {
+  const h = useQuery({
+    queryKey: ["ai-health-history"],
+    queryFn: () => client.get("/ai/system-analysis/history?limit=30").then(r => r.data),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  });
+  const items = (h.data?.items || []).filter(x => typeof x.health_score === "number").reverse();
+  if (items.length < 2) return null;  // grafik için en az 2 nokta
+  const data = items.map((it) => ({
+    at: new Date(it.generated_at).toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" }),
+    score: it.health_score,
+  }));
+  const scores = items.map(i => i.health_score);
+  const min = Math.min(...scores), max = Math.max(...scores);
+  const last = scores[scores.length - 1], prev = scores[scores.length - 2];
+  const delta = last - prev;
+  const trend = delta > 0 ? "yükseliş" : delta < 0 ? "düşüş" : "sabit";
+  const trendColor = delta > 0 ? "text-emerald-300" : delta < 0 ? "text-rose-300" : "text-slate-400";
+  return (
+    <div data-testid="ai-health-trend" className="mb-4 p-3 rounded-lg border border-slate-800 bg-slate-950/40">
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="text-[11px] uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+          <TrendingUp className="w-3.5 h-3.5" /> Sağlık Skoru Trendi (son {items.length} rapor)
+        </div>
+        <div className={`text-[11px] mono ${trendColor}`}>
+          {delta > 0 ? "▲" : delta < 0 ? "▼" : "▬"} {delta > 0 ? "+" : ""}{delta} ({trend}) · min {min} · max {max}
+        </div>
+      </div>
+      <div className="h-24">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+            <XAxis dataKey="at" tick={{ fontSize: 9, fill: "#64748b" }} interval="preserveStartEnd" />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "#64748b" }} width={30} />
+            <Tooltip
+              contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 4, fontSize: 11 }}
+              labelStyle={{ color: "#cbd5e1" }}
+              formatter={(v) => [`${v}/100`, "Skor"]}
+            />
+            <Line type="monotone" dataKey="score" stroke="#a855f7" strokeWidth={2}
+                  dot={{ r: 2, fill: "#c084fc" }} activeDot={{ r: 4 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }

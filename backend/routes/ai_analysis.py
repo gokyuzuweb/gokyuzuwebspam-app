@@ -241,67 +241,9 @@ async def export_pdf(report_id: str, request: Request, license_key: Optional[str
     doc = await db.ai_system_reports.find_one({"id": report_id}, projection={"_id": 0})
     if not doc:
         raise HTTPException(404, "Rapor bulunamadı")
-
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import cm
-    from reportlab.lib import colors
-    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                     PageBreak, Table, TableStyle)
-
-    buf = io.BytesIO()
-    docp = SimpleDocTemplate(buf, pagesize=A4,
-                              leftMargin=2*cm, rightMargin=2*cm,
-                              topMargin=2*cm, bottomMargin=2*cm,
-                              title="GökyüzüWebSpam Sağlık Raporu",
-                              author="GökyüzüWebSpam AI")
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="H1TR", parent=styles["Heading1"],
-                               textColor=colors.HexColor("#4f46e5"),
-                               spaceAfter=12, fontSize=16))
-    styles.add(ParagraphStyle(name="H2TR", parent=styles["Heading2"],
-                               textColor=colors.HexColor("#6366f1"),
-                               spaceAfter=8, fontSize=13))
-    styles.add(ParagraphStyle(name="BodyTR", parent=styles["BodyText"],
-                               fontSize=10, leading=14, spaceAfter=4))
-    styles.add(ParagraphStyle(name="MonoTR", parent=styles["Code"],
-                               fontSize=8, textColor=colors.HexColor("#64748b")))
-    elements = []
-    elements.append(Paragraph("🛡 GökyüzüWebSpam — AI Sistem Sağlık Raporu", styles["H1TR"]))
-    gen_dt = doc.get("generated_at", "")
-    score = doc.get("health_score")
-    elements.append(Paragraph(
-        f"Oluşturulma: {gen_dt}<br/>Model: {doc.get('model')}<br/>"
-        f"Neden: {doc.get('reason', '-')}<br/>"
-        f"Sağlık Skoru: <b>{score if score is not None else '-'} / 100</b>",
-        styles["MonoTR"],
-    ))
-    elements.append(Spacer(1, 12))
-    # Markdown → basit paragraflar
-    md = doc.get("report_markdown") or ""
-    for raw in md.split("\n"):
-        line = raw.rstrip()
-        if not line.strip():
-            elements.append(Spacer(1, 6)); continue
-        if line.startswith("# "):
-            elements.append(Paragraph(line[2:], styles["H1TR"]))
-        elif line.startswith("## "):
-            elements.append(Paragraph(line[3:], styles["H2TR"]))
-        elif line.startswith("### "):
-            elements.append(Paragraph(f"<b>{line[4:]}</b>", styles["BodyTR"]))
-        elif line.startswith("---"):
-            elements.append(Spacer(1, 10))
-        elif line.lstrip().startswith(("- ", "* ", "• ")):
-            txt = line.lstrip()[2:]
-            elements.append(Paragraph(f"• {_md_bold(txt)}", styles["BodyTR"]))
-        elif re.match(r"^\d+\.\s", line.lstrip()):
-            elements.append(Paragraph(_md_bold(line.lstrip()), styles["BodyTR"]))
-        else:
-            elements.append(Paragraph(_md_bold(line), styles["BodyTR"]))
-    docp.build(elements)
-    buf.seek(0)
-    fname = f"gws-health-{gen_dt[:10]}-{report_id[:8]}.pdf"
-    return StreamingResponse(buf, media_type="application/pdf",
+    pdf_bytes = _render_report_pdf(doc)
+    fname = f"gws-health-{doc.get('generated_at', '')[:10]}-{report_id[:8]}.pdf"
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
@@ -315,6 +257,55 @@ def _md_bold(s: str) -> str:
 # ═════════════════════════════════════════════════════════════════════
 # v44.00.36 — Otomatik Sabah Cron + Skor Düşüşü Alarmı
 # ═════════════════════════════════════════════════════════════════════
+
+def _render_report_pdf(doc: dict) -> bytes:
+    """v44.00.37 — Rapor doc'undan PDF bytes üret (endpoint + cron ortak)."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    buf = io.BytesIO()
+    docp = SimpleDocTemplate(buf, pagesize=A4,
+                              leftMargin=2*cm, rightMargin=2*cm,
+                              topMargin=2*cm, bottomMargin=2*cm,
+                              title="GokyuzuWebSpam Health Report", author="GokyuzuWebSpam AI")
+    styles = getSampleStyleSheet()
+    if "H1TR" not in styles.byName:
+        styles.add(ParagraphStyle(name="H1TR", parent=styles["Heading1"],
+                                   textColor=colors.HexColor("#4f46e5"), spaceAfter=12, fontSize=16))
+        styles.add(ParagraphStyle(name="H2TR", parent=styles["Heading2"],
+                                   textColor=colors.HexColor("#6366f1"), spaceAfter=8, fontSize=13))
+        styles.add(ParagraphStyle(name="BodyTR", parent=styles["BodyText"],
+                                   fontSize=10, leading=14, spaceAfter=4))
+        styles.add(ParagraphStyle(name="MonoTR", parent=styles["Code"],
+                                   fontSize=8, textColor=colors.HexColor("#64748b")))
+    elements = []
+    elements.append(Paragraph("GokyuzuWebSpam - AI Sistem Saglik Raporu", styles["H1TR"]))
+    elements.append(Paragraph(
+        f"Olusturulma: {doc.get('generated_at', '')}<br/>Model: {doc.get('model')}<br/>"
+        f"Neden: {doc.get('reason', '-')}<br/>"
+        f"Saglik Skoru: <b>{doc.get('health_score') if doc.get('health_score') is not None else '-'} / 100</b>",
+        styles["MonoTR"]))
+    elements.append(Spacer(1, 12))
+    md = doc.get("report_markdown") or ""
+    for raw in md.split("\n"):
+        line = raw.rstrip()
+        if not line.strip(): elements.append(Spacer(1, 6)); continue
+        if line.startswith("# "):    elements.append(Paragraph(line[2:], styles["H1TR"]))
+        elif line.startswith("## "): elements.append(Paragraph(line[3:], styles["H2TR"]))
+        elif line.startswith("### "):elements.append(Paragraph(f"<b>{line[4:]}</b>", styles["BodyTR"]))
+        elif line.startswith("---"): elements.append(Spacer(1, 10))
+        elif line.lstrip().startswith(("- ", "* ", "• ")):
+            elements.append(Paragraph(f"• {_md_bold(line.lstrip()[2:])}", styles["BodyTR"]))
+        elif re.match(r"^\d+\.\s", line.lstrip()):
+            elements.append(Paragraph(_md_bold(line.lstrip()), styles["BodyTR"]))
+        else:
+            elements.append(Paragraph(_md_bold(line), styles["BodyTR"]))
+    docp.build(elements)
+    buf.seek(0)
+    return buf.getvalue()
+
 
 async def _daily_ai_analysis_task():
     """Her sabah 08:00 UTC AI raporu üret + önceki raporla skor karşılaştır.
@@ -368,6 +359,36 @@ async def _daily_ai_analysis_task():
                         )
                         log.info("ai analysis cron: score=%s prev=%s drop=%s report=%s",
                                  new_score, prev_score, drop, doc.get("id"))
+                        # v44.00.37 — PDF'i master admin'e mail at
+                        try:
+                            master_email = os.environ.get("MASTER_ADMIN_EMAIL") or ""
+                            if not master_email:
+                                # Fallback: settings.master_email
+                                s = await db.settings.find_one({"_key": "master_email"}, {"_id": 0}) or {}
+                                master_email = (s.get("email") or "").strip()
+                            if master_email and "@" in master_email:
+                                pdf_bytes = _render_report_pdf(doc)
+                                fname = f"gws-health-{doc.get('generated_at','')[:10]}.pdf"
+                                from server import _send_email
+                                score_line = f"Saglik Skoru: {new_score}/100"
+                                if drop and drop >= 15:
+                                    score_line += f" (onceki: {prev_score}, DUSUS: -{drop})"
+                                body = (
+                                    "Merhaba,\n\n"
+                                    "GokyuzuWebSpam gunluk otomatik AI saglik raporu ekli PDF'te.\n\n"
+                                    f"{score_line}\n\n"
+                                    "Detayli analiz icin panele giris yapin: Dashboard > AI Sistem Analizi.\n"
+                                )
+                                ok, info = await _send_email(
+                                    to_addr=master_email,
+                                    subject=f"[GWS Saglik] {new_score}/100 · {doc.get('generated_at','')[:10]}",
+                                    body=body,
+                                    attachments=[(fname, pdf_bytes, "application/pdf")],
+                                )
+                                log.info("ai analysis cron email: to=%s ok=%s info=%s",
+                                         master_email, ok, info)
+                        except Exception as em:
+                            log.warning("ai analysis cron email send failed: %s", em)
                     except Exception as ex:
                         log.warning("ai analysis cron failed: %s", ex)
         except Exception as ex:
@@ -381,12 +402,20 @@ async def _daily_ai_analysis_task():
 
 @router.get("/dmarc-verify")
 async def dmarc_verify(domain: str, request: Request, license_key: Optional[str] = None):
-    """v44.00.36 — Verilen domain için SPF, DKIM (default selector) ve DMARC TXT record'ları
-    canlı DNS'ten sorgular. Wizard'daki "DNS'i Şimdi Kontrol Et" butonu için."""
+    """v44.00.36 — SPF/DKIM/DMARC canlı DNS sorgu · v44.00.37: 60sn DB cache."""
     await _require_master(request, license_key)
     if not domain or "." not in domain:
         raise HTTPException(400, "Geçerli bir domain gir")
     domain = domain.lower().strip()
+
+    # v44.00.37 — 60sn DB cache
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+    cached = await db.dns_verify_cache.find_one(
+        {"domain": domain, "checked_at": {"$gt": cutoff}}, {"_id": 0},
+    )
+    if cached:
+        cached["from_cache"] = True
+        return cached
 
     def _query(fqdn: str) -> list[str]:
         try:
@@ -448,11 +477,20 @@ async def dmarc_verify(domain: str, request: Request, license_key: Optional[str]
     dkim = _analyze_dkim(dkim_res)
     ok = spf.get("present") and dmarc.get("present") and dkim.get("present")
 
-    return {
+    result = {
         "domain": domain,
         "checked_at": _iso(),
         "spf": spf,
         "dkim": dkim,
         "dmarc": dmarc,
         "all_ok": bool(ok),
+        "from_cache": False,
     }
+    # v44.00.37 — Persist cache (60sn TTL applied on read)
+    try:
+        await db.dns_verify_cache.update_one(
+            {"domain": domain}, {"$set": result}, upsert=True,
+        )
+    except Exception:
+        pass
+    return result
