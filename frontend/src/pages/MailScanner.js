@@ -336,6 +336,7 @@ function StatsTab() {
   const clean = s.verdicts?.clean || 0;
   const virus = s.virus_24h ?? ((s.verdicts?.virus || 0) + (s.verdicts?.phishing || 0));
   const phishing = s.phishing_24h ?? 0;
+  const countryBlocked = s.country_blocked_24h ?? (s.verdicts?.country_blocked || 0);
   const spamRate = totalScanned ? ((spam / totalScanned) * 100).toFixed(1) : "0.0";
   const bayesTrainedHam = bayes.data?.ham_samples || 0;
   const bayesTrainedSpam = bayes.data?.spam_samples || 0;
@@ -353,6 +354,8 @@ function StatsTab() {
         <MSKpi label="Temiz Teslim" value={clean} tone="text-emerald-300" icon="✓" sub="Kullanıcıya iletildi"/>
         <MSKpi label="Virüs/Phishing" value={virus + phishing} tone="text-rose-300" icon="☠"
                sub={phishing > 0 ? `${virus} virüs · ${phishing} phish` : `${virus} tespit`}/>
+        <MSKpi label="Ülke Engelli" value={countryBlocked} tone="text-pink-300" icon="🌐"
+               sub={(s.top_blocked_countries || []).slice(0,3).map(c => c.name || c.value).join(" · ") || "Engel yok"}/>
         <MSKpi label="Aktif Motor" value={`${activeEngines}/${totalEngines}`} tone="text-cyan-300" icon="⚙️"
                sub={Object.entries(enginesMap).filter(([,v])=>v).slice(0,3).map(([k])=>k).join(" · ") || "Motor yok"}/>
         <MSKpi label="Bayes Eğitilen" value={bayesTrainedHam + bayesTrainedSpam} tone="text-fuchsia-300" icon="🧠"
@@ -454,6 +457,25 @@ function StatsTab() {
           </CardBody>
         </Card>
       </div>
+
+      {/* v44.00.25 — Country-blocked breakdown */}
+      {(s.top_blocked_countries || []).length > 0 && (
+        <Card>
+          <CardHeader title={<span className="flex items-center gap-2">🌐 Ülke Bazlı Engellenenler</span>}
+                      subtitle={`${countryBlocked} mail engellendi · verdict=country_blocked`}/>
+          <CardBody>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {s.top_blocked_countries.map(c => (
+                <div key={c.value} className="bg-pink-500/5 border border-pink-500/20 rounded p-3">
+                  <div className="text-xs text-slate-400 mb-1">{c.name}</div>
+                  <div className="mono text-2xl text-pink-300">{c.count}</div>
+                  <div className="text-[10px] mono text-slate-500">{c.value}</div>
+                </div>
+              ))}
+            </div>
+          </CardBody>
+        </Card>
+      )}
 
       <Card>
         <CardHeader title="Motor Aktivitesi" subtitle="Her motorun bu pencerede kaç mail'e vurduğu · spam yakalama oranı · son vuruş"/>
@@ -1210,17 +1232,121 @@ function LearnTab() {
         </Card>
       </div>
       <div className="col-span-12">
+        <RulePerformanceCard/>
+      </div>
+      <div className="col-span-12">
         <div className="border border-indigo-500/20 bg-indigo-500/5 rounded-md p-3 text-xs">
           <div className="text-indigo-300 font-semibold flex items-center gap-1 mb-1"><Info className="w-3.5 h-3.5"/>Sistem-Genelinde Otomatik AI</div>
           <ul className="list-disc list-inside space-y-0.5 text-slate-400">
             <li>Her saat başı background job: son 1 saatteki high_spam/clean mailleri Bayes'e besler</li>
             <li>5+ spam örnek biriktiğinde Claude LLM yeni SA regex kuralı önerir (subject pattern)</li>
             <li><span className="text-cyan-300">🔎 Karantinayı Tara</span>: son 7 gün karantina kayıtlarından gönderen domain, TLD ve konu kelime kalıplarını yerel istatistikle çıkarır (LLM'siz, ücretsiz)</li>
+            <li><span className="text-pink-300">📉 Kural Performans Loop</span>: Onaylanan kuralların 7+ gün sonraki hit sayısı ölçülür → 0 hit → "kaldırma önerisi" oluşur (v44.00.25)</li>
             <li>Öneriler bu tab'da görünür — otomatik apply değil, sen onaylarsın (güvenlik)</li>
             <li>AI Batch Prewarm: yüksek riskli mailler için "Neden spam?" açıklaması ingest sırasında üretilip cache'lenir</li>
           </ul>
         </div>
       </div>
     </div>
+  );
+}
+
+// v44.00.25 — AI Rule Performance Loop UI
+function RulePerformanceCard() {
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: ["ms-rule-perf"],
+    queryFn: () => api.msRulePerfList(LICKEY()),
+  });
+  const scan = useMutation({
+    mutationFn: () => api.msRulePerfScan(LICKEY(), 7, 7),
+    onSuccess: (d) => {
+      toast.success(`📊 ${d.scanned} kural tarandı · ${d.zero_hit} sıfır hit · ${d.new_removal_suggestions} yeni kaldırma önerisi`);
+      qc.invalidateQueries({ queryKey: ["ms-rule-perf"] });
+      qc.invalidateQueries({ queryKey: ["ms-suggestions"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const remove = useMutation({
+    mutationFn: (ruleId) => api.msRuleRemove(LICKEY(), ruleId),
+    onSuccess: () => {
+      toast.success("Kural kaldırıldı");
+      qc.invalidateQueries({ queryKey: ["ms-rule-perf"] });
+      qc.invalidateQueries({ queryKey: ["ms-rules"] });
+    },
+  });
+  const [showAll, setShowAll] = useState(false);
+  const items = list.data?.items || [];
+  const zeroHit = items.filter(r => (r.hits_last_check || 0) === 0 && r.hits_last_check_at);
+  const visible = showAll ? items : zeroHit;
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-amber-400"/> Kural Performans Loop</span>}
+        subtitle={`Toplam ${list.data?.total || 0} aktif kural · ${list.data?.healthy || 0} sağlıklı · ${list.data?.zero_hit || 0} sıfır-hit`}
+        right={
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowAll(!showAll)} data-testid="rule-perf-toggle"
+                    className="text-[11px] px-2 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700">
+              {showAll ? "Sadece 0-hit göster" : "Tümünü göster"}
+            </button>
+            <button onClick={() => scan.mutate()} disabled={scan.isPending} data-testid="rule-perf-scan"
+                    className="text-xs px-2.5 py-1.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 disabled:opacity-40">
+              📊 {scan.isPending ? "Ölçülüyor…" : "7 Günü Ölç"}
+            </button>
+          </div>
+        }
+      />
+      <CardBody>
+        {list.isLoading ? (
+          <div className="text-slate-500 text-sm text-center py-4">Yükleniyor…</div>
+        ) : items.length === 0 ? (
+          <div className="text-slate-500 text-sm text-center py-6">Henüz onaylanmış kural yok — AI önerilerini onaylayınca burada takip edilecek.</div>
+        ) : visible.length === 0 ? (
+          <div className="text-emerald-400 text-sm text-center py-4">✓ Tüm kurallar aktif hit alıyor — 0-hit kural yok</div>
+        ) : (
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="text-[10px] uppercase text-slate-500">
+                <tr>
+                  <th className="text-left px-2 py-1.5">Kural</th>
+                  <th className="text-left px-2 py-1.5">Pattern</th>
+                  <th className="text-right px-2 py-1.5">Skor</th>
+                  <th className="text-right px-2 py-1.5">7g Hit</th>
+                  <th className="text-right px-2 py-1.5">Ölçüm</th>
+                  <th className="text-right px-2 py-1.5">İşlem</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {visible.map(r => {
+                  const zero = (r.hits_last_check || 0) === 0;
+                  return (
+                    <tr key={r.id} data-testid={`rule-perf-row-${r.id}`}
+                        className={zero ? "bg-rose-500/5" : "hover:bg-slate-800/40"}>
+                      <td className="px-2 py-1.5 text-slate-200 truncate max-w-[180px]" title={r.name}>{r.name}</td>
+                      <td className="px-2 py-1.5 mono text-slate-500 text-[10px] truncate max-w-[220px]" title={r.pattern}>{r.pattern}</td>
+                      <td className="px-2 py-1.5 text-right mono text-slate-300">{(r.score || 0).toFixed(1)}</td>
+                      <td className={`px-2 py-1.5 text-right mono ${zero ? "text-rose-300" : "text-emerald-300"}`}>{r.hits_last_check || 0}</td>
+                      <td className="px-2 py-1.5 text-right text-[10px] mono text-slate-600">
+                        {r.hits_last_check_at ? new Date(r.hits_last_check_at).toLocaleDateString("tr-TR") : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-right">
+                        {zero && (
+                          <button onClick={() => window.confirm(`"${r.name}" kaldırılsın mı?`) && remove.mutate(r.id)}
+                                  data-testid={`rule-perf-remove-${r.id}`}
+                                  className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30">
+                            Kaldır
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }

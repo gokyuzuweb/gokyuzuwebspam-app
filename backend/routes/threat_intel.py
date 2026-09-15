@@ -330,6 +330,65 @@ async def dmarc_summary(days: int = Query(30, ge=1, le=180)):
     return {"days": days, "domains": domains, "count": len(domains)}
 
 
+# v44.00.25 — DMARC Per-Domain Breakdown (kullanıcı: "domain başına breakdown göster")
+@router.get("/dmarc/domain/{domain}")
+async def dmarc_domain_detail(domain: str, days: int = Query(30, ge=1, le=365)):
+    """Verilen domain için son N günlük DMARC agregat rapor breakdown'ı:
+    - Reporting organization'lara göre kırılım (Google/Yahoo/Microsoft/Yandex vb.)
+    - En sık başarısız SPF/DKIM kaynak IP'leri
+    - Zamansal trend (günlük)
+    """
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    q = {"domain": domain.lower().strip(), "received_at": {"$gte": since}}
+    reports = await db.dmarc_reports.find(q, {"_id": 0}).sort("received_at", -1).to_list(500)
+    if not reports:
+        return {"domain": domain, "reports": [], "count": 0,
+                "note": "Bu domain için son {} gün rapor yok.".format(days)}
+    # Aggregate per-org
+    per_org: dict = {}
+    per_day: dict = {}
+    failing_ips: dict = {}
+    total = 0
+    total_pass = 0
+    for r in reports:
+        org = r.get("org_name", "unknown")
+        b = per_org.setdefault(org, {
+            "org": org, "reports": 0, "msgs": 0, "pass": 0, "fail": 0,
+        })
+        b["reports"] += 1
+        m = int(r.get("total_msgs", 0))
+        b["msgs"] += m
+        p = int(r.get("dmarc_pass", 0))
+        b["pass"] += p
+        b["fail"] += (m - p)
+        total += m
+        total_pass += p
+        # Günlük agregat
+        d = (r.get("date_range_begin") or r.get("received_at") or "")[:10]
+        if d:
+            dd = per_day.setdefault(d, {"date": d, "msgs": 0, "pass": 0, "fail": 0})
+            dd["msgs"] += m
+            dd["pass"] += p
+            dd["fail"] += (m - p)
+        # Başarısız kaynak IP'leri
+        for f in (r.get("failures") or []):
+            ip = f.get("source_ip") or f.get("ip")
+            if ip:
+                failing_ips.setdefault(ip, {"ip": ip, "count": 0})
+                failing_ips[ip]["count"] += 1
+    return {
+        "domain": domain,
+        "days": days,
+        "count": len(reports),
+        "total_msgs": total,
+        "dmarc_pass_pct": round(total_pass / max(1, total) * 100, 1),
+        "per_org": sorted(per_org.values(), key=lambda x: -x["msgs"]),
+        "per_day": sorted(per_day.values(), key=lambda x: x["date"]),
+        "failing_ips": sorted(failing_ips.values(), key=lambda x: -x["count"])[:10],
+        "reports": reports[:20],
+    }
+
+
 # ---------- 3) Global Blocklist Sync ----------
 GLOBAL_FEEDS = [
     {"key": "spamhaus_zen",  "name": "Spamhaus ZEN",       "url": "https://www.spamhaus.org/",     "interval_min": 30},

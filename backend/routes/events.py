@@ -766,7 +766,7 @@ async def _ioc_enforce(doc: dict) -> None:
     """Ingest sonrasi client_ip veya body url'lerini IOC listesiyle kontrol et.
     Eslesirse verdict'i override et."""
     try:
-        ip = doc.get("client_ip") or doc.get("server_ip")
+        ip = doc.get("client_ip") or doc.get("server_ip") or doc.get("sender_ip")
         if ip:
             ioc = await db.threat_iocs.find_one({"type": "ip", "value": ip}, {"_id": 0})
             if ioc:
@@ -780,6 +780,28 @@ async def _ioc_enforce(doc: dict) -> None:
                     }},
                 )
                 return
+            # v44.00.25 — GeoIP Country Block enforce
+            country = await _geoip_lookup_country(ip)
+            if country:
+                blk = await db.lists.find_one(
+                    {"entry_type": "country", "value": country},
+                    {"_id": 0, "value": 1, "country_name": 1, "note": 1},
+                )
+                if blk:
+                    await db.mail_events.update_one(
+                        {"id": doc["id"]},
+                        {"$set": {
+                            "verdict": "country_blocked",
+                            "action": "reject",
+                            "country_hit": {
+                                "code": country,
+                                "name": blk.get("country_name") or country,
+                                "ip": ip,
+                                "reason": blk.get("note") or "Ülke engelli",
+                            },
+                        }},
+                    )
+                    return
         import re
         urls = re.findall(r"https?://[^\s<>\"']+", (doc.get("body_preview") or "")[:2000])
         for url in urls[:20]:
@@ -797,6 +819,93 @@ async def _ioc_enforce(doc: dict) -> None:
                 return
     except Exception:
         return
+
+
+# v44.00.25 — GeoIP helper: MaxMind mmdb + ip-api.com fallback + Mongo cache (30d)
+_GEOIP_MMDB_CACHE = {"path": None, "reader": None, "checked": False}
+
+
+async def _geoip_lookup_country(ip: str) -> str | None:
+    """IP → ISO-3166 alpha-2 country code. Sıralı deneme:
+    1. Mongo cache (geoip_cache koleksiyonu, 30 gün TTL)
+    2. MaxMind GeoLite2-Country.mmdb (yerel, hızlı, offline)
+    3. ip-api.com free API (rate limit 45/dk, cache'lenir)
+    Sonucu her durumda geoip_cache'e yazar."""
+    if not ip:
+        return None
+    # skip private / local ranges — anlamlı değil
+    if ip.startswith(("10.", "127.", "192.168.", "169.254.", "172.16.", "172.17.",
+                       "172.18.", "172.19.", "172.20.", "172.21.", "172.22.",
+                       "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
+                       "172.28.", "172.29.", "172.30.", "172.31.", "::1")):
+        return None
+    # 1. Mongo cache
+    try:
+        cached = await db.geoip_cache.find_one({"ip": ip}, {"_id": 0, "cc": 1, "ts": 1})
+        if cached and cached.get("cc"):
+            # 30 gün TTL
+            try:
+                cts = cached["ts"]
+                if isinstance(cts, str):
+                    cts_dt = datetime.fromisoformat(cts.replace("Z", "+00:00"))
+                    if cts_dt.tzinfo is None:
+                        cts_dt = cts_dt.replace(tzinfo=timezone.utc)
+                    age = (datetime.now(timezone.utc) - cts_dt).days
+                    if age < 30:
+                        return cached["cc"]
+            except Exception:
+                # tarih format hatası → cache invalid, devam et
+                pass
+    except Exception:
+        pass
+    # 2. MaxMind mmdb
+    cc = None
+    try:
+        if not _GEOIP_MMDB_CACHE["checked"]:
+            _GEOIP_MMDB_CACHE["checked"] = True
+            import os as _os
+            for p in ("/usr/share/GeoIP/GeoLite2-Country.mmdb",
+                       "/var/lib/GeoIP/GeoLite2-Country.mmdb",
+                       "/opt/geoip/GeoLite2-Country.mmdb"):
+                if _os.path.exists(p):
+                    try:
+                        import geoip2.database  # type: ignore
+                        _GEOIP_MMDB_CACHE["reader"] = geoip2.database.Reader(p)
+                        _GEOIP_MMDB_CACHE["path"] = p
+                        break
+                    except Exception:
+                        pass
+        if _GEOIP_MMDB_CACHE["reader"]:
+            try:
+                resp = _GEOIP_MMDB_CACHE["reader"].country(ip)
+                cc = (resp.country.iso_code or "").upper() or None
+            except Exception:
+                cc = None
+    except Exception:
+        cc = None
+    # 3. ip-api.com fallback
+    if not cc:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=3) as c:
+                r = await c.get(f"http://ip-api.com/json/{ip}?fields=countryCode,status")
+                if r.status_code == 200:
+                    data = r.json()
+                    if data.get("status") == "success":
+                        cc = (data.get("countryCode") or "").upper() or None
+        except Exception:
+            cc = None
+    # Cache et (başarısız da olsa 24 saat cache'le → aynı IP'yi 45/dk limitte tekrar denememek için)
+    try:
+        await db.geoip_cache.update_one(
+            {"ip": ip},
+            {"$set": {"ip": ip, "cc": cc, "ts": datetime.now(timezone.utc).isoformat(),
+                      "source": "mmdb" if _GEOIP_MMDB_CACHE["reader"] else ("ip-api" if cc else "none")}},
+            upsert=True,
+        )
+    except Exception:
+        pass
+    return cc
 
 
 async def _ai_prewarm(doc: dict) -> None:

@@ -205,6 +205,7 @@ async def stats(license_key: str = Query(..., min_length=8), hours: int = 24):
 
     virus_24h    = int((verdicts.get("virus") or 0))
     phishing_24h = int((verdicts.get("phishing") or 0))
+    country_blocked_24h = int((verdicts.get("country_blocked") or 0))
     # Yaygın hata: virus ClamAV verdict'ini "virus" atmıyorsa reasons/scores'a bak.
     if virus_24h == 0:
         virus_24h = await db.mail_events.count_documents({**q, "$or": [
@@ -212,18 +213,34 @@ async def stats(license_key: str = Query(..., min_length=8), hours: int = 24):
             {"scores.clamav": {"$exists": True, "$gt": 0}},
         ]})
 
+    # v44.00.25 — Country-blocked top ülke breakdown
+    top_blocked_countries = []
+    async for r in db.mail_events.aggregate([
+        {"$match": {**q, "verdict": "country_blocked"}},
+        {"$group": {"_id": "$country_hit.code", "count": {"$sum": 1},
+                    "name": {"$first": "$country_hit.name"}}},
+        {"$sort": {"count": -1}}, {"$limit": 8},
+    ]):
+        if r["_id"]:
+            top_blocked_countries.append({
+                "value": r["_id"], "count": r["count"],
+                "name": r.get("name") or r["_id"],
+            })
+
     return {
         "hours": hours, "total_scanned": total,
         "verdicts": verdicts, "score_histogram": hist,
         "engines": engines,
-        # v44.00.24 zenginleştirmeler:
+        # v44.00.24+25 zenginleştirmeler:
         "hourly_trend": hourly,
         "top_senders": top_senders,
         "top_recipients": top_recipients,
         "top_sender_domains": top_sender_domains,
+        "top_blocked_countries": top_blocked_countries,
         "actions": actions,
         "virus_24h": virus_24h,
         "phishing_24h": phishing_24h,
+        "country_blocked_24h": country_blocked_24h,
         "generated_at": _iso(),
     }
 
@@ -887,11 +904,132 @@ async def apply_suggestion(suggestion_id: str, license_key: str = Query(..., min
         "score": doc["score"], "enabled": True,
         "description": f"[AI] {doc.get('description', '')}",
         "updated_at": _iso(), "created_at": _iso(),
+        # v44.00.25 — perf loop tracking
+        "applied_from_suggestion": suggestion_id,
+        "hits_last_check": 0,
+        "hits_last_check_at": None,
     }
     await db.mailscanner_rules.insert_one(dict(rule))
     await db.mailscanner_rule_suggestions.update_one(
-        {"id": suggestion_id}, {"$set": {"applied": True, "applied_at": _iso()}})
+        {"id": suggestion_id}, {"$set": {"applied": True, "applied_at": _iso(), "promoted_rule_id": rule["id"]}})
     return {"ok": True, "rule": rule}
+
+
+# v44.00.25 — AI Rule Improvement Loop: onaylanan kuralların 7 gün sonraki hit sayısı 0 ise
+# "removal_suggestion" olarak işaretlenir ve kullanıcıya kaldırma önerisi gösterilir.
+@router.post("/ai/rule-performance/scan")
+async def scan_rule_performance(license_key: str = Query(..., min_length=8),
+                                  min_age_days: int = Query(7, ge=1, le=90),
+                                  window_days: int = Query(7, ge=1, le=30)):
+    """Onaylanan kuralların hit sayısını ölçer. 0 hit olan >min_age_days yaşlı kurallar
+    için otomatik "removal_suggestion" oluşturur."""
+    import re as _re
+    since = (datetime.now(timezone.utc) - timedelta(days=min_age_days)).isoformat()
+    window_since = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+
+    rules = await db.mailscanner_rules.find({
+        "license_key": license_key,
+        "created_at": {"$lt": since},
+        "enabled": True,
+    }, {"_id": 0}).to_list(500)
+
+    scanned = 0
+    zero_hit = 0
+    removed_suggested = 0
+    healthy = 0
+    perf_report = []
+
+    for r in rules:
+        scanned += 1
+        pat = r.get("pattern") or ""
+        target = r.get("target") or "subject"
+        # Regex olarak mail_events içinde ara — target'a göre alan seç
+        field_map = {
+            "subject": "subject", "from": "from_addr", "sender": "from_addr",
+            "to": "to_addr", "body": "body_preview", "header": "headers_full",
+        }
+        field = field_map.get(target, "subject")
+        # Regex'i güvenli test et
+        try:
+            _re.compile(pat)
+        except Exception:
+            continue
+        hits = await db.mail_events.count_documents({
+            "license_key": license_key,
+            "ingested_at": {"$gte": window_since},
+            field: {"$regex": pat, "$options": "i"},
+        })
+        await db.mailscanner_rules.update_one(
+            {"id": r["id"]},
+            {"$set": {"hits_last_check": hits, "hits_last_check_at": _iso(),
+                      "hits_window_days": window_days}},
+        )
+        perf_report.append({
+            "rule_id": r["id"], "name": r["name"], "pattern": pat[:50],
+            "target": target, "hits": hits, "score": r.get("score", 0),
+        })
+        if hits == 0:
+            zero_hit += 1
+            # Halihazırda removal_suggestion var mı kontrol et
+            existing = await db.mailscanner_rule_suggestions.find_one({
+                "license_key": license_key,
+                "source": "removal_suggestion",
+                "target_rule_id": r["id"],
+            })
+            if not existing:
+                await db.mailscanner_rule_suggestions.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "license_key": license_key,
+                    "name": f"REMOVAL: {r['name']}",
+                    "pattern": pat, "target": target, "score": r.get("score", 0),
+                    "description": (f"Bu kural {min_age_days}+ gündür aktif ama son "
+                                    f"{window_days} günde 0 mail'e vurmadı — kaldırmayı düşünün."),
+                    "source": "removal_suggestion",
+                    "sub_source": "zero_hit",
+                    "target_rule_id": r["id"],
+                    "hit_count": 0,
+                    "days": window_days,
+                    "applied": False,
+                    "created_at": _iso(),
+                })
+                removed_suggested += 1
+        else:
+            healthy += 1
+
+    return {
+        "ok": True, "scanned": scanned, "healthy": healthy,
+        "zero_hit": zero_hit, "new_removal_suggestions": removed_suggested,
+        "window_days": window_days, "min_age_days": min_age_days,
+        "top_performers": sorted(perf_report, key=lambda x: -x["hits"])[:10],
+        "zero_performers": [p for p in perf_report if p["hits"] == 0][:20],
+    }
+
+
+@router.get("/ai/rule-performance")
+async def rule_performance_list(license_key: str = Query(..., min_length=8)):
+    """Onaylanan kuralların son ölçüm sonuçlarını döner (dashboard için)."""
+    rows = await db.mailscanner_rules.find(
+        {"license_key": license_key, "enabled": True},
+        {"_id": 0, "id": 1, "name": 1, "pattern": 1, "target": 1, "score": 1,
+         "created_at": 1, "hits_last_check": 1, "hits_last_check_at": 1,
+         "hits_window_days": 1, "applied_from_suggestion": 1},
+    ).sort("hits_last_check", -1).to_list(500)
+    total = len(rows)
+    healthy = sum(1 for r in rows if (r.get("hits_last_check") or 0) > 0)
+    return {"items": rows, "total": total, "healthy": healthy,
+            "zero_hit": total - healthy}
+
+
+@router.post("/ai/rule-performance/remove/{rule_id}")
+async def confirm_rule_removal(rule_id: str, license_key: str = Query(..., min_length=8)):
+    """Removal öneri onaylandı — kuralı sil + öneriyi kapat."""
+    r = await db.mailscanner_rules.delete_one({"id": rule_id, "license_key": license_key})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Kural bulunamadı")
+    await db.mailscanner_rule_suggestions.delete_many({
+        "target_rule_id": rule_id, "license_key": license_key,
+    })
+    return {"ok": True, "removed_rule": rule_id}
 
 
 @router.post("/ai/self-train/reject/{suggestion_id}")

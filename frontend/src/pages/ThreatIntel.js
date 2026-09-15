@@ -7,6 +7,9 @@ import {
   Globe, Radar, ShieldCheck, FileCheck2, RefreshCw, Plus, X, Zap,
   AlertTriangle, TrendingUp, Award, ChevronDown, ChevronRight, Mail,
 } from "lucide-react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from "recharts";
 import ModuleFooter from "@/components/ModuleFooter";
 
 export default function ThreatIntel() {
@@ -275,6 +278,7 @@ function DmarcTab() {
     onError: (e) => toast.error(e?.response?.data?.detail || e.message),
   });
   const domains = q.data?.domains || [];
+  const [drillDomain, setDrillDomain] = useState(null);
   return (
     <Card>
       <CardHeader
@@ -316,8 +320,12 @@ function DmarcTab() {
             </thead>
             <tbody className="divide-y divide-slate-800">
               {domains.map(d => (
-                <tr key={d.domain} data-testid={`dmarc-row-${d.domain}`} className="hover:bg-slate-800/40">
-                  <td className="px-3 py-2 mono text-slate-100">{d.domain}</td>
+                <tr key={d.domain} data-testid={`dmarc-row-${d.domain}`}
+                    onClick={() => setDrillDomain(d.domain)}
+                    className="hover:bg-indigo-500/10 cursor-pointer transition-colors">
+                  <td className="px-3 py-2 mono text-slate-100">
+                    <span className="text-indigo-400 mr-1">▸</span>{d.domain}
+                  </td>
                   <td className="px-3 py-2 text-right mono">{d.reports}</td>
                   <td className="px-3 py-2 text-right mono text-slate-300">{d.total_msgs.toLocaleString()}</td>
                   <td className={`px-3 py-2 text-right mono ${d.spf_pct >= 90 ? "text-emerald-300" : "text-amber-300"}`}>%{d.spf_pct}</td>
@@ -329,7 +337,131 @@ function DmarcTab() {
           </table>
         )}
       </CardBody>
+      {/* v44.00.25 — DMARC Domain Detail Drawer */}
+      {drillDomain && <DmarcDomainDrill domain={drillDomain} onClose={() => setDrillDomain(null)} />}
     </Card>
+  );
+}
+
+// v44.00.25 — DMARC per-domain breakdown drawer
+function DmarcDomainDrill({ domain, onClose }) {
+  const q = useQuery({
+    queryKey: ["dmarc-domain", domain],
+    queryFn: () => client.get(`/threat-intel/dmarc/domain/${domain}?days=180`).then(r => r.data),
+    enabled: !!domain,
+  });
+  const d = q.data;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+         onClick={onClose} data-testid="dmarc-drill">
+      <div className="bg-slate-950 border border-slate-800 rounded-lg max-w-4xl w-full max-h-[85vh] overflow-y-auto"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-950">
+          <div>
+            <h3 className="text-lg font-bold text-slate-100 mono">{domain}</h3>
+            <p className="text-xs text-slate-500 mt-0.5">Son 180 gün DMARC breakdown</p>
+          </div>
+          <button onClick={onClose} data-testid="dmarc-drill-close"
+                  className="p-2 rounded hover:bg-slate-800 text-slate-400"><X className="w-4 h-4"/></button>
+        </div>
+        {q.isLoading ? (
+          <div className="p-10 text-center text-slate-500 text-sm">Yükleniyor…</div>
+        ) : !d || d.count === 0 ? (
+          <div className="p-10 text-center text-slate-500 text-sm">Bu domain için rapor yok</div>
+        ) : (
+          <div className="p-4 space-y-4">
+            {/* Summary */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-slate-900 border border-slate-800 rounded p-3">
+                <div className="text-[10px] uppercase text-slate-500">Rapor Sayısı</div>
+                <div className="mono text-2xl text-slate-100">{d.count}</div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded p-3">
+                <div className="text-[10px] uppercase text-slate-500">Toplam Mail</div>
+                <div className="mono text-2xl text-slate-100">{d.total_msgs.toLocaleString()}</div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded p-3">
+                <div className="text-[10px] uppercase text-slate-500">DMARC Pass</div>
+                <div className={`mono text-2xl ${d.dmarc_pass_pct >= 90 ? "text-emerald-300" : d.dmarc_pass_pct >= 70 ? "text-amber-300" : "text-rose-300"}`}>
+                  %{d.dmarc_pass_pct}
+                </div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded p-3">
+                <div className="text-[10px] uppercase text-slate-500">Org Sayısı</div>
+                <div className="mono text-2xl text-slate-100">{d.per_org?.length || 0}</div>
+              </div>
+            </div>
+
+            {/* Reporting Orgs */}
+            <div>
+              <h4 className="text-sm font-semibold text-indigo-300 mb-2">Reporting Organizations</h4>
+              <table className="w-full text-sm">
+                <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-800">
+                  <tr>
+                    <th className="text-left py-2 pr-2">ISP / Org</th>
+                    <th className="text-right py-2 pr-2">Rapor</th>
+                    <th className="text-right py-2 pr-2">Mesaj</th>
+                    <th className="text-right py-2 pr-2">Pass</th>
+                    <th className="text-right py-2 pr-2">Fail</th>
+                    <th className="text-right py-2 pr-2">Oran</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {(d.per_org || []).map((o) => {
+                    const pct = o.msgs > 0 ? Math.round((o.pass / o.msgs) * 100) : 0;
+                    return (
+                      <tr key={o.org} className="hover:bg-slate-900/40">
+                        <td className="py-2 pr-2 text-slate-200">{o.org}</td>
+                        <td className="py-2 pr-2 text-right mono text-slate-300">{o.reports}</td>
+                        <td className="py-2 pr-2 text-right mono text-slate-300">{o.msgs.toLocaleString()}</td>
+                        <td className="py-2 pr-2 text-right mono text-emerald-300">{o.pass.toLocaleString()}</td>
+                        <td className="py-2 pr-2 text-right mono text-rose-300">{o.fail.toLocaleString()}</td>
+                        <td className={`py-2 pr-2 text-right mono ${pct >= 90 ? "text-emerald-300" : pct >= 70 ? "text-amber-300" : "text-rose-300"}`}>%{pct}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Daily Trend */}
+            {(d.per_day || []).length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-indigo-300 mb-2">Günlük Trend</h4>
+                <div className="h-40">
+                  <ResponsiveContainer>
+                    <LineChart data={d.per_day}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false}/>
+                      <XAxis dataKey="date" stroke="#475569" tick={{ fontSize: 10 }}/>
+                      <YAxis stroke="#475569" tick={{ fontSize: 10 }}/>
+                      <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 6, fontSize: 11 }}/>
+                      <Legend wrapperStyle={{ fontSize: 10 }}/>
+                      <Line type="monotone" dataKey="pass" stroke="#10b981" strokeWidth={2} dot={false} name="Pass"/>
+                      <Line type="monotone" dataKey="fail" stroke="#f43f5e" strokeWidth={2} dot={false} name="Fail"/>
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {/* Failing IPs */}
+            {(d.failing_ips || []).length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-rose-300 mb-2">En Sık Başarısız Kaynak IP'ler</h4>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {d.failing_ips.map((f) => (
+                    <div key={f.ip} className="bg-slate-900 border border-rose-500/20 rounded p-2 text-xs mono flex items-center justify-between">
+                      <span className="text-slate-200">{f.ip}</span>
+                      <span className="text-rose-300 font-bold">{f.count}×</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

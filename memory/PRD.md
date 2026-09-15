@@ -14,6 +14,50 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 25, v44.00.25) — 3 Advanced Pack: DMARC Drill + GeoIP Enforce + Rule Perf Loop ✅
+
+### 🎯 (1) DMARC Doğrulama + Per-Domain Breakdown UI
+- **Backend `GET /api/threat-intel/dmarc/domain/{domain}`** (v44.00.25): Belirli domain için son N gün DMARC breakdown — reporting organizations (Google/Yahoo/Microsoft/Yandex/Proofpoint), günlük trend (per_day), en sık başarısız kaynak IP'ler (failing_ips)
+- **Frontend `DmarcDomainDrill` modal**: DMARC tablosunda domain satırına tıklanınca full-screen drawer açılır → 4 KPI (rapor sayısı, toplam mesaj, DMARC pass %, org sayısı) + Org tablosu (pass/fail/oran) + Günlük Trend LineChart + Failing IPs grid
+- **`mailshield-dmarc-fetch` test**: Mock XML.gz + multipart mail dosyası ile pytest'te dry-run doğrulandı — script 1 domain'de 1 raporu parse edip 100 mesajı doğru saydı. Bayide gerçek `--license MS-XXX` ile çalıştırıldığında `POST /api/threat-intel/dmarc/ingest`e push edecek.
+
+### 🎯 (2) GeoIP Country Block Motor Enforce
+- **Backend `_geoip_lookup_country(ip)` helper** (`routes/events.py`): 3-katmanlı çözünürlük — (1) Mongo `geoip_cache` (30 gün TTL), (2) MaxMind `GeoLite2-Country.mmdb` (offline, hızlı; `/usr/share/GeoIP/` + fallback path'ler), (3) `ip-api.com` free API (3s timeout, 45/dk rate). Sonuç her durumda cache'lenir (başarısız da → 24h "none" cache ile rate limit'i korur).
+- **`_ioc_enforce` hook** genişletildi: IOC IP eşleşmesi yoksa GeoIP lookup → `lists` koleksiyonunda `entry_type=country, value=ISO` eşleşmesi varsa `verdict=country_blocked`, `action=reject`, `country_hit={code, name, ip, reason}` kaydedilir.
+- **Private/Local IP skip**: 10.x, 127.x, 192.168.x, 172.16-31.x, 169.254.x, ::1 → GeoIP lookup atlanır.
+- **MailScanner `/stats`** eklendi:
+  - `country_blocked_24h` — verdict sayacı
+  - `top_blocked_countries` — top 8 (ISO code + name + count)
+- **Frontend MailScanner İstatistik**:
+  - Yeni KPI kartı: **🌐 Ülke Engelli** (top 3 ülke ismi subtitle'da)
+  - **Ülke Bazlı Engellenenler** panel — grid halinde her ülke için count kartı
+
+### 🎯 (3) AI Kural İyileştirme Loop (Rule Performance Loop)
+- **Backend `POST /api/mailscanner/ai/rule-performance/scan`** (v44.00.25): >7 gün önce onaylanmış `enabled=true` kurallar için son 7 günlük hit sayısı ölçülür (regex `mail_events.{field}` üzerinde). 0-hit kurallar için otomatik `mailscanner_rule_suggestions` içinde `source=removal_suggestion, sub_source=zero_hit, target_rule_id=...` kayıt oluşturulur. Zaten var olan removal_suggestion tekrar oluşmaz (idempotent).
+- **`GET /api/mailscanner/ai/rule-performance`** — tüm aktif kurallar + son ölçüm sonuçları
+- **`POST /api/mailscanner/ai/rule-performance/remove/{rule_id}`** — kaldırma önerisini onayla → kuralı sil + tüm ilgili öneriyi kapat
+- **`apply_suggestion`** güncellendi: yeni kural artık `applied_from_suggestion`, `hits_last_check`, `hits_last_check_at` alanlarını da tutar (perf tracking)
+- **Frontend `RulePerformanceCard`** (AI Öğrenme sekmesi altına):
+  - Header'da toplam / sağlıklı / sıfır-hit sayaçları
+  - "📊 7 Günü Ölç" butonu → scan endpoint'i çağrılır
+  - "Sadece 0-hit göster" / "Tümünü göster" toggle
+  - Tablo: kural adı, pattern, skor, 7g hit, ölçüm tarihi, "Kaldır" butonu (0-hit satırlarda)
+  - Zero-hit satırları rose background ile vurgulu
+
+### 📊 Test Coverage
+- `test_v44_00_25_dmarc_geoip_ruleloop.py`: 9/9 ✅
+  - dmarc/domain route + per_org/per_day/failing_ips
+  - GeoIP helper + country_blocked verdict
+  - Rule performance endpoints (scan/list/remove)
+  - Frontend DMARC drill + rule perf UI
+  - `mailshield-dmarc-fetch` mock XML dry-run
+  - Integration: DMARC domain detail + rule perf scan flow
+
+### 📦 Version Bump
+`v44.00.24` → `v44.00.25`
+
+
+
 ## Feb 15, 2026 (Session 25, v44.00.23 + v44.00.24) — 4 Modernizasyon Paketi ✅
 
 ### 🎯 (1) v44.00.23 — Tehdit Göstergeleri (IOC) → Mail Correlation

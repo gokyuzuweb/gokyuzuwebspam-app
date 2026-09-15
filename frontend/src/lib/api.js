@@ -781,6 +781,15 @@ export const api = {
   // v44.00.07 — Manuel inactive-cleanup tetikleme (master)
   deactivateInactiveResellers: () => client.post("/master/deactivate-inactive-resellers").then(r => r.data),
   msWeeklyReport: () => client.post("/mailscanner/ai/quarantine-recommend/weekly-report").then(r => r.data),
+  // v44.00.25 — AI Rule Performance Loop + DMARC domain drill
+  msRulePerfScan: (licenseKey, minAgeDays = 7, windowDays = 7) =>
+    client.post(`/mailscanner/ai/rule-performance/scan?license_key=${encodeURIComponent(licenseKey)}&min_age_days=${minAgeDays}&window_days=${windowDays}`).then(r => r.data),
+  msRulePerfList: (licenseKey) =>
+    client.get(`/mailscanner/ai/rule-performance?license_key=${encodeURIComponent(licenseKey)}`).then(r => r.data),
+  msRuleRemove: (licenseKey, ruleId) =>
+    client.post(`/mailscanner/ai/rule-performance/remove/${ruleId}?license_key=${encodeURIComponent(licenseKey)}`).then(r => r.data),
+  tiDmarcDomain: (domain, days = 180) =>
+    client.get(`/threat-intel/dmarc/domain/${encodeURIComponent(domain)}?days=${days}`).then(r => r.data),
   // v43.42 — Marketplace leaderboard
   mpLeaderboard: (period = "week") => client.get("/marketplace/leaderboard", { params: { period } }).then(r => r.data),
   // v43.42 — Live diagnostic
