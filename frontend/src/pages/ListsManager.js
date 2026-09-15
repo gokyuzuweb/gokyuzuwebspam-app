@@ -183,6 +183,7 @@ function HistoryPane() {
 }
 
 export default function ListsManager() {
+  // v44.00.22 — cache-buster bump (force frontend rebuild)
   const [tab, setTab] = useState("all");    // all | whitelist | blacklist | history
   const [entry_type, setEntryType] = useState("");
   const [q, setQ] = useState("");
