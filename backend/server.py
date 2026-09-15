@@ -744,6 +744,7 @@ async def _startup() -> None:
     asyncio.create_task(_daily_usom_fetch_task())  # v44.00.22 — günlük USOM fetch
     asyncio.create_task(_daily_ai_rule_performance_task())  # v44.00.26 — günlük AI kural perf ölçümü + auto-disable
     asyncio.create_task(_daily_dmarc_attack_alarm_task())   # v44.00.26 — %70+ DMARC fail → saldırı alarmı
+    asyncio.create_task(_hourly_feed_health_check_task())   # v44.00.31 — feed 24s+ error → notif
     asyncio.create_task(_pos_health_monitor_task())
     asyncio.create_task(_daily_violations_cleanup_task())
     asyncio.create_task(_threat_ratio_monitor_task())
@@ -1536,6 +1537,54 @@ async def _daily_dmarc_attack_alarm_task():
         await asyncio.sleep(3600)
 
 
+# v44.00.31 — Feed Health Alerting
+async def _hourly_feed_health_check_task():
+    """Her saat başı: 24+ saattir 'error' status'ta olan feed'ler için notifications_inbox'a alarm oluştur."""
+    await asyncio.sleep(1200)
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            threshold = (now - timedelta(hours=24)).isoformat()
+            alarmed = 0
+            async for feed in db.threat_intel_feeds.find(
+                {"last_sync_status": "error", "last_sync_at": {"$lt": threshold}},
+                {"_id": 0}
+            ):
+                key = feed.get("key")
+                if not key:
+                    continue
+                cool = await db.notifications_inbox.find_one({
+                    "kind": "feed_health",
+                    "meta.feed_key": key,
+                    "created_at": {"$gte": (now - timedelta(hours=24)).isoformat()},
+                })
+                if cool:
+                    continue
+                err = feed.get("last_error") or "Bilinmeyen hata"
+                last = feed.get("last_sync_at") or "-"
+                doc = {
+                    "id": str(uuid.uuid4()),
+                    "kind": "feed_health",
+                    "subject": f"[FEED HATASI] {key} · 24+ saattir hata veriyor",
+                    "body": (f"Global Threat Intelligence Feed '{key}' 24 saatten fazla süredir hata veriyor.\n\n"
+                             f"Son Sync: {last}\nHata: {err}\n\n"
+                             "ÖNERİLEN AKSIYON:\n"
+                             "  1. Threat Intel > Global Feeds sayfasında 'Şimdi Senkronize Et' butonuna basın\n"
+                             "  2. Sunucudan bu feed'in DNS/HTTP erişimini kontrol edin\n"
+                             "  3. Sorun devam ederse feed'i Custom Feeds'ten geçici olarak kaldırın"),
+                    "meta": {"feed_key": key, "last_sync_at": last, "error": err[:200]},
+                    "license_key": None,
+                    "read": False,
+                    "severity": "medium",
+                    "created_at": now.isoformat(),
+                }
+                await db.notifications_inbox.insert_one(doc)
+                alarmed += 1
+            if alarmed:
+                log.info("feed health cron: %d feed alarms created", alarmed)
+        except Exception as ex:
+            log.warning("feed health cron error: %s", ex)
+        await asyncio.sleep(3600)
 
 
 
@@ -4848,7 +4897,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.30"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.31"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -13923,6 +13972,8 @@ _DEMO_ALLOW_PREFIXES = (
     "/api/notifications/badge",   # v43.12 client achievement unlock notification
     "/api/pin-approvals/request", # v43.90 bayi PIN change request (per-bayi guard'lı)
     "/api/pin-approvals/my",      # v43.90 bayi kendi taleplerini görür
+    "/api/threat-intel/plugin/",  # v44.00.31 bayi cPanel plugin push (hosted-domains vb. license_key ile doğrulanır)
+    "/api/threat-intel/dmarc/ingest", # v44.00.22 bayi cPanel DMARC agregat rapor push
 )
 
 

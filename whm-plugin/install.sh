@@ -401,6 +401,21 @@ if [[ $DRY_RUN -eq 0 ]]; then
   fi
 fi
 
+# v44.00.31 — Hosted Domains Push (cPanel /etc/userdomains → Master)
+# Master DMARC dashboard için gerçek hosted domain listesini push eder.
+# Heuristik fallback yerine bu script'in çıktısı kullanılır.
+if [[ $DRY_RUN -eq 0 ]]; then
+  install -m 0755 "$SRC/scripts/mailshield-domains-push" "$INSTALL_DIR/bin/mailshield-domains-push"
+  if [[ -n "$LICENSE_KEY" ]]; then
+    systemctl enable --now mailshield-domains-push.timer 2>/dev/null || true
+    # İlk push'u ANINDA tetikle — master hemen gerçek liste alsın (heuristic'ten kurtul)
+    systemctl start mailshield-domains-push.service 2>/dev/null || \
+      "$INSTALL_DIR/bin/mailshield-domains-push" >/dev/null 2>&1 || true
+    echo "    ✓ Hosted domains push timer aktif (her 24 saatte bir /etc/userdomains → Master)"
+  fi
+fi
+
+
 echo "==> Exim push timer kurulumu (5 dk'da bir master'a mail metriği push eder)"
 # v44.00.11 — Bağımsız heartbeat script dosyası. Systemd ExecStart içinde
 # karmaşık bash escape'i yerine ayrı bir .sh çağırmak daha güvenli (systemd
@@ -691,10 +706,12 @@ cat <<EOF
     · Kullanıcılar: cPanel > Email > GokyuzuWebSpam MailControl
 
   Otomatik kurulan servisler:
-    · gws-simple-push.timer      → heartbeat (her 5 dk)
-    · gws-exim-push.timer        → outbound log push (her 15 sn)
-    · gws-exim-inotify.service   → real-time push (inotify varsa)
-    · gwsm-auto-update.timer     → günlük otomatik güncelleme
+    · gws-simple-push.timer          → heartbeat (her 5 dk)
+    · gws-exim-push.timer            → outbound log push (her 15 sn)
+    · gws-exim-inotify.service       → real-time push (inotify varsa)
+    · mailshield-dmarc-fetch.timer   → DMARC agregat rapor çekici (6 saatte bir)
+    · mailshield-domains-push.timer  → hosted domain listesi push (24 saatte bir)
+    · gwsm-auto-update.timer         → günlük otomatik güncelleme
 
   Milter'ı etkinleştirmek İSTERSENİZ (opt-in):
     systemctl enable --now mailshield-milter.service

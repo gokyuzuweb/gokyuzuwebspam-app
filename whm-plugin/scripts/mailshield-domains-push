@@ -1,0 +1,67 @@
+#!/usr/bin/env perl
+# v44.00.31 — GökyüzüWebSpam Hosted Domains Push
+# ================================================
+# /etc/userdomains içindeki gerçek hosted domain listesini
+# Master'a POST /api/threat-intel/plugin/hosted-domains ile push eder.
+#
+# Kullanım:
+#   /usr/local/gokyuzuwebspam/scripts/mailshield-domains-push
+#
+# Systemd timer (günde 1):
+#   /etc/systemd/system/mailshield-domains-push.timer
+#
+use strict;
+use warnings;
+use JSON::PP;
+use LWP::UserAgent;
+
+my $conf_file = "/etc/mailshield/mailshield.conf";
+my ($license, $server_url);
+if (open my $fh, '<', $conf_file) {
+    while (my $line = <$fh>) {
+        if ($line =~ /^\s*key\s*=\s*(\S+)/)         { $license = $1; }
+        elsif ($line =~ /^\s*server_url\s*=\s*(\S+)/) { $server_url = $1; }
+    }
+    close $fh;
+}
+die "License veya server_url tanımlanmamış ($conf_file)\n"
+    unless $license && $server_url;
+
+# /etc/userdomains formatı: "example.com: user1\nsub.example.com: user1\n..."
+my @domains;
+if (open my $ud, '<', '/etc/userdomains') {
+    while (my $line = <$ud>) {
+        chomp $line;
+        if ($line =~ /^([\w\.\-]+)\s*:/) {
+            push @domains, lc($1);
+        }
+    }
+    close $ud;
+} else {
+    die "/etc/userdomains okunamıyor: $!\n";
+}
+
+# Dedupe
+my %seen; @domains = grep { !$seen{$_}++ } @domains;
+
+print STDERR "[hosted-domains-push] " . scalar(@domains) . " domain tespit edildi\n";
+
+my $ua = LWP::UserAgent->new(timeout => 30);
+my $body = encode_json({
+    license_key => $license,
+    domains     => \@domains,
+    source      => "userdomains",
+});
+my $resp = $ua->post(
+    "$server_url/api/threat-intel/plugin/hosted-domains",
+    'Content-Type' => 'application/json',
+    Content        => $body,
+);
+if ($resp->is_success) {
+    print STDERR "[hosted-domains-push] OK: " . $resp->decoded_content . "\n";
+    exit 0;
+} else {
+    print STDERR "[hosted-domains-push] FAIL: " . $resp->status_line . "\n";
+    print STDERR $resp->decoded_content . "\n";
+    exit 2;
+}

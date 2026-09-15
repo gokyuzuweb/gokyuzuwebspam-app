@@ -1,0 +1,9 @@
+[Unit]
+Description=GökyüzüWebSpam Hosted Domains Push (cPanel userdomains → Master)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/mailshield/bin/mailshield-domains-push
+StandardOutput=append:/var/log/mailshield/domains-push.log
+StandardError=append:/var/log/mailshield/domains-push.log

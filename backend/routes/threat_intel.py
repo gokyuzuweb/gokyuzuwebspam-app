@@ -9,7 +9,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+
+async def _require_master(request: "Request", license_key: str | None = None):
+    from server import _require_master as core_check
+    return await core_check(request, license_key)
 from pydantic import BaseModel, Field
 from deps import db
 
@@ -310,46 +314,43 @@ async def dmarc_summary(days: int = Query(30, ge=1, le=180),
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     hosted_domains: set[str] | None = None
+    hosted_source: str | None = None
     if license_key and only_hosted:
-        # v44.00.30 fix — Sunucudaki hosted domain'leri ÇOKLU kaynaktan çıkart:
-        #  1. mail_events.to_addr (gelen mail'lerin alıcı domain'i = hosted)
-        #  2. mail_events.from_addr (bu sunucudan giden mailin gönderici domain'i = hosted)
-        # 180 gün pencere, min 1 mail (kullanıcı 188 dedi, önceki 111 çıkıyordu → gevşettik)
-        hosted_since = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
-        common_free = {
-            "gmail.com", "yahoo.com", "yahoo.com.tr", "hotmail.com",
-            "outlook.com", "outlook.com.tr", "icloud.com", "mail.com",
-            "yandex.com", "yandex.com.tr", "yandex.ru", "aol.com",
-            "protonmail.com", "gmx.com", "hey.com", "live.com",
-            "msn.com", "me.com", "fastmail.com", "zoho.com",
-        }
-        hosted_domains = set()
-        # to_addr (in) — server'ın hosted olduğu domain'ler
-        async for r in db.mail_events.aggregate([
-            {"$match": {"license_key": license_key,
-                        "ingested_at": {"$gte": hosted_since},
-                        "to_addr": {"$regex": "@"}}},
-            {"$project": {"dom": {"$toLower": {
-                "$arrayElemAt": [{"$split": ["$to_addr", "@"]}, 1]}}}},
-            {"$group": {"_id": "$dom", "c": {"$sum": 1}}},
-            {"$match": {"c": {"$gte": 1}}},
-        ]):
-            d = (r["_id"] or "").strip().lower().rstrip(".")
-            if d and "." in d and d not in common_free:
-                hosted_domains.add(d)
-        # from_addr (out) — bu sunucudan giden mailler (direction filter'ı olmadan — güvenli)
-        async for r in db.mail_events.aggregate([
-            {"$match": {"license_key": license_key,
-                        "ingested_at": {"$gte": hosted_since},
-                        "from_addr": {"$regex": "@"}}},
-            {"$project": {"dom": {"$toLower": {
-                "$arrayElemAt": [{"$split": ["$from_addr", "@"]}, 1]}}}},
-            {"$group": {"_id": "$dom", "c": {"$sum": 1}}},
-            {"$match": {"c": {"$gte": 3}}},  # tekil spam mail'i dahil etme
-        ]):
-            d = (r["_id"] or "").strip().lower().rstrip(".")
-            if d and "." in d and d not in common_free:
-                hosted_domains.add(d)
+        # v44.00.31 — Önce cPanel'den push edilmiş kesin liste var mı bak
+        pushed = await db.hosted_domains.find_one({"license_key": license_key}, {"_id": 0, "domains": 1, "source": 1})
+        if pushed and pushed.get("domains"):
+            hosted_domains = set(pushed["domains"])
+            hosted_source = pushed.get("source") or "pushed"
+        else:
+            # Fallback: SADECE verdict=clean gelen mail'lerin to_addr domain'i.
+            # Bu domain'lerde başarıyla teslim edilmiş mail var = gerçekten hosted.
+            hosted_since = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
+            common_free = {
+                "gmail.com", "yahoo.com", "yahoo.com.tr", "hotmail.com",
+                "outlook.com", "outlook.com.tr", "icloud.com", "mail.com",
+                "yandex.com", "yandex.com.tr", "yandex.ru", "aol.com",
+                "protonmail.com", "gmx.com", "hey.com", "live.com",
+                "msn.com", "me.com", "fastmail.com", "zoho.com",
+            }
+            hosted_domains = set()
+            hosted_source = "heuristic_clean_delivery"
+            # to_addr + verdict=clean + action=accept → başarıyla teslim edildi = hosted
+            async for r in db.mail_events.aggregate([
+                {"$match": {
+                    "license_key": license_key,
+                    "ingested_at": {"$gte": hosted_since},
+                    "to_addr": {"$regex": "@"},
+                    "verdict": {"$in": ["clean", "accept"]},
+                    "action":  {"$in": ["accept", "deliver", None]},
+                }},
+                {"$project": {"dom": {"$toLower": {
+                    "$arrayElemAt": [{"$split": ["$to_addr", "@"]}, 1]}}}},
+                {"$group": {"_id": "$dom", "c": {"$sum": 1}}},
+                {"$match": {"c": {"$gte": 3}}},  # min 3 teslim = gerçek kullanım
+            ]):
+                d = (r["_id"] or "").strip().lower().rstrip(".")
+                if d and "." in d and d not in common_free:
+                    hosted_domains.add(d)
 
     match: dict = {"received_at": {"$gte": since}}
     if hosted_domains is not None:
@@ -387,6 +388,7 @@ async def dmarc_summary(days: int = Query(30, ge=1, le=180),
     return {
         "days": days, "domains": domains, "count": len(domains),
         "hosted_count": len(hosted_domains) if hosted_domains is not None else None,
+        "hosted_source": hosted_source,
         "hosted_without_reports": sorted(missing)[:20],
         "filtered": license_key is not None and only_hosted,
     }
@@ -468,12 +470,26 @@ GLOBAL_FEEDS = [
 ]
 
 
+# v44.00.31 — Custom Feed Support: user'ın kendi DNSBL/URL feed'leri
+class CustomFeedIn(BaseModel):
+    key: str = Field(..., min_length=2, max_length=30)
+    name: str = Field(..., min_length=2, max_length=80)
+    url: str
+    type: str = Field("txt_url", description="txt_url | dnsbl_zone")
+    interval_min: int = Field(60, ge=5, le=1440)
+
+
 @router.get("/feeds")
 async def list_feeds():
     """Global feed sync durumu — gerçek DB'den IOC sayısı + threat_intel_feeds sync tracking."""
     now = datetime.now(timezone.utc)
     items = []
-    for f in GLOBAL_FEEDS:
+    # v44.00.31 — Built-in + Custom feeds birlikte
+    custom_feeds = []
+    async for c in db.threat_intel_custom_feeds.find({}, {"_id": 0}):
+        custom_feeds.append(c)
+    all_feeds = list(GLOBAL_FEEDS) + custom_feeds
+    for f in all_feeds:
         ioc_count = await db.threat_iocs.count_documents({"source": f["key"]})
         # v44.00.30 — feed_sync_log'dan son çalışma zamanı (IOC olmasa bile sync yapıldı bilgisi)
         sync_track = await db.threat_intel_feeds.find_one(
@@ -535,6 +551,127 @@ async def list_feeds():
             "last_error": last_error,
         })
     return {"items": items, "count": len(items)}
+
+
+# v44.00.31 — Custom Feed CRUD
+@router.post("/feeds/custom")
+async def add_custom_feed(payload: CustomFeedIn, request: Request, license_key: str | None = None):
+    await _require_master(request, license_key)
+    # key çakışması kontrolü
+    if any(f["key"] == payload.key for f in GLOBAL_FEEDS):
+        raise HTTPException(400, f"'{payload.key}' built-in feed key'i, farklı bir key seç")
+    existing = await db.threat_intel_custom_feeds.find_one({"key": payload.key})
+    if existing:
+        raise HTTPException(400, "Bu key zaten mevcut")
+    doc = {
+        "key": payload.key,
+        "name": payload.name,
+        "url": payload.url,
+        "type": payload.type,   # txt_url | dnsbl_zone
+        "interval_min": payload.interval_min,
+        "custom": True,
+        "created_at": _iso(),
+    }
+    await db.threat_intel_custom_feeds.insert_one(dict(doc))
+    return {"ok": True, "feed": doc}
+
+
+@router.delete("/feeds/custom/{key}")
+async def remove_custom_feed(key: str, request: Request, license_key: str | None = None):
+    await _require_master(request, license_key)
+    r = await db.threat_intel_custom_feeds.delete_one({"key": key})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Custom feed bulunamadı")
+    # Bu feed'in eklediği IOC'ları da sil
+    await db.threat_iocs.delete_many({"source": key})
+    return {"ok": True, "removed": key}
+
+
+# v44.00.31 — DMARC Rua Setup Wizard: SPF/DKIM/DMARC DNS TXT snippet üret
+@router.get("/dmarc/setup-wizard/{domain}")
+async def dmarc_setup_wizard(domain: str, request: Request, license_key: str | None = None):
+    """Bir domain için önerilen SPF/DKIM/DMARC DNS TXT kayıtları."""
+    await _require_master(request, license_key)
+    dom = domain.lower().strip().rstrip(".")
+    rua_email = f"dmarc@{dom}"
+    # Master IP'yi bulmak için — bayinin gerçek MX IP'si burada olmalı
+    # Fallback: generic instruction
+    return {
+        "domain": dom,
+        "steps": [
+            {
+                "step": 1, "title": "SPF Kaydı Ekle",
+                "record_type": "TXT",
+                "record_name": dom,
+                "record_value": "v=spf1 mx a ~all",
+                "note": "Bu kayıt, mail sunucularınızın (MX) ve A kayıtlarınızın sizin adınıza mail göndermesine izin verir. Sıkılaştırma için ~all yerine -all kullanabilirsiniz (hardfail).",
+            },
+            {
+                "step": 2, "title": "DKIM Anahtarı Kur",
+                "record_type": "CMD",
+                "record_name": f"cPanel/WHM: {dom}",
+                "record_value": "WHM → Email Deliverability → Manage → Repair DNS",
+                "note": "cPanel/WHM zaten default DKIM key üretir. \"Email Deliverability\" sekmesinden 'Repair' tuşuna basın; DKIM anahtarı otomatik kurulur. Manuel: /etc/opendkim/keys/{dom}/default.txt",
+            },
+            {
+                "step": 3, "title": "DMARC Politikası Ekle",
+                "record_type": "TXT",
+                "record_name": f"_dmarc.{dom}",
+                "record_value": f"v=DMARC1; p=quarantine; rua=mailto:{rua_email}; pct=100; adkim=r; aspf=r",
+                "note": (
+                    f"'p=quarantine' başlangıç için güvenli. rua adresi ({rua_email}) e-postaları toplayabilecek "
+                    "gerçek bir mail kutusu olmalı. 30 gün sonra %100 uyum sağlandığında 'p=reject' yapabilirsin."
+                ),
+            },
+            {
+                "step": 4, "title": "Test Et",
+                "record_type": "TOOL",
+                "record_name": "https://mxtoolbox.com/dmarc.aspx",
+                "record_value": f"https://mxtoolbox.com/SuperTool.aspx?action=dmarc%3a{dom}",
+                "note": "24-48 saat sonra bu araçla kaydı test edin. Yeşil tik görene kadar bekleyin.",
+            },
+        ],
+        "rua_email": rua_email,
+        "estimated_time": "5-10 dakika kurulum + 24-48 saat DNS propagate + 30 gün quarantine → reject geçişi",
+    }
+
+
+# v44.00.31 — Hosted Domain push (cPanel'den kesin liste)
+class HostedDomainsIn(BaseModel):
+    license_key: str
+    domains: list[str]
+    source: str = "userdomains"
+
+
+@router.post("/plugin/hosted-domains")
+async def push_hosted_domains(payload: HostedDomainsIn):
+    """Bayilerin cPanel'inden /etc/userdomains içindeki gerçek hosted domain listesini push eder.
+    Heuristic (mail_events.to_addr) yerine kesin liste kullanır."""
+    now = _iso()
+    domains = [d.lower().strip().rstrip(".") for d in (payload.domains or []) if d and "." in d]
+    domains = sorted(set(domains))
+    await db.hosted_domains.update_one(
+        {"license_key": payload.license_key},
+        {"$set": {
+            "license_key": payload.license_key,
+            "domains": domains,
+            "count": len(domains),
+            "source": payload.source,
+            "updated_at": now,
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "count": len(domains), "at": now}
+
+
+@router.get("/plugin/hosted-domains/{license_key}")
+async def get_hosted_domains(license_key: str, request: Request):
+    """Bayinin push ettiği hosted domain listesi (yoksa None). Master-only."""
+    # NOT: license_key path param bakılacak bayiyi tanımlar, master doğrulaması
+    # için değil. _require_master(None) → X-Master-Key header / cookie / query'den okur.
+    await _require_master(request, None)
+    doc = await db.hosted_domains.find_one({"license_key": license_key}, {"_id": 0})
+    return doc or {"domains": [], "count": 0, "source": None}
 
 
 # v44.00.21 — Ortak helper: son 24s public IP'leri topla (private/loopback filtre).

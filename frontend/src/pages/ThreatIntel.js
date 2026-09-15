@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, client } from "@/lib/api";
@@ -1089,21 +1089,23 @@ function UsomPagedTable({ items, delRow, q }) {
           {Array.from({ length: totalPages }, (_, i) => i)
             .filter(i => i === 0 || i === totalPages - 1 || Math.abs(i - page) <= 2)
             .reduce((acc, i, idx, arr) => {
-              if (idx > 0 && i - arr[idx - 1] > 1) acc.push(-1); // ellipsis marker
+              if (idx > 0 && i - arr[idx - 1] > 1) acc.push(-1);
               acc.push(i);
               return acc;
             }, [])
-            .map((p, idx) => p === -1
-              ? <span key={`e${idx}`} className="text-slate-600 mono px-1">…</span>
-              : (
-                <button key={p} onClick={() => goto(p)} data-testid={`usom-page-${p+1}`}
-                        className={`px-2.5 py-1 rounded mono min-w-[32px] ${
+            .map((p, idx) => {
+              if (p === -1) {
+                return <span key={"e" + idx} className="text-slate-600 mono px-1">…</span>;
+              }
+              return (
+                <button key={p} onClick={() => goto(p)} data-testid={"usom-page-" + (p+1)}
+                        className={"px-2.5 py-1 rounded mono min-w-[32px] " + (
                           p === page
                             ? "bg-indigo-500/30 text-indigo-100 border border-indigo-500/50 font-bold"
                             : "bg-slate-800 hover:bg-slate-700 text-slate-300"
-                        }`}>{p + 1}</button>
-              )
-            )}
+                        )}>{p + 1}</button>
+              );
+            })}
           <button onClick={() => goto(page + 1)} disabled={page >= totalPages - 1} data-testid="usom-next"
                   className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 mono">Sonraki ›</button>
           <button onClick={() => goto(totalPages - 1)} disabled={page >= totalPages - 1} data-testid="usom-last"

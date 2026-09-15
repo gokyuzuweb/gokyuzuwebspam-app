@@ -14,6 +14,66 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 26, v44.00.31) — Hosted Domains Push Bağlantısı + JSX/Cron Doom Loop Fix ✅
+
+### 🐛 P0 FIX (kullanıcı raporu — session 25'ten devir)
+- **USOM sekmesi tıklanınca sayfa çökmesi**: `UsomPagedTable` component `useEffect`
+  kullanıyordu ama `import { useState } from "react"` satırında `useEffect` yoktu →
+  React "Uncaught runtime errors: useEffect is not defined" ekranı. Fix: import
+  satırına `useEffect` eklendi. Doğrulandı: USOM tab 500 kayıt, pagination, KPI
+  histogramı sorunsuz render ediyor.
+- **Backend `SyntaxError` (500 → tüm API ölüydü)**: Session 25'te
+  `_hourly_feed_health_check_task` fonksiyonu yanlışlıkla
+  `_daily_dmarc_attack_alarm_task`'ın ortasına (satır 1493, kapatılmamış `find_one({`
+  içine) yerleştirilmişti → uvicorn boot sırasında `invalid syntax`. Fix: yeniden
+  ayırıp `_hourly_feed_health_check_task`'ı DMARC task'tan SONRA yerleştirdim,
+  DMARC task'ın tam gövdesi restore edildi.
+- **DMARC "Kapsam Oranı boş" bug**: Backend/frontend zaten doğruydu (progress bar
+  filtered && totalHosted > 0 iken render oluyor). Backend crash düzeltilince
+  değer geliyor: `0 / 79 domain · %0` (heuristic clean delivery kaynaklı).
+
+### 🎯 (1) mailshield-domains-push → install.sh Entegrasyonu
+Kullanıcı: "hosted domain'leri /etc/userdomains'ten push edelim, heuristic hep yanlış"
+
+- **Yeni systemd unit'leri**:
+  - `/app/whm-plugin/systemd/mailshield-domains-push.service` (oneshot)
+  - `/app/whm-plugin/systemd/mailshield-domains-push.timer` (24 saatte bir)
+- **install.sh v44.00.31 bloğu** (DMARC fetcher bloğunun HEMEN altında):
+  - Script'i `/usr/local/mailshield/bin/mailshield-domains-push`'a install
+  - Timer'ı `enable --now` ile aktive
+  - **İlk push'u anında tetikle** (`systemctl start mailshield-domains-push.service`)
+    → master, heuristic'ten kurtulup gerçek listeyi 30 saniye içinde alır
+- **Kurulum özeti** ekranına iki yeni satır: `mailshield-dmarc-fetch.timer` ve
+  `mailshield-domains-push.timer`.
+
+### 🎯 (2) `/api/threat-intel/plugin/` demo_write_guard bypass
+- Session 25'te eklenmiş POST `/plugin/hosted-domains` endpoint'i master panelde
+  `BAYI_ON_MASTER_PANEL` 403 alıyordu (bayi cPanel'den plugin push ederken).
+- Fix: `_DEMO_ALLOW_PREFIXES` listesine iki path eklendi:
+  - `/api/threat-intel/plugin/` — hosted-domains ve gelecekte diğer plugin push
+    endpoint'leri (license_key body ile doğrulanır, plugin script'leri master IP
+    dışından çağırıyor)
+  - `/api/threat-intel/dmarc/ingest` — DMARC fetcher push
+- GET `/plugin/hosted-domains/{license_key}` düzeltmesi: `license_key` PATH param'ı
+  master doğrulaması için değil, HANGİ bayinin listesini istediğimizi belirler.
+  `_require_master(request, None)` → header/cookie'den master anahtarını okur.
+
+### 📊 Test Coverage
+- `test_v44_00_31_hosted_domains_push.py`: **7/7 ✅**
+  - install.sh mailshield-domains-push entegrasyonu
+  - systemd service+timer varlığı ve ExecStart doğruluğu
+  - Perl script shebang + LWP + /etc/userdomains + endpoint kontrolü
+  - POST endpoint dedupe + lowercase (4 girdi → 3 unique)
+  - GET master-only (X-Master-Key), non-master → 403
+  - DMARC summary artık `hosted_source=userdomains` (heuristic yerine)
+
+### 📦 Version Bump
+`v44.00.30` → **`v44.00.31`**
+- `/app/VERSION`, `/app/backend/VERSION`, `/app/whm-plugin/VERSION` → v44.00.31
+- `server.py::_PACKAGE_VERSION` → v44.00.31
+
+
+
 ## Feb 15, 2026 (Session 25, v44.00.29 + v44.00.30) — DMARC Dashboard + Global Feed Status Overhaul + USOM Pagination ✅
 
 ### 🎯 (1) DMARC Dashboard + Hosted Filter (v44.00.29 + v44.00.30)

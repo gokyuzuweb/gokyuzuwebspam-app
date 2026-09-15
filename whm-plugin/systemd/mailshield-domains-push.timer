@@ -1,0 +1,11 @@
+[Unit]
+Description=GökyüzüWebSpam Hosted Domains Push Timer (günde 1)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=24h
+Persistent=true
+Unit=mailshield-domains-push.service
+
+[Install]
+WantedBy=timers.target
