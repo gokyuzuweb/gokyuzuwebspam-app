@@ -7,7 +7,7 @@ import {
 } from "recharts";
 import {
   ShieldAlert, Ban, Bug, MailWarning, MailCheck, Activity, LayoutDashboard,
-  Globe2, Inbox, HeartPulse, Radio, Grid3x3,
+  Globe2, HeartPulse, Radio, Grid3x3,
 } from "lucide-react";
 import { Card, CardBody, CardHeader, StatCard, Badge } from "@/components/ui-primitives";
 import { api } from "@/lib/api";
@@ -56,7 +56,6 @@ const TABS = [
   { key: "overview",  label: "Genel Bakış",   Icon: LayoutDashboard },
   { key: "geo",       label: "Coğrafi",       Icon: Globe2 },
   { key: "traffic",   label: "Trafik",        Icon: Activity },
-  { key: "quarantine",label: "Karantina",     Icon: Inbox },
   { key: "health",    label: "Sağlık",        Icon: HeartPulse },
   { key: "live",      label: "Canlı",         Icon: Radio },
   { key: "all",       label: "Tümünü Göster", Icon: Grid3x3 },
@@ -72,7 +71,6 @@ export default function Dashboard() {
   const overview   = useQuery({ queryKey: ["overview"],   queryFn: api.overview, refetchInterval: 15000 });
   const traffic    = useQuery({ queryKey: ["traffic"],    queryFn: () => api.traffic(24), refetchInterval: 30000 });
   const top        = useQuery({ queryKey: ["top-senders"], queryFn: api.topSenders });
-  const quarantine = useQuery({ queryKey: ["q-recent"],   queryFn: () => api.quarantine({ limit: 10 }) });
   const stats = overview.data || {};
 
   const show = (k) => tab === "all" || tab === k;
@@ -121,9 +119,11 @@ export default function Dashboard() {
                         value={nfmt(stats.caught_today)} hint={`% ${stats.spam_ratio ?? 0} oranı`}/>
             </div>
             <div className="col-span-12 md:col-span-3">
-              <StatCard label={t("dashboard.in_quarantine")} tone="danger" icon={ShieldAlert} testid="stat-quarantine"
-                        value={nfmt(stats.quarantine_total)}
-                        hint={`${stats.phishing_count ?? 0} phishing · ${stats.virus_count ?? 0} virüs`}/>
+              <Link to="/panel/quarantine" className="block group" data-testid="stat-quarantine-link">
+                <StatCard label={t("dashboard.in_quarantine")} tone="danger" icon={ShieldAlert} testid="stat-quarantine"
+                          value={nfmt(stats.quarantine_total)}
+                          hint={`${stats.phishing_count ?? 0} phishing · ${stats.virus_count ?? 0} virüs · tıkla → modülü aç`}/>
+              </Link>
             </div>
             <div className="col-span-12 md:col-span-3">
               <StatCard label={t("dashboard.clean_delivered")} tone="success" icon={MailCheck} testid="stat-ham"
@@ -168,44 +168,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Quarantine tab — v44.00.32: konsolide Karantina modülüne yönlendir */}
-      {show("quarantine") && (
-        <Card>
-          <CardHeader title="Karantina" subtitle="Son 5 karantina mesajı · tam yönetim için modülü aç" />
-          <CardBody className="p-0">
-            <div className="divide-y divide-slate-800">
-              {(quarantine.data || []).slice(0, 5).map((q) => (
-                <div key={q.id} data-testid={`recent-q-${q.id}`} className="px-5 py-3 hover:bg-slate-800/40 transition-colors">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-slate-100 truncate">{q.subject}</div>
-                      <div className="text-[11px] mono text-slate-500 truncate">{q.sender}</div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      {verdictBadge(q.verdict, t)}
-                      <span className="mono text-[11px] text-slate-500">{q.score?.toFixed(1)}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {(quarantine.data?.length ?? 0) === 0 && (
-                <div className="p-6 text-center text-sm text-slate-500">Karantinada mesaj yok</div>
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-slate-800 flex items-center justify-between">
-              <span className="text-[11px] text-slate-500">
-                Toplu işlemler, "Spam Değil", Skor Yeniden Hesapla, Karantinayı Doldur, Ayarlar → Karantina modülünde
-              </span>
-              <Link
-                to="/panel/quarantine"
-                data-testid="dashboard-open-quarantine"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-xs font-semibold">
-                Karantina Modülünü Aç →
-              </Link>
-            </div>
-          </CardBody>
-        </Card>
-      )}
+      {/* Quarantine tab — v44.00.34: Karantina tamamen /panel/quarantine modülüne taşındı.
+          Dashboard'da artık sub-tab veya widget yok. `stat-quarantine` KPI kartı Karantina modülüne link. */}
 
       {/* Health tab */}
       {show("health") && (
