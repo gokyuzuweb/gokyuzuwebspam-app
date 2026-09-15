@@ -646,23 +646,33 @@ function StatCounter({ label, value, tone }) {
 function UsomTab() {
   const [q, setQ] = useState("");
   const qc = useQueryClient();
+  // v44.00.27 — Master endpoint'leri license_key parametresi ister
+  const lk = () => (typeof window !== "undefined" &&
+    (localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license"))) || "";
 
   const list = useQuery({
     queryKey: ["usom-list", q],
-    queryFn: async () => (await client.get(`/threat-intel/usom/list${q ? `?q=${encodeURIComponent(q)}` : ""}`)).data,
+    queryFn: async () => {
+      const params = new URLSearchParams({ license_key: lk(), limit: "500" });
+      if (q) params.set("q", q);
+      return (await client.get(`/threat-intel/usom/list?${params}`)).data;
+    },
   });
 
   const fetchNow = useMutation({
-    mutationFn: async () => (await client.post("/threat-intel/usom/fetch")).data,
+    mutationFn: async () => (await client.post(`/threat-intel/usom/fetch?license_key=${encodeURIComponent(lk())}`)).data,
     onSuccess: (d) => {
-      toast.success(`USOM güncellendi: ${d.fetched_urls} URL, ${d.new_urls} yeni + ${d.new_domains} domain`);
+      // v44.00.26 — Yeni response şeması: total_fetched + added_urls/domains/ips + added_to_blacklist
+      const totalNew = (d.added_urls || 0) + (d.added_domains || 0) + (d.added_ips || 0);
+      toast.success(`✓ USOM: ${d.total_fetched} IOC · ${totalNew} yeni · ${d.added_to_blacklist || 0} kara liste ekleme`);
       qc.invalidateQueries({ queryKey: ["usom-list"] });
+      qc.invalidateQueries({ queryKey: ["lists-manager-unified"] });
     },
     onError: (e) => toast.error("USOM fetch hatası: " + (e.response?.data?.detail || e.message)),
   });
 
   const cleanup = useMutation({
-    mutationFn: async () => (await client.post("/threat-intel/usom/cleanup")).data,
+    mutationFn: async () => (await client.post(`/threat-intel/usom/cleanup?license_key=${encodeURIComponent(lk())}`)).data,
     onSuccess: (d) => {
       toast.success(`Temizlendi: ${d.removed_iocs} IOC + ${d.removed_from_lists} kara liste kaydı`);
       qc.invalidateQueries({ queryKey: ["usom-list"] });
@@ -671,7 +681,8 @@ function UsomTab() {
   });
 
   const delRow = useMutation({
-    mutationFn: async (value) => (await client.post("/threat-intel/usom/delete", { value })).data,
+    mutationFn: async (value) =>
+      (await client.post(`/threat-intel/usom/delete?license_key=${encodeURIComponent(lk())}`, { value })).data,
     onSuccess: (d, value) => {
       toast.success(`${value} silindi (${d.removed_iocs + d.removed_from_lists} kayıt)`);
       qc.invalidateQueries({ queryKey: ["usom-list"] });

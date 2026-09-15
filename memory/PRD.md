@@ -14,6 +14,25 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 25, v44.00.28) — USOM UI License Fix ✅
+
+### 🎯 USOM Tab Boş Görünüyordu — Root Cause & Fix
+Kullanıcı: "Henüz USOM verisi çekilmedi. Üstteki 'Şimdi Çek' butonuna basın."
+
+- **Root cause**: DB'de 500 USOM IOC vardı ama `/api/threat-intel/usom/list` endpoint'i `_require_master()` çağırıyor → UI'dan gelen istekte `license_key` query param YOKtu → **HTTP 403** → UI 0 kayıt → "Henüz USOM verisi çekilmedi" mesajı.
+- **Fix (v44.00.28)**: `UsomTab` içindeki 4 endpoint çağrısı (list, fetch, cleanup, delete) hepsi artık `license_key=lk()` query parametresi gönderiyor. Ayrıca `fetchNow` mutation'ın success toast'ı yeni response şemasına güncellendi (`total_fetched`, `added_urls`, `added_domains`, `added_ips`, `added_to_blacklist`).
+- **Live doğrulandı**: UsomTab artık 500 kayıt gösteriyor (krediniz-hazir-online.cloud, A101 phishing sepet-indirimleri.online, banka taklit abrdns.com/duckdns.org domain'leri, hepsi "USOM:PH · seviye 4" phishing tag'iyle).
+
+### 📊 Test Coverage
+- `test_v44_00_28_usom_ui_fix.py`: 2/2 ✅
+  - UsomTab'ın tüm çağrılarında `license_key` gönderdiği
+  - Fetch toast'ının yeni response şemasını kullandığı
+
+### 📦 Version Bump
+`v44.00.27` → `v44.00.28`
+
+
+
 ## Feb 15, 2026 (Session 25, v44.00.27) — 4 Follow-up Pack: USOM Cron + DMARC UI + Rule Auto-Disable + GeoIP UI ✅
 
 ### 🎯 (1) USOM Otomatik Cron Yenilendi
