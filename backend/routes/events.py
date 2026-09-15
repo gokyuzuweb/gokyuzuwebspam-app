@@ -382,6 +382,72 @@ async def ingest_event(evt: MailEvent, request: Request):
     if (not _fa or _fa == "<>") or (_fu in SYSTEM_USERS) or _fu.startswith("systemd-"):
         doc["direction"] = "in"
         doc.pop("from_user", None)
+    # v44.00.38 — WHITELIST ENFORCEMENT (kritik güvenlik fix)
+    # Plugin verdict=spam ile push etse bile whitelist eşleşmesi varsa
+    # verdict → "whitelisted", karantinaya YAZILMAZ. lists koleksiyonundan:
+    #   - entry_type=email     · value=from_addr (exact)
+    #   - entry_type=domain    · value=from_domain
+    #   - entry_type=ip        · value=sender_ip
+    # Scope: global VEYA owner_license_key=evt.license_key
+    _from_addr_lower = (doc.get("from_addr") or "").strip().lower()
+    _from_domain = ""
+    if "@" in _from_addr_lower:
+        _from_domain = _from_addr_lower.split("@", 1)[1]
+    _sender_ip = (doc.get("sender_ip") or "").strip()
+    _wl_values: list = []
+    if _from_addr_lower:
+        _wl_values.append({"entry_type": "email",  "value": _from_addr_lower})
+    if _from_domain:
+        _wl_values.append({"entry_type": "domain", "value": _from_domain})
+    if _sender_ip:
+        _wl_values.append({"entry_type": "ip",     "value": _sender_ip})
+    _wl_hit = None
+    if _wl_values:
+        _wl_hit = await db.lists.find_one({
+            "list_type": "white",
+            "$or": _wl_values,
+            "$or_scope": None,  # placeholder to force $and below
+        }, {"_id": 0}) if False else await db.lists.find_one({
+            "list_type": "white",
+            "$or": _wl_values,
+            "$or_2": None,
+        }, {"_id": 0}) if False else None
+        # Basit yaklaşım: iki ayrı sorgu (global + license'a özel)
+        for _crit in _wl_values:
+            hit = await db.lists.find_one({
+                "list_type": "white",
+                "entry_type": _crit["entry_type"],
+                "value":      _crit["value"],
+                "$or": [
+                    {"scope": "global"},
+                    {"scope": {"$exists": False}},
+                    {"owner_license_key": evt.license_key},
+                    {"owner_license_key": {"$exists": False}},
+                ],
+            }, {"_id": 0})
+            if hit:
+                _wl_hit = hit
+                break
+    if _wl_hit:
+        doc["verdict_original"] = doc.get("verdict")
+        doc["verdict"] = "whitelisted"
+        doc["whitelist_hit"] = {
+            "entry_type": _wl_hit.get("entry_type"),
+            "value":      _wl_hit.get("value"),
+            "list_id":    _wl_hit.get("id"),
+            "note":       _wl_hit.get("note"),
+        }
+        # Karantinada varsa temizle (idempotent)
+        try:
+            await db.quarantine.delete_many({
+                "license_key": evt.license_key,
+                "from_addr": doc.get("from_addr"),
+                "subject":   doc.get("subject"),
+                "ts":        doc.get("ts"),
+            })
+        except Exception:
+            pass
+
     # ---------------------------------------------------------------------
     await db.mail_events.insert_one(doc)
 
@@ -764,7 +830,10 @@ async def _ai_predict_bg(doc: dict) -> None:
 
 async def _ioc_enforce(doc: dict) -> None:
     """Ingest sonrasi client_ip veya body url'lerini IOC listesiyle kontrol et.
-    Eslesirse verdict'i override et."""
+    Eslesirse verdict'i override et.
+    v44.00.38 — Whitelisted verdict'ini KESİNLİKLE override etme."""
+    if (doc.get("verdict") or "").lower() == "whitelisted":
+        return
     try:
         ip = doc.get("client_ip") or doc.get("server_ip") or doc.get("sender_ip")
         if ip:

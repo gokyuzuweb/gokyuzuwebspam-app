@@ -14,7 +14,39 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
-## Feb 15, 2026 (Session 26, v44.00.37) — ThreatIntel Refactor + DNS Cache + AI Email + Trend Chart ✅
+## Feb 15, 2026 (Session 26, v44.00.38) — Whitelist Enforcement Fix (Kritik) ✅
+
+### 🐛 Kullanıcı raporu
+Kullanıcı ekran görüntüsü paylaştı: `modern-ambalaj.com.tr` domain + 2 email whitelist'te ekli olmasına rağmen bu göndericiden gelen mail hala karantinaya düşüyor.
+
+### 🔍 Kök Neden
+`/api/events/ingest` endpoint'i whitelist enforcement YAPMIYORDU. Plugin `verdict=spam` ile push edince ingest doğrudan `mail_events` + `quarantine` koleksiyonlarına yazıyor, whitelist hiç kontrol edilmiyor.
+
+Ayrıca `_ioc_enforce` post-insert task'ı sender_ip → threat_iocs kontrolü yapıyor ve verdict'i "high_spam"/"blocked"'a override ediyor — whitelist mail'in bile.
+
+### 🎯 Fix (routes/events.py)
+1. **WHITELIST ENFORCEMENT bloğu** (line 385-449) — SA normalization'dan sonra, `db.mail_events.insert_one` öncesinde:
+   - `from_addr` (email exact match)
+   - `from_domain` (email'in @'den sonrası)
+   - `sender_ip`
+   - Scope: global VEYA `owner_license_key=license_key`
+   - Match olursa → `verdict = "whitelisted"`, `verdict_original = <önceki>`, `whitelist_hit = {...}` meta
+   - `db.quarantine.delete_many` — önceden kaydolmuşsa temizle
+2. **`_ioc_enforce` guard**: `if verdict == "whitelisted": return` — bu değeri KESİNLİKLE override etmez.
+
+### 📊 Test Coverage
+`test_v44_00_38_whitelist_enforce.py`: **4/4 ✅**
+- Whitelist email eşleşince verdict=whitelisted + quarantine boş
+- Whitelist domain eşleşmesi (`anyone@domain` → domain=X)
+- `_ioc_enforce` "whitelisted" verdict'e dokunmuyor
+- Whitelist'te olmayan spam yine spam olarak işaretleniyor (regression check)
+
+### 📦 Version Bump
+`v44.00.37` → **`v44.00.38`**
+
+---
+
+
 
 ### 🎯 (1) ThreatIntel.js Refactor (1535 → 64 satır)
 - Yeni klasör: `/app/frontend/src/pages/threat-intel/`

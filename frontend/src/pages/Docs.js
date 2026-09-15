@@ -1907,6 +1907,7 @@ function AiModuleChat({ module }) {
 
 // v43.99.14 — "Video Eğitimi" sekmesi
 function DocsVideoTab({ module }) {
+  const MODULE_VIDEOS = {};  // v44.00.37 — placeholder; gerçek video config sonradan eklenecek
   const configured = MODULE_VIDEOS[module.key];
   const isInstallGuide = module.key === "install_guide";
   const ytSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
