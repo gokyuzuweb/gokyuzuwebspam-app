@@ -204,6 +204,80 @@ async def delete_ioc(ioc_id: str):
     return {"ok": True}
 
 
+# v44.00.23 — IOC → Mail Event correlation.
+# UI'da her IOC satırı "neden karalistede?" cevabı için tıklanınca bu endpoint
+# çağrılır ve o göstergeye uyan son mail_events kayıtları döner.
+@router.get("/ioc/{ioc_id}/hits")
+async def ioc_hits(ioc_id: str, limit: int = Query(10, ge=1, le=50)):
+    ioc = await db.threat_iocs.find_one({"id": ioc_id}, {"_id": 0})
+    if not ioc:
+        raise HTTPException(404, "IOC bulunamadı")
+    t = (ioc.get("type") or "").lower()
+    v = (ioc.get("value") or "").strip()
+    if not v:
+        return {"indicator": ioc, "hits": [], "hit_count": 0}
+
+    import re as _re
+    match: dict = {}
+    if t == "ip":
+        # IP değeri sender_ip / client_ip / server_ip alanlarından birinde olabilir.
+        match = {"$or": [
+            {"sender_ip": v}, {"client_ip": v}, {"server_ip": v},
+        ]}
+    elif t == "email":
+        # Case-insensitive exact match
+        rx = f"^{_re.escape(v)}$"
+        match = {"from_addr": {"$regex": rx, "$options": "i"}}
+    elif t == "domain":
+        # from_addr'ın domain kısmı IOC domain'e eşit (veya subdomain)
+        rx = f"@({_re.escape(v)}|.*\\.{_re.escape(v)})$"
+        match = {"from_addr": {"$regex": rx, "$options": "i"}}
+    elif t == "url":
+        # subject veya body_preview içinde geçenler
+        rx = _re.escape(v)
+        match = {"$or": [
+            {"subject":      {"$regex": rx, "$options": "i"}},
+            {"body_preview": {"$regex": rx, "$options": "i"}},
+        ]}
+    elif t == "hash":
+        # mail_events'te hash alanı yok; boş döneriz
+        return {"indicator": ioc, "hits": [], "hit_count": 0,
+                "note": "Hash IOC'lar için mail eşleşmesi tutulmuyor (ClamAV/AV tarama sonucunda ayrıca loglanır)."}
+    else:
+        return {"indicator": ioc, "hits": [], "hit_count": 0}
+
+    proj = {
+        "_id": 0, "id": 1, "ts": 1, "ingested_at": 1,
+        "from_addr": 1, "to_addr": 1, "subject": 1,
+        "verdict": 1, "action": 1, "total_score": 1,
+        "sender_ip": 1, "client_ip": 1, "server_ip": 1,
+        "license_key": 1,
+    }
+    cursor = db.mail_events.find(match, proj).sort("ts", -1).limit(limit)
+    hits = []
+    async for e in cursor:
+        hits.append({
+            "id":        e.get("id"),
+            "ts":        e.get("ts") or e.get("ingested_at"),
+            "from_addr": e.get("from_addr") or "",
+            "to_addr":   e.get("to_addr") or "",
+            "subject":   (e.get("subject") or "")[:120],
+            "verdict":   e.get("verdict"),
+            "action":    e.get("action"),
+            "score":     e.get("total_score"),
+            "sender_ip": e.get("sender_ip") or e.get("client_ip") or e.get("server_ip"),
+            "license_key": (e.get("license_key") or "")[:12],
+        })
+    # Hızlı bir toplam sayaç (limit'i aşan durumlar için "10+" göstermek için)
+    total = await db.mail_events.count_documents(match)
+    return {
+        "indicator": {"type": t, "value": v, "tag": ioc.get("tag"),
+                      "source": ioc.get("source"), "confidence": ioc.get("confidence")},
+        "hits": hits,
+        "hit_count": total,
+    }
+
+
 # ---------- 2) DMARC Aggregator ----------
 class DMARCReport(BaseModel):
     domain: str

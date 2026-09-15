@@ -448,10 +448,28 @@ export default function BounceDigest() {
                         <tr key={i} className="border-t border-slate-800/60">
                           <td className="px-2 py-1.5 text-slate-500 mono">{s.ts ? new Date(s.ts).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
                           <td className="px-2 py-1.5">
-                            {/* v44.00.22 — tam email göster (from_addr öncelikli) */}
-                            <div className="text-slate-300 mono truncate max-w-[220px]" title={s.from_addr || s.user}>
-                              {s.from_addr || s.user}
-                            </div>
+                            {/* v44.00.22 — Envelope-null (`<>`) DSN'lerde gerçek gönderen = to_addr (bounce'un vardığı yer).
+                                from_addr boş veya `<>` ise fallback zinciri: to_addr → user@top_domain → user. */}
+                            {(() => {
+                              let disp = s.from_addr;
+                              const isNull = !disp || disp === "<>" || disp.trim() === "<>" || disp === "MAILER-DAEMON";
+                              if (isNull) {
+                                // Bounce mail: to_addr = orijinal gönderen (bounce ona döndü)
+                                if (s.to_addr && s.to_addr.includes("@")) disp = s.to_addr;
+                                else if (s.user && s.user.includes("@")) disp = s.user;
+                                else if (s.user) {
+                                  const dom = (p.top_domains || [])[0]?.[0];
+                                  disp = dom ? `${s.user}@${dom}` : s.user;
+                                }
+                                else disp = "(bilinmiyor)";
+                              }
+                              return (
+                                <div className="text-slate-300 mono truncate max-w-[220px]" title={disp}>
+                                  {disp}
+                                  {isNull && <span className="ml-1 text-[9px] text-amber-400" title="Bounce mail — envelope null">↩</span>}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="px-2 py-1.5 text-slate-400 mono truncate max-w-[180px]">{s.to}</td>
                           <td className="px-2 py-1.5 text-slate-400 truncate max-w-[240px]">{s.subject}</td>

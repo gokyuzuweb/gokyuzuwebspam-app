@@ -2,12 +2,12 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-  PieChart, Pie, Cell,
+  PieChart, Pie, Cell, LineChart, Line, Legend,
 } from "recharts";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
-import { Filter, Brain, Sliders, Users, Trash2, Plus, Beaker, Link as LinkIcon, Sparkles, Info } from "lucide-react";
+import { Filter, Brain, Sliders, Users, Trash2, Plus, Beaker, Link as LinkIcon, Sparkles, Info, TrendingUp, Mail, Globe2 } from "lucide-react";
 import ModuleFooter from "@/components/ModuleFooter";
 
 const LICKEY = () => (typeof window !== "undefined"
@@ -327,35 +327,70 @@ function StatsTab() {
   const q = useQuery({ queryKey: ["ms-stats"], queryFn: () => api.msStats(LICKEY(), 24), refetchInterval: 30000 });
   const bayes = useQuery({ queryKey: ["ms-bayes"], queryFn: () => api.msBayesStatus(LICKEY()) });
   const health = useQuery({ queryKey: ["ms-health"], queryFn: () => api.msHealth(LICKEY()) });
+  const cfg = useQuery({ queryKey: ["ms-config"], queryFn: () => api.msConfig(LICKEY()) });
   if (!q.data) return <SkeletonCard/>;
   const s = q.data;
   const pie = Object.entries(s.verdicts || {}).map(([name, value]) => ({ name, value }));
-  // v43.31 — Detay metrikler
   const totalScanned = s.total_scanned || 0;
   const spam = (s.verdicts?.spam || 0) + (s.verdicts?.high_spam || 0);
   const clean = s.verdicts?.clean || 0;
-  const virus = (s.verdicts?.virus || 0) + (s.verdicts?.phishing || 0);
+  const virus = s.virus_24h ?? ((s.verdicts?.virus || 0) + (s.verdicts?.phishing || 0));
+  const phishing = s.phishing_24h ?? 0;
   const spamRate = totalScanned ? ((spam / totalScanned) * 100).toFixed(1) : "0.0";
-  const bayesTrainedHam = bayes.data?.ham_learned || 0;
-  const bayesTrainedSpam = bayes.data?.spam_learned || 0;
-  const activeEngines = (health.data?.engines || []).filter(e => e.enabled).length;
-  const totalEngines = (health.data?.engines || []).length;
+  const bayesTrainedHam = bayes.data?.ham_samples || 0;
+  const bayesTrainedSpam = bayes.data?.spam_samples || 0;
+  const bayesTokens = bayes.data?.total_tokens || 0;
+  // v44.00.24 — Aktif motor sayısı için config kaynağı (health endpoint flat string dönüyor)
+  const enginesMap = cfg.data?.engines || {};
+  const activeEngines = Object.values(enginesMap).filter(v => v).length;
+  const totalEngines = Object.keys(enginesMap).length || 8;
   return (
     <div className="space-y-4">
-      {/* v43.31 — 6 KPI kartı */}
+      {/* KPI kartları */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <MSKpi label="Toplam Taranan" value={totalScanned} tone="text-indigo-300" icon="📧" sub={`Son ${s.hours}h`}/>
         <MSKpi label="Spam Yakalanan" value={spam} tone="text-amber-300" icon="🛡️" sub={`% ${spamRate} oran`}/>
         <MSKpi label="Temiz Teslim" value={clean} tone="text-emerald-300" icon="✓" sub="Kullanıcıya iletildi"/>
-        <MSKpi label="Virüs/Phishing" value={virus} tone="text-rose-300" icon="☠"/>
-        <MSKpi label="Aktif Motor" value={`${activeEngines}/${totalEngines || 6}`} tone="text-cyan-300" icon="⚙️" sub="Tarama motorları"/>
+        <MSKpi label="Virüs/Phishing" value={virus + phishing} tone="text-rose-300" icon="☠"
+               sub={phishing > 0 ? `${virus} virüs · ${phishing} phish` : `${virus} tespit`}/>
+        <MSKpi label="Aktif Motor" value={`${activeEngines}/${totalEngines}`} tone="text-cyan-300" icon="⚙️"
+               sub={Object.entries(enginesMap).filter(([,v])=>v).slice(0,3).map(([k])=>k).join(" · ") || "Motor yok"}/>
         <MSKpi label="Bayes Eğitilen" value={bayesTrainedHam + bayesTrainedSpam} tone="text-fuchsia-300" icon="🧠"
-               sub={`${bayesTrainedHam} ham · ${bayesTrainedSpam} spam`}/>
+               sub={`${bayesTokens.toLocaleString("tr-TR")} token · ${bayesTrainedHam} ham · ${bayesTrainedSpam} spam`}/>
       </div>
 
+      {/* v44.00.24 — Saatlik trend line chart */}
+      {(s.hourly_trend || []).length > 0 && (
+        <Card>
+          <CardHeader
+            title={<span className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-cyan-400"/> Saatlik Trafik Trendi</span>}
+            subtitle={`Son ${s.hours} saatte verdict bazlı gelen mail akışı`}
+          />
+          <CardBody>
+            <div className="h-56">
+              <ResponsiveContainer>
+                <LineChart data={s.hourly_trend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false}/>
+                  <XAxis dataKey="h" stroke="#475569" tick={{ fontSize: 10, fontFamily: "JetBrains Mono" }}
+                         interval={Math.max(0, Math.floor(s.hourly_trend.length / 12))}/>
+                  <YAxis stroke="#475569" tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }}/>
+                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 6, fontSize: 12 }}/>
+                  <Legend wrapperStyle={{ fontSize: 11 }}/>
+                  <Line type="monotone" dataKey="clean" stroke="#10b981" strokeWidth={2} dot={false} name="Temiz"/>
+                  <Line type="monotone" dataKey="spam"  stroke="#f59e0b" strokeWidth={2} dot={false} name="Spam"/>
+                  <Line type="monotone" dataKey="virus" stroke="#f43f5e" strokeWidth={2} dot={false} name="Virüs"/>
+                  <Line type="monotone" dataKey="phishing" stroke="#ec4899" strokeWidth={2} dot={false} name="Phishing"/>
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
+      {/* Skor Histogramı + Verdict Pie */}
       <div className="grid grid-cols-12 gap-4">
-        <Card className="col-span-12 lg:col-span-6">
-          <CardHeader title="Skor Histogramı" subtitle={`Son ${s.hours} saat · ${s.total_scanned} mail`}/>
+        <Card className="col-span-12 lg:col-span-7">
+          <CardHeader title="Skor Histogramı" subtitle={`Son ${s.hours} saat · ${s.total_scanned} mail · 0-20 skor dağılımı`}/>
           <CardBody>
             <div className="h-64">
               <ResponsiveContainer>
@@ -370,45 +405,116 @@ function StatsTab() {
             </div>
           </CardBody>
         </Card>
-        <Card className="col-span-12 lg:col-span-6">
-          <CardHeader title="Verdict Dağılımı"/>
+        <Card className="col-span-12 lg:col-span-5">
+          <CardHeader title="Verdict Dağılımı" subtitle="Verdict → adet"/>
           <CardBody>
-            <div className="h-64">
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={pie} dataKey="value" nameKey="name" outerRadius={90} innerRadius={40}>
-                    {pie.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
-                  </Pie>
-                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 6 }}/>
-                </PieChart>
-              </ResponsiveContainer>
+            <div className="h-64 flex items-center">
+              <div className="flex-1 h-full">
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={pie} dataKey="value" nameKey="name" outerRadius={80} innerRadius={40} paddingAngle={2}>
+                      {pie.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
+                    </Pie>
+                    <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 6 }}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="w-32 space-y-1">
+                {pie.slice(0, 6).map((p, i) => (
+                  <div key={p.name} className="flex items-center gap-1.5 text-[10px] mono">
+                    <span className="w-2.5 h-2.5 rounded-sm" style={{ background: COLORS[i % COLORS.length] }}/>
+                    <span className="text-slate-300 truncate flex-1">{p.name}</span>
+                    <span className="text-slate-500">{p.value}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </CardBody>
         </Card>
-        <Card className="col-span-12">
-          <CardHeader title="Motor Aktivitesi" subtitle="Her motorun bu pencerede kaç mail'e vurduğu + spam yakalama oranı"/>
+      </div>
+
+      {/* Top Senders / Recipients / Domains */}
+      <div className="grid grid-cols-12 gap-4">
+        <Card className="col-span-12 md:col-span-4">
+          <CardHeader title={<span className="flex items-center gap-2"><Mail className="w-4 h-4 text-amber-400"/>En Çok Spam Gönderen</span>} subtitle="from_addr · verdict ∈ {spam, virus, phishing}"/>
           <CardBody>
-            <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase tracking-widest text-slate-500">
-                <tr><th className="text-left px-3 py-1.5">Motor</th><th className="text-right px-3 py-1.5">Toplam</th><th className="text-right px-3 py-1.5">Spam Yakalama</th><th className="text-right px-3 py-1.5">Oran</th></tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {(s.engines || []).map(e => (
-                  <tr key={e.engine} className="hover:bg-slate-800/40">
-                    <td className="px-3 py-2 mono text-slate-300">{e.engine}</td>
-                    <td className="px-3 py-2 text-right mono">{e.total}</td>
-                    <td className="px-3 py-2 text-right mono text-rose-300">{e.spam}</td>
-                    <td className="px-3 py-2 text-right text-slate-500 text-xs">%{e.total ? Math.round(e.spam / e.total * 100) : 0}</td>
-                  </tr>
-                ))}
-                {(s.engines || []).length === 0 && (
-                  <tr><td colSpan={4} className="text-center py-8 text-slate-500">Motor verisi yok</td></tr>
-                )}
-              </tbody>
-            </table>
+            <TopList items={s.top_senders} emptyMsg="Kayıt yok" mono/>
+          </CardBody>
+        </Card>
+        <Card className="col-span-12 md:col-span-4">
+          <CardHeader title={<span className="flex items-center gap-2"><Globe2 className="w-4 h-4 text-cyan-400"/>Spam Kaynağı Domain</span>} subtitle="from_addr@domain (right-side)"/>
+          <CardBody>
+            <TopList items={s.top_sender_domains} emptyMsg="Domain verisi yok" mono/>
+          </CardBody>
+        </Card>
+        <Card className="col-span-12 md:col-span-4">
+          <CardHeader title={<span className="flex items-center gap-2"><Users className="w-4 h-4 text-emerald-400"/>Hedef Alıcılar</span>} subtitle="Spam'in ulaştığı iç kullanıcılar"/>
+          <CardBody>
+            <TopList items={s.top_recipients} emptyMsg="Kayıt yok" mono/>
           </CardBody>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader title="Motor Aktivitesi" subtitle="Her motorun bu pencerede kaç mail'e vurduğu · spam yakalama oranı · son vuruş"/>
+        <CardBody>
+          <table className="w-full text-sm">
+            <thead className="text-[11px] uppercase tracking-widest text-slate-500">
+              <tr>
+                <th className="text-left px-3 py-1.5">Motor</th>
+                <th className="text-right px-3 py-1.5">Toplam Hit</th>
+                <th className="text-right px-3 py-1.5">Spam Yakalama</th>
+                <th className="text-right px-3 py-1.5">Oran</th>
+                <th className="text-right px-3 py-1.5">Son Vuruş</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {(s.engines || []).map(e => (
+                <tr key={e.engine} className="hover:bg-slate-800/40">
+                  <td className="px-3 py-2 mono text-slate-300">{e.engine}</td>
+                  <td className="px-3 py-2 text-right mono">{e.total}</td>
+                  <td className="px-3 py-2 text-right mono text-rose-300">{e.spam}</td>
+                  <td className="px-3 py-2 text-right text-xs">
+                    <span className={`mono ${(e.spam / (e.total || 1)) > 0.3 ? "text-rose-300" : "text-slate-500"}`}>
+                      %{e.total ? Math.round(e.spam / e.total * 100) : 0}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right text-[10px] mono text-slate-500">
+                    {e.last_hit_at ? new Date(e.last_hit_at).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                  </td>
+                </tr>
+              ))}
+              {(s.engines || []).length === 0 && (
+                <tr><td colSpan={5} className="text-center py-8 text-slate-500">Motor verisi yok — motorlar henüz vurmadı</td></tr>
+              )}
+            </tbody>
+          </table>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+// v44.00.24 — Top list yardımcı bileşeni
+function TopList({ items, emptyMsg = "Kayıt yok", mono = false }) {
+  if (!items || items.length === 0) {
+    return <div className="text-slate-500 text-sm text-center py-6">{emptyMsg}</div>;
+  }
+  const max = Math.max(...items.map(i => i.count));
+  return (
+    <div className="space-y-1.5">
+      {items.map((it, i) => (
+        <div key={it.value + i} className="relative">
+          <div className="flex items-center gap-2">
+            <div className={`flex-1 min-w-0 truncate text-xs ${mono ? "mono" : ""} text-slate-200`} title={it.value}>{it.value}</div>
+            <span className="mono text-xs text-slate-400 shrink-0">{it.count}</span>
+          </div>
+          <div className="mt-1 h-1 bg-slate-800 rounded overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-indigo-500 to-fuchsia-500"
+                 style={{ width: `${(it.count / max) * 100}%` }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -500,11 +606,19 @@ function BayesTab() {
       <Card>
         <CardHeader title="Bayes Trainer (Kendi motor)" subtitle="Token counter — spam/ham örnek besleyin"/>
         <CardBody className="space-y-4">
-          <div className="grid grid-cols-3 gap-3">
-            <Stat label="Token Sayısı" value={status.data?.total_tokens ?? 0}/>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Stat label="Token Sayısı" value={(status.data?.total_tokens ?? 0).toLocaleString("tr-TR")}/>
             <Stat label="Spam Örnekler" value={status.data?.spam_samples ?? 0} tone="text-rose-300"/>
             <Stat label="Ham Örnekler" value={status.data?.ham_samples ?? 0} tone="text-emerald-300"/>
+            <Stat label="Denge Skoru" value={`% ${Math.round((status.data?.balance ?? 0) * 100)}`}
+                  tone={(status.data?.balance ?? 0) > 0.5 ? "text-emerald-300" : "text-amber-300"}/>
           </div>
+          {(status.data?.total_tokens ?? 0) < 500 && (
+            <div className="text-[11px] p-2 rounded border border-amber-500/30 bg-amber-500/5 text-amber-300">
+              ⚠ En az 500 token (200+ spam + 200+ ham örnek) beslendikten sonra Bayes anlamlı sonuç verir.
+              Şu an <b>{(status.data?.total_tokens ?? 0).toLocaleString("tr-TR")}</b> token var.
+            </div>
+          )}
           <textarea data-testid="bayes-sample" value={text} onChange={e => setText(e.target.value)} rows={4}
                     placeholder="Örnek e-posta metni yapıştırın..."
                     className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm"/>
@@ -520,6 +634,26 @@ function BayesTab() {
           </div>
         </CardBody>
       </Card>
+
+      {/* v44.00.24 — Top spam/ham token discriminatorlar (Bayes'in ne öğrendiğini gör) */}
+      {(status.data?.top_spam_tokens?.length > 0 || status.data?.top_ham_tokens?.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader title="🔴 En Ayırt Edici Spam Kelimeleri"
+                        subtitle="En az %65 spam oranı olan token'lar — Bayes'in spam işareti olarak öğrendikleri"/>
+            <CardBody>
+              <TokenList items={status.data?.top_spam_tokens || []} kind="spam"/>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader title="🟢 En Ayırt Edici Ham Kelimeleri"
+                        subtitle="Meşru mail sinyali olarak öğrenilen kelimeler"/>
+            <CardBody>
+              <TokenList items={status.data?.top_ham_tokens || []} kind="ham"/>
+            </CardBody>
+          </Card>
+        </div>
+      )}
 
       {/* v43.33 — Toplu Bayes Eğitim (bayilere de push eder) */}
       <Card>
@@ -689,6 +823,32 @@ function Stat({ label, value, tone = "text-slate-100" }) {
     <div className="bg-slate-950 border border-slate-800 rounded-md p-3">
       <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">{label}</div>
       <div className={`mono text-lg ${tone}`}>{value}</div>
+    </div>
+  );
+}
+
+// v44.00.24 — Bayes en iyi discriminator token listesi
+function TokenList({ items, kind = "spam" }) {
+  if (!items || items.length === 0) {
+    return <div className="text-slate-500 text-xs text-center py-4">Yeterli örnek yok</div>;
+  }
+  const barColor = kind === "spam" ? "bg-rose-500" : "bg-emerald-500";
+  return (
+    <div className="space-y-1.5">
+      {items.map((it, i) => (
+        <div key={it.token + i}>
+          <div className="flex items-center justify-between gap-2">
+            <span className="mono text-xs text-slate-200 truncate flex-1" title={it.token}>{it.token}</span>
+            <span className="text-[10px] mono text-slate-400 shrink-0">
+              <span className="text-rose-300">{it.spam}</span>/<span className="text-emerald-300">{it.ham}</span>
+              <span className="text-slate-500 ml-1">·%{Math.round(it.ratio * 100)}</span>
+            </span>
+          </div>
+          <div className="mt-0.5 h-1 bg-slate-800 rounded overflow-hidden">
+            <div className={`h-full ${barColor}`} style={{ width: `${it.ratio * 100}%` }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -963,10 +1123,12 @@ function LearnTab() {
                      : "Karantina · Konu Kelimesi")
                   : "Öz-eğitim · Konu";
                 const isSel = selected.has(s.id);
-                // v43.85 — Skor ısı haritası: 0=gri, 3=sarı, 6=kırmızı (soldaki 3px bar)
                 const sc = Math.max(0, Math.min(6, Number(s.score) || 0));
-                const hue = 180 - (sc / 6) * 180; // 180 (cyan/gri) → 0 (kırmızı)
+                const hue = 180 - (sc / 6) * 180;
                 const heatColor = sc < 0.1 ? "#475569" : `hsl(${hue.toFixed(0)}, 85%, 55%)`;
+                // v44.00.24 — Net domain/tld/keyword badge
+                const pKindColor = { domain: "#22d3ee", tld: "#ec4899", keyword: "#f59e0b" }[s.pattern_kind] || "#94a3b8";
+                const pKindLabel = { domain: "🌐 Domain", tld: "🏷 TLD", keyword: "🔑 Kelime" }[s.pattern_kind] || "?";
                 return (
                   <div key={s.id} data-testid={`suggestion-${s.id}`}
                        className={`border ${borderCls} rounded p-3 pl-4 relative ${isSel ? "ring-1 ring-indigo-400" : ""}`}>
@@ -992,13 +1154,32 @@ function LearnTab() {
                         <Badge tone="warning">{(s.score || 0).toFixed(1)}</Badge>
                       </div>
                     </div>
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">{sourceLabel}</div>
-                    <div className="text-[11px] mono text-slate-400 truncate mb-1">
-                      <span className="text-slate-500">{s.target}:</span> /{highlight(s.pattern)}/
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-2 flex-wrap">
+                      <span>{sourceLabel}</span>
+                      {s.pattern_value && (
+                        <span className="inline-flex items-center gap-1 text-[10px] mono uppercase px-1.5 py-0.5 rounded font-bold"
+                              style={{ background: pKindColor + "22", color: pKindColor }}
+                              title="Kuralın hedeflediği tam değer">
+                          {pKindLabel}: <span className="normal-case">{highlight(s.pattern_value)}</span>
+                        </span>
+                      )}
                     </div>
+                    <details className="text-[11px] mono text-slate-500 mb-1 group">
+                      <summary className="cursor-pointer hover:text-slate-300"><span className="text-slate-500">{s.target}:</span> /{highlight(s.pattern)}/</summary>
+                    </details>
                     <div className="text-[11px] text-slate-400 mb-2">{highlight(s.description)}</div>
+                    {/* v44.00.24 — Örnek göndericiler (canlı bağlam) */}
+                    {Array.isArray(s.sample_senders) && s.sample_senders.length > 0 && (
+                      <div className="text-[10px] mb-2 border-l-2 border-cyan-500/40 pl-2">
+                        <div className="text-cyan-400 uppercase tracking-wider mb-0.5">Örnek Göndericiler ({s.sample_senders.length})</div>
+                        {s.sample_senders.map((sd, i) => (
+                          <div key={i} className="mono text-slate-300 truncate">→ {highlight(sd)}</div>
+                        ))}
+                      </div>
+                    )}
                     {Array.isArray(s.sample_subjects) && s.sample_subjects.length > 0 && (
                       <div className="text-[10px] text-slate-500 mb-2 border-l-2 border-slate-700 pl-2 space-y-0.5">
+                        <div className="text-slate-400 uppercase tracking-wider mb-0.5">Örnek Konular</div>
                         {s.sample_subjects.slice(0, 3).map((ss, i) => (
                           <div key={i} className="truncate italic">"{highlight(ss)}"</div>
                         ))}
@@ -1007,11 +1188,11 @@ function LearnTab() {
                     <div className="flex gap-2">
                       <button data-testid={`suggestion-apply-${s.id}`} onClick={() => apply.mutate(s.id)}
                               className="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30">
-                        Onayla
+                        ✓ Onayla → Kural Ekle
                       </button>
                       <button data-testid={`suggestion-reject-${s.id}`} onClick={() => reject.mutate(s.id)}
                               className="text-[11px] px-2 py-1 rounded bg-rose-500/10 text-rose-300 border border-rose-500/40 hover:bg-rose-500/20">
-                        Reddet
+                        ✕ Reddet
                       </button>
                     </div>
                   </div>

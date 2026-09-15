@@ -121,17 +121,110 @@ async def stats(license_key: str = Query(..., min_length=8), hours: int = 24):
     hist = [{"bin": i, "count": c} for i, c in enumerate(bins)]
     # per-engine hits (from scores.map)
     engine_hits: dict[str, dict] = {}
-    async for e in db.mail_events.find(q, {"_id": 0, "scores": 1, "verdict": 1}):
+    async for e in db.mail_events.find(q, {"_id": 0, "scores": 1, "verdict": 1, "ts": 1, "ingested_at": 1}):
         for eng, val in (e.get("scores") or {}).items():
-            b = engine_hits.setdefault(eng, {"engine": eng, "total": 0, "spam": 0})
+            b = engine_hits.setdefault(eng, {"engine": eng, "total": 0, "spam": 0, "last_hit_at": None})
             b["total"] += 1
-            if e.get("verdict") in ("spam", "high_spam", "virus"):
+            if e.get("verdict") in ("spam", "high_spam", "virus", "phishing"):
                 b["spam"] += 1
+            ts = e.get("ts") or e.get("ingested_at")
+            if ts and (b["last_hit_at"] is None or ts > b["last_hit_at"]):
+                b["last_hit_at"] = ts
     engines = sorted(engine_hits.values(), key=lambda x: x["total"], reverse=True)
+
+    # v44.00.24 — Zenginleştirilmiş istatistikler:
+    #   - hourly_trend: son N saatte saatlik verdict trendi
+    #   - top_senders / top_recipients / top_domains
+    #   - actions: bounce/reject/accept dağılımı
+    #   - virus/phishing/bec özel breakdown'ları
+    hourly: list[dict] = []
+    now = datetime.now(timezone.utc)
+    for h in range(hours - 1, -1, -1):
+        bucket_start = (now - timedelta(hours=h + 1)).isoformat()
+        bucket_end   = (now - timedelta(hours=h)).isoformat()
+        # verdict-based tally per hour (single agg for the bucket)
+        cursor = db.mail_events.aggregate([
+            {"$match": {"license_key": license_key,
+                        "ingested_at": {"$gte": bucket_start, "$lt": bucket_end}}},
+            {"$group": {"_id": "$verdict", "count": {"$sum": 1}}},
+        ])
+        row = {"h": (now - timedelta(hours=h)).strftime("%H:00"),
+               "clean": 0, "spam": 0, "virus": 0, "phishing": 0, "other": 0}
+        async for r in cursor:
+            v = r["_id"] or "other"
+            if v in row:
+                row[v] += r["count"]
+            elif v == "high_spam":
+                row["spam"] += r["count"]
+            else:
+                row["other"] += r["count"]
+        row["total"] = row["clean"] + row["spam"] + row["virus"] + row["phishing"] + row["other"]
+        hourly.append(row)
+
+    async def _top(field: str, limit: int = 5, extra_match: dict | None = None):
+        m = {**q}
+        if extra_match:
+            m.update(extra_match)
+        pipeline = [
+            {"$match": m},
+            {"$match": {field: {"$exists": True, "$nin": [None, "", "<>"]}}},
+            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}}, {"$limit": limit},
+        ]
+        out = []
+        async for r in db.mail_events.aggregate(pipeline):
+            out.append({"value": r["_id"], "count": r["count"]})
+        return out
+
+    top_senders    = await _top("from_addr", 5, {"verdict": {"$in": ["spam", "high_spam", "virus", "phishing"]}})
+    top_recipients = await _top("to_addr",   5, {"verdict": {"$in": ["spam", "high_spam", "virus", "phishing"]}})
+
+    # Sender-domain top (uses from_addr, right-of-@)
+    domain_pipeline = [
+        {"$match": q},
+        {"$match": {"from_addr": {"$regex": "@", "$nin": [None, ""]},
+                    "verdict":   {"$in": ["spam", "high_spam", "virus", "phishing"]}}},
+        {"$project": {"dom": {"$toLower": {
+            "$arrayElemAt": [{"$split": ["$from_addr", "@"]}, 1]
+        }}}},
+        {"$group": {"_id": "$dom", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}, {"$limit": 5},
+    ]
+    top_sender_domains = []
+    async for r in db.mail_events.aggregate(domain_pipeline):
+        if r["_id"]:
+            top_sender_domains.append({"value": r["_id"], "count": r["count"]})
+
+    # action distribution (accept/reject/bounce/defer)
+    actions: dict[str, int] = {}
+    async for r in db.mail_events.aggregate([
+        {"$match": q},
+        {"$group": {"_id": "$action", "count": {"$sum": 1}}},
+    ]):
+        actions[r["_id"] or "unknown"] = r["count"]
+
+    virus_24h    = int((verdicts.get("virus") or 0))
+    phishing_24h = int((verdicts.get("phishing") or 0))
+    # Yaygın hata: virus ClamAV verdict'ini "virus" atmıyorsa reasons/scores'a bak.
+    if virus_24h == 0:
+        virus_24h = await db.mail_events.count_documents({**q, "$or": [
+            {"reasons": {"$regex": "clam|virus|infected", "$options": "i"}},
+            {"scores.clamav": {"$exists": True, "$gt": 0}},
+        ]})
+
     return {
         "hours": hours, "total_scanned": total,
         "verdicts": verdicts, "score_histogram": hist,
-        "engines": engines, "generated_at": _iso(),
+        "engines": engines,
+        # v44.00.24 zenginleştirmeler:
+        "hourly_trend": hourly,
+        "top_senders": top_senders,
+        "top_recipients": top_recipients,
+        "top_sender_domains": top_sender_domains,
+        "actions": actions,
+        "virus_24h": virus_24h,
+        "phishing_24h": phishing_24h,
+        "generated_at": _iso(),
     }
 
 
@@ -244,11 +337,50 @@ async def bayes_status(license_key: str = Query(..., min_length=8)):
     ]
     agg = await db.mailscanner_bayes.aggregate(pipeline).to_list(1)
     doc = agg[0] if agg else {"spam_total": 0, "ham_total": 0}
+
+    # v44.00.24 — Top discriminator token'lar (en spam-ağırlıklı ve en ham-ağırlıklı)
+    # spam_ratio = spam_count / (spam_count + ham_count + 1), minimum 3 örnek gerekli
+    top_spam_tokens = []
+    async for r in db.mailscanner_bayes.find(
+        {"license_key": license_key, "spam_count": {"$gte": 3}},
+        {"_id": 0, "token": 1, "spam_count": 1, "ham_count": 1}
+    ).sort("spam_count", -1).limit(50):
+        sc = r.get("spam_count", 0)
+        hc = r.get("ham_count", 0)
+        ratio = sc / (sc + hc + 1)
+        if ratio >= 0.65:
+            top_spam_tokens.append({
+                "token": r["token"], "spam": sc, "ham": hc,
+                "ratio": round(ratio, 2),
+            })
+    top_spam_tokens = sorted(top_spam_tokens, key=lambda x: -x["ratio"])[:10]
+
+    top_ham_tokens = []
+    async for r in db.mailscanner_bayes.find(
+        {"license_key": license_key, "ham_count": {"$gte": 3}},
+        {"_id": 0, "token": 1, "spam_count": 1, "ham_count": 1}
+    ).sort("ham_count", -1).limit(50):
+        sc = r.get("spam_count", 0)
+        hc = r.get("ham_count", 0)
+        ratio = hc / (sc + hc + 1)
+        if ratio >= 0.65:
+            top_ham_tokens.append({
+                "token": r["token"], "spam": sc, "ham": hc,
+                "ratio": round(ratio, 2),
+            })
+    top_ham_tokens = sorted(top_ham_tokens, key=lambda x: -x["ratio"])[:10]
+
+    # Doğruluk tahmini (basit): |spam_total - ham_total| / max(spam+ham, 1) ⇒ ne kadar dengeli olduğu
+    balance = 1 - abs(doc.get("spam_total", 0) - doc.get("ham_total", 0)) / max(
+        doc.get("spam_total", 0) + doc.get("ham_total", 0), 1)
     return {
         "total_tokens": total_tokens,
         "spam_samples": doc.get("spam_total", 0),
         "ham_samples":  doc.get("ham_total", 0),
         "trained": total_tokens > 0,
+        "balance": round(balance, 2),
+        "top_spam_tokens": top_spam_tokens,
+        "top_ham_tokens":  top_ham_tokens,
     }
 
 
@@ -686,6 +818,60 @@ async def rule_suggestions(license_key: str = Query(..., min_length=8), applied:
     q = {"license_key": license_key, "applied": applied}
     rows = await db.mailscanner_rule_suggestions.find(q, {"_id": 0})\
         .sort("created_at", -1).limit(100).to_list(100)
+    # v44.00.24 — Her öneriyi zenginleştir: pattern_value (net domain/tld/keyword),
+    # sample_senders (son gönderici e-postalar), matched_count (kural aktif olsa kaç mail'i tutardı)
+    import re as _re
+    for r in rows:
+        pat = r.get("pattern") or ""
+        sub = r.get("sub_source") or ""
+        # 1) Net değer çıkarımı — regex'ten domain/tld/keyword
+        pval = ""
+        pkind = "keyword"
+        m_dom = _re.match(r"^@([\w.\-]+)\$$", pat)
+        m_tld = _re.match(r"^@\[\^ \]\+\\\.([\w\-]+)\$$", pat)
+        if m_dom:
+            pval = m_dom.group(1); pkind = "domain"
+        elif m_tld:
+            pval = "." + m_tld.group(1); pkind = "tld"
+        elif sub == "subject_keyword":
+            # /kelime/i biçiminde olabilir → sadece kelimeyi al
+            m_kw = _re.match(r"^/?\(?\??:?([^/()|]+)", pat)
+            if m_kw:
+                pval = m_kw.group(1)[:40]; pkind = "keyword"
+        r["pattern_value"] = pval
+        r["pattern_kind"] = pkind
+
+        # 2) Bu pattern'e uyan son mail'lerden sender örnekleri — canlı bağlam
+        try:
+            since = (datetime.now(timezone.utc) - timedelta(days=r.get("days") or 7)).isoformat()
+            match_q: dict = {"license_key": license_key, "ingested_at": {"$gte": since}}
+            if pkind == "domain" and pval:
+                match_q["from_addr"] = {"$regex": f"@{_re.escape(pval)}$", "$options": "i"}
+            elif pkind == "tld" and pval:
+                match_q["from_addr"] = {"$regex": f"\\{pval}$", "$options": "i"}
+            elif pkind == "keyword" and pval:
+                match_q["subject"] = {"$regex": _re.escape(pval), "$options": "i"}
+            else:
+                match_q = None  # type: ignore
+            senders: list[str] = []
+            recipients: list[str] = []
+            if match_q:
+                async for e in db.mail_events.find(match_q,
+                                                    {"_id": 0, "from_addr": 1, "to_addr": 1}
+                                                   ).limit(20):
+                    fa = e.get("from_addr")
+                    if fa and fa not in senders and fa != "<>":
+                        senders.append(fa)
+                    ra = e.get("to_addr")
+                    if ra and ra not in recipients:
+                        recipients.append(ra)
+                    if len(senders) >= 3 and len(recipients) >= 3:
+                        break
+            r["sample_senders"] = senders[:3]
+            r["sample_recipients"] = recipients[:3]
+        except Exception:
+            r["sample_senders"] = []
+            r["sample_recipients"] = []
     return {"items": rows}
 
 

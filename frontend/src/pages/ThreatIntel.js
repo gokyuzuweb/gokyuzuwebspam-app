@@ -5,7 +5,7 @@ import { api, client } from "@/lib/api";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import {
   Globe, Radar, ShieldCheck, FileCheck2, RefreshCw, Plus, X, Zap,
-  AlertTriangle, TrendingUp, Award,
+  AlertTriangle, TrendingUp, Award, ChevronDown, ChevronRight, Mail,
 } from "lucide-react";
 import ModuleFooter from "@/components/ModuleFooter";
 
@@ -164,20 +164,105 @@ function IocTab() {
         </div>
         <div className="space-y-1 max-h-96 overflow-y-auto">
           {items.map(it => (
-            <div key={it.id} data-testid={`ioc-${it.id}`}
-                 className="flex items-center gap-3 border border-slate-800 rounded p-2 text-xs bg-slate-950/30">
-              <Badge tone={it.tag === "ransomware" || it.tag === "malware" ? "danger" : it.tag === "phishing" ? "warning" : "default"}>{it.tag}</Badge>
-              <span className="mono text-slate-400 w-14 text-[10px]">{it.type}</span>
-              <span className="mono text-slate-100 flex-1 truncate">{it.value}</span>
-              <span className="mono text-slate-500 text-[10px]">güven: %{it.confidence}</span>
-              <span className="mono text-slate-600 text-[10px]">{it.source}</span>
-              <button onClick={() => del.mutate(it.id)} className="text-slate-500 hover:text-rose-400"><X className="w-3 h-3"/></button>
-            </div>
+            <IocRow key={it.id} it={it} onDelete={() => del.mutate(it.id)} />
           ))}
           {items.length === 0 && <div className="text-center py-8 text-slate-500 text-sm">Henüz IOC yok</div>}
         </div>
       </CardBody>
     </Card>
+  );
+}
+
+// v44.00.23 — IOC satırı: tıklanınca "neden karalistede?" panelini açar.
+// /threat-intel/ioc/{id}/hits çağrısıyla o göstergeye uyan son mail'leri
+// (gönderici / konu / alıcı / verdict / zaman) alt panelde listeler.
+function IocRow({ it, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const hitsQ = useQuery({
+    queryKey: ["ti-ioc-hits", it.id],
+    queryFn: () => client.get(`/threat-intel/ioc/${it.id}/hits?limit=10`).then(r => r.data),
+    enabled: open,
+    staleTime: 30000,
+  });
+  const hits = hitsQ.data?.hits || [];
+  const total = hitsQ.data?.hit_count ?? 0;
+  return (
+    <div data-testid={`ioc-${it.id}`} className="border border-slate-800 rounded bg-slate-950/30">
+      <div className="flex items-center gap-3 p-2 text-xs">
+        <button onClick={() => setOpen(!open)} data-testid={`ioc-toggle-${it.id}`}
+                className="text-slate-500 hover:text-indigo-300 shrink-0" title="Bu göstergeye uyan mail'leri gör">
+          {open ? <ChevronDown className="w-3.5 h-3.5"/> : <ChevronRight className="w-3.5 h-3.5"/>}
+        </button>
+        <Badge tone={it.tag === "ransomware" || it.tag === "malware" ? "danger" : it.tag === "phishing" ? "warning" : "default"}>{it.tag}</Badge>
+        <span className="mono text-slate-400 w-14 text-[10px]">{it.type}</span>
+        <button onClick={() => setOpen(!open)} className="mono text-slate-100 flex-1 truncate text-left hover:text-indigo-300"
+                title="Detayları aç/kapa">{it.value}</button>
+        <span className="mono text-slate-500 text-[10px]">güven: %{it.confidence}</span>
+        <span className="mono text-slate-600 text-[10px]">{it.source}</span>
+        <button onClick={onDelete} className="text-slate-500 hover:text-rose-400"><X className="w-3 h-3"/></button>
+      </div>
+      {open && (
+        <div data-testid={`ioc-hits-${it.id}`} className="border-t border-slate-800 bg-slate-950/60 px-3 py-2">
+          {hitsQ.isLoading ? (
+            <div className="text-[11px] text-slate-500 py-2">Yükleniyor…</div>
+          ) : it.type === "hash" ? (
+            <div className="text-[11px] text-slate-500 py-2">Hash IOC'lar için mail eşleşmesi tutulmuyor — ClamAV/AV tarama sonucu ayrıca loglanır.</div>
+          ) : hits.length === 0 ? (
+            <div className="text-[11px] text-slate-500 py-2 flex items-center gap-2">
+              <Mail className="w-3 h-3"/>
+              Bu göstergeye uyan lokal mail kaydı yok — <span className="text-slate-400">gösterge global feed'ten geldi (henüz sunucunuza vurmadı)</span>.
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-2 mb-1">
+                <Mail className="w-3 h-3"/> Neden karalistede? · Son {hits.length} eşleşme
+                {total > hits.length && <span className="text-slate-600">(toplam {total.toLocaleString()})</span>}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-[9px] uppercase text-slate-600 border-b border-slate-800">
+                      <th className="text-left py-1 pr-2">Zaman</th>
+                      <th className="text-left py-1 pr-2">Gönderici</th>
+                      <th className="text-left py-1 pr-2">Alıcı</th>
+                      <th className="text-left py-1 pr-2">Konu</th>
+                      <th className="text-left py-1 pr-2">Verdict</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {hits.map((h, i) => (
+                      <tr key={h.id || i} className="border-b border-slate-900/60 hover:bg-slate-900/40">
+                        <td className="mono text-slate-500 py-1 pr-2 whitespace-nowrap">
+                          {h.ts ? new Date(h.ts).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" }) : "-"}
+                        </td>
+                        <td className="mono text-slate-100 py-1 pr-2 truncate max-w-[200px]" title={h.from_addr}>
+                          {h.from_addr || <span className="text-slate-600">(bilinmeyen)</span>}
+                        </td>
+                        <td className="mono text-slate-400 py-1 pr-2 truncate max-w-[180px]" title={h.to_addr}>{h.to_addr || "-"}</td>
+                        <td className="text-slate-300 py-1 pr-2 truncate max-w-[260px]" title={h.subject}>{h.subject || <span className="text-slate-600">(konusuz)</span>}</td>
+                        <td className="py-1 pr-2">
+                          {h.verdict && (
+                            <span className={`mono text-[9px] uppercase px-1.5 py-0.5 rounded ${
+                              h.verdict === "spam" || h.verdict === "malware" || h.verdict === "phishing"
+                                ? "bg-rose-500/20 text-rose-300"
+                                : h.verdict === "clean" ? "bg-emerald-500/20 text-emerald-300"
+                                : "bg-slate-700 text-slate-300"
+                            }`}>{h.verdict}</span>
+                          )}
+                          {h.score != null && (
+                            <span className="mono text-slate-500 text-[9px] ml-1">{Number(h.score).toFixed(1)}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -14,6 +14,77 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 25, v44.00.23 + v44.00.24) — 4 Modernizasyon Paketi ✅
+
+### 🎯 (1) v44.00.23 — Tehdit Göstergeleri (IOC) → Mail Correlation
+Kullanıcı: "Tehdit Göstergeleri (IOC) kısmında neden dolayı spam hangi mailden geldiğini göstersin"
+- **Backend**: `GET /api/threat-intel/ioc/{ioc_id}/hits?limit=10` — IOC'ye uyan son mail_events kayıtlarını döner. IP → sender_ip/client_ip/server_ip; domain → from_addr'ın domain'i (sub-domain dahil); email → from_addr tam eşleşme; url → subject/body arama; hash → not.
+- **Frontend `ThreatIntel.js`**: IOC satırı artık genişleyebilir (ChevronRight/Down toggle). Tıklandığında alt panelde son 10 eşleşme (zaman, gönderici, alıcı, konu, verdict, skor) tablo halinde gösterilir. Ayrıca "toplam N eşleşme" sayacı da eklendi.
+- **Testler**: 3/3 (route + expandable row + integration ile IP/domain/hash/404 senaryoları).
+
+### 🎯 (2) v44.00.24 — Cluster Offline Badge Fix (WHM Plugin CGI)
+Kullanıcı: "Cluster Offline yazıyor neden ?"
+- **Root cause**: `mailshield.cgi::cluster_badge()` self-master modunda `healthy_count=1/total_regions=1` dönmesine rağmen bazı network koşullarında JSON alınamıyor → "Cluster Offline" gösteriyor.
+- **Fix**: 3 adımlı fallback probe (`/api/license-server/health` → `/api/version`), timeout 4s → 6s, healthy=0 & total=0 & mode="self-master" → "● Standalone Master" yeşil rozet, unreachable → "⚠ Master'a Erişilemiyor" (Turkish, açıklayıcı), rozete hover tooltip eklendi.
+
+### 🎯 (3) v44.00.24 — MailScanner İstatistik + Bayes + AI Öğrenme Modernizasyon
+Kullanıcı: "burdaki tabları istatistik ve hepsini gözden geçir bazılar 0 gözüküyor... AI Öğrenme kısmı dahil hepsini geliştir ve modernleştir"
+
+- **Backend `/mailscanner/stats`** zenginleştirmesi (v44.00.24):
+  - `hourly_trend` — son N saatlik verdict trendi (clean/spam/virus/phishing/other buckets)
+  - `top_senders`, `top_recipients`, `top_sender_domains` — spam kaynağı analizi
+  - `actions` — accept/reject/bounce/defer dağılımı
+  - `virus_24h`, `phishing_24h` — reasons/scores fallback ile
+  - `engines[].last_hit_at` — motor son vuruş zamanı
+- **Backend `/mailscanner/bayes-status`** enrichment:
+  - `top_spam_tokens` — en ayırt edici spam kelimeleri (ratio ≥ 0.65, min 3 örnek)
+  - `top_ham_tokens` — en ayırt edici ham kelimeleri
+  - `balance` — spam/ham denge skoru (Bayes health signal)
+- **Backend `/mailscanner/ai/self-train/suggestions`** enrichment:
+  - `pattern_value` — regex'ten çıkarılmış NET domain/tld/keyword (ör. "spammer.tk")
+  - `pattern_kind` — "domain" | "tld" | "keyword" (UI'da renkli badge)
+  - `sample_senders`, `sample_recipients` — pattern'e uyan gerçek son gönderici/alıcılar
+- **Frontend `MailScanner.js`**:
+  - **KPI**: "Aktif Motor 7/8" gerçek config kaynağından (health flat string bug'ı düzeltildi), Bayes token sayısı doğru gösteriliyor, motor adları KPI altında listeleniyor
+  - **Saatlik Trafik Trendi** — LineChart eklendi (clean/spam/virus/phishing 4 renk)
+  - **Top Senders / Top Domains / Top Recipients** — 3 mini list + progress bar (spam kaynağı görünürlüğü)
+  - **Motor Aktivitesi** tablosuna "Son Vuruş" sütunu + oran rengi (>%30 rose)
+  - **Bayes tab**: Denge skoru + "En Ayırt Edici Spam/Ham Kelimeleri" (ratio bar chart)
+  - **AI Kural Önerileri**: Her öneride "🌐 Domain: spammer.tk" veya "🏷 TLD: .zip" ya da "🔑 Kelime: fatura" badge net gösteriliyor. Örnek Göndericiler (canlı bağlam, 3'e kadar) + Örnek Konular ayrı sekmelerde. Pattern regex açılır details içinde saklandı.
+
+### 🎯 (4) v44.00.24 — Liste Merkezi: Toplu İşlemler + Ülke Bazlı Engelleme
+Kullanıcı: "tüm taleplerin hepsini yap bunları hepsini bitir... toplu işlemler filtreleme ekli olsun"
+
+- **Backend**:
+  - `POST /api/lists-manager/bulk-delete` — filtre (kind/entry_type/q) veya id listesi ile toplu silme + geçmiş kaydı
+  - `GET /api/lists-manager/country-blocks` — engelli ülkelerin listesi (ISO + bayrak emoji + Türkçe adı)
+  - `POST /api/lists-manager/country-block` — ISO-3166-1 alpha-2 doğrulama, idempotent upsert
+  - `DELETE /api/lists-manager/country-block/{cc}` — engeli kaldır
+  - `GET /api/lists-manager/country-catalog` — 76 ülkelik dropdown kataloğu (bayrak + TR adı)
+  - `COUNTRY_NAMES_TR` — 76 ülke Türkçe adları
+- **Frontend `ListsManager.js`** (fully overwritten):
+  - **5 tab**: Tümü / Beyaz / Kara / **🌐 Ülke Engelle** / Geçmiş
+  - **Toplu işlem toolbar**: "Tümünü Seç", "Seçilenleri Sil (N)", "Filtreyi Sil (N)", "🧹 Hepsini Temizle" — 3 seviye onay (confirm modalları)
+  - **Ülke Engelleme sekmesi**: Ülke seç dropdown (bayrak + TR adı + zaten engelli disabled), quick pick chips (12 sık engellenen ülke: 🇷🇺 🇨🇳 🇰🇵 🇮🇷 🇸🇾 🇳🇬 🇮🇳 🇵🇰 🇻🇳 🇮🇩 🇧🇩 🇦🇫), engelli ülkeler grid görünümü
+  - Row checkbox seçim + toplu silme
+  - Country tipi row'unda bayrak + ülke adı ayrı gösterim
+  - Geçmişte "bulk_delete", "country_block_add/remove" aksiyonları da render ediliyor
+
+### 🎯 (5) v44.00.24 — Bounce Digest `<>` Fix
+- `bounce_digest.py::_generate_digest_for_license` → sample yaratımında `display_from` fallback zinciri eklendi: `from_addr → to_addr → user@top_domain → user`. Envelope-null DSN'lerde artık gerçek e-posta gözükür.
+
+### 📊 Test Coverage
+- `test_v44_00_23_ioc_hits.py` — 3/3 ✅
+- `test_v44_00_24_modernize.py` — 11/11 ✅ (bulk-delete, country-block, mailscanner stats, bayes enrichment, rule enrichment, bounce, cluster badge, frontend country tab, integration)
+- Toplam yeni testler: 14/14 ✅
+
+### 📦 Version Bump
+`v44.00.22` → `v44.00.24`
+- `/app/VERSION`, `/app/backend/VERSION`, `/app/whm-plugin/VERSION` → v44.00.24
+- `server.py::_PACKAGE_VERSION` → v44.00.24
+
+
+
 
 ## Feb 15, 2026 (Session 24, v44.00.11) — "Master paneli müşterinin kurulu versiyonunu güncellemiyor" P0 FIX
 

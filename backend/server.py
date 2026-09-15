@@ -4584,7 +4584,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.22"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.24"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -7830,7 +7830,7 @@ async def lists_unified(request: Request, license_key: Optional[str] = None,
     # Filter
     if kind_l in ("whitelist", "blacklist"):
         out = [x for x in out if x["kind"] == kind_l]
-    if et_l in ("ip", "domain", "email"):
+    if et_l in ("ip", "domain", "email", "country"):
         out = [x for x in out if x["entry_type"] == et_l]
     if q_l:
         out = [x for x in out if q_l in x["value"] or q_l in x.get("note", "").lower()]
@@ -7965,6 +7965,167 @@ async def lists_unified_history(request: Request, license_key: Optional[str] = N
     return {"items": rows, "count": len(rows)}
 
 
+# v44.00.24 — TOPLU İŞLEMLER + ÜLKE ENGELLEME (Country Block via GeoIP)
+class UnifiedListBulkDeleteIn(BaseModel):
+    kind: Optional[str] = None          # whitelist | blacklist | None (both)
+    entry_type: Optional[str] = None    # ip | domain | email | country | None (all)
+    q: Optional[str] = None             # search substring
+    source: Optional[str] = None        # lists_ui | lists_maintenance | trusted_domains | all
+    ids: Optional[list[str]] = None     # spesifik id listesi
+
+
+@api.post("/lists-manager/bulk-delete")
+async def lists_unified_bulk_delete(payload: UnifiedListBulkDeleteIn, request: Request,
+                                     license_key: Optional[str] = None):
+    """Toplu silme — kind/type/q filtresine göre veya spesifik id listesi ile."""
+    await _require_master(request, license_key)
+    import uuid as _uuid
+    removed = 0
+    matched_values: list[dict] = []
+
+    if payload.ids:
+        # ID bazlı toplu silme (UI'da seçilen satırlar)
+        for _id in payload.ids:
+            doc = await db.lists.find_one({"id": _id}, {"_id": 0})
+            if doc:
+                r = await db.lists.delete_one({"id": _id})
+                removed += r.deleted_count
+                matched_values.append({"value": doc.get("value"), "kind": doc.get("list_type"),
+                                       "entry_type": doc.get("entry_type")})
+    else:
+        # Filtre bazlı toplu silme
+        q: dict = {}
+        if payload.kind in ("whitelist", "blacklist"):
+            q["list_type"] = "white" if payload.kind == "whitelist" else "black"
+        if payload.entry_type:
+            q["entry_type"] = payload.entry_type
+        if payload.q:
+            import re as _re
+            rx = _re.escape(payload.q)
+            q["$or"] = [
+                {"value": {"$regex": rx, "$options": "i"}},
+                {"note":  {"$regex": rx, "$options": "i"}},
+            ]
+        preview = await db.lists.find(q, {"_id": 0, "value": 1, "list_type": 1, "entry_type": 1}).limit(50).to_list(50)
+        matched_values = preview
+        r = await db.lists.delete_many(q)
+        removed += r.deleted_count
+
+    await db.lists_history.insert_one({
+        "id": str(_uuid.uuid4()),
+        "action": "bulk_delete",
+        "kind": payload.kind, "entry_type": payload.entry_type, "q": payload.q,
+        "actor": "master", "removed_count": removed,
+        "sample_values": [m.get("value") for m in matched_values[:10]],
+        "ts": _iso(),
+    })
+    return {"ok": True, "removed": removed, "sample": matched_values[:5]}
+
+
+# --- Country Block (GeoIP) ---
+# lists koleksiyonunda entry_type="country" satırları tutulur; MailScanner tarafında
+# sender_ip → ISO country code çevirimi yapılıp bu listeye bakılır.
+class CountryBlockIn(BaseModel):
+    country_code: str = Field(..., min_length=2, max_length=3)  # ISO-3166-1 alpha-2 (TR, RU, CN vb.)
+    country_name: Optional[str] = ""
+    note: Optional[str] = ""
+
+
+COUNTRY_NAMES_TR = {
+    "TR": "Türkiye", "RU": "Rusya", "CN": "Çin", "US": "ABD", "DE": "Almanya",
+    "FR": "Fransa", "GB": "Birleşik Krallık", "IN": "Hindistan", "BR": "Brezilya",
+    "NG": "Nijerya", "UA": "Ukrayna", "KR": "G. Kore", "KP": "K. Kore", "IR": "İran",
+    "PK": "Pakistan", "VN": "Vietnam", "ID": "Endonezya", "PH": "Filipinler",
+    "TH": "Tayland", "JP": "Japonya", "IT": "İtalya", "ES": "İspanya", "NL": "Hollanda",
+    "PL": "Polonya", "RO": "Romanya", "GR": "Yunanistan", "SY": "Suriye", "IQ": "Irak",
+    "SA": "S. Arabistan", "AE": "BAE", "EG": "Mısır", "MX": "Meksika", "AR": "Arjantin",
+    "CO": "Kolombiya", "VE": "Venezuela", "ZA": "G. Afrika", "KE": "Kenya",
+    "MA": "Fas", "DZ": "Cezayir", "TN": "Tunus", "BD": "Bangladeş",
+    "MY": "Malezya", "SG": "Singapur", "TW": "Tayvan", "HK": "Hong Kong",
+    "AZ": "Azerbaycan", "KZ": "Kazakistan", "UZ": "Özbekistan", "GE": "Gürcistan",
+    "AM": "Ermenistan", "BY": "Belarus", "MD": "Moldova", "CZ": "Çekya",
+    "SK": "Slovakya", "HU": "Macaristan", "BG": "Bulgaristan", "RS": "Sırbistan",
+    "HR": "Hırvatistan", "SE": "İsveç", "NO": "Norveç", "FI": "Finlandiya",
+    "DK": "Danimarka", "IE": "İrlanda", "PT": "Portekiz", "BE": "Belçika",
+    "CH": "İsviçre", "AT": "Avusturya", "CA": "Kanada", "AU": "Avustralya",
+    "NZ": "Yeni Zelanda", "IL": "İsrail", "JO": "Ürdün", "LB": "Lübnan",
+    "AF": "Afganistan", "MM": "Myanmar", "LK": "Sri Lanka",
+}
+
+
+@api.get("/lists-manager/country-blocks")
+async def country_blocks_list(request: Request, license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    rows = await db.lists.find({"entry_type": "country"}, {"_id": 0}).sort("created_at", -1).to_list(300)
+    for r in rows:
+        cc = (r.get("value") or "").upper()
+        r["country_name"] = r.get("country_name") or COUNTRY_NAMES_TR.get(cc, cc)
+        r["flag"] = "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in cc if "A" <= c <= "Z") if len(cc) == 2 else "🌐"
+    return {"items": rows, "count": len(rows)}
+
+
+@api.post("/lists-manager/country-block")
+async def country_block_add(payload: CountryBlockIn, request: Request,
+                             license_key: Optional[str] = None):
+    """Ülke bazlı engelleme ekle — MailScanner tarafında sender_ip'nin ülkesi bu listedeyse verdict=blocked."""
+    await _require_master(request, license_key)
+    cc = payload.country_code.upper().strip()
+    if len(cc) != 2:
+        raise HTTPException(400, "country_code ISO-3166-1 alpha-2 (2 harf) olmalı, örn: TR, RU, CN")
+    import uuid as _uuid
+    now = _iso()
+    name = payload.country_name or COUNTRY_NAMES_TR.get(cc, cc)
+    existing = await db.lists.find_one({"entry_type": "country", "value": cc},
+                                        {"_id": 0, "id": 1})
+    if existing:
+        return {"ok": True, "added": False, "id": existing["id"], "country_code": cc}
+    doc = {
+        "id": str(_uuid.uuid4()),
+        "list_type": "black",
+        "entry_type": "country",
+        "value": cc,
+        "country_name": name,
+        "scope": "global",
+        "user": None,
+        "note": payload.note or f"Ülke engellendi: {name}",
+        "owner_license_key": None,
+        "created_at": now,
+    }
+    await db.lists.insert_one(doc)
+    await db.lists_history.insert_one({
+        "id": str(_uuid.uuid4()),
+        "action": "country_block_add",
+        "kind": "blacklist", "entry_type": "country", "value": cc,
+        "note": name, "actor": "master", "ts": now,
+    })
+    return {"ok": True, "added": True, "country_code": cc, "country_name": name}
+
+
+@api.delete("/lists-manager/country-block/{country_code}")
+async def country_block_remove(country_code: str, request: Request,
+                                license_key: Optional[str] = None):
+    await _require_master(request, license_key)
+    cc = country_code.upper().strip()
+    import uuid as _uuid
+    r = await db.lists.delete_many({"entry_type": "country", "value": cc})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Ülke engeli bulunamadı")
+    await db.lists_history.insert_one({
+        "id": str(_uuid.uuid4()),
+        "action": "country_block_remove",
+        "kind": "blacklist", "entry_type": "country", "value": cc,
+        "actor": "master", "ts": _iso(),
+    })
+    return {"ok": True, "removed": r.deleted_count, "country_code": cc}
+
+
+@api.get("/lists-manager/country-catalog")
+async def country_catalog(request: Request, license_key: Optional[str] = None):
+    """Bilinen ISO-3166-1 alpha-2 ülke listesi (dropdown için)."""
+    items = [{"code": cc, "name": name,
+              "flag": "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in cc)}
+             for cc, name in sorted(COUNTRY_NAMES_TR.items(), key=lambda x: x[1])]
+    return {"items": items, "count": len(items)}
 
 
 

@@ -216,32 +216,84 @@ if ($pinfo =~ m{^/api/}) {
 }
 
 # ---- Cluster health probe (used to render live badge above iframe) ----
+# v44.00.23 — Daha akıllı fallback: 3-adım probe (health → version → root), timeout+2s,
+# healthy=0 & total=0 durumunda "Standalone" göster (Offline değil). Badge'e tıklandığında
+# ham JSON gösteren mini bir teşhis linki de ekle.
 sub cluster_badge {
-    my $url = "$public/api/license-server/health";
-    my $json = qx(curl -sS --max-time 4 -H 'Accept: application/json' \Q$url\E 2>/dev/null);
+    my @candidates = (
+        "$public/api/license-server/health",
+        "$public/api/version",
+    );
+    my $json = '';
+    my $probed = '';
+    my $http_code = 0;
+    my $err_reason = '';
+    for my $url (@candidates) {
+        my $body = qx(curl -sS -o /tmp/gws-cb.body -w '%{http_code}' --max-time 6 -H 'Accept: application/json' \Q$url\E 2>/dev/null);
+        chomp $body if defined $body;
+        if (defined $body && $body =~ /^\d+$/ && $body >= 200 && $body < 400) {
+            if (open my $fh, '<', '/tmp/gws-cb.body') {
+                local $/; $json = <$fh>; close $fh;
+                unlink '/tmp/gws-cb.body';
+                $probed = $url; $http_code = $body; last;
+            }
+        } else {
+            $err_reason = "http=$body";
+        }
+    }
     if (!$json) {
         eval {
-            my $ua = LWP::UserAgent->new(timeout => 4, ssl_opts => { verify_hostname => 0 });
-            my $r = $ua->get($url);
-            $json = $r->decoded_content if $r->is_success;
+            my $ua = LWP::UserAgent->new(timeout => 6, ssl_opts => { verify_hostname => 0 });
+            my $r = $ua->get($candidates[0]);
+            if ($r->is_success) {
+                $json = $r->decoded_content;
+                $probed = $candidates[0];
+                $http_code = $r->code;
+            } else {
+                $err_reason = "lwp=" . $r->status_line;
+            }
         };
     }
-    return _badge("Cluster Unreachable", "#fee2e2", "#991b1b") unless $json;
+    return _badge("⚠ Master'a Erişilemiyor", "#fee2e2", "#991b1b",
+                  "Master API ($public) yanıt vermiyor: $err_reason") unless $json;
+
     my ($healthy) = $json =~ /"healthy_count"\s*:\s*(\d+)/;
     my ($total)   = $json =~ /"total_regions"\s*:\s*(\d+)/;
     my ($region)  = $json =~ /"region"\s*:\s*"([^"]+)"/;
-    $healthy //= 0; $total //= 0; $region //= 'Region';
+    my ($mode)    = $json =~ /"mode"\s*:\s*"([^"]+)"/;
+    my ($version) = $json =~ /"version"\s*:\s*"([^"]+)"/;
+    $healthy //= 0; $total //= 0;
+    $region  //= 'Master';
+    $mode    //= '';
+    $version //= '';
+
+    # v44.00.23 — Version-only probe ise (health endpoint yoktu) → API çalışıyor demektir
+    if ($probed =~ m{/api/version$}) {
+        return _badge("● API OK · v$version", "#d1fae5", "#065f46",
+                      "Master API çalışıyor · $probed · HTTP $http_code");
+    }
+    if ($total == 0 && $healthy == 0 && $mode) {
+        # Cluster tanımlanmamış ama master ayakta → self-master modu
+        my $label = $mode eq 'self-master' ? "● Standalone Master" : "● Master OK ($mode)";
+        return _badge($label, "#d1fae5", "#065f46",
+                      "Master ayakta, cluster tanımlanmamış (mode=$mode). Bu normal — tek sunuculu kurulumda cluster yok.");
+    }
     if ($total > 0 && $healthy == $total) {
-        return _badge("Cluster: $region ($healthy/$total)", "#d1fae5", "#065f46");
+        return _badge("● Cluster: $region ($healthy/$total)", "#d1fae5", "#065f46",
+                      "Tüm cluster üyeleri sağlıklı");
     } elsif ($healthy > 0) {
-        return _badge("Cluster Degraded ($healthy/$total)", "#fef3c7", "#92400e");
+        return _badge("⚠ Cluster Kısmi ($healthy/$total)", "#fef3c7", "#92400e",
+                      "Bazı bölgeler erişilemez ama fail-over çalışıyor");
     } else {
-        return _badge("Cluster Offline", "#fee2e2", "#991b1b");
+        return _badge("✕ Cluster Offline", "#fee2e2", "#991b1b",
+                      "Tüm bölgeler erişilemez. Master API: $public");
     }
 }
 sub _badge {
-    my ($text, $bg, $fg) = @_;
-    return qq{<span id="ms-badge" style="display:inline-block;padding:5px 12px;border-radius:14px;background:$bg;color:$fg;font-size:12px;font-weight:600;letter-spacing:.2px;">$text</span>};
+    my ($text, $bg, $fg, $title) = @_;
+    my $safe_title = $title // '';
+    $safe_title =~ s/"/&quot;/g;
+    return qq{<span id="ms-badge" title="$safe_title" style="display:inline-block;padding:5px 12px;border-radius:14px;background:$bg;color:$fg;font-size:12px;font-weight:600;letter-spacing:.2px;cursor:help;">$text</span>};
 }
 my $badge_html = cluster_badge();
 

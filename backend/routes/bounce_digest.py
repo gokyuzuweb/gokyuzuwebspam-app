@@ -185,9 +185,18 @@ async def _generate_digest_for_license(license_key: str, hours: int = 24) -> dic
         r_key = r[:60]
         top_reasons[r_key] = top_reasons.get(r_key, 0) + 1
         if len(samples) < 10:
+            # v44.00.24 — Envelope-null (`<>`) DSN'lerde gerçek gönderen kaybolur.
+            # Bunun için display_from fallback zinciri ekle: from_addr → to_addr → user@top_domain → user
+            raw_from = (e.get("from_addr") or "").strip()
+            display_from = raw_from
+            if not display_from or display_from == "<>":
+                display_from = rcpt or (
+                    f"{u}@{list(per_domain.keys())[0]}" if per_domain else u
+                )
             samples.append({
                 "user": u,
-                "from_addr": e.get("from_addr") or "",  # v43.99.20 — tam gönderici e-posta
+                "from_addr": raw_from,                   # ham değer (audit için)
+                "display_from": display_from,            # UI için hazır — hep dolu
                 "to": rcpt, "subject": (e.get("subject") or "")[:80],
                 "ts": e.get("ts"), "action": e.get("action"),
                 "size_kb": round((e.get("size_bytes") or 0) / 1024, 1),
