@@ -1,7 +1,7 @@
 // v44.00.35 — AI System Analysis Modal (Claude Sonnet 4.6)
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Sparkles, X, Loader2, RefreshCw } from "lucide-react";
+import { Sparkles, X, Loader2, RefreshCw, Download } from "lucide-react";
 import { toast } from "sonner";
 import { client } from "@/lib/api";
 
@@ -92,6 +92,18 @@ export default function AiSystemAnalysisButton() {
                   ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Analiz Ediliyor…</>
                   : <><RefreshCw className="w-3.5 h-3.5" /> {report ? "Yenile" : "Analizi Başlat"}</>}
               </button>
+              {/* v44.00.36 — PDF Export */}
+              {report?.id && (
+                <a
+                  href={`${(process.env.REACT_APP_BACKEND_URL || "")}/api/ai/system-analysis/${report.id}/pdf?license_key=${encodeURIComponent(
+                    (typeof window !== "undefined" && (localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license"))) || ""
+                  )}`}
+                  target="_blank" rel="noreferrer"
+                  data-testid="ai-system-pdf"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold">
+                  <Download className="w-3.5 h-3.5" /> PDF
+                </a>
+              )}
               <button onClick={() => setOpen(false)}
                 className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
                 data-testid="ai-system-close">

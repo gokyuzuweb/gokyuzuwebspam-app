@@ -14,7 +14,45 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
-## Feb 15, 2026 (Session 26, v44.00.35) — Sticky Bulk Bar + AI Analiz + DMARC Wizard ✅
+## Feb 15, 2026 (Session 26, v44.00.36) — AI Cron + DNS Doğrulama + PDF Export ✅
+
+### 🎯 (1) AI Rapor Zamanlaması + Skor Düşüşü Alarmı
+- **`_daily_ai_analysis_task`** cron (server.py startup'ta register): her sabah **08:00 UTC** otomatik rapor üretir.
+- **Skor düşüşü tespiti**: Önceki raporla karşılaştır, **≥15 puan düşüşte** `notifications_inbox`'a `ai_health_drop` alarmı (severity `high` ≥25 puan, `medium` ≥15).
+- **`_extract_score` regex** `\d{1,3}\s*/\s*100` → rapor Markdown'undan Genel Sağlık Skoru sayısını çıkarır ve `health_score` alanına yazar.
+- **`_generate_report` shared helper** hem manuel endpoint hem cron için tek yerden çalışır.
+- **`GET /system-analysis/history`** endpoint: son N raporun metadata + skor listesi.
+- Live doğrulandı: cron register OK, endpoint history 1 kayıt döner.
+
+### 🎯 (2) DMARC Wizard — Canlı DNS Doğrulama
+- **`GET /api/ai/dmarc-verify?domain=<d>`**: `dnspython` ile SPF (`v=spf1`), DKIM (`default._domainkey`), DMARC (`_dmarc`) TXT record'larını Cloudflare (1.1.1.1) + Google (8.8.8.8) resolver'larından paralel sorgular.
+- **Akıllı analiz**: SPF policy (`-all`/`~all`/`+all`), DMARC policy + rua= parse, DKIM presence check.
+- **Issue detection**: "SPF kaydı yok", "Sonu ~all veya -all olmalı", "DMARC kaydı yok — spoof'a açık!", "default._domainkey seçicisi yok" gibi Türkçe uyarılar.
+- **Frontend**: `DmarcSetupWizard` üst barına **"🔍 DNS'i Şimdi Kontrol Et"** butonu → altında canlı ✓/✕ sonuç barı (SPF/DKIM/DMARC + policy + geçen süre + issue detayları).
+- Live doğrulandı: `gokyuzu.net` gerçek DNS: ✓ SPF (~all) · ✕ DKIM (default yok) · ✓ DMARC (p=none).
+
+### 🎯 (3) AI Rapor PDF Export
+- **`GET /api/ai/system-analysis/{report_id}/pdf`**: `reportlab.platypus` ile A4 PDF üretir. Markdown → paragraflar (H1/H2/H3/liste/bold), sağlık skoru ve model metadata dahil.
+- **`Content-Disposition`** attachment header ile filename `gws-health-{YYYY-MM-DD}-{id[:8]}.pdf`.
+- **Frontend**: AI System Analysis modal header'a **PDF** butonu (indirme linki, `?license_key=...` query param).
+- Live doğrulandı: 5074 byte gerçek PDF üretti (`%PDF-1.4` magic bytes OK).
+
+### 📊 Test Coverage
+`test_v44_00_36_cron_dns_pdf.py`: **6/6 ✅**
+- DNS verify (real domain, master-only, invalid input)
+- History endpoint format
+- PDF magic bytes + content-type
+- Score extraction & cron markers
+
+### ⏭ Devam eden Backlog
+- **ThreatIntel.js Refactor**: 1535 satırı UsomTab / DmarcTab / FeedsTab / ComplianceTab / IocTab dosyalarına bölme — bu session'da context/risk dengesi nedeniyle yapılmadı; sonraki session'a bırakıldı
+
+### 📦 Version Bump
+`v44.00.35` → **`v44.00.36`**
+
+---
+
+
 
 ### 🎯 (1) Karantina Sticky Bulk Action Bar (Gmail-benzeri UX)
 - **`Quarantine.js`**: Toolbar'daki 4 satır aksiyon barı → `selected.size > 0` iken ekranın alt kenarından yükselen sabit floating bar (`fixed left-1/2 -translate-x-1/2 bottom-4 z-50` + backdrop-blur + indigo shadow)

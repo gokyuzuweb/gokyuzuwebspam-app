@@ -2,18 +2,29 @@
 Master-only endpoint that collects current signals (spam trend, rule performance,
 threat feed health, DMARC alarms) and asks Claude to produce a plain-language
 Turkish summary + recommended actions.
+
+v44.00.36 — Added:
+  * `_daily_ai_analysis_task` — her sabah 08:00 UTC otomatik rapor + skor düşüşü alarmı
+  * `GET /system-analysis/history` — geçmiş raporlar
+  * `GET /system-analysis/{id}/pdf` — PDF export
 """
 from __future__ import annotations
+import asyncio
+import io
+import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 
 load_dotenv()
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -125,39 +136,60 @@ Kurallar:
 - Toplam uzunluk: max 400 kelime"""
 
 
-@router.post("/system-analysis")
-async def system_analysis(request: Request, license_key: Optional[str] = None):
-    """Claude Sonnet 4.6 ile sistem sağlık raporu üret. Master-only."""
+@router.get("/system-analysis/latest")
+async def get_latest_analysis(request: Request, license_key: Optional[str] = None):
+    """Son üretilen sistem sağlık raporunu döner (cache olarak kullanmak için)."""
     await _require_master(request, license_key)
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(500, "EMERGENT_LLM_KEY tanımlı değil. Profil → Manage Plan → Universal Key")
-    signals = await _collect_signals()
+    doc = await db.ai_system_reports.find_one({}, sort=[("generated_at", -1)], projection={"_id": 0})
+    return doc or {}
 
+
+# v44.00.36 — Skor extraction & history & PDF & cron
+_SCORE_RE = re.compile(r"(\d{1,3})\s*/\s*100", re.MULTILINE)
+
+
+def _extract_score(md: str) -> Optional[int]:
+    """Rapor markdown'undan '62 / 100' gibi ilk sağlık skorunu çıkar."""
+    if not md:
+        return None
+    m = _SCORE_RE.search(md)
+    if not m:
+        return None
+    try:
+        v = int(m.group(1))
+        return v if 0 <= v <= 100 else None
+    except Exception:
+        return None
+
+
+async def _generate_report(reason: str = "manual") -> dict:
+    """Rapor üretme ortak fonksiyon (endpoint + cron ortak kullanır)."""
+    if not EMERGENT_LLM_KEY:
+        raise RuntimeError("EMERGENT_LLM_KEY tanımlı değil")
+    signals = await _collect_signals()
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
     except ImportError:
-        raise HTTPException(500, "emergentintegrations yüklü değil. pip install emergentintegrations")
-
+        raise RuntimeError("emergentintegrations yüklü değil")
+    import json as _json
     session_id = f"sys-analysis-{uuid.uuid4()}"
     chat = (
         LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session_id, system_message=SYSTEM_PROMPT)
         .with_model("anthropic", "claude-sonnet-4-6")
     )
-    import json as _json
     msg = UserMessage(text=(
-        f"Aşağıdaki JSON, GökyüzüWebSpam master panelinin son 7 günlük durum sinyalleridir. "
-        f"Sistem prompt'undaki 4 bölümlü Türkçe rapor formatında yanıtla.\n\n"
+        "Aşağıdaki JSON, GökyüzüWebSpam master panelinin son 7 günlük durum sinyalleridir. "
+        "Sistem prompt'undaki 4 bölümlü Türkçe rapor formatında yanıtla.\n\n"
         f"```json\n{_json.dumps(signals, ensure_ascii=False, indent=2)}\n```"
     ))
-    try:
-        response_text = await chat.send_message(msg)
-    except Exception as ex:
-        raise HTTPException(502, f"LLM çağrısı başarısız: {ex}")
-
+    response_text = await chat.send_message(msg)
+    score = _extract_score(response_text)
     doc = {
         "id": str(uuid.uuid4()),
         "generated_at": _iso(),
         "model": "anthropic/claude-sonnet-4-6",
+        "reason": reason,
+        "health_score": score,
         "signals": signals,
         "report_markdown": response_text,
     }
@@ -166,9 +198,261 @@ async def system_analysis(request: Request, license_key: Optional[str] = None):
     return doc
 
 
-@router.get("/system-analysis/latest")
-async def get_latest_analysis(request: Request, license_key: Optional[str] = None):
-    """Son üretilen sistem sağlık raporunu döner (cache olarak kullanmak için)."""
+# system-analysis endpoint'ini shared fonksiyona bağla
+@router.post("/system-analysis")
+async def system_analysis(request: Request, license_key: Optional[str] = None):
+    """Claude Sonnet 4.6 ile sistem sağlık raporu üret. Master-only."""
     await _require_master(request, license_key)
-    doc = await db.ai_system_reports.find_one({}, sort=[("generated_at", -1)], projection={"_id": 0})
-    return doc or {}
+    try:
+        return await _generate_report(reason="manual")
+    except RuntimeError as ex:
+        raise HTTPException(500, str(ex))
+    except Exception as ex:
+        raise HTTPException(502, f"LLM çağrısı başarısız: {ex}")
+
+
+@router.get("/system-analysis/history")
+async def get_history(request: Request, license_key: Optional[str] = None,
+                       limit: int = 30):
+    """Son N raporu döner (metadata + skor, tam markdown yok)."""
+    await _require_master(request, license_key)
+    limit = max(1, min(200, int(limit)))
+    docs = await db.ai_system_reports.find(
+        {}, projection={"_id": 0, "id": 1, "generated_at": 1, "model": 1,
+                        "reason": 1, "health_score": 1}
+    ).sort("generated_at", -1).limit(limit).to_list(limit)
+    return {"items": docs, "count": len(docs)}
+
+
+@router.get("/system-analysis/{report_id}")
+async def get_report(report_id: str, request: Request, license_key: Optional[str] = None):
+    """Belirli bir raporu detaylı döner."""
+    await _require_master(request, license_key)
+    doc = await db.ai_system_reports.find_one({"id": report_id}, projection={"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Rapor bulunamadı")
+    return doc
+
+
+@router.get("/system-analysis/{report_id}/pdf")
+async def export_pdf(report_id: str, request: Request, license_key: Optional[str] = None):
+    """Raporu PDF olarak indir."""
+    await _require_master(request, license_key)
+    doc = await db.ai_system_reports.find_one({"id": report_id}, projection={"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Rapor bulunamadı")
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                     PageBreak, Table, TableStyle)
+
+    buf = io.BytesIO()
+    docp = SimpleDocTemplate(buf, pagesize=A4,
+                              leftMargin=2*cm, rightMargin=2*cm,
+                              topMargin=2*cm, bottomMargin=2*cm,
+                              title="GökyüzüWebSpam Sağlık Raporu",
+                              author="GökyüzüWebSpam AI")
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="H1TR", parent=styles["Heading1"],
+                               textColor=colors.HexColor("#4f46e5"),
+                               spaceAfter=12, fontSize=16))
+    styles.add(ParagraphStyle(name="H2TR", parent=styles["Heading2"],
+                               textColor=colors.HexColor("#6366f1"),
+                               spaceAfter=8, fontSize=13))
+    styles.add(ParagraphStyle(name="BodyTR", parent=styles["BodyText"],
+                               fontSize=10, leading=14, spaceAfter=4))
+    styles.add(ParagraphStyle(name="MonoTR", parent=styles["Code"],
+                               fontSize=8, textColor=colors.HexColor("#64748b")))
+    elements = []
+    elements.append(Paragraph("🛡 GökyüzüWebSpam — AI Sistem Sağlık Raporu", styles["H1TR"]))
+    gen_dt = doc.get("generated_at", "")
+    score = doc.get("health_score")
+    elements.append(Paragraph(
+        f"Oluşturulma: {gen_dt}<br/>Model: {doc.get('model')}<br/>"
+        f"Neden: {doc.get('reason', '-')}<br/>"
+        f"Sağlık Skoru: <b>{score if score is not None else '-'} / 100</b>",
+        styles["MonoTR"],
+    ))
+    elements.append(Spacer(1, 12))
+    # Markdown → basit paragraflar
+    md = doc.get("report_markdown") or ""
+    for raw in md.split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            elements.append(Spacer(1, 6)); continue
+        if line.startswith("# "):
+            elements.append(Paragraph(line[2:], styles["H1TR"]))
+        elif line.startswith("## "):
+            elements.append(Paragraph(line[3:], styles["H2TR"]))
+        elif line.startswith("### "):
+            elements.append(Paragraph(f"<b>{line[4:]}</b>", styles["BodyTR"]))
+        elif line.startswith("---"):
+            elements.append(Spacer(1, 10))
+        elif line.lstrip().startswith(("- ", "* ", "• ")):
+            txt = line.lstrip()[2:]
+            elements.append(Paragraph(f"• {_md_bold(txt)}", styles["BodyTR"]))
+        elif re.match(r"^\d+\.\s", line.lstrip()):
+            elements.append(Paragraph(_md_bold(line.lstrip()), styles["BodyTR"]))
+        else:
+            elements.append(Paragraph(_md_bold(line), styles["BodyTR"]))
+    docp.build(elements)
+    buf.seek(0)
+    fname = f"gws-health-{gen_dt[:10]}-{report_id[:8]}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+def _md_bold(s: str) -> str:
+    """Markdown **bold** → HTML <b> for reportlab paragraphs."""
+    s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+    # Escape < unless it's part of a tag we just made
+    return s
+
+
+# ═════════════════════════════════════════════════════════════════════
+# v44.00.36 — Otomatik Sabah Cron + Skor Düşüşü Alarmı
+# ═════════════════════════════════════════════════════════════════════
+
+async def _daily_ai_analysis_task():
+    """Her sabah 08:00 UTC AI raporu üret + önceki raporla skor karşılaştır.
+    Skor 15+ puan düştüyse notifications_inbox'a 'ai_health_drop' alarmı at."""
+    await asyncio.sleep(900)  # startup +15dk
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.hour == 8:
+                today = now.date().isoformat()
+                last = await db.settings.find_one({"_key": "ai_analysis_last_cron"}, {"_id": 0}) or {}
+                if last.get("date") == today:
+                    await asyncio.sleep(3600); continue
+                if not EMERGENT_LLM_KEY:
+                    log.info("ai analysis cron skipped: no EMERGENT_LLM_KEY")
+                else:
+                    try:
+                        prev = await db.ai_system_reports.find_one(
+                            {}, sort=[("generated_at", -1)], projection={"_id": 0, "health_score": 1}
+                        ) or {}
+                        prev_score = prev.get("health_score")
+                        doc = await _generate_report(reason="daily_cron")
+                        new_score = doc.get("health_score")
+                        drop = None
+                        if isinstance(prev_score, int) and isinstance(new_score, int):
+                            drop = prev_score - new_score
+                            if drop >= 15:
+                                # Skor 15+ düştü → alarm
+                                await db.notifications_inbox.insert_one({
+                                    "id": str(uuid.uuid4()),
+                                    "kind": "ai_health_drop",
+                                    "subject": f"[SAĞLIK UYARISI] Sistem skoru {prev_score}→{new_score} (−{drop} puan)",
+                                    "body": (
+                                        f"AI günlük sağlık raporu, sisteminizin sağlık skorunun "
+                                        f"{prev_score}/100'den {new_score}/100'e düştüğünü tespit etti (−{drop} puan).\n\n"
+                                        f"Detaylı rapor için: Dashboard → AI Sistem Analizi butonuna basın."
+                                    ),
+                                    "meta": {"prev_score": prev_score, "new_score": new_score,
+                                             "drop": drop, "report_id": doc.get("id")},
+                                    "license_key": None, "read": False,
+                                    "severity": "high" if drop >= 25 else "medium",
+                                    "created_at": _iso(),
+                                })
+                        await db.settings.update_one(
+                            {"_key": "ai_analysis_last_cron"},
+                            {"$set": {"_key": "ai_analysis_last_cron", "date": today,
+                                      "score": new_score, "prev_score": prev_score,
+                                      "drop": drop, "report_id": doc.get("id"),
+                                      "at": now.isoformat()}},
+                            upsert=True,
+                        )
+                        log.info("ai analysis cron: score=%s prev=%s drop=%s report=%s",
+                                 new_score, prev_score, drop, doc.get("id"))
+                    except Exception as ex:
+                        log.warning("ai analysis cron failed: %s", ex)
+        except Exception as ex:
+            log.warning("ai analysis cron error: %s", ex)
+        await asyncio.sleep(3600)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# v44.00.36 — DMARC / SPF / DKIM DNS Doğrulama
+# ═════════════════════════════════════════════════════════════════════
+
+@router.get("/dmarc-verify")
+async def dmarc_verify(domain: str, request: Request, license_key: Optional[str] = None):
+    """v44.00.36 — Verilen domain için SPF, DKIM (default selector) ve DMARC TXT record'ları
+    canlı DNS'ten sorgular. Wizard'daki "DNS'i Şimdi Kontrol Et" butonu için."""
+    await _require_master(request, license_key)
+    if not domain or "." not in domain:
+        raise HTTPException(400, "Geçerli bir domain gir")
+    domain = domain.lower().strip()
+
+    def _query(fqdn: str) -> list[str]:
+        try:
+            import dns.resolver
+            r = dns.resolver.Resolver()
+            r.timeout = 4; r.lifetime = 5
+            r.nameservers = ["1.1.1.1", "8.8.8.8"]
+            ans = r.resolve(fqdn, "TXT")
+            out = []
+            for rr in ans:
+                try:
+                    txt = "".join(s.decode("utf-8", errors="replace") if isinstance(s, bytes) else str(s)
+                                  for s in rr.strings)
+                except Exception:
+                    txt = str(rr)
+                out.append(txt)
+            return out
+        except Exception:
+            return []
+
+    loop = asyncio.get_event_loop()
+    # DNS queries paralel
+    spf_res, dmarc_res, dkim_res = await asyncio.gather(
+        loop.run_in_executor(None, _query, domain),
+        loop.run_in_executor(None, _query, f"_dmarc.{domain}"),
+        loop.run_in_executor(None, _query, f"default._domainkey.{domain}"),
+    )
+
+    def _analyze_spf(records):
+        spf = [r for r in records if r.lower().startswith("v=spf1")]
+        if not spf:
+            return {"present": False, "value": None, "policy": None, "issue": "SPF kaydı yok"}
+        v = spf[0]
+        policy = "-all" if "-all" in v else "~all" if "~all" in v else "?all" if "?all" in v else "+all" if "+all" in v else None
+        return {"present": True, "value": v, "policy": policy,
+                "issue": None if policy in ("-all", "~all") else "Sonu ~all veya -all olmalı (yetkisiz reddeder)"}
+
+    def _analyze_dmarc(records):
+        dm = [r for r in records if r.lower().startswith("v=dmarc1")]
+        if not dm:
+            return {"present": False, "value": None, "policy": None, "rua": None,
+                    "issue": "DMARC kaydı yok — spoof'a açık!"}
+        v = dm[0]
+        p_match = re.search(r"p\s*=\s*(none|quarantine|reject)", v, re.I)
+        rua_match = re.search(r"rua\s*=\s*(mailto:[^;\s]+)", v, re.I)
+        return {"present": True, "value": v,
+                "policy": (p_match.group(1).lower() if p_match else None),
+                "rua": (rua_match.group(1) if rua_match else None),
+                "issue": None if p_match else "p= yok, geçersiz DMARC"}
+
+    def _analyze_dkim(records):
+        dk = [r for r in records if "v=dkim1" in r.lower() or "k=" in r.lower() or "p=" in r.lower()]
+        return {"present": bool(dk), "value": (dk[0] if dk else None),
+                "selector": "default",
+                "issue": None if dk else "default._domainkey seçicisi yok. cPanel'de otomatik oluşturun."}
+
+    spf = _analyze_spf(spf_res)
+    dmarc = _analyze_dmarc(dmarc_res)
+    dkim = _analyze_dkim(dkim_res)
+    ok = spf.get("present") and dmarc.get("present") and dkim.get("present")
+
+    return {
+        "domain": domain,
+        "checked_at": _iso(),
+        "spf": spf,
+        "dkim": dkim,
+        "dmarc": dmarc,
+        "all_ok": bool(ok),
+    }

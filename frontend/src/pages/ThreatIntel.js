@@ -5,7 +5,7 @@ import { api, client } from "@/lib/api";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import {
   Globe, Radar, ShieldCheck, FileCheck2, RefreshCw, Plus, X, Zap,
-  AlertTriangle, TrendingUp, Award, ChevronDown, ChevronRight, Mail,
+  AlertTriangle, TrendingUp, Award, ChevronDown, ChevronRight, Mail, Loader2,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -621,9 +621,8 @@ function DmarcDomainDrill({ domain, onClose }) {
   );
 }
 
-// v44.00.35 — DMARC Setup Wizard: copy-paste DNS records
+// v44.00.35 — DMARC Setup Wizard: copy-paste DNS records + v44.00.36 canlı DNS doğrulama
 function DmarcSetupWizard({ domain, onClose }) {
-  const spfHost = "@";
   const spfValue = "v=spf1 +a +mx +ip4:0.0.0.0/0 include:_spf.google.com -all"; // placeholder for user to customize
   const spfValueSimple = "v=spf1 +a +mx ~all";
   const dkimHost = "default._domainkey";
@@ -637,6 +636,12 @@ function DmarcSetupWizard({ domain, onClose }) {
     navigator.clipboard.writeText(v).then(() => toast.success(`${label} kopyalandı`));
   };
 
+  // v44.00.36 — Live DNS verification
+  const verify = useMutation({
+    mutationFn: async () => (await client.get(`/ai/dmarc-verify?domain=${encodeURIComponent(domain)}`)).data,
+    onError: (e) => toast.error("DNS kontrolü başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
          onClick={(e) => e.target === e.currentTarget && onClose()}
@@ -648,11 +653,47 @@ function DmarcSetupWizard({ domain, onClose }) {
             <div className="text-sm font-bold text-amber-200">DMARC Kurulum Sihirbazı</div>
             <div className="text-[11px] text-slate-500 mono">{domain} — Kopyala-Yapıştır DNS Kayıtları</div>
           </div>
+          {/* v44.00.36 — DNS'i Şimdi Kontrol Et */}
+          <button
+            onClick={() => verify.mutate()}
+            disabled={verify.isPending}
+            data-testid="dmarc-wizard-verify"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold disabled:opacity-50">
+            {verify.isPending ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Sorgulanıyor…</>
+                              : <>🔍 DNS'i Şimdi Kontrol Et</>}
+          </button>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
                   data-testid="dmarc-wizard-close">
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {verify.data && (
+          <div data-testid="dmarc-verify-result" className={`px-5 py-2.5 border-b border-slate-800 text-xs ${
+            verify.data.all_ok ? "bg-emerald-500/10" : "bg-rose-500/5"
+          }`}>
+            <div className="flex items-center gap-4 flex-wrap mono">
+              <span className={verify.data.spf.present ? "text-emerald-300" : "text-rose-300"}>
+                {verify.data.spf.present ? "✓" : "✕"} SPF{verify.data.spf.policy ? ` (${verify.data.spf.policy})` : ""}
+              </span>
+              <span className={verify.data.dkim.present ? "text-emerald-300" : "text-rose-300"}>
+                {verify.data.dkim.present ? "✓" : "✕"} DKIM (default)
+              </span>
+              <span className={verify.data.dmarc.present ? "text-emerald-300" : "text-rose-300"}>
+                {verify.data.dmarc.present ? "✓" : "✕"} DMARC{verify.data.dmarc.policy ? ` (p=${verify.data.dmarc.policy})` : ""}
+              </span>
+              <span className="text-slate-500 ml-auto">
+                {new Date(verify.data.checked_at).toLocaleTimeString("tr-TR")}
+              </span>
+            </div>
+            {!verify.data.all_ok && (
+              <div className="mt-1.5 text-[11px] text-amber-300">
+                {[verify.data.spf.issue, verify.data.dkim.issue, verify.data.dmarc.issue]
+                  .filter(Boolean).map((i, idx) => <div key={idx}>⚠ {i}</div>)}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-1 border-b border-slate-800 px-5">
           {[

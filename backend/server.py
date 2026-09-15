@@ -743,6 +743,12 @@ async def _startup() -> None:
     asyncio.create_task(_daily_ioc_domain_extract_task())  # v44.00.20 — günlük URL→domain çıkarma
     asyncio.create_task(_daily_usom_fetch_task())  # v44.00.22 — günlük USOM fetch
     asyncio.create_task(_daily_quarantine_retention_task())  # v44.00.33 — retention auto-delete
+    # v44.00.36 — Günlük AI sağlık raporu + skor düşüşü alarmı
+    try:
+        from routes.ai_analysis import _daily_ai_analysis_task
+        asyncio.create_task(_daily_ai_analysis_task())
+    except Exception as _e:
+        log.warning("ai analysis cron register failed: %s", _e)
     asyncio.create_task(_daily_ai_rule_performance_task())  # v44.00.26 — günlük AI kural perf ölçümü + auto-disable
     asyncio.create_task(_daily_dmarc_attack_alarm_task())   # v44.00.26 — %70+ DMARC fail → saldırı alarmı
     asyncio.create_task(_hourly_feed_health_check_task())   # v44.00.31 — feed 24s+ error → notif
@@ -4966,7 +4972,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.35"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.36"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
