@@ -289,6 +289,7 @@ function DmarcTab() {
   const missing = q.data?.hosted_without_reports || [];
   const filtered = q.data?.filtered;
   const [drillDomain, setDrillDomain] = useState(null);
+  const [wizardDomain, setWizardDomain] = useState(null);  // v44.00.35
   return (
     <Card>
       <CardHeader
@@ -320,17 +321,24 @@ function DmarcTab() {
               DMARC Kaydı Olmayan {missing.length} Hosted Domain
             </div>
             <div className="text-slate-400 mb-2">
-              Aşağıdaki domain'ler sunucunda mail gönderiyor ama DMARC raporu ALMIYOR — bu, DMARC/SPF/DKIM'in kurulmadığı ya da <span className="mono">rua=</span> adresinin yanlış tanımlandığı anlamına gelir. Bu domain'ler spoof'a açıktır.
+              Aşağıdaki domain'ler sunucunda mail gönderiyor ama DMARC raporu ALMIYOR — bu, DMARC/SPF/DKIM'in kurulmadığı ya da <span className="mono">rua=</span> adresinin yanlış tanımlandığı anlamına gelir. Bu domain'ler spoof'a açıktır. <b className="text-amber-200">Domain'e tıklayınca kopyala-yapıştırılabilir DNS record'ları görüntülenir.</b>
             </div>
             <div className="flex flex-wrap gap-1">
               {missing.slice(0, 15).map(d => (
-                <span key={d} className="mono text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-amber-500/30 text-amber-200">
+                <button
+                  key={d}
+                  onClick={() => setWizardDomain(d)}
+                  data-testid={`dmarc-wizard-open-${d}`}
+                  className="mono text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-amber-500/30 text-amber-200 hover:bg-amber-500/20 hover:border-amber-500/60 transition cursor-pointer">
                   {d}
-                </span>
+                </button>
               ))}
               {missing.length > 15 && <span className="text-[10px] text-slate-500">+{missing.length - 15} daha</span>}
             </div>
           </div>
+        )}
+        {wizardDomain && (
+          <DmarcSetupWizard domain={wizardDomain} onClose={() => setWizardDomain(null)} />
         )}
         {domains.length === 0 ? (
           <div className="text-center py-10" data-testid="dmarc-empty">
@@ -608,6 +616,163 @@ function DmarcDomainDrill({ domain, onClose }) {
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// v44.00.35 — DMARC Setup Wizard: copy-paste DNS records
+function DmarcSetupWizard({ domain, onClose }) {
+  const spfHost = "@";
+  const spfValue = "v=spf1 +a +mx +ip4:0.0.0.0/0 include:_spf.google.com -all"; // placeholder for user to customize
+  const spfValueSimple = "v=spf1 +a +mx ~all";
+  const dkimHost = "default._domainkey";
+  const dkimNote = "DKIM anahtarınızı cPanel → Email Deliverability sayfasından oluşturup public key'i buraya girin.";
+  const dmarcHost = "_dmarc";
+  const dmarcValueStrict = `v=DMARC1; p=quarantine; rua=mailto:dmarc@${domain}; ruf=mailto:dmarc@${domain}; fo=1; pct=100; adkim=s; aspf=s`;
+  const dmarcValueGentle = `v=DMARC1; p=none; rua=mailto:dmarc@${domain}; pct=100`;
+
+  const [tab, setTab] = useState("dmarc");
+  const copy = (v, label) => {
+    navigator.clipboard.writeText(v).then(() => toast.success(`${label} kopyalandı`));
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+         onClick={(e) => e.target === e.currentTarget && onClose()}
+         data-testid="dmarc-wizard">
+      <div className="bg-slate-950 border border-slate-800 rounded-lg max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
+        <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-800 bg-gradient-to-r from-amber-900/20 to-rose-900/20">
+          <AlertTriangle className="w-5 h-5 text-amber-400" />
+          <div className="flex-1">
+            <div className="text-sm font-bold text-amber-200">DMARC Kurulum Sihirbazı</div>
+            <div className="text-[11px] text-slate-500 mono">{domain} — Kopyala-Yapıştır DNS Kayıtları</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+                  data-testid="dmarc-wizard-close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1 border-b border-slate-800 px-5">
+          {[
+            { k: "spf",   label: "1. SPF",   color: "emerald" },
+            { k: "dkim",  label: "2. DKIM",  color: "sky" },
+            { k: "dmarc", label: "3. DMARC", color: "amber" },
+          ].map(t => (
+            <button key={t.k}
+              onClick={() => setTab(t.k)}
+              data-testid={`dmarc-wizard-tab-${t.k}`}
+              className={`px-3 py-2 text-xs font-semibold border-b-2 -mb-px ${
+                tab === t.k ? `border-${t.color}-500 text-${t.color}-300` : "border-transparent text-slate-400 hover:text-slate-100"
+              }`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {tab === "spf" && (
+            <>
+              <p className="text-xs text-slate-300">
+                <b className="text-emerald-300">SPF</b> (Sender Policy Framework), sunucundan mail göndermeye YETKİLİ IP/host'ları tanımlar.
+                Aşağıdaki kaydı <span className="mono text-indigo-300">TXT</span> olarak DNS Zone'una ekle:
+              </p>
+              <DnsRecord label="Ad" value={spfHost} copy={copy} />
+              <DnsRecord label="Tip" value="TXT" copy={copy} />
+              <DnsRecord label="Değer (Basit — sadece sunucun)" value={spfValueSimple} copy={copy} multiline />
+              <details className="text-xs text-slate-400">
+                <summary className="cursor-pointer text-slate-300">Google Workspace de kullanıyorsan (gelişmiş)</summary>
+                <DnsRecord label="Değer" value={spfValue.replace("+ip4:0.0.0.0/0 ", "")} copy={copy} multiline />
+              </details>
+              <div className="p-2.5 bg-slate-900 border border-slate-800 rounded text-[11px] text-slate-400">
+                <b className="text-slate-200">Not:</b> <span className="mono">~all</span> yerine <span className="mono">-all</span> koyarsan
+                yetkisiz göndericilerin mail'i reddedilir (daha katı, ama önce log'unu izle).
+              </div>
+            </>
+          )}
+          {tab === "dkim" && (
+            <>
+              <p className="text-xs text-slate-300">
+                <b className="text-sky-300">DKIM</b> gönderilen mail'i cryptographic imza ile doğrular. cPanel'de:
+              </p>
+              <div className="p-3 bg-slate-900 border border-slate-800 rounded text-xs text-slate-300 space-y-1.5">
+                <div>1. cPanel → <span className="mono text-sky-300">Email Deliverability</span></div>
+                <div>2. <span className="mono">{domain}</span> için "Manage" &gt; DKIM "Install the Suggested Record"</div>
+                <div>3. Public key otomatik olarak <span className="mono">default._domainkey.{domain}</span> TXT'ine yazılır</div>
+              </div>
+              <DnsRecord label="Ad" value={dkimHost} copy={copy} />
+              <DnsRecord label="Tip" value="TXT" copy={copy} />
+              <div className="p-2.5 bg-amber-500/5 border border-amber-500/30 rounded text-[11px] text-amber-200">
+                {dkimNote}
+              </div>
+            </>
+          )}
+          {tab === "dmarc" && (
+            <>
+              <p className="text-xs text-slate-300">
+                <b className="text-amber-300">DMARC</b>, SPF+DKIM sonucuna göre alıcı ISP'lere ne yapacaklarını söyler ve rapor gönderir.
+                Aşağıdaki 2 şablondan birini seç:
+              </p>
+              <div className="p-3 border border-emerald-500/30 bg-emerald-500/5 rounded space-y-2">
+                <div className="text-emerald-300 font-semibold text-xs">🟢 Başlangıç (Sadece İzle, Bloklamaz)</div>
+                <DnsRecord label="Ad" value={dmarcHost} copy={copy} compact />
+                <DnsRecord label="Tip" value="TXT" copy={copy} compact />
+                <DnsRecord label="Değer" value={dmarcValueGentle} copy={copy} multiline highlight="emerald" />
+                <p className="text-[11px] text-slate-400">
+                  <span className="mono">p=none</span> → hiçbir mail reddedilmez, sadece rapor toplanır (2-4 hafta izleyin).
+                </p>
+              </div>
+              <div className="p-3 border border-rose-500/30 bg-rose-500/5 rounded space-y-2">
+                <div className="text-rose-300 font-semibold text-xs">🔴 Katı Politika (Karantina/Reject)</div>
+                <DnsRecord label="Ad" value={dmarcHost} copy={copy} compact />
+                <DnsRecord label="Tip" value="TXT" copy={copy} compact />
+                <DnsRecord label="Değer" value={dmarcValueStrict} copy={copy} multiline highlight="rose" />
+                <p className="text-[11px] text-slate-400">
+                  <span className="mono">p=quarantine</span> → SPF/DKIM fail olan mail'ler alıcının spam kutusuna düşer. Test ettikten sonra <span className="mono">p=reject</span>'e geçirin.
+                </p>
+              </div>
+              <div className="p-2.5 bg-slate-900 border border-slate-800 rounded text-[11px] text-slate-400 leading-relaxed">
+                <b className="text-slate-200">📊 Rapor toplama:</b> DMARC ISP'lerden agregat rapor almak için <span className="mono">dmarc@{domain}</span> mail hesabını oluşturmanız gerekir.
+                Bu hesap raporları otomatik alacak ve GökyüzüWebSpam DMARC dashboard'unda görüntülenecektir.
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-slate-800 bg-slate-900/50 flex items-center justify-between">
+          <span className="text-[11px] text-slate-500">
+            DNS değişiklikleri 5-60 dakika içinde etkin olur. Sonra <a href="https://dmarcian.com/dmarc-inspector/" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline">dmarcian.com/dmarc-inspector</a> ile doğrulayın.
+          </span>
+          <button onClick={onClose}
+            className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
+            data-testid="dmarc-wizard-done">
+            Kapat
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DnsRecord({ label, value, copy, multiline, compact, highlight }) {
+  const highlightBg = highlight === "emerald" ? "border-emerald-500/40 bg-emerald-500/5" :
+                      highlight === "rose"    ? "border-rose-500/40 bg-rose-500/5" :
+                      "border-slate-800 bg-slate-950";
+  return (
+    <div className={`flex items-start gap-2 ${compact ? "py-0.5" : ""}`}>
+      <span className="text-[10px] uppercase text-slate-500 mono w-14 shrink-0 pt-1.5">{label}</span>
+      <div className={`flex-1 flex items-start gap-2 ${highlightBg} border rounded px-2 py-1.5 min-w-0`}>
+        <code className={`flex-1 mono text-xs ${multiline ? "break-all" : "truncate"} text-slate-100`}>{value}</code>
+        <button onClick={() => copy(value, label)}
+          className="shrink-0 p-1 rounded hover:bg-slate-800 text-indigo-300 hover:text-indigo-100"
+          title="Kopyala">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+        </button>
       </div>
     </div>
   );

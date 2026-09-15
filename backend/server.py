@@ -4966,7 +4966,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.34"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.35"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -13959,6 +13959,8 @@ from routes.advanced_threat import router as _advanced_threat_router  # noqa: E4
 from routes.auto_backup import router as _auto_backup_router, start_scheduler as _start_backup_scheduler  # noqa: E402 v43.99.11
 from routes.install_videos import router as _install_videos_router  # noqa: E402 v43.99.13
 from routes.install_screenshots import router as _install_screenshots_router  # noqa: E402 v43.99.18
+from routes.ai_analysis import router as _ai_analysis_router  # noqa: E402 v44.00.35
+app.include_router(_ai_analysis_router, prefix="/api")
 app.include_router(_reports_router, prefix="/api")
 app.include_router(_pin_approvals_router, prefix="/api")
 app.include_router(_report_schedules_router, prefix="/api")

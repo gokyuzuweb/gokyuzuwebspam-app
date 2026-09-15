@@ -14,6 +14,50 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 26, v44.00.35) — Sticky Bulk Bar + AI Analiz + DMARC Wizard ✅
+
+### 🎯 (1) Karantina Sticky Bulk Action Bar (Gmail-benzeri UX)
+- **`Quarantine.js`**: Toolbar'daki 4 satır aksiyon barı → `selected.size > 0` iken ekranın alt kenarından yükselen sabit floating bar (`fixed left-1/2 -translate-x-1/2 bottom-4 z-50` + backdrop-blur + indigo shadow)
+- İçerik: X (seçim temizle) · "N seçili" · **Spam Değil · Sil · Spam Öğret · İlet**
+- `slide-in-from-bottom-4 fade-in duration-200` animasyonu
+- Toolbar üstünde sadece "Filtrelenmişleri seç" + "Diğer Toplu İşlemler →" kaldı
+
+### 🎯 (2) AI Sistem Sağlık Analizi (Claude Sonnet 4.6 via Emergent LLM Key)
+- **Yeni route** `/app/backend/routes/ai_analysis.py`:
+  - `POST /api/ai/system-analysis` — Master-only. `_collect_signals()` son 7 gün metrikleri (mail_metrics, rule_performance, threat_feeds, usom_last_run, quarantine, alerts_7d) toplar → `emergentintegrations.llm.chat.LlmChat` `anthropic/claude-sonnet-4-6` → Türkçe Markdown rapor → `db.ai_system_reports`
+  - `GET  /api/ai/system-analysis/latest` — cache retrieval
+- Turkish system prompt: 4 bölüm — 📊 Genel Sağlık Skoru (0-100) · 🚨 Tehlike Sinyalleri · ✅ Olumlu Notlar · 💡 Önerilen Aksiyonlar
+- Frontend `components/AiSystemAnalysisButton.js`: Dashboard tab bar sağında Sparkles gradient buton → modal (inline `renderMd`/`boldify` utility, harici lib yok)
+- 6+ saat eski raporlar için "eski rapor" uyarısı
+- Live doğrulandı: **62/100 skorlu tam Türkçe rapor** (4 tehlike + 3 olumlu + 5 aksiyon maddesi)
+
+### 🎯 (3) DMARC Setup Wizard (SPF+DKIM+DMARC copy-paste DNS)
+- **`ThreatIntel.js`**: "Rapor Yok" panelindeki missing domain chip'leri artık **tıklanabilir buton** → wizard modal açar
+- Modal 3 sub-tab:
+  - **1. SPF**: `v=spf1 +a +mx ~all` basit + Google Workspace varyantı (details/summary)
+  - **2. DKIM**: cPanel → Email Deliverability adım adım rehberi
+  - **3. DMARC**: 2 hazır şablon — 🟢 **Başlangıç** (`p=none`, sadece izle) · 🔴 **Katı** (`p=quarantine; adkim=s; aspf=s`)
+- Her record'un yanında **kopyala** butonu (`navigator.clipboard` + toast)
+- Alt info: DNS propagasyon süresi + `dmarcian.com/dmarc-inspector` linki
+- `DnsRecord` sub-component: label/value/copy/multiline/highlight props
+- Live doğrulandı: `gokyuzu.net` chip → wizard → DMARC tab → 2 policy şablonu render
+
+### ⏭ Backlog'a alınan
+- **ThreatIntel.js Refactor**: 1500+ satırı UsomTab / DmarcTab / FeedsTab / ComplianceTab / IocTab dosyalarına bölme (kod organizasyonu — kullanıcıya net değer yok, güvenli JSX-parity ile sonraki session'da yapılacak)
+
+### 📦 Version Bump
+`v44.00.34` → **`v44.00.35`**
+
+---
+
+## Feb 15, 2026 (Session 26, v44.00.34) — Dashboard'dan Eski Karantina Öğeleri Kaldırıldı ✅
+- Dashboard'daki `dashtab-quarantine` sub-tab + "Son Karantina" widget + `api.quarantine` sorgusu kaldırıldı
+- `stat-quarantine` KPI kartı artık `/panel/quarantine`'e Link (`data-testid=stat-quarantine-link`)
+- Sol menüde tek "Karantina" girişi (Koruma grubu)
+- Karantina için tek merkez: `/panel/quarantine` (4 tab)
+
+---
+
 ## Feb 15, 2026 (Session 26, v44.00.33) — Karantina Ayarlar Tam + USOM Delta Sync Cron ✅
 
 ### 🎯 (1) Karantina Ayarlar Sekmesi Tamamlandı

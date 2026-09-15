@@ -289,28 +289,9 @@ export default function Quarantine() {
         </div>
       </Card>
 
+      {/* Sağ üst KPI band'in altına: aksiyon bar toolbar */}
+      {/* Not: v44.00.35 — Ana aksiyon barı kayıt seçilince sticky bottom'a taşınır (aşağıda). */}
       <div className="flex flex-wrap items-center gap-2">
-        <button data-testid="q-release" onClick={() => runBulk("release")}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm"
-          title="Serbest bırak + göndericiyi Beyaz Liste'ye ekle + Bayes'e ham (temiz) olarak öğret">
-          <RotateCcw className="w-3.5 h-3.5" /> Spam Değil (Serbest Bırak)
-        </button>
-        <button data-testid="q-delete" onClick={() => runBulk("delete")}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-sm">
-          <Trash2 className="w-3.5 h-3.5" /> {t("quarantine.delete_action")}
-        </button>
-        <button data-testid="q-report" onClick={() => runBulk("report")}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm"
-          title="Spam olarak işaretle: Kara Liste'ye ekle + Bayes'e spam öğret">
-          <GraduationCap className="w-3.5 h-3.5" /> Spam Öğret
-        </button>
-        <button data-testid="q-forward-open" onClick={() => {
-            if (selected.size === 0) return toast.error(t("quarantine.select_first"));
-            setFwdOpen(true);
-          }}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 text-sm">
-          <Forward className="w-3.5 h-3.5" /> Farklı adrese ilet
-        </button>
         <div className="ml-auto flex items-center gap-2">
           <button data-testid="q-select-filtered" onClick={() => setSelected(new Set(rows.map(r => r.id)))}
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-700 bg-slate-900/60 text-slate-300 hover:bg-slate-800 text-xs"
@@ -325,6 +306,45 @@ export default function Quarantine() {
           </button>
         </div>
       </div>
+
+      {/* v44.00.35 — Sticky Bulk Action Bar (kayıt seçildiğinde alt kenardan yükselir, Gmail benzeri) */}
+      {selected.size > 0 && (
+        <div
+          data-testid="q-sticky-bulk-bar"
+          className="fixed left-1/2 -translate-x-1/2 bottom-4 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg
+                     bg-slate-900/95 backdrop-blur border border-indigo-500/40 shadow-2xl shadow-indigo-500/10
+                     animate-in slide-in-from-bottom-4 fade-in duration-200">
+          <button
+            onClick={() => setSelected(new Set())}
+            data-testid="q-sticky-clear"
+            className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-100"
+            title="Seçimi temizle">
+            <X className="w-4 h-4" />
+          </button>
+          <span className="text-sm mono text-indigo-300 mr-1">
+            <b className="text-indigo-100">{selected.size}</b> seçili
+          </span>
+          <div className="h-6 w-px bg-slate-700 mx-1" />
+          <button data-testid="q-release" onClick={() => runBulk("release")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm"
+            title="Serbest bırak + Beyaz Liste'ye ekle + Bayes'e ham öğret">
+            <RotateCcw className="w-3.5 h-3.5" /> Spam Değil
+          </button>
+          <button data-testid="q-delete" onClick={() => runBulk("delete")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-sm">
+            <Trash2 className="w-3.5 h-3.5" /> Sil
+          </button>
+          <button data-testid="q-report" onClick={() => runBulk("report")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm"
+            title="Kara Liste'ye ekle + Bayes'e spam öğret">
+            <GraduationCap className="w-3.5 h-3.5" /> Spam Öğret
+          </button>
+          <button data-testid="q-forward-open" onClick={() => setFwdOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 text-sm">
+            <Forward className="w-3.5 h-3.5" /> İlet
+          </button>
+        </div>
+      )}
 
       <Card>
         <div className="overflow-x-auto">

@@ -24,6 +24,7 @@ import ControlBar from "@/components/ControlBar";
 import AttackMap from "@/components/AttackMap";
 import QueueModal from "@/components/QueueModal";
 import IpDrilldownDrawer from "@/components/IpDrilldownDrawer";
+import AiSystemAnalysisButton from "@/components/AiSystemAnalysisButton";
 import CountryBlockCard from "@/components/CountryBlockCard";
 import ThreatIntelTodayWidget from "@/components/ThreatIntelTodayWidget";
 import ResellerAnalyticsWidget from "@/components/ResellerAnalyticsWidget";
@@ -100,6 +101,9 @@ export default function Dashboard() {
             <Icon className="w-3.5 h-3.5"/>{label}
           </button>
         ))}
+        <div className="ml-auto pl-2">
+          <AiSystemAnalysisButton />
+        </div>
       </div>
 
       {/* Overview tab: sadeleştirildi — sadece KPI + trend */}
