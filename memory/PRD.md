@@ -3790,6 +3790,47 @@ Spamhaus + Barracuda + SORBS + UCEPROTECT + SpamCop + PSBL + DroneBL + Manitu + 
 2. **Sunucuda `sudo gwsm-update`** → yeni DMARC fetcher + systemd timer kurulur
 3. **İlk çalıştırmayı görmek için**: `systemctl start mailshield-dmarc-fetch.service && journalctl -u mailshield-dmarc-fetch -n 50`
 
+
+
+## Feb 15, 2026 — v44.00.22 (part 3) — USOM Integration + Bounce Digest UX
+
+### 🎯 User Requests
+1. USOM (siberguvenlik.gov.tr) zararlı URL/domain listesini otomatik çek — manuel arama + silme
+2. Bounce Digest'te kullanıcı adı yerine tam e-posta göster + modül açıklaması ekle
+
+### 🆕 USOM Entegrasyonu
+**Backend** — `routes/usom.py` (yeni):
+- `POST /api/threat-intel/usom/fetch` — `usom.gov.tr/url-list.txt` public feed'ini indirir, IOC'lara + `db.lists` kara listeye yazar (URL + host → domain iki kayıt)
+- `GET  /api/threat-intel/usom/list?q=` — kayıtları arama ile listele
+- `POST /api/threat-intel/usom/delete` — kayıt sil (hem IOC hem kara listeden)
+- `_daily_usom_fetch_task()` — her sabah 03:00 UTC (06:00 TR) otomatik çeker
+
+**Frontend** — `ThreatIntel.js` yeni sekme "USOM (TR)":
+- "Şimdi Çek" butonu (spinner ile)
+- Arama input'u (URL/domain filter)
+- Tablo: Tip (URL/Domain badge), Adres, Tarih, Açıklama, Kaynak, Sil butonu
+- Alt bilgi kartı: "Nasıl çalışır?" açıklaması
+- data-testid'ler: `usom-tab`, `usom-fetch-btn`, `usom-search`, `usom-del-{value}`
+
+### 🖼 Bounce Digest UX
+`BounceDigest.js` iyileştirmeleri:
+- **"Etkilenen Kullanıcı Adresleri"**: user yerine tam e-posta (from_addr'den veya top_domain ile tahmin)
+- Sample tablo başlığı: "Kullanıcı" → "Gönderen (E-posta)"
+- Sample tablosu tek satır tam e-posta (mono font)
+- **Yeni "Bu modül ne işe yarar?" info paneli** en altta:
+  - Erken uyarı (hacklenmiş hesap tespiti)
+  - Reputation koruma (IP RBL riski)
+  - Domain analizi (DMARC/SPF eksikliği)
+  - Reject reason kategorizasyon
+
+### 🧪 Tests — 10/10 ✅
+`test_v44_00_22_usom_and_bounce.py` (6):
+- USOM route file + endpoints + auth + router include + cron
+- Frontend USOM tab component
+- Bounce Digest email display + module explanation
+
+### 📦 v44.00.22 Bump
+
 `test_v44_00_21_lists_manager.py` (6 test): 4 tabs verified, endpoints work, routes redirect.
 
 - 30s auto-refresh

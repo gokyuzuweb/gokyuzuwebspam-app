@@ -364,14 +364,29 @@ export default function BounceDigest() {
               </div>
             </div>
             <div>
-              <div className="text-[11px] uppercase text-slate-500 mb-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> Etkilenen Kullanıcılar</div>
+              <div className="text-[11px] uppercase text-slate-500 mb-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> Etkilenen Kullanıcı Adresleri</div>
               <ul className="space-y-1">
-                {p.top_users.map(([u, n]) => (
-                  <li key={u} className="text-xs flex justify-between border-b border-slate-800/60 pb-1">
-                    <span className="text-slate-300">{u}</span>
-                    <span className="text-rose-400 mono">{n}</span>
-                  </li>
-                ))}
+                {p.top_users.map(([u, n]) => {
+                  // v44.00.22 — Kullanıcı adı yerine tam e-posta adresi göster.
+                  // top_users tuple: [user_or_email, count]. Eğer user'da @ yoksa,
+                  // p.samples içinden bu user'a ait from_addr'i eşleştirmeye çalış.
+                  let email = u;
+                  if (u && !u.includes("@")) {
+                    const sample = (p.samples || []).find(s => s.user === u && s.from_addr && s.from_addr.includes("@"));
+                    if (sample?.from_addr) email = sample.from_addr;
+                    else {
+                      // Aynı user'ın en sık gönderdiği domain'i (top_domains) tahmin et
+                      const topDom = (p.top_domains || [])[0]?.[0];
+                      email = topDom ? `${u}@${topDom}` : u;
+                    }
+                  }
+                  return (
+                    <li key={u} className="text-xs flex justify-between border-b border-slate-800/60 pb-1">
+                      <span className="text-slate-300 mono truncate max-w-[260px]" title={email}>{email}</span>
+                      <span className="text-rose-400 mono">{n}</span>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
             <div>
@@ -422,7 +437,7 @@ export default function BounceDigest() {
                     <thead>
                       <tr className="text-[10px] uppercase text-slate-500 bg-slate-900/40">
                         <th className="text-left px-2 py-1.5">Zaman</th>
-                        <th className="text-left px-2 py-1.5">Kullanıcı</th>
+                        <th className="text-left px-2 py-1.5">Gönderen (E-posta)</th>
                         <th className="text-left px-2 py-1.5">Alıcı</th>
                         <th className="text-left px-2 py-1.5">Konu</th>
                         <th className="text-right px-2 py-1.5">Aksiyon</th>
@@ -433,10 +448,10 @@ export default function BounceDigest() {
                         <tr key={i} className="border-t border-slate-800/60">
                           <td className="px-2 py-1.5 text-slate-500 mono">{s.ts ? new Date(s.ts).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
                           <td className="px-2 py-1.5">
-                            <div className="text-slate-300">{s.user}</div>
-                            {s.from_addr && s.from_addr !== s.user && (
-                              <div className="text-[10px] mono text-slate-500 truncate max-w-[220px]" title={s.from_addr}>{s.from_addr}</div>
-                            )}
+                            {/* v44.00.22 — tam email göster (from_addr öncelikli) */}
+                            <div className="text-slate-300 mono truncate max-w-[220px]" title={s.from_addr || s.user}>
+                              {s.from_addr || s.user}
+                            </div>
                           </td>
                           <td className="px-2 py-1.5 text-slate-400 mono truncate max-w-[180px]">{s.to}</td>
                           <td className="px-2 py-1.5 text-slate-400 truncate max-w-[240px]">{s.subject}</td>
@@ -450,6 +465,27 @@ export default function BounceDigest() {
             )}
           </div>
         )}
+
+        {/* v44.00.22 — Modül açıklaması */}
+        <div className="mt-5 p-4 rounded-lg border border-slate-800 bg-slate-950/50 text-[12px] text-slate-400 leading-relaxed">
+          <div className="text-slate-200 font-semibold mb-2 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400"/> Bu modül ne işe yarar?
+          </div>
+          <p className="mb-2">
+            <b className="text-slate-300">Bounce Digest</b>, sunucunuzdaki mail hesaplarından gönderilip <b>alıcı tarafından reddedilen (bounce)</b> mail'leri
+            gruplayan bir raporlama modülüdür. Her sabah otomatik çalışır, master admin'e özet e-posta atar.
+          </p>
+          <ul className="list-disc list-inside space-y-1 ml-2">
+            <li><b className="text-emerald-300">Erken uyarı</b>: Hangi hesabınızın toplu spam / phishing kampanyasına aracı olduğunu tespit eder (hacklenmiş hesap tespiti).</li>
+            <li><b className="text-emerald-300">Reputation koruma</b>: Bounce oranı %5+ olan hesaplar için SMTP relay kısıtlaması önerir — sunucu IP'nizin RBL'ye düşmesini engeller.</li>
+            <li><b className="text-emerald-300">Domain analizi</b>: Hangi alıcı domain'lerin (Yahoo/Gmail/Yandex) sizden gelen mail'i reddettiğini gösterir — DMARC/SPF eksikliğini erken yakalar.</li>
+            <li><b className="text-emerald-300">Reject Reason</b>: SMTP 550/554 hata mesajlarını grupla — "spam content", "sender ip blocked", "unknown recipient" gibi kategorilere ayır.</li>
+          </ul>
+          <p className="mt-2">
+            <b className="text-slate-300">Ne yapmalıyım?</b> Etkilenen hesaplarda 20+ bounce görürseniz o cPanel kullanıcısına <b>parola değiştir</b> uyarısı gönderin
+            ve <b>Liste Merkezi → Kara Liste</b>'den şüpheli alıcı domain'i kısıtlayın. Otomatik günlük digest, master admin mail adresine SMTP ayarlarınız üzerinden gönderilir.
+          </p>
+        </div>
       </Card>
       )}
 

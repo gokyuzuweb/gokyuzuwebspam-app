@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { api, client } from "@/lib/api";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
 import {
   Globe, Radar, ShieldCheck, FileCheck2, RefreshCw, Plus, X, Zap,
@@ -25,6 +25,7 @@ export default function ThreatIntel() {
             { k: "ioc", l: "IOC Feed", i: Radar },
             { k: "dmarc", l: "DMARC", i: FileCheck2 },
             { k: "feeds", l: "Global Feeds", i: RefreshCw },
+            { k: "usom", l: "USOM (TR)", i: AlertTriangle },
             { k: "compliance", l: "Uyumluluk", i: ShieldCheck },
           ].map(({ k, l, i: Icon }) => (
             <button key={k} data-testid={`ti-tab-${k}`} onClick={() => setTab(k)}
@@ -38,6 +39,7 @@ export default function ThreatIntel() {
       {tab === "ioc" && <IocTab/>}
       {tab === "dmarc" && <DmarcTab/>}
       {tab === "feeds" && <FeedsTab/>}
+      {tab === "usom" && <UsomTab/>}
       {tab === "compliance" && <ComplianceTab/>}
 
       <ModuleFooter
@@ -421,3 +423,117 @@ function StatCounter({ label, value, tone }) {
     </div>
   );
 }
+
+
+// v44.00.22 — USOM (TR) Zararlı Bağlantı Listesi
+function UsomTab() {
+  const [q, setQ] = useState("");
+  const qc = useQueryClient();
+
+  const list = useQuery({
+    queryKey: ["usom-list", q],
+    queryFn: async () => (await client.get(`/threat-intel/usom/list${q ? `?q=${encodeURIComponent(q)}` : ""}`)).data,
+  });
+
+  const fetchNow = useMutation({
+    mutationFn: async () => (await client.post("/threat-intel/usom/fetch")).data,
+    onSuccess: (d) => {
+      toast.success(`USOM güncellendi: ${d.fetched_urls} URL, ${d.new_urls} yeni + ${d.new_domains} domain`);
+      qc.invalidateQueries({ queryKey: ["usom-list"] });
+    },
+    onError: (e) => toast.error("USOM fetch hatası: " + (e.response?.data?.detail || e.message)),
+  });
+
+  const delRow = useMutation({
+    mutationFn: async (value) => (await client.post("/threat-intel/usom/delete", { value })).data,
+    onSuccess: (d, value) => {
+      toast.success(`${value} silindi (${d.removed_iocs + d.removed_from_lists} kayıt)`);
+      qc.invalidateQueries({ queryKey: ["usom-list"] });
+    },
+    onError: (e) => toast.error("Silinemedi: " + (e.response?.data?.detail || e.message)),
+  });
+
+  const items = list.data?.items || [];
+  const lastSync = list.data?.last_sync_at;
+
+  return (
+    <Card data-testid="usom-tab">
+      <CardHeader
+        title="USOM Zararlı Bağlantılar (siberguvenlik.gov.tr)"
+        subtitle="Ulusal Siber Olaylara Müdahale Merkezi listesi — otomatik günlük fetch + manuel arama/silme"
+      />
+      <CardBody>
+        <div className="flex items-center gap-3 mb-4">
+          <button onClick={() => fetchNow.mutate()} disabled={fetchNow.isPending}
+            data-testid="usom-fetch-btn"
+            className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-60">
+            <RefreshCw className={`w-4 h-4 ${fetchNow.isPending ? "animate-spin" : ""}`}/>
+            {fetchNow.isPending ? "USOM verileri çekiliyor..." : "Şimdi Çek"}
+          </button>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="URL / domain'de ara..."
+            data-testid="usom-search"
+            className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm mono"/>
+          <div className="text-[11px] text-slate-500 mono whitespace-nowrap">
+            {items.length} kayıt {lastSync && `· son sync: ${new Date(lastSync).toLocaleString("tr-TR")}`}
+          </div>
+        </div>
+
+        {items.length === 0 ? (
+          <div className="p-6 text-center text-slate-500 text-sm border border-dashed border-slate-800 rounded">
+            {q ? "Bu arama için sonuç yok." : 'Henüz USOM verisi çekilmedi. Üstteki "Şimdi Çek" butonuna basın.'}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
+                  <th className="px-3 py-2 text-left">Tip</th>
+                  <th className="px-3 py-2 text-left">Adres</th>
+                  <th className="px-3 py-2 text-left">Tarih</th>
+                  <th className="px-3 py-2 text-left">Açıklama</th>
+                  <th className="px-3 py-2 text-left">Kaynak</th>
+                  <th className="px-3 py-2 text-right">İşlem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((r) => (
+                  <tr key={`${r.type}-${r.value}`} className="border-b border-slate-800/60 hover:bg-slate-900/40"
+                      data-testid={`usom-row-${r.value}`}>
+                    <td className="px-3 py-2">
+                      <span className="text-[9px] mono uppercase px-1.5 py-0.5 rounded"
+                            style={{ background: r.type === "url" ? "#f43f5522" : "#22d3ee22",
+                                     color: r.type === "url" ? "#f43f5e" : "#22d3ee" }}>
+                        {r.type === "url" ? "URL" : "Domain"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 mono text-slate-100 break-all max-w-[440px]">{r.value}</td>
+                    <td className="px-3 py-2 text-[10px] text-slate-500 mono whitespace-nowrap">
+                      {r.created_at ? new Date(r.created_at).toLocaleString("tr-TR") : "-"}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-400 max-w-[220px] truncate" title={r.note}>{r.note || "USOM"}</td>
+                    <td className="px-3 py-2 text-[10px] text-indigo-300 mono">{r.source}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => window.confirm(`${r.value} kaldırılsın mı?`) && delRow.mutate(r.value)}
+                        disabled={delRow.isPending} data-testid={`usom-del-${r.value}`}
+                        className="p-1 rounded hover:bg-rose-500/20 text-rose-400 disabled:opacity-40">
+                        <X className="w-4 h-4"/>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="mt-4 p-3 rounded bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 leading-relaxed">
+          <b className="text-slate-200">Nasıl çalışır?</b> USOM (Ulusal Siber Olaylara Müdahale Merkezi) günlük güncellenen
+          zararlı URL listesini <span className="mono">usom.gov.tr/url-list.txt</span> adresinden çekiyoruz. Her URL'nin
+          host'unu da otomatik olarak Kara Liste'ye ekliyoruz — bu domainlerden gelen mail'lerin verdict'i otomatik
+          "blocked" olur. Otomatik günlük fetch <b className="text-emerald-400">06:00 TR</b>'de çalışır.
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+

@@ -741,6 +741,7 @@ async def _startup() -> None:
     asyncio.create_task(_daily_digest_task())  # v44.00.20 — daily ÇELİŞKİ digest
     asyncio.create_task(_migrate_trusted_domains_to_lists())  # v44.00.20 — one-time UI sync
     asyncio.create_task(_daily_ioc_domain_extract_task())  # v44.00.20 — günlük URL→domain çıkarma
+    asyncio.create_task(_daily_usom_fetch_task())  # v44.00.22 — günlük USOM fetch
     asyncio.create_task(_pos_health_monitor_task())
     asyncio.create_task(_daily_violations_cleanup_task())
     asyncio.create_task(_threat_ratio_monitor_task())
@@ -1271,6 +1272,49 @@ async def _daily_ioc_domain_extract_task():
         except Exception as ex:
             log.warning("ioc-domain-extract cron error: %s", ex)
         await asyncio.sleep(3600)  # her saat başı kontrol
+
+
+# v44.00.22 — USOM Zararlı Bağlantı günlük fetch (03:00 UTC = 06:00 TR).
+async def _daily_usom_fetch_task():
+    await asyncio.sleep(600)  # startup +10dk
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.hour == 3:
+                today = now.date().isoformat()
+                last = await db.settings.find_one({"_key": "usom_last_run"}, {"_id": 0})
+                if not last or last.get("date") != today:
+                    from routes.usom import _fetch_usom_urls
+                    urls = await _fetch_usom_urls()
+                    # Reuse fetch_usom logic by calling endpoint helper directly
+                    # Simple inline version: just write via update_one loop
+                    import uuid as _uuid
+                    from urllib.parse import urlparse as _urlparse
+                    now_iso = _iso()
+                    expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+                    added = 0
+                    for u in urls:
+                        r_url = await db.threat_iocs.update_one(
+                            {"type": "url", "value": u},
+                            {"$setOnInsert": {"id": str(_uuid.uuid4()), "type": "url", "value": u,
+                                              "tag": "malicious", "confidence": 98, "source": "usom",
+                                              "feed": "usom-url-list", "note": "USOM Zararlı Bağlantı Listesi",
+                                              "created_at": now_iso, "expires_at": expires},
+                             "$set": {"last_seen_at": now_iso}},
+                            upsert=True,
+                        )
+                        if r_url.upserted_id: added += 1
+                    await db.settings.update_one(
+                        {"_key": "usom_last_run"},
+                        {"$set": {"_key": "usom_last_run", "date": today,
+                                  "urls": len(urls), "added": added}},
+                        upsert=True,
+                    )
+                    log.info("usom daily cron: %d urls fetched, %d new", len(urls), added)
+        except Exception as ex:
+            log.warning("usom cron error: %s", ex)
+        await asyncio.sleep(3600)
+
 
 
 
@@ -13344,6 +13388,7 @@ from routes.queue import router as _queue_router  # noqa: E402
 from routes.security_adv import router as _security_adv_router  # noqa: E402
 from routes.mailscanner import router as _mailscanner_router  # noqa: E402
 from routes.threat_intel import router as _threat_intel_router  # noqa: E402
+from routes.usom import router as _usom_router  # noqa: E402  v44.00.22
 from routes.payments import router as _payments_router  # noqa: E402
 from routes.maintenance import router as _maintenance_router  # noqa: E402
 from routes.master import router as _master_router  # noqa: E402
@@ -13384,6 +13429,7 @@ app.include_router(_queue_router, prefix="/api")
 app.include_router(_security_adv_router, prefix="/api")
 app.include_router(_mailscanner_router, prefix="/api")
 app.include_router(_threat_intel_router, prefix="/api")
+app.include_router(_usom_router, prefix="/api")  # v44.00.22 — USOM zararlı bağlantı
 app.include_router(_payments_router, prefix="/api")
 app.include_router(_maintenance_router, prefix="/api")
 app.include_router(_master_router, prefix="/api")
