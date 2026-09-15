@@ -742,6 +742,8 @@ async def _startup() -> None:
     asyncio.create_task(_migrate_trusted_domains_to_lists())  # v44.00.20 — one-time UI sync
     asyncio.create_task(_daily_ioc_domain_extract_task())  # v44.00.20 — günlük URL→domain çıkarma
     asyncio.create_task(_daily_usom_fetch_task())  # v44.00.22 — günlük USOM fetch
+    asyncio.create_task(_daily_ai_rule_performance_task())  # v44.00.26 — günlük AI kural perf ölçümü + auto-disable
+    asyncio.create_task(_daily_dmarc_attack_alarm_task())   # v44.00.26 — %70+ DMARC fail → saldırı alarmı
     asyncio.create_task(_pos_health_monitor_task())
     asyncio.create_task(_daily_violations_cleanup_task())
     asyncio.create_task(_threat_ratio_monitor_task())
@@ -1314,6 +1316,168 @@ async def _daily_usom_fetch_task():
         except Exception as ex:
             log.warning("usom cron error: %s", ex)
         await asyncio.sleep(3600)
+
+
+# v44.00.26 — Günlük AI kural performans ölçümü + auto-disable
+async def _daily_ai_rule_performance_task():
+    """Her gün 04:00 UTC'de tüm license'lar için kural performansını ölçer,
+    ayarlı gün sayısını aşan 0-hit kuralları otomatik disable eder."""
+    await asyncio.sleep(720)  # startup +12dk
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.hour == 4:
+                today = now.date().isoformat()
+                last = await db.settings.find_one({"_key": "ai_rule_perf_last_run"}, {"_id": 0})
+                if not last or last.get("date") != today:
+                    from routes.mailscanner import scan_rule_performance as _scan  # type: ignore
+                    # Aktif license'ları topla (mail_events'ten son 30 gün)
+                    since = (now - timedelta(days=30)).isoformat()
+                    licenses = await db.mail_events.distinct(
+                        "license_key", {"ingested_at": {"$gte": since}})
+                    scanned = 0
+                    disabled_total = 0
+                    for lk in licenses:
+                        if not lk:
+                            continue
+                        try:
+                            # Perf ölçümü (7 günü baz al)
+                            await _scan(license_key=lk, min_age_days=7, window_days=7)
+                            scanned += 1
+                            # Auto-disable: her license için ayarlı gün sayısını oku
+                            cfg = await db.mailscanner_config.find_one({"license_key": lk},
+                                                                       {"_id": 0, "rule_auto_disable_days": 1})
+                            days = int((cfg or {}).get("rule_auto_disable_days") or 14)
+                            if days <= 0:
+                                continue
+                            threshold_iso = (now - timedelta(days=days)).isoformat()
+                            # 0-hit AND last_check_at older than threshold → disable
+                            r = await db.mailscanner_rules.update_many(
+                                {"license_key": lk, "enabled": True,
+                                 "hits_last_check": 0,
+                                 "hits_last_check_at": {"$lt": threshold_iso}},
+                                {"$set": {"enabled": False,
+                                          "auto_disabled_at": now.isoformat(),
+                                          "auto_disable_reason": f"0 hits for {days}+ days"}},
+                            )
+                            disabled_total += r.modified_count
+                        except Exception as ex:
+                            log.warning("rule perf scan failed for %s: %s", lk, ex)
+                    await db.settings.update_one(
+                        {"_key": "ai_rule_perf_last_run"},
+                        {"$set": {"_key": "ai_rule_perf_last_run", "date": today,
+                                  "licenses": scanned, "auto_disabled": disabled_total,
+                                  "at": now.isoformat()}},
+                        upsert=True,
+                    )
+                    log.info("ai rule perf cron: %d licenses scanned, %d rules auto-disabled",
+                             scanned, disabled_total)
+        except Exception as ex:
+            log.warning("ai rule perf cron error: %s", ex)
+        await asyncio.sleep(3600)
+
+
+# v44.00.26 — DMARC saldırı alarm: %70+ fail oranı → notifications_inbox
+async def _daily_dmarc_attack_alarm_task():
+    """Son 7 günde bir domain'in DMARC fail oranı %70+ ve toplam mesaj >=100 ise
+    o domain sahibi bayiye 'domain saldırı altında' alarmı gönderir."""
+    await asyncio.sleep(900)  # startup +15dk
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.hour == 5:
+                today = now.date().isoformat()
+                last = await db.settings.find_one({"_key": "dmarc_attack_last_run"}, {"_id": 0})
+                if last and last.get("date") == today:
+                    await asyncio.sleep(3600); continue
+                since = (now - timedelta(days=7)).isoformat()
+                pipeline = [
+                    {"$match": {"received_at": {"$gte": since}}},
+                    {"$group": {
+                        "_id": "$domain",
+                        "total_msgs": {"$sum": "$total_msgs"},
+                        "dmarc_pass": {"$sum": "$dmarc_pass"},
+                    }},
+                ]
+                alarmed = 0
+                async for row in db.dmarc_reports.aggregate(pipeline):
+                    domain = row["_id"]
+                    tot = row["total_msgs"] or 0
+                    p = row["dmarc_pass"] or 0
+                    if tot < 100:
+                        continue
+                    fail_pct = round((tot - p) / tot * 100, 1)
+                    if fail_pct < 70:
+                        continue
+                    # Bu domain'i hangi license'a bağlayacağız?
+                    # 1. lists içinde entry_type=domain,value=domain,owner_license_key varsa oradan
+                    # 2. mail_events'ten to_addr@domain veya from_addr@domain sahibinden
+                    owner_lk = None
+                    ldoc = await db.lists.find_one({"value": domain, "entry_type": "domain",
+                                                     "owner_license_key": {"$ne": None}},
+                                                    {"_id": 0, "owner_license_key": 1})
+                    if ldoc:
+                        owner_lk = ldoc.get("owner_license_key")
+                    if not owner_lk:
+                        # from_addr veya to_addr'de bu domain'in geçtiği en son mail'in license'ı
+                        import re as _re
+                        rx = f"@{_re.escape(domain)}$"
+                        ev = await db.mail_events.find_one(
+                            {"$or": [{"from_addr": {"$regex": rx, "$options": "i"}},
+                                     {"to_addr":   {"$regex": rx, "$options": "i"}}]},
+                            {"_id": 0, "license_key": 1},
+                            sort=[("ingested_at", -1)],
+                        )
+                        if ev:
+                            owner_lk = ev.get("license_key")
+                    # Cool-down: bu domain için 24s içinde alarm var mı?
+                    cool = await db.notifications_inbox.find_one({
+                        "kind": "dmarc_attack",
+                        "meta.domain": domain,
+                        "created_at": {"$gte": (now - timedelta(hours=24)).isoformat()},
+                    })
+                    if cool:
+                        continue
+                    subj = f"[DMARC SALDIRI] {domain} · %{fail_pct} fail oranı"
+                    body = (
+                        f"'{domain}' alan adınız için son 7 günde alınan DMARC agregat raporlarında "
+                        f"toplam {tot:,} mesajın {tot - p:,}'i (%{fail_pct}) DMARC doğrulamayı GEÇEMEDİ.\n\n"
+                        "Bu genellikle şu anlamlara gelir:\n"
+                        "  • Birileri sizin adınızı kullanarak sahte (spoofed) mail gönderiyor\n"
+                        "  • SPF/DKIM konfigürasyonunuz eksik ya da yanlış\n\n"
+                        "ÖNERİLEN AKSİYONLAR:\n"
+                        "  1. SPF kaydınızı '-all' (hardfail) ile sıkılaştırın\n"
+                        "  2. DKIM anahtarınızın tüm gönderici sunucularınıza kurulu olduğundan emin olun\n"
+                        "  3. DMARC politikanızı 'p=quarantine' ya da 'p=reject' yapın\n"
+                        f"  4. Failing IPs listesini Threat Intel > DMARC > {domain} sayfasından inceleyin\n\n"
+                        "Bu alarm 24 saatte bir tekrar tetiklenir; sorunu çözdükçe fail oranı düşecektir."
+                    )
+                    doc = {
+                        "id": str(uuid.uuid4()),
+                        "kind": "dmarc_attack",
+                        "subject": subj, "body": body,
+                        "meta": {"domain": domain, "fail_pct": fail_pct,
+                                 "total_msgs": tot, "pass": p, "fail": tot - p,
+                                 "period_days": 7},
+                        "license_key": owner_lk,
+                        "read": False,
+                        "severity": "high" if fail_pct >= 90 else "medium",
+                        "created_at": now.isoformat(),
+                    }
+                    await db.notifications_inbox.insert_one(doc)
+                    alarmed += 1
+                await db.settings.update_one(
+                    {"_key": "dmarc_attack_last_run"},
+                    {"$set": {"_key": "dmarc_attack_last_run", "date": today,
+                              "alarmed": alarmed, "at": now.isoformat()}},
+                    upsert=True,
+                )
+                log.info("dmarc attack cron: %d domains alarmed", alarmed)
+        except Exception as ex:
+            log.warning("dmarc attack cron error: %s", ex)
+        await asyncio.sleep(3600)
+
+
 
 
 
@@ -4584,7 +4748,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.25"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.26"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -7928,32 +8092,39 @@ class UnifiedListDeleteIn(BaseModel):
 @api.post("/lists-manager/delete")
 async def lists_unified_delete(payload: UnifiedListDeleteIn, request: Request,
                                  license_key: Optional[str] = None):
-    """Tek bir kayıt için — hangi kaynakta olursa olsun hepsinden sil."""
+    """Tek bir kayıt için — hangi kaynakta olursa olsun hepsinden sil.
+    v44.00.26 — Case-insensitive (regex) eşleşme (DB'de karışık case olabilir)."""
     await _require_master(request, license_key)
+    import re as _re
     kind = payload.kind.lower()
     et = payload.entry_type.lower()
-    val = (payload.value or "").strip().lower()
+    val_raw = (payload.value or "").strip()
+    val_l = val_raw.lower()
     list_type = "white" if kind == "whitelist" else "black"
+    # Case-insensitive exact-match regex
+    rx = {"$regex": "^" + _re.escape(val_raw) + "$", "$options": "i"}
     removed = 0
-    # db.lists UI schema
-    r1 = await db.lists.delete_many({"entry_type": et, "value": val, "list_type": list_type})
+    # UI schema (entry_type + list_type)
+    r1 = await db.lists.delete_many({"entry_type": et, "value": rx, "list_type": list_type})
     removed += r1.deleted_count
-    # db.lists maintenance schema
-    r2 = await db.lists.delete_many({"type": et, "value": val, "kind": kind})
+    # Maintenance schema (type + kind)
+    r2 = await db.lists.delete_many({"type": et, "value": rx, "kind": kind})
     removed += r2.deleted_count
-    # db.trusted_domains (domain/email)
+    # Legacy trusted_domains
     if et in ("domain", "email"):
-        dom = val.split("@")[-1] if "@" in val else val
-        r3 = await db.trusted_domains.delete_many({"domain": dom, "kind": kind})
+        dom = val_l.split("@")[-1] if "@" in val_l else val_l
+        r3 = await db.trusted_domains.delete_many({
+            "domain": {"$regex": "^" + _re.escape(dom) + "$", "$options": "i"},
+            "kind": kind})
         removed += r3.deleted_count
     import uuid as _uuid
     await db.lists_history.insert_one({
         "id": str(_uuid.uuid4()),
         "action": "delete",
-        "kind": kind, "entry_type": et, "value": val,
+        "kind": kind, "entry_type": et, "value": val_raw,
         "actor": "master", "removed_count": removed, "ts": _iso(),
     })
-    return {"ok": True, "removed": removed}
+    return {"ok": True, "removed": removed, "value": val_raw}
 
 
 @api.get("/lists-manager/history")

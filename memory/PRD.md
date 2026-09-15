@@ -14,6 +14,53 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 25, v44.00.26) — USOM Yeni API + Silme Fix + Auto Blacklist ✅
+
+### 🎯 (1) Silme Bug Fix (P0 - kullanıcı raporu)
+Kullanıcı: "burada silme işlemi yapamıyorum"
+- **Root cause**: `/api/lists-manager/delete` endpoint'i gelen value'yu `.lower()` yapıp aynen aratıyordu ama DB'de kayıtlar KARIŞIK case (örn. `TEST_act_136f02@example.com`, `girisyap-Hizlica.abrdns.com`) saklanıyordu → hiçbir kayıt eşleşmiyordu → `removed: 0` dönüyordu.
+- **Fix (v44.00.26)**: `db.lists.delete_many({"value": {"$regex": "^"+_re.escape(val_raw)+"$", "$options": "i"}, ...})` — case-insensitive exact match. Hem UI schema (`entry_type + list_type`) hem maintenance schema (`type + kind`) hem legacy `trusted_domains` için uygulandı. Response'a `"value"` alanı da eklendi (audit).
+- **Doğrulanan**: `TEST_act_136f02@example.com`, `garantibbvacepsubesi-mobilislem.ph` gibi mixed-case değerler artık silinebiliyor (`removed: 1`).
+
+### 🎯 (2) USOM Yeni JSON API + Auto Blacklist (P0 - kullanıcı raporu)
+Kullanıcı: "usomdan verileri cekemiyoruz .. https://siberguvenlik.gov.tr/api/ buna gore düzenle.. ve usom domainlerini otomatik karalisteye ekle"
+- **Eski API artık çalışmıyor**: `https://www.usom.gov.tr/url-list.txt` → 302 redirect + HTML (`<title>USOM</title>`).
+- **Yeni API**: `https://siberguvenlik.gov.tr/api/address/index?page=N` — JSON, paginated (her sayfa 20 kayıt, ~492k toplam kayıt).
+  ```json
+  {"totalCount": 492462, "count": 20, "models": [
+     {"id": 1168040, "url": "sahtebanka.com", "type": "domain",
+      "desc": "PH", "criticality_level": 4, "date": "2026-09-15 00:23:36"}, ...
+  ]}
+  ```
+- **Yeni `_fetch_usom_iocs()`**:
+  - 25 sayfa × 20 kayıt = ~500 en güncel IOC / fetch (30 sn)
+  - Multi-type destek: `type` alanına göre `domain` / `url` / `ip` — hepsi ayrı IOC olarak yazılır
+  - **USOM_DESC_MAP**: PH→phishing, MW→malware, RS→ransomware, SPAM, BOT, C2, DR→dropper, IH→impersonation, TR→trojan, AD→adware, MI→miner
+  - **Confidence dinamik**: criticality_level (1-5) → confidence (76-99)
+  - Eski TXT feed fallback olarak korundu (JSON API başarısız olursa)
+- **Otomatik karalisteye ekleme (yeni!)**:
+  - `type=domain` → `db.lists` içine `list_type=black, entry_type=domain, source=usom_auto, note="USOM otomatik ekleme · {tag}"` yazılır
+  - `type=url` → URL'in host'u da domain IOC ve kara listeye eklenir
+  - `type=ip` → `db.lists` içine IP kara listesine yazılır
+  - Duplicate koruma: mevcut aynı entry varsa atlanır
+- **Doğrulandı** (bugün live fetch):
+  - 500 IOC çekildi (455 domain + 45 IP)
+  - 500 karaliste kaydı otomatik oluştu
+  - UI'da Kara Liste sekmesinde 510 kayıt (eski 10 + yeni 500)
+  - Örnek: `garantibbvacepsubesi-mobilislem.ph`, `orhanlisubesindelerr.duckdns.org`, `girisyap-hizlica.abrdns.com` (Türk banka phishing)
+
+### 📊 Test Coverage
+- `test_v44_00_26_usom_new_api.py`: 4/4 ✅
+  - USOM yeni API URL + USOM_DESC_MAP kontrolleri
+  - Auto-blacklist source=usom_auto varlığı
+  - Delete case-insensitive regex kontrolü
+  - Integration: mixed-case silme + auto blacklist unified endpoint görünürlüğü
+
+### 📦 Version Bump
+`v44.00.25` → `v44.00.26`
+
+
+
 ## Feb 15, 2026 (Session 25, v44.00.25) — 3 Advanced Pack: DMARC Drill + GeoIP Enforce + Rule Perf Loop ✅
 
 ### 🎯 (1) DMARC Doğrulama + Per-Domain Breakdown UI

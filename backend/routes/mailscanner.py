@@ -19,7 +19,7 @@ import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from deps import db
 
@@ -1009,15 +1009,151 @@ async def scan_rule_performance(license_key: str = Query(..., min_length=8),
 async def rule_performance_list(license_key: str = Query(..., min_length=8)):
     """Onaylanan kuralların son ölçüm sonuçlarını döner (dashboard için)."""
     rows = await db.mailscanner_rules.find(
-        {"license_key": license_key, "enabled": True},
+        {"license_key": license_key},
         {"_id": 0, "id": 1, "name": 1, "pattern": 1, "target": 1, "score": 1,
          "created_at": 1, "hits_last_check": 1, "hits_last_check_at": 1,
-         "hits_window_days": 1, "applied_from_suggestion": 1},
+         "hits_window_days": 1, "applied_from_suggestion": 1, "enabled": 1,
+         "auto_disabled_at": 1, "auto_disable_reason": 1},
     ).sort("hits_last_check", -1).to_list(500)
     total = len(rows)
-    healthy = sum(1 for r in rows if (r.get("hits_last_check") or 0) > 0)
-    return {"items": rows, "total": total, "healthy": healthy,
-            "zero_hit": total - healthy}
+    enabled = [r for r in rows if r.get("enabled", True)]
+    healthy = sum(1 for r in enabled if (r.get("hits_last_check") or 0) > 0)
+    auto_disabled = sum(1 for r in rows if not r.get("enabled", True) and r.get("auto_disabled_at"))
+    cfg = await db.mailscanner_config.find_one({"license_key": license_key},
+                                                 {"_id": 0, "rule_auto_disable_days": 1,
+                                                  "rule_auto_disable_enabled": 1})
+    return {
+        "items": rows, "total": total, "enabled": len(enabled),
+        "healthy": healthy, "zero_hit": len(enabled) - healthy,
+        "auto_disabled": auto_disabled,
+        "config": {
+            "auto_disable_days": (cfg or {}).get("rule_auto_disable_days", 14),
+            "auto_disable_enabled": (cfg or {}).get("rule_auto_disable_enabled", True),
+        },
+    }
+
+
+# v44.00.26 — Auto-disable config
+class RuleAutoDisableConfigIn(BaseModel):
+    enabled: bool = True
+    days: int = Field(14, ge=0, le=365)
+
+
+@router.post("/ai/rule-performance/config")
+async def rule_perf_config(payload: RuleAutoDisableConfigIn,
+                            license_key: str = Query(..., min_length=8)):
+    """Kural otomatik disable konfigürasyonu (per-license)."""
+    await db.mailscanner_config.update_one(
+        {"license_key": license_key},
+        {"$set": {
+            "license_key": license_key,
+            "rule_auto_disable_enabled": payload.enabled,
+            "rule_auto_disable_days": int(payload.days),
+            "updated_at": _iso(),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "enabled": payload.enabled, "days": payload.days}
+
+
+@router.post("/ai/rule-performance/enable/{rule_id}")
+async def rule_re_enable(rule_id: str, license_key: str = Query(..., min_length=8)):
+    """Otomatik disable edilen kuralı tekrar aktif et (revert)."""
+    r = await db.mailscanner_rules.update_one(
+        {"id": rule_id, "license_key": license_key},
+        {"$set": {"enabled": True, "hits_last_check": 0,
+                  "hits_last_check_at": None,
+                  "re_enabled_at": _iso()},
+         "$unset": {"auto_disabled_at": "", "auto_disable_reason": ""}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "Kural bulunamadı")
+    return {"ok": True, "re_enabled": rule_id}
+
+
+# v44.00.26 — GeoIP Onboarding: "en çok spam aldığın 5 ülke" öneri
+@router.get("/geoip/suggestions")
+async def geoip_country_suggestions(license_key: str = Query(..., min_length=8),
+                                     days: int = Query(30, ge=1, le=90),
+                                     limit: int = Query(5, ge=1, le=20)):
+    """Son N günde spam/high_spam verdict alan mail'lerin sender_ip'lerini
+    GeoIP cache üzerinden ülkelere agregate eder. Kullanıcıya toplu engelleme önerisi."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    # 1. mail_events'ten spam gönderilerin IP'lerini topla
+    pipeline = [
+        {"$match": {"license_key": license_key,
+                    "ingested_at": {"$gte": since},
+                    "verdict": {"$in": ["spam", "high_spam", "virus", "phishing"]},
+                    "$or": [{"sender_ip": {"$exists": True, "$nin": [None, ""]}},
+                            {"client_ip": {"$exists": True, "$nin": [None, ""]}}]}},
+        {"$project": {
+            "ip": {"$ifNull": ["$sender_ip", "$client_ip"]},
+        }},
+        {"$group": {"_id": "$ip", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 500},
+    ]
+    ip_counts = []
+    async for r in db.mail_events.aggregate(pipeline):
+        if r["_id"]:
+            ip_counts.append({"ip": r["_id"], "count": r["count"]})
+
+    # 2. Her IP için ülkeyi cache'ten oku (yoksa lookup)
+    from routes.events import _geoip_lookup_country
+    country_agg: dict = {}
+    for entry in ip_counts:
+        cc = await _geoip_lookup_country(entry["ip"])
+        if not cc:
+            continue
+        b = country_agg.setdefault(cc, {"code": cc, "spam_count": 0,
+                                        "unique_ips": 0, "sample_ips": []})
+        b["spam_count"] += entry["count"]
+        b["unique_ips"] += 1
+        if len(b["sample_ips"]) < 5:
+            b["sample_ips"].append(entry["ip"])
+
+    # 3. Zaten engelli ülkeleri filtrele
+    already_blocked = set()
+    async for r in db.lists.find({"entry_type": "country"}, {"_id": 0, "value": 1}):
+        already_blocked.add((r.get("value") or "").upper())
+
+    # 4. Ülke katalog isimlerini ekle
+    from server import COUNTRY_NAMES_TR
+    suggestions = []
+    for cc, b in country_agg.items():
+        if cc in already_blocked:
+            continue
+        b["name"] = COUNTRY_NAMES_TR.get(cc, cc)
+        b["flag"] = "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in cc if "A" <= c <= "Z") if len(cc) == 2 else "🌐"
+        suggestions.append(b)
+    suggestions.sort(key=lambda x: -x["spam_count"])
+    suggestions = suggestions[:limit]
+    return {
+        "days": days,
+        "suggestions": suggestions,
+        "count": len(suggestions),
+        "note": ("Bu ülkelerden gelen mail'lerin çoğu son {} günde spam verdict aldı. "
+                 "Tek tıkla toplu engelleyerek gelen spam trafiğinizi azaltabilirsiniz.").format(days),
+    }
+
+
+# v44.00.26 — Manual triggers (UI'dan tetiklemek için)
+@router.post("/ai/rule-performance/scan-all")
+async def scan_all_licenses_rules(request: Request):
+    """Master: tüm bayilerin kural perf'ini şimdi ölç (background task'ın manuel karşılığı)."""
+    # Basit protection: sadece master IP'den erişilebilir (X-Forwarded-For master IP)
+    ip = (request.headers.get("X-Forwarded-For") or request.client.host or "").split(",")[0].strip()
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    licenses = await db.mail_events.distinct("license_key", {"ingested_at": {"$gte": since}})
+    scanned = 0
+    for lk in licenses:
+        if not lk: continue
+        try:
+            await scan_rule_performance(license_key=lk, min_age_days=7, window_days=7)
+            scanned += 1
+        except Exception:
+            continue
+    return {"ok": True, "scanned": scanned, "master_ip": ip}
 
 
 @router.post("/ai/rule-performance/remove/{rule_id}")

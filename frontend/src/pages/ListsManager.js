@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search, Plus, Trash2, History, ShieldCheck, ShieldX, RefreshCw, Filter,
-  Globe2, CheckSquare, Square, AlertTriangle,
+  Globe2, CheckSquare, Square, AlertTriangle, Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui-primitives";
@@ -225,37 +225,66 @@ function CountryBlockPane({ onChange }) {
     queryFn: async () => (await client.get("/lists-manager/country-blocks")).data,
     refetchInterval: 30000,
   });
+  // v44.00.26 — GeoIP onboarding suggestions
+  const suggestions = useQuery({
+    queryKey: ["geoip-suggestions"],
+    queryFn: async () => {
+      const lk = localStorage.getItem("gws.event_license") || "";
+      return (await client.get(`/mailscanner/geoip/suggestions?license_key=${lk}&days=30&limit=5`)).data;
+    },
+    staleTime: 60000,
+  });
   const [cc, setCC] = useState("");
   const [note, setNote] = useState("");
   const [search, setSearch] = useState("");
 
   const add = useMutation({
-    mutationFn: async () => (await client.post("/lists-manager/country-block", {
-      country_code: cc, note,
-    })).data,
+    mutationFn: async (code = cc, extraNote = note) =>
+      (await client.post("/lists-manager/country-block", {
+        country_code: code, note: extraNote,
+      })).data,
     onSuccess: (d) => {
       toast.success(d.added ? `🌐 ${d.country_name} engellendi` : `${d.country_code} zaten engelli`);
       setCC(""); setNote("");
       qc.invalidateQueries({ queryKey: ["country-blocks"] });
+      qc.invalidateQueries({ queryKey: ["geoip-suggestions"] });
       qc.invalidateQueries({ queryKey: ["lists-manager-unified"] });
       onChange?.();
     },
     onError: (e) => toast.error(e.response?.data?.detail || e.message),
+  });
+  const bulkAdd = useMutation({
+    mutationFn: async (codes) => {
+      const results = [];
+      for (const code of codes) {
+        try {
+          const r = await client.post("/lists-manager/country-block",
+            { country_code: code, note: "GeoIP önerisi ile toplu eklendi" });
+          results.push(r.data);
+        } catch (_) { /* skip */ }
+      }
+      return results;
+    },
+    onSuccess: (res) => {
+      toast.success(`🌐 ${res.filter(r => r?.added).length} ülke engellendi`);
+      qc.invalidateQueries({ queryKey: ["country-blocks"] });
+      qc.invalidateQueries({ queryKey: ["geoip-suggestions"] });
+      qc.invalidateQueries({ queryKey: ["lists-manager-unified"] });
+    },
   });
   const del = useMutation({
     mutationFn: async (code) => (await client.delete(`/lists-manager/country-block/${code}`)).data,
     onSuccess: (_, code) => {
       toast.success(`${code} engeli kaldırıldı`);
       qc.invalidateQueries({ queryKey: ["country-blocks"] });
+      qc.invalidateQueries({ queryKey: ["geoip-suggestions"] });
       qc.invalidateQueries({ queryKey: ["lists-manager-unified"] });
       onChange?.();
     },
   });
 
   const items = list.data?.items || [];
-  const catalogItems = (catalog.data?.items || []).filter(c =>
-    !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase().includes(search.toLowerCase())
-  );
+  const sugItems = suggestions.data?.suggestions || [];
   const blockedSet = new Set(items.map(i => i.value));
 
   return (
@@ -270,6 +299,46 @@ function CountryBlockPane({ onChange }) {
           </div>
         </div>
       </div>
+
+      {/* v44.00.26 — GeoIP Onboarding Önerileri */}
+      {sugItems.length > 0 && (
+        <div className="bg-indigo-500/5 border border-indigo-500/30 rounded-md p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-sm font-semibold text-indigo-300 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" /> Akıllı Öneri: En Çok Spam Aldığın Ülkeler
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                Son 30 gün mail_events'in GeoIP analizinden — {suggestions.data?.note}
+              </div>
+            </div>
+            <button data-testid="cb-suggest-bulk"
+                    onClick={() => window.confirm(`${sugItems.length} önerilen ülke TOPLU engellensin mi?`) && bulkAdd.mutate(sugItems.map(s => s.code))}
+                    disabled={bulkAdd.isPending}
+                    className="text-xs px-3 py-1.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 whitespace-nowrap disabled:opacity-40">
+              ⚡ {bulkAdd.isPending ? "Ekleniyor…" : `Hepsini Engelle (${sugItems.length})`}
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-2">
+            {sugItems.map(s => (
+              <div key={s.code} data-testid={`cb-suggestion-${s.code}`}
+                   className="bg-slate-950 border border-indigo-500/20 rounded p-2.5 flex items-center gap-2">
+                <div className="text-3xl shrink-0">{s.flag}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-slate-100 truncate">{s.name}</div>
+                  <div className="text-[10px] mono text-slate-500">{s.spam_count} spam · {s.unique_ips} IP</div>
+                </div>
+                <button onClick={() => add.mutate(s.code, `GeoIP önerisi: ${s.spam_count} spam`)}
+                        disabled={add.isPending}
+                        className="text-[10px] px-2 py-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 shrink-0"
+                        title="Bu ülkeyi engelle">
+                  Engelle
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Add form */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2 p-3 bg-slate-900/30 rounded-md border border-slate-800">
@@ -302,7 +371,7 @@ function CountryBlockPane({ onChange }) {
               <button key={code}
                       onClick={() => {
                         if (blocked) return;
-                        setCC(code); add.mutate();
+                        add.mutate(code);
                       }}
                       disabled={blocked || add.isPending}
                       data-testid={`cb-quick-${code}`}
