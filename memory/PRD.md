@@ -14,7 +14,55 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
-## Feb 15, 2026 (Session 26, v44.00.32) — USOM 2024+ Async Fetch + Karantina Modül Konsolidasyonu ✅
+## Feb 15, 2026 (Session 26, v44.00.33) — Karantina Ayarlar Tam + USOM Delta Sync Cron ✅
+
+### 🎯 (1) Karantina Ayarlar Sekmesi Tamamlandı
+Backend `settings.quarantine_settings` doküman şeması + 3 endpoint:
+- `GET  /api/quarantine/settings` — default'larla merge edilmiş ayarlar (public read, master yazı gerekir değil)
+- `POST /api/quarantine/settings` — master-only, validation (retention 0-3650, threshold 0-100)
+- `POST /api/quarantine/settings/apply-retention` — master-only, retention'ı ŞİMDİ uygula
+
+Ayar alanları:
+- **retention_days** (default 30) + **auto_delete_enabled** (default true)
+- **spam_score_threshold** (default 5.0) · **high_spam_score_threshold** (default 10.0)
+- Spam-öğret davranışı: `auto_train_bayes_on_release`, `auto_whitelist_on_release`, `auto_train_bayes_on_report`, `auto_blacklist_on_report`
+
+Cron: **`_daily_quarantine_retention_task`** — her gün 02:00 UTC'de retention'ı uygular (idempotent, günde bir), settings.quarantine_retention_last_run'a log yazar.
+
+Frontend `QuarantineSettingsPane` (Ayarlar tab'ı):
+- 3 kart: Retention · Skor Eşikleri · Spam-Öğret Davranışı
+- Sticky "Değişiklikleri Kaydet" barı (dirty state kontrolü)
+- "Şimdi Uygula" butonu retention'ı manuel tetikler
+- Tüm alanlar için data-testid (`qs-retention-days`, `qs-auto-delete`, `qs-spam-threshold`, `qs-high-threshold`, `qs-auto-train-bayes-on-release`, `qs-apply-retention`, `qs-save`, ...)
+
+### 🎯 (2) USOM Delta Sync Cron (2024+ günlük)
+Kullanıcı: "günlük cron'da otomatik koşsun ve son çalışmadan sadece yeni tarihli kayıtları alsın"
+
+- `_fetch_usom_iocs()` `min_date` parametresi eklendi: bu tarihten (YYYY-MM-DD HH:MM:SS) eski kayıt görünce döngü durur.
+- `_daily_usom_fetch_task` **komple yeniden yazıldı** (~100 satır → ~50 satır):
+  - İlk çalışma: `min_year=2024`, `min_date=None` → full 2024+ fetch (~20K)
+  - Sonraki çalışmalar: `min_date=settings.usom_last_run.last_max_date` → sadece delta (yeni tarihli kayıtlar)
+  - Her başarılı çalışmada `last_max_date` güncellenir (en son gelen kaydın tarihi)
+  - Progress bar & auto-blacklist mantığı `_ingest_usom_items()` shared helper'ına devredildi
+- Manuel async fetch (`POST /usom/fetch-async`) da başarılı bittikten sonra `last_max_date`'i günceller — cron ile manuel arasında paylaşımlı state
+- Her saatte kontrol, 03:00 UTC'de bir kez çalışır, aynı gün tekrar başlamaz
+
+### 📊 Test Coverage
+`test_v44_00_33_settings_and_delta.py`: **7/7 ✅**
+- Settings GET default'ları döner
+- POST master-only (403 non-master, 200 master), persistence
+- Validation (retention -1, 9999 → 400)
+- Apply-retention endpoint
+- USOM `_fetch_usom_iocs` `min_date` param + koşulu var
+- `_daily_usom_fetch_task` delta markerları (last_max_date, min_date=last_max)
+- `_daily_quarantine_retention_task` var + startup'a kayıtlı
+
+### 📦 Version Bump
+`v44.00.32` → **`v44.00.33`**
+
+---
+
+
 
 ### 🎯 (1) USOM 2024+ Yıl Bazlı Async Fetch + Canlı Progress Bar
 Kullanıcı: "usom 456 domain eklemiş ama 20 bin kusur var. son 2024-2025-2026 yıllarını çeksin. güncel olanları çeksin. çekerken loading gibi bir şey görelim. toplu silme de ekle."

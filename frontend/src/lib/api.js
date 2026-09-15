@@ -143,6 +143,10 @@ export const api = {
   quarantineStats: (params = {}) => client.get("/quarantine/stats", { params }).then(r => r.data),
   quarantinePurgeAll: (params = {}) => client.post("/quarantine/purge-all", null, { params }).then(r => r.data),
   quarantineForward: (payload) => client.post("/quarantine/forward", payload).then(r => r.data),
+  // v44.00.33 — Karantina Ayarları
+  qsettingsGet: () => client.get("/quarantine/settings").then(r => r.data),
+  qsettingsSet: (payload) => client.post("/quarantine/settings", payload).then(r => r.data),
+  qsettingsApplyRetention: () => client.post("/quarantine/settings/apply-retention").then(r => r.data),
   eventsRescore: (params = {}) => client.post("/events/rescore", null, { params }).then(r => r.data),
   eventsBackfill: (params = {}) => client.post("/events/backfill-quarantine", null, { params }).then(r => r.data),
   eventsExport: (params = {}) => `${API}/events/export?${new URLSearchParams(params).toString()}`,

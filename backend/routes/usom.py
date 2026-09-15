@@ -95,11 +95,14 @@ async def _fetch_usom_iocs(
     min_year: int | None = None,
     progress_key: str | None = None,
     max_pages: int | None = None,
+    min_date: str | None = None,
 ) -> tuple[list[dict], str]:
     """v44.00.32 — siberguvenlik.gov.tr JSON API'sinden IOC listesi çeker.
 
     min_year: bu yıldan önceki kayıtları GEÇME (kayıtlar date-desc geldiğinden
               min_year'dan eski bir kayıt görünce durur). None → tümünü çek.
+    min_date: v44.00.33 — bu tarihten (YYYY-MM-DD HH:MM:SS) daha eski kayıtları
+              GEÇME. Delta-sync için kullanılır (min_year ile beraber kullanılabilir).
     progress_key: settings._key altına yaz (frontend polling için).
     max_pages: opsiyonel hard cap.
 
@@ -181,6 +184,11 @@ async def _fetch_usom_iocs(
                                 break
                         except Exception:
                             pass
+                    # v44.00.33 — delta sync: min_date'ten eski ise dur
+                    if min_date and date_str and date_str < min_date:
+                        page_stopped = True
+                        stopped_by_year = True
+                        break
                     val = (m.get("url") or "").strip()
                     typ = (m.get("type") or "").strip().lower()
                     if not val or typ not in ("url", "domain", "ip"):
@@ -801,6 +809,18 @@ async def _run_async_fetch(min_year: int):
             upsert=True,
         )
         result = await _ingest_usom_items(items, src)
+        # v44.00.33 — delta sync için en son gelen tarihini kaydet
+        new_max = ""
+        for it in items:
+            d = (it.get("date") or "").strip()
+            if d and d > new_max:
+                new_max = d
+        if new_max:
+            await db.settings.update_one(
+                {"_key": "usom_last_run"},
+                {"$set": {"last_max_date": new_max}},
+                upsert=True,
+            )
         await db.settings.update_one(
             {"_key": USOM_FETCH_PROGRESS_KEY},
             {"$set": {
@@ -812,6 +832,7 @@ async def _run_async_fetch(min_year: int):
                 "result": result,
                 "min_year": min_year,
                 "source": src,
+                "last_max_date": new_max,
             }},
             upsert=True,
         )

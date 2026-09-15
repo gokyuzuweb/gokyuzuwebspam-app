@@ -742,6 +742,7 @@ async def _startup() -> None:
     asyncio.create_task(_migrate_trusted_domains_to_lists())  # v44.00.20 — one-time UI sync
     asyncio.create_task(_daily_ioc_domain_extract_task())  # v44.00.20 — günlük URL→domain çıkarma
     asyncio.create_task(_daily_usom_fetch_task())  # v44.00.22 — günlük USOM fetch
+    asyncio.create_task(_daily_quarantine_retention_task())  # v44.00.33 — retention auto-delete
     asyncio.create_task(_daily_ai_rule_performance_task())  # v44.00.26 — günlük AI kural perf ölçümü + auto-disable
     asyncio.create_task(_daily_dmarc_attack_alarm_task())   # v44.00.26 — %70+ DMARC fail → saldırı alarmı
     asyncio.create_task(_hourly_feed_health_check_task())   # v44.00.31 — feed 24s+ error → notif
@@ -1279,8 +1280,8 @@ async def _daily_ioc_domain_extract_task():
 
 # v44.00.22 — USOM Zararlı Bağlantı günlük fetch (03:00 UTC = 06:00 TR).
 async def _daily_usom_fetch_task():
-    """v44.00.26 — Yeni JSON API'sinden 500 IOC çeker + otomatik kara listeye yazar.
-    Endpoint fonksiyonunu doğrudan çağırır (auto-blacklist mantığı orada mevcut)."""
+    """v44.00.33 — Günlük USOM delta sync: son çalışmadan bu yana 2024+ yıla ait yeni kayıtları çeker.
+    İlk çalışmada full 2024+ (min_year=2024) fetch, sonrasında sadece last_max_date sonrası (delta)."""
     await asyncio.sleep(600)  # startup +10dk
     while True:
         try:
@@ -1289,91 +1290,81 @@ async def _daily_usom_fetch_task():
                 today = now.date().isoformat()
                 last = await db.settings.find_one({"_key": "usom_last_run"}, {"_id": 0})
                 if not last or last.get("date") != today:
-                    # v44.00.26 — Yeni endpoint fonksiyonu: JSON API + auto-blacklist
-                    from routes.usom import fetch_usom as _fetch_usom_ep
-                    class _MockReq:
-                        headers = {"X-Forwarded-For": "127.0.0.1"}
-                        client = type("c", (), {"host": "127.0.0.1"})()
+                    from routes.usom import _fetch_usom_iocs, _ingest_usom_items, USOM_FETCH_PROGRESS_KEY
+                    last_max = last.get("last_max_date") if last else None
                     try:
-                        # _require_master check'ini bypass etmek için doğrudan iç fonksiyonu çağır
-                        from routes.usom import _fetch_usom_iocs
-                        import uuid as _uuid
-                        from urllib.parse import urlparse as _urlparse
-                        items, source_url = await _fetch_usom_iocs()
-                        now_iso = _iso()
-                        expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-                        added_urls = added_domains = added_ips = added_blk = 0
-                        seen_domains: set = set()
+                        items, source_url = await _fetch_usom_iocs(
+                            min_year=2024,
+                            progress_key=USOM_FETCH_PROGRESS_KEY,
+                            min_date=last_max,  # delta: only newer than last run
+                        )
+                        result = await _ingest_usom_items(items, source_url)
+                        # En son gelen kaydın tarihini sakla (delta için)
+                        new_max = last_max or ""
                         for it in items:
-                            val = it["value"]; typ = it["type"]; tag = it["tag"]
-                            conf = min(99, 70 + it["criticality"] * 6)
-                            note = (f"USOM {it['desc_code']} · seviye {it['criticality']}"
-                                    if it["desc_code"] else "USOM Zararlı Bağlantı Listesi")
-                            r_ioc = await db.threat_iocs.update_one(
-                                {"type": typ, "value": val},
-                                {"$setOnInsert": {"id": str(_uuid.uuid4()), "type": typ, "value": val,
-                                                  "tag": tag, "confidence": conf, "source": "usom",
-                                                  "feed": "usom-json-api", "note": note,
-                                                  "created_at": now_iso, "expires_at": expires,
-                                                  "usom_id": it.get("usom_id"),
-                                                  "criticality": it["criticality"]},
-                                 "$set": {"last_seen_at": now_iso}}, upsert=True)
-                            if r_ioc.upserted_id:
-                                if typ == "url": added_urls += 1
-                                elif typ == "domain": added_domains += 1
-                                elif typ == "ip": added_ips += 1
-                            # Auto blacklist
-                            host = None
-                            if typ == "domain":
-                                host = val
-                            elif typ == "url":
-                                try:
-                                    u = val if val.startswith(("http://","https://")) else f"http://{val}"
-                                    host = (_urlparse(u).hostname or "").lower()
-                                except Exception:
-                                    host = None
-                            if host and "." in host and host not in seen_domains and \
-                               not host[0].isdigit():
-                                seen_domains.add(host)
-                                existing = await db.lists.find_one(
-                                    {"entry_type": "domain", "value": host, "list_type": "black"},
-                                    {"_id": 0, "id": 1})
-                                if not existing:
-                                    await db.lists.insert_one({
-                                        "id": str(_uuid.uuid4()),
-                                        "list_type": "black", "entry_type": "domain",
-                                        "value": host, "scope": "global", "user": None,
-                                        "note": f"USOM otomatik ekleme · {tag}",
-                                        "source": "usom_auto", "created_at": now_iso})
-                                    added_blk += 1
-                            if typ == "ip":
-                                existing_ip = await db.lists.find_one(
-                                    {"entry_type": "ip", "value": val, "list_type": "black"},
-                                    {"_id": 0, "id": 1})
-                                if not existing_ip:
-                                    await db.lists.insert_one({
-                                        "id": str(_uuid.uuid4()),
-                                        "list_type": "black", "entry_type": "ip",
-                                        "value": val, "scope": "global", "user": None,
-                                        "note": f"USOM otomatik ekleme · {tag}",
-                                        "source": "usom_auto", "created_at": now_iso})
-                                    added_blk += 1
+                            d = (it.get("date") or "").strip()
+                            if d and d > new_max:
+                                new_max = d
                         await db.settings.update_one(
                             {"_key": "usom_last_run"},
-                            {"$set": {"_key": "usom_last_run", "date": today,
-                                      "count": len(items),
-                                      "added_urls": added_urls,
-                                      "added_domains": added_domains,
-                                      "added_ips": added_ips,
-                                      "added_to_blacklist": added_blk,
-                                      "source": source_url, "at": now_iso}},
-                            upsert=True)
-                        log.info("usom daily cron: %d IOC, %d new blacklist entries (%s)",
-                                 len(items), added_blk, source_url)
+                            {"$set": {
+                                "date": today,
+                                "last_max_date": new_max or last_max,
+                                "trigger": "daily_delta_cron",
+                                "count": len(items),
+                                **result,
+                            }},
+                            upsert=True,
+                        )
+                        await db.settings.update_one(
+                            {"_key": USOM_FETCH_PROGRESS_KEY},
+                            {"$set": {"state": "done", "fetched": len(items),
+                                      "finished_at": _iso(), "updated_at": _iso(),
+                                      "result": result, "source": source_url,
+                                      "trigger": "daily_delta_cron"}},
+                            upsert=True,
+                        )
+                        log.info("usom daily delta cron: %d new IOC · last_max=%s · %s",
+                                 len(items), new_max, source_url)
                     except Exception as ex2:
-                        log.warning("usom daily cron (new API) failed: %s", ex2)
+                        log.warning("usom daily delta cron failed: %s", ex2)
         except Exception as ex:
             log.warning("usom cron error: %s", ex)
+        await asyncio.sleep(3600)
+
+
+# v44.00.33 — Karantina Retention Auto-Delete (günlük)
+async def _daily_quarantine_retention_task():
+    """Her gün 02:00 UTC'de karantina ayarlarındaki retention_days'ten eski
+    kayıtları siler. auto_delete_enabled=false veya retention_days=0 iken atlanır."""
+    await asyncio.sleep(480)  # startup +8dk
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.hour == 2:
+                today = now.date().isoformat()
+                last = await db.settings.find_one({"_key": "quarantine_retention_last_run"}, {"_id": 0})
+                if last and last.get("date") == today:
+                    await asyncio.sleep(3600); continue
+                cfg = await db.settings.find_one({"_key": _QUARANTINE_SETTINGS_KEY}, {"_id": 0}) or {}
+                enabled = cfg.get("auto_delete_enabled", True)
+                rd = int(cfg.get("retention_days") or 30)
+                deleted = 0
+                if enabled and rd > 0:
+                    cutoff = (now - timedelta(days=rd)).isoformat()
+                    r = await db.quarantine.delete_many({"received_at": {"$lt": cutoff}})
+                    deleted = r.deleted_count
+                    log.info("quarantine retention cron: %d records deleted (older than %d days)",
+                             deleted, rd)
+                await db.settings.update_one(
+                    {"_key": "quarantine_retention_last_run"},
+                    {"$set": {"_key": "quarantine_retention_last_run", "date": today,
+                              "deleted": deleted, "retention_days": rd,
+                              "auto_delete_enabled": enabled, "at": now.isoformat()}},
+                    upsert=True,
+                )
+        except Exception as ex:
+            log.warning("quarantine retention cron error: %s", ex)
         await asyncio.sleep(3600)
 
 
@@ -2204,6 +2195,84 @@ async def quarantine_local_domains():
     ranked = sorted(seen.items(), key=lambda x: -x[1])[:20]
     return {"items": [{"domain": d, "count": c} for d, c in ranked],
             "demo_domains": sorted(_DEMO_DOMAINS)}
+
+
+# v44.00.33 — Karantina Ayarları (retention, thresholds, spam-learn davranışı)
+_QUARANTINE_SETTINGS_KEY = "quarantine_settings"
+_QUARANTINE_SETTINGS_DEFAULT = {
+    "retention_days": 30,               # kaç günden eski karantina otomatik silinsin
+    "auto_delete_enabled": True,        # retention cron'u aktif mi?
+    "spam_score_threshold": 5.0,        # bu skor ve üzeri "spam" verdict
+    "high_spam_score_threshold": 10.0,  # bu skor ve üzeri "high_spam" verdict
+    "auto_train_bayes_on_release": True,   # "Spam Değil" → Bayes ham eğit
+    "auto_whitelist_on_release": True,     # "Spam Değil" → göndericiyi Beyaz Liste'ye ekle
+    "auto_train_bayes_on_report": True,    # "Spam Öğret" → Bayes spam eğit
+    "auto_blacklist_on_report": True,      # "Spam Öğret" → göndericiyi Kara Liste'ye ekle
+}
+
+
+@api.get("/quarantine/settings")
+async def quarantine_settings_get(request: Request, license_key: Optional[str] = None):
+    """Karantina ayarlarını getirir (retention/eşikler/spam-öğret davranışı).
+    Boşsa default değerler döner."""
+    doc = await db.settings.find_one({"_key": _QUARANTINE_SETTINGS_KEY}, {"_id": 0}) or {}
+    merged = {**_QUARANTINE_SETTINGS_DEFAULT, **{k: v for k, v in doc.items() if k not in ("_key",)}}
+    return merged
+
+
+class QuarantineSettingsIn(BaseModel):
+    retention_days: Optional[int] = None
+    auto_delete_enabled: Optional[bool] = None
+    spam_score_threshold: Optional[float] = None
+    high_spam_score_threshold: Optional[float] = None
+    auto_train_bayes_on_release: Optional[bool] = None
+    auto_whitelist_on_release: Optional[bool] = None
+    auto_train_bayes_on_report: Optional[bool] = None
+    auto_blacklist_on_report: Optional[bool] = None
+
+
+@api.post("/quarantine/settings")
+async def quarantine_settings_post(payload: QuarantineSettingsIn, request: Request,
+                                    license_key: Optional[str] = None):
+    """Karantina ayarlarını kaydet. Master-only.
+    retention_days=0 → auto-delete kapatılır (auto_delete_enabled=false zorlanır)."""
+    await _require_master(request, license_key)
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    # Validation
+    if "retention_days" in updates:
+        rd = int(updates["retention_days"])
+        if rd < 0 or rd > 3650:
+            raise HTTPException(400, "retention_days 0-3650 arası olmalı")
+        updates["retention_days"] = rd
+    for k in ("spam_score_threshold", "high_spam_score_threshold"):
+        if k in updates:
+            v = float(updates[k])
+            if v < 0 or v > 100:
+                raise HTTPException(400, f"{k} 0-100 arası olmalı")
+            updates[k] = v
+    updates["_key"] = _QUARANTINE_SETTINGS_KEY
+    updates["updated_at"] = _iso()
+    await db.settings.update_one(
+        {"_key": _QUARANTINE_SETTINGS_KEY},
+        {"$set": updates}, upsert=True,
+    )
+    doc = await db.settings.find_one({"_key": _QUARANTINE_SETTINGS_KEY}, {"_id": 0}) or {}
+    return {**_QUARANTINE_SETTINGS_DEFAULT, **{k: v for k, v in doc.items() if k not in ("_key",)}}
+
+
+@api.post("/quarantine/settings/apply-retention")
+async def quarantine_apply_retention(request: Request, license_key: Optional[str] = None):
+    """Retention'ı ŞİMDİ uygula: retention_days'ten eski karantina kayıtlarını sil.
+    Master-only. Cron zaten günlük çalıştırıyor, bu manuel tetikleme."""
+    await _require_master(request, license_key)
+    doc = await db.settings.find_one({"_key": _QUARANTINE_SETTINGS_KEY}, {"_id": 0}) or {}
+    settings = {**_QUARANTINE_SETTINGS_DEFAULT, **{k: v for k, v in doc.items() if k not in ("_key",)}}
+    rd = int(settings.get("retention_days") or 30)
+    if rd <= 0:
+        return {"ok": True, "deleted": 0, "note": "retention_days=0, silme yapılmadı"}
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=rd)).isoformat()
+    r = await db.quarantine.delete_many({"received_at": {"$lt": cutoff}})
+    return {"ok": True, "deleted": r.deleted_count, "cutoff": cutoff, "retention_days": rd}
 
 
 @api.post("/quarantine/purge-demo")
@@ -4897,7 +4966,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.32"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.33"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:

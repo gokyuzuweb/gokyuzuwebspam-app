@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Search, Trash2, RotateCcw, GraduationCap, X, Mail, Server, Hash, Filter, BarChart3, Flame, Forward, Calendar, AlertTriangle, Calculator, Download, Eye } from "lucide-react";
 import { toast } from "sonner";
@@ -634,22 +634,163 @@ function BulkCard({ testid, icon: Icon, color, title, desc, btn, onClick, disabl
 }
 
 function QuarantineSettingsPane() {
-  return (
+  const qc = useQueryClient();
+  const s = useQuery({
+    queryKey: ["quarantine-settings"],
+    queryFn: async () => (await api.qsettingsGet ? api.qsettingsGet() : fetch("/api/quarantine/settings").then(r => r.json())),
+  });
+  const [form, setForm] = useState(null);
+  useEffect(() => { if (s.data && !form) setForm(s.data); }, [s.data]); // eslint-disable-line
+  const save = useMutation({
+    mutationFn: async (patch) => api.qsettingsSet(patch),
+    onSuccess: (d) => {
+      toast.success("Ayarlar kaydedildi");
+      setForm(d);
+      qc.invalidateQueries({ queryKey: ["quarantine-settings"] });
+    },
+    onError: (e) => toast.error("Kaydedilemedi: " + (e?.response?.data?.detail || e.message)),
+  });
+  const applyNow = useMutation({
+    mutationFn: () => api.qsettingsApplyRetention(),
+    onSuccess: (d) => {
+      toast.success(`Retention uygulandı: ${d.deleted} kayıt silindi (${d.retention_days}+ günden eski)`);
+      qc.invalidateQueries({ queryKey: ["quarantine"] });
+      qc.invalidateQueries({ queryKey: ["quarantine-stats"] });
+    },
+    onError: (e) => toast.error("Uygulama başarısız: " + (e?.response?.data?.detail || e.message)),
+  });
+
+  if (!form) return (
     <Card data-testid="q-pane-settings">
-      <CardBody className="p-4 space-y-3">
-        <div className="text-[11px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
-          <Server className="w-3.5 h-3.5" /> Karantina Ayarları
-        </div>
-        <div className="p-4 border border-dashed border-slate-800 rounded text-sm text-slate-400 text-center">
-          <div className="mono text-slate-300 mb-1.5">Yakında</div>
-          <p className="text-xs leading-relaxed">
-            Karantina saklama süresi (retention), otomatik karantina eşikleri,
-            spam öğretim davranışı ve raporlama tercihleri burada yönetilecek.
-            Şimdilik eşikler <span className="mono text-indigo-400">MailScanner → Kurallar</span> bölümünden yapılandırılabilir.
-          </p>
-        </div>
-      </CardBody>
+      <CardBody className="p-6 text-center text-slate-400 text-sm">Ayarlar yükleniyor…</CardBody>
     </Card>
+  );
+
+  const update = (k, v) => setForm({ ...form, [k]: v });
+  const dirty = JSON.stringify(form) !== JSON.stringify(s.data || {});
+
+  return (
+    <div className="space-y-4" data-testid="q-pane-settings">
+      {/* Retention */}
+      <Card>
+        <CardBody className="p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[11px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                <Calendar className="w-3.5 h-3.5" /> Karantina Retention (Saklama)
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Bu süreden eski karantina kayıtları her gün <b className="text-slate-200">02:00 UTC</b>'de otomatik silinir.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+              <input type="checkbox"
+                checked={form.auto_delete_enabled}
+                onChange={e => update("auto_delete_enabled", e.target.checked)}
+                data-testid="qs-auto-delete"
+                className="accent-indigo-500" />
+              Oto-silme Aktif
+            </label>
+          </div>
+          <div className="flex items-center gap-3">
+            <input type="number" min="0" max="3650"
+              value={form.retention_days}
+              onChange={e => update("retention_days", parseInt(e.target.value || 0))}
+              data-testid="qs-retention-days"
+              disabled={!form.auto_delete_enabled}
+              className="w-24 bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-sm mono text-slate-100 disabled:opacity-40" />
+            <span className="text-xs text-slate-400">gün</span>
+            <button
+              onClick={() => {
+                if (!window.confirm(`${form.retention_days}+ günden eski karantina kayıtları ŞİMDİ silinecek. Devam?`)) return;
+                applyNow.mutate();
+              }}
+              disabled={applyNow.isPending || !form.retention_days}
+              data-testid="qs-apply-retention"
+              className="ml-auto px-3 py-1.5 rounded border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-xs disabled:opacity-40">
+              {applyNow.isPending ? "Uygulanıyor…" : "Şimdi Uygula"}
+            </button>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Auto-quarantine thresholds */}
+      <Card>
+        <CardBody className="p-4 space-y-3">
+          <div className="text-[11px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5" /> Otomatik Karantina Skor Eşikleri
+          </div>
+          <p className="text-xs text-slate-400">
+            SpamAssassin skoruna göre verdict atama: eşiği geçen mail'ler karantinaya alınır.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-amber-300">Spam Eşiği (score ≥)</span>
+              <input type="number" step="0.5" min="0" max="100"
+                value={form.spam_score_threshold}
+                onChange={e => update("spam_score_threshold", parseFloat(e.target.value || 0))}
+                data-testid="qs-spam-threshold"
+                className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-sm mono" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-rose-300">Yüksek Spam Eşiği (score ≥)</span>
+              <input type="number" step="0.5" min="0" max="100"
+                value={form.high_spam_score_threshold}
+                onChange={e => update("high_spam_score_threshold", parseFloat(e.target.value || 0))}
+                data-testid="qs-high-threshold"
+                className="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-sm mono" />
+            </label>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Spam-learn behavior */}
+      <Card>
+        <CardBody className="p-4 space-y-3">
+          <div className="text-[11px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
+            <GraduationCap className="w-3.5 h-3.5" /> Spam Öğretim Davranışı
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {[
+              { k: "auto_train_bayes_on_release", label: '"Spam Değil"de → Bayes\'e ham eğit', hint: "Serbest bırakınca istatistiksel filtreye 'temiz' örnek olarak ekle" },
+              { k: "auto_whitelist_on_release",   label: '"Spam Değil"de → Beyaz Liste\'ye ekle', hint: "Göndericiyi otomatik whitelist; bir daha karantinaya düşmez" },
+              { k: "auto_train_bayes_on_report",  label: '"Spam Öğret"te → Bayes\'e spam eğit',    hint: "Bu göndericiden gelecek benzer mail'ler otomatik yakalanır" },
+              { k: "auto_blacklist_on_report",    label: '"Spam Öğret"te → Kara Liste\'ye ekle',   hint: "Göndericiyi otomatik blacklist" },
+            ].map(({ k, label, hint }) => (
+              <label key={k} className="flex items-start gap-2 p-2 rounded border border-slate-800 bg-slate-950/40 cursor-pointer hover:border-indigo-500/40">
+                <input type="checkbox"
+                  checked={!!form[k]}
+                  onChange={e => update(k, e.target.checked)}
+                  data-testid={`qs-${k.replace(/_/g, '-')}`}
+                  className="mt-0.5 accent-indigo-500" />
+                <span className="flex-1">
+                  <span className="text-sm text-slate-100 block">{label}</span>
+                  <span className="text-[11px] text-slate-500">{hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Save bar */}
+      <div className="sticky bottom-4 flex items-center gap-2 justify-end">
+        <button
+          onClick={() => setForm(s.data)}
+          disabled={!dirty}
+          data-testid="qs-reset"
+          className="px-3 py-1.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800 text-xs disabled:opacity-30">
+          Değişiklikleri İptal Et
+        </button>
+        <button
+          onClick={() => save.mutate(form)}
+          disabled={!dirty || save.isPending}
+          data-testid="qs-save"
+          className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs disabled:opacity-50">
+          {save.isPending ? "Kaydediliyor…" : dirty ? "Değişiklikleri Kaydet" : "Kayıtlı"}
+        </button>
+      </div>
+    </div>
   );
 }
 
