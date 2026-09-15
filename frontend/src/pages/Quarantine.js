@@ -145,10 +145,65 @@ export default function Quarantine() {
     bulk.mutate({ action, ids: Array.from(selected) });
   };
 
+  // v44.00.32 — Konsolide 4 sekmeli yapı
+  const [activeTab, setActiveTab] = useState("all");   // all | overview | bulk | settings
+
+  const TABS = [
+    { key: "overview", label: "Özet",           icon: BarChart3 },
+    { key: "all",      label: "Tüm Mesajlar",   icon: Mail      },
+    { key: "bulk",     label: "Toplu İşlemler", icon: Filter    },
+    { key: "settings", label: "Ayarlar",        icon: Server    },
+  ];
+
   return (
     <div className="p-6 space-y-4">
-      {/* KPI band --------------------------------------------------------- */}
+      {/* KPI band — daima üstte görünür */}
       <QuarantineKPIBand stats={stats.data} />
+
+      {/* v44.00.32 — Ana sekme çubuğu (konsolide modül) */}
+      <div className="flex items-center gap-1 border-b border-slate-800" data-testid="q-main-tabs">
+        {TABS.map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            data-testid={`q-tab-${key}`}
+            onClick={() => setActiveTab(key)}
+            className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
+              activeTab === key
+                ? "border-indigo-500 text-indigo-300"
+                : "border-transparent text-slate-400 hover:text-slate-100"
+            }`}>
+            <Icon className="w-3.5 h-3.5" />{label}
+          </button>
+        ))}
+        <div className="ml-auto flex items-center gap-2 text-[11px] text-slate-500 mono pr-2">
+          {rows.length} kayıt · {selected.size} seçili
+        </div>
+      </div>
+
+      {/* ═══ Tab: ÖZET ═══════════════════════════════════════════════════ */}
+      {activeTab === "overview" && (
+        <QuarantineOverviewPane
+          stats={stats.data}
+          recent={rows.slice(0, 10)}
+          onGotoAll={() => setActiveTab("all")}
+          onRescore={() => {
+            if (!window.confirm("Tüm mail_events kayıtlarında SA skoru üzerinden verdict yeniden hesaplanır. Devam edilsin mi?")) return;
+            rescoreMut.mutate();
+          }}
+          onBackfill={() => {
+            if (!window.confirm("mail_events içindeki tüm spam/virüs/phish kayıtları karantinaya taşınır (idempotent). Devam edilsin mi?")) return;
+            backfillMut.mutate();
+          }}
+          rescorePending={rescoreMut.isPending}
+          backfillPending={backfillMut.isPending}
+          verdictBadge={verdictBadge}
+          locale={locale}
+        />
+      )}
+
+      {/* ═══ Tab: TÜM MESAJLAR ═══════════════════════════════════════════ */}
+      {activeTab === "all" && (
+        <>
 
       {/* Direction tabs (v43) — Gelen / Giden / Tümü ---------------------- */}
       <div className="flex items-center gap-1 border-b border-slate-800" data-testid="q-direction-tabs">
@@ -236,16 +291,18 @@ export default function Quarantine() {
 
       <div className="flex flex-wrap items-center gap-2">
         <button data-testid="q-release" onClick={() => runBulk("release")}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm">
-          <RotateCcw className="w-3.5 h-3.5" /> {t("quarantine.release_action")}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm"
+          title="Serbest bırak + göndericiyi Beyaz Liste'ye ekle + Bayes'e ham (temiz) olarak öğret">
+          <RotateCcw className="w-3.5 h-3.5" /> Spam Değil (Serbest Bırak)
         </button>
         <button data-testid="q-delete" onClick={() => runBulk("delete")}
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-sm">
           <Trash2 className="w-3.5 h-3.5" /> {t("quarantine.delete_action")}
         </button>
         <button data-testid="q-report" onClick={() => runBulk("report")}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm">
-          <GraduationCap className="w-3.5 h-3.5" /> {t("quarantine.report_action")}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm"
+          title="Spam olarak işaretle: Kara Liste'ye ekle + Bayes'e spam öğret">
+          <GraduationCap className="w-3.5 h-3.5" /> Spam Öğret
         </button>
         <button data-testid="q-forward-open" onClick={() => {
             if (selected.size === 0) return toast.error(t("quarantine.select_first"));
@@ -260,37 +317,12 @@ export default function Quarantine() {
             title="Filtreye uyan tüm kayıtları seç">
             Filtrelenmişleri seç ({rows.length})
           </button>
-          <button data-testid="q-purge-open" onClick={() => setPurgeOpen(true)}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-sm font-medium"
-            title="Filtreye uyan tümünü kalıcı olarak sil">
-            <Flame className="w-3.5 h-3.5" /> Hepsini Temizle
+          <button
+            onClick={() => setActiveTab("bulk")}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-xs"
+            title="Toplu işlemler tab'ına git (Karantinayı Doldur / Skorları Yeniden Hesapla / Hepsini Temizle / CSV)">
+            <Filter className="w-3.5 h-3.5" /> Diğer Toplu İşlemler →
           </button>
-          <button data-testid="q-rescore" onClick={() => {
-              if (!confirm("Tüm mail_events kayıtlarında SpamAssassin skoru üzerinden verdict yeniden hesaplanır. Devam edilsin mi?")) return;
-              rescoreMut.mutate();
-            }}
-            disabled={rescoreMut.isPending}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-sm disabled:opacity-50"
-            title="Plugin yanlış skorlar yolladıysa SA skoruna göre otomatik düzelt (ConfigServer Front-End paritesi)">
-            <Calculator className="w-3.5 h-3.5" /> {rescoreMut.isPending ? "Hesaplanıyor…" : "Skorları Yeniden Hesapla"}
-          </button>
-          <button data-testid="q-backfill" onClick={() => {
-              if (!confirm("mail_events içindeki tüm spam/virüs/phish kayıtları karantinaya taşınır (idempotent, dup yazmaz). Devam edilsin mi?")) return;
-              backfillMut.mutate();
-            }}
-            disabled={backfillMut.isPending}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 text-sm disabled:opacity-50"
-            title="Karantina sayfasında görünmüyor gibi görünen eski spam kayıtları buraya taşı">
-            <Download className="w-3.5 h-3.5" /> {backfillMut.isPending ? "Dolduruluyor…" : "Karantinayı Doldur"}
-          </button>
-          <a data-testid="q-export-csv"
-             href={api.eventsExport({ module: "quarantine", format: "csv",
-               ...(verdict && verdict !== "all" ? { verdict } : {}),
-               ...(search ? { subject_search: search } : {}) })}
-             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 text-sm"
-             title="Filtreye uyan tüm kayıtları CSV olarak indir (max 50000)">
-            <Download className="w-3.5 h-3.5" /> CSV İndir
-          </a>
         </div>
       </div>
 
@@ -352,6 +384,34 @@ export default function Quarantine() {
         </div>
       </Card>
 
+        </>
+      )}
+
+      {/* ═══ Tab: TOPLU İŞLEMLER ═══════════════════════════════════════════ */}
+      {activeTab === "bulk" && (
+        <QuarantineBulkPane
+          rows={rows}
+          verdict={verdict}
+          search={search}
+          onPurge={() => setPurgeOpen(true)}
+          onRescore={() => {
+            if (!window.confirm("Tüm mail_events kayıtlarında SA skoru üzerinden verdict yeniden hesaplanır. Devam edilsin mi?")) return;
+            rescoreMut.mutate();
+          }}
+          onBackfill={() => {
+            if (!window.confirm("mail_events içindeki tüm spam/virüs/phish kayıtları karantinaya taşınır (idempotent). Devam edilsin mi?")) return;
+            backfillMut.mutate();
+          }}
+          rescorePending={rescoreMut.isPending}
+          backfillPending={backfillMut.isPending}
+        />
+      )}
+
+      {/* ═══ Tab: AYARLAR ═════════════════════════════════════════════════ */}
+      {activeTab === "settings" && (
+        <QuarantineSettingsPane />
+      )}
+
       {preview && (
         <QuarantineDetail
           item={preview}
@@ -391,6 +451,208 @@ export default function Quarantine() {
     </div>
   );
 }
+
+/* -------- v44.00.32 — Özet / Toplu İşlemler / Ayarlar sekmeleri --------- */
+function QuarantineOverviewPane({ stats, recent, onGotoAll, onRescore, onBackfill,
+                                  rescorePending, backfillPending, verdictBadge, locale }) {
+  const dist = stats?.verdicts || {};
+  const total = Math.max(1, stats?.total || 1);
+  const entries = [
+    { k: "spam",      label: "Spam",       tone: "bg-amber-500",   fg: "text-amber-300",   v: dist.spam || 0 },
+    { k: "high_spam", label: "Yüksek Spam", tone: "bg-rose-500",    fg: "text-rose-300",    v: dist.high_spam || 0 },
+    { k: "virus",     label: "Virüs",      tone: "bg-red-500",     fg: "text-red-300",     v: dist.virus || 0 },
+    { k: "phish",     label: "Phishing",   tone: "bg-fuchsia-500", fg: "text-fuchsia-300", v: dist.phish || 0 },
+  ];
+  return (
+    <div className="space-y-4" data-testid="q-pane-overview">
+      {/* Hızlı aksiyon şeridi */}
+      <Card>
+        <CardBody className="p-3 flex flex-wrap items-center gap-2">
+          <button
+            data-testid="q-quick-rescore"
+            onClick={onRescore} disabled={rescorePending}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-sm disabled:opacity-50">
+            <Calculator className="w-3.5 h-3.5" />
+            {rescorePending ? "Hesaplanıyor…" : "Skorları Yeniden Hesapla"}
+          </button>
+          <button
+            data-testid="q-quick-backfill"
+            onClick={onBackfill} disabled={backfillPending}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 text-sm disabled:opacity-50">
+            <Download className="w-3.5 h-3.5" />
+            {backfillPending ? "Dolduruluyor…" : "Karantinayı Doldur"}
+          </button>
+          <button
+            data-testid="q-goto-all"
+            onClick={onGotoAll}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-sm ml-auto">
+            Tüm Mesajları Aç <Mail className="w-3.5 h-3.5" />
+          </button>
+        </CardBody>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Tehdit dağılımı grafik */}
+        <Card>
+          <CardBody className="p-4">
+            <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-2">
+              <BarChart3 className="w-3.5 h-3.5" /> Tehdit Dağılımı (Verdict)
+            </div>
+            <div className="space-y-2">
+              {entries.map(e => {
+                const pct = Math.round((e.v / total) * 100);
+                return (
+                  <div key={e.k} className="text-xs">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className={`mono ${e.fg}`}>{e.label}</span>
+                      <span className="mono text-slate-400">{e.v} · %{pct}</span>
+                    </div>
+                    <div className="h-2 bg-slate-900 rounded overflow-hidden">
+                      <div className={`h-full ${e.tone} transition-all`}
+                           style={{ width: `${Math.max(2, pct)}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* Son 10 kayıt */}
+        <Card>
+          <CardBody className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[11px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                <Mail className="w-3.5 h-3.5" /> Son Karantina (10)
+              </div>
+              <button onClick={onGotoAll}
+                data-testid="q-goto-all-2"
+                className="text-[10px] text-indigo-400 hover:text-indigo-200 mono">
+                Tümünü gör →
+              </button>
+            </div>
+            <div className="divide-y divide-slate-800 max-h-[260px] overflow-y-auto">
+              {(recent || []).map(r => (
+                <div key={r.id} className="py-1.5 flex items-center gap-2 text-xs">
+                  <span className="mono text-[10px] text-slate-500 shrink-0">
+                    {new Date(r.received_at).toLocaleString(locale, { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
+                  </span>
+                  <span className="text-slate-200 truncate flex-1" title={r.subject}>{r.subject || "(konu yok)"}</span>
+                  {verdictBadge(r.verdict)}
+                </div>
+              ))}
+              {(recent || []).length === 0 && (
+                <div className="py-6 text-center text-slate-500 text-sm">Karantinada mesaj yok</div>
+              )}
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function QuarantineBulkPane({ rows, verdict, search, onPurge, onRescore, onBackfill,
+                              rescorePending, backfillPending }) {
+  return (
+    <div className="space-y-4" data-testid="q-pane-bulk">
+      <Card>
+        <CardBody className="p-4">
+          <div className="text-[11px] uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
+            <Filter className="w-3.5 h-3.5" /> Tüm Karantina Üzerinde Toplu İşlemler
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <BulkCard
+              testid="q-bulk-rescore"
+              icon={Calculator} color="amber"
+              title="Skorları Yeniden Hesapla"
+              desc="Tüm mail_events kayıtlarında SA skoru üzerinden verdict yeniden hesaplanır. Plugin yanlış skorlar yolladıysa (ConfigServer front-end paritesi) doğru veriyi geri getirir."
+              btn={rescorePending ? "Hesaplanıyor…" : "Şimdi Yeniden Hesapla"}
+              onClick={onRescore} disabled={rescorePending}
+            />
+            <BulkCard
+              testid="q-bulk-backfill"
+              icon={Download} color="sky"
+              title="Karantinayı Doldur"
+              desc="mail_events içindeki spam/virüs/phish kayıtları karantinaya taşınır (idempotent — mevcut kayıtlar dup'lanmaz). Karantinada olmayan eski kayıtları toplar."
+              btn={backfillPending ? "Dolduruluyor…" : "Karantinayı Şimdi Doldur"}
+              onClick={onBackfill} disabled={backfillPending}
+            />
+            <BulkCard
+              testid="q-bulk-purge"
+              icon={Flame} color="rose"
+              title="Hepsini Temizle (verdict/yaş filtreli)"
+              desc="Filtreye uyan tüm karantina kayıtlarını kalıcı olarak sil. Öncesinde verdict + kaç günden eski seçme fırsatı verilir."
+              btn="Toplu Silme Sihirbazı"
+              onClick={onPurge} disabled={false}
+            />
+            <BulkCard
+              testid="q-bulk-export"
+              icon={Download} color="emerald"
+              title="CSV Olarak İndir"
+              desc="Aktif filtreye uyan kayıtları CSV olarak dışa aktar (max 50.000). Excel'de aç, denetim/rapor için sakla."
+              btn="CSV İndir"
+              onClick={() => {
+                const q = new URLSearchParams({ module: "quarantine", format: "csv",
+                  ...(verdict && verdict !== "all" ? { verdict } : {}),
+                  ...(search ? { subject_search: search } : {}),
+                });
+                window.open(`${api.eventsExport ? api.eventsExport({}) : ""}`.replace(/\?.*$/, "") + "?" + q.toString(), "_blank");
+              }}
+              disabled={false}
+            />
+          </div>
+        </CardBody>
+      </Card>
+      <div className="text-[11px] text-slate-500 leading-relaxed p-3 bg-slate-950/60 border border-slate-800 rounded">
+        <b className="text-slate-300">İpucu:</b> Tek tek karantinadaki mail'i "Spam Değil" olarak işaretlemek için "Tüm Mesajlar" sekmesine geç, kayıtları seç, ardından yeşil <span className="mono text-emerald-300">"Spam Değil (Serbest Bırak)"</span> butonuna bas. Bu işlem: (1) mesajı alıcıya teslim eder, (2) göndericiyi Beyaz Liste'ye ekler, (3) Bayes'e ham (temiz) olarak öğretir — böylece aynı gönderici bir daha karantinaya düşmez.
+      </div>
+    </div>
+  );
+}
+
+function BulkCard({ testid, icon: Icon, color, title, desc, btn, onClick, disabled }) {
+  const colors = {
+    amber:   { bd: "border-amber-500/40",   bg: "bg-amber-500/10",   fg: "text-amber-300",   btn: "bg-amber-500 hover:bg-amber-400" },
+    sky:     { bd: "border-sky-500/40",     bg: "bg-sky-500/10",     fg: "text-sky-300",     btn: "bg-sky-500 hover:bg-sky-400" },
+    rose:    { bd: "border-rose-500/40",    bg: "bg-rose-500/10",    fg: "text-rose-300",    btn: "bg-rose-500 hover:bg-rose-400" },
+    emerald: { bd: "border-emerald-500/40", bg: "bg-emerald-500/10", fg: "text-emerald-300", btn: "bg-emerald-500 hover:bg-emerald-400" },
+  }[color] || {};
+  return (
+    <div className={`rounded-lg border ${colors.bd} ${colors.bg} p-3 space-y-2`} data-testid={testid}>
+      <div className={`flex items-center gap-2 font-semibold ${colors.fg}`}>
+        <Icon className="w-4 h-4" /> {title}
+      </div>
+      <p className="text-[11px] text-slate-400 leading-relaxed">{desc}</p>
+      <button
+        onClick={onClick} disabled={disabled}
+        className={`px-3 py-1.5 rounded ${colors.btn} text-white text-xs font-semibold disabled:opacity-50`}>
+        {btn}
+      </button>
+    </div>
+  );
+}
+
+function QuarantineSettingsPane() {
+  return (
+    <Card data-testid="q-pane-settings">
+      <CardBody className="p-4 space-y-3">
+        <div className="text-[11px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
+          <Server className="w-3.5 h-3.5" /> Karantina Ayarları
+        </div>
+        <div className="p-4 border border-dashed border-slate-800 rounded text-sm text-slate-400 text-center">
+          <div className="mono text-slate-300 mb-1.5">Yakında</div>
+          <p className="text-xs leading-relaxed">
+            Karantina saklama süresi (retention), otomatik karantina eşikleri,
+            spam öğretim davranışı ve raporlama tercihleri burada yönetilecek.
+            Şimdilik eşikler <span className="mono text-indigo-400">MailScanner → Kurallar</span> bölümünden yapılandırılabilir.
+          </p>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 
 /* -------- KPI Band ------------------------------------------------------ */
 function QuarantineKPIBand({ stats }) {

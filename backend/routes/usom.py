@@ -24,6 +24,7 @@ Endpoints:
   POST /api/threat-intel/usom/delete — kayıt sil
 """
 from __future__ import annotations
+import asyncio
 import os
 import re
 import uuid
@@ -46,6 +47,10 @@ USOM_FEED_CANDIDATES = [
 # İlk N sayfa çek — 200/page × 25 = 5000 IOC (son eklenenler, yani en güncel tehditler)
 USOM_MAX_PAGES = 25
 USOM_PAGE_LIMIT = 200
+
+# v44.00.32 — Yıla göre çekim: 2024 ve sonrası kayıtlar (son 3 yıl)
+USOM_MIN_YEAR_DEFAULT = 2024
+USOM_MAX_PAGES_HARDCAP = 5000  # güvenlik: 5000 × 20 = 100K record hard cap
 
 # USOM "desc" kodları → insan-okur etiket
 USOM_DESC_MAP = {
@@ -86,24 +91,69 @@ def _is_html_content(text: str) -> bool:
     return head.startswith(("<!doctype", "<html", "<?xml"))
 
 
-async def _fetch_usom_iocs() -> tuple[list[dict], str]:
-    """v44.00.26 — Yeni siberguvenlik.gov.tr JSON API'sinden IOC listesi çeker.
+async def _fetch_usom_iocs(
+    min_year: int | None = None,
+    progress_key: str | None = None,
+    max_pages: int | None = None,
+) -> tuple[list[dict], str]:
+    """v44.00.32 — siberguvenlik.gov.tr JSON API'sinden IOC listesi çeker.
+
+    min_year: bu yıldan önceki kayıtları GEÇME (kayıtlar date-desc geldiğinden
+              min_year'dan eski bir kayıt görünce durur). None → tümünü çek.
+    progress_key: settings._key altına yaz (frontend polling için).
+    max_pages: opsiyonel hard cap.
+
     Döner: (items, source_url). Her item: {"value", "type", "tag", "criticality", "date"}.
-    Fallback olarak eski TXT feed'i denenir."""
+    Fallback olarak eski TXT feed'i denenir (sadece progress_key=None ise)."""
+    if max_pages is None:
+        max_pages = USOM_MAX_PAGES_HARDCAP
     items: list[dict] = []
     seen: set = set()
+
+    async def _write_progress(state: str, page: int, extra: dict | None = None):
+        if not progress_key:
+            return
+        doc = {
+            "_key": progress_key,
+            "state": state,       # running / done / error
+            "page": page,
+            "fetched": len(items),
+            "min_year": min_year,
+            "updated_at": _iso(),
+        }
+        if extra:
+            doc.update(extra)
+        try:
+            await db.settings.update_one(
+                {"_key": progress_key}, {"$set": doc}, upsert=True,
+            )
+        except Exception:
+            pass
+
+    await _write_progress("running", 0, {"started_at": _iso()})
+
     async with httpx.AsyncClient(
-        timeout=30, follow_redirects=True,
+        timeout=45, follow_redirects=True,
         headers={
-            "User-Agent": "Mozilla/5.0 (GokyuzuWebSpam/v44.00.26 Master Panel)",
+            "User-Agent": "Mozilla/5.0 (GokyuzuWebSpam/v44.00.32 Master Panel)",
             "Accept": "application/json, text/plain, */*",
         },
     ) as h:
         # 1) Yeni JSON API — paginated
+        last_err = ""
+        stopped_by_year = False
         try:
-            for page in range(1, USOM_MAX_PAGES + 1):
+            for page in range(1, max_pages + 1):
                 url = f"{USOM_JSON_API}?page={page}&limit={USOM_PAGE_LIMIT}"
-                r = await h.get(url)
+                try:
+                    r = await h.get(url)
+                except httpx.HTTPError as ex:
+                    last_err = f"HTTPError page {page}: {ex}"
+                    # Küçük hata → 1 kere retry
+                    try:
+                        r = await h.get(url)
+                    except Exception:
+                        break
                 if r.status_code != 200:
                     if page == 1:
                         raise httpx.HTTPError(f"HTTP {r.status_code} on page 1")
@@ -117,7 +167,20 @@ async def _fetch_usom_iocs() -> tuple[list[dict], str]:
                 models = data.get("models") or []
                 if not models:
                     break
+
+                page_stopped = False
                 for m in models:
+                    date_str = (m.get("date") or "").strip()
+                    # Date parse: "2026-09-15 00:23:36" gibi
+                    if min_year and date_str:
+                        try:
+                            yr = int(date_str[:4])
+                            if yr < min_year:
+                                page_stopped = True
+                                stopped_by_year = True
+                                break
+                        except Exception:
+                            pass
                     val = (m.get("url") or "").strip()
                     typ = (m.get("type") or "").strip().lower()
                     if not val or typ not in ("url", "domain", "ip"):
@@ -135,49 +198,64 @@ async def _fetch_usom_iocs() -> tuple[list[dict], str]:
                         "tag": tag,
                         "desc_code": desc_code,
                         "criticality": int(m.get("criticality_level") or 3),
-                        "date": m.get("date") or "",
+                        "date": date_str,
                         "usom_id": m.get("id"),
                     })
-                # Total count based early exit
-                if len(items) >= (data.get("totalCount") or 999999):
-                    break
-            if items:
-                return items, f"{USOM_JSON_API} (JSON API, {len(items)} IOC · {page} sayfa)"
-        except httpx.HTTPError as ex:
-            _last_err = f"JSON API başarısız: {ex}"
-        except Exception as ex:
-            _last_err = f"JSON parse başarısız: {ex}"
 
-        # 2) Fallback: eski TXT feed
-        for feed_url in USOM_FEED_CANDIDATES:
-            try:
-                r = await h.get(feed_url)
-                if r.status_code != 200 or _is_html_content(r.text):
-                    continue
-                for line in r.text.splitlines():
-                    u = line.strip()
-                    if not u or u.startswith("#"):
-                        continue
-                    if any(c in u for c in ("<", ">", '"', "'", "{", "}", "=")):
-                        continue
-                    if not _VALID_LINE_RE.match(u):
-                        continue
-                    if not u.startswith(("http://", "https://")):
-                        u = "http://" + u
-                    key = ("url", u.lower())
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    items.append({
-                        "value": u.lower(), "type": "url", "tag": "malicious",
-                        "desc_code": "", "criticality": 3, "date": "",
-                        "usom_id": None,
+                # Progress her sayfa
+                if page % 5 == 0 or page_stopped:
+                    total_count = data.get("totalCount") or None
+                    await _write_progress("running", page, {
+                        "total_count": total_count,
                     })
-                if items:
-                    return items, feed_url + " (TXT fallback)"
-            except httpx.HTTPError:
-                continue
-    raise HTTPException(502, "USOM feed çekilemedi (JSON API + TXT fallback ikisi de başarısız)")
+
+                if page_stopped:
+                    break
+                # Total count based early exit (min_year yoksa)
+                if not min_year and len(items) >= (data.get("totalCount") or 999999):
+                    break
+
+            if items:
+                src = f"{USOM_JSON_API} (JSON API · {len(items)} IOC · {page} sayfa)"
+                if stopped_by_year:
+                    src += f" · yıl≥{min_year}"
+                return items, src
+        except httpx.HTTPError as ex:
+            last_err = f"JSON API başarısız: {ex}"
+        except Exception as ex:
+            last_err = f"JSON parse başarısız: {ex}"
+
+        # 2) Fallback: eski TXT feed (sadece hiç item yoksa)
+        if not items:
+            for feed_url in USOM_FEED_CANDIDATES:
+                try:
+                    r = await h.get(feed_url)
+                    if r.status_code != 200 or _is_html_content(r.text):
+                        continue
+                    for line in r.text.splitlines():
+                        u = line.strip()
+                        if not u or u.startswith("#"):
+                            continue
+                        if any(c in u for c in ("<", ">", '"', "'", "{", "}", "=")):
+                            continue
+                        if not _VALID_LINE_RE.match(u):
+                            continue
+                        if not u.startswith(("http://", "https://")):
+                            u = "http://" + u
+                        key = ("url", u.lower())
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        items.append({
+                            "value": u.lower(), "type": "url", "tag": "malicious",
+                            "desc_code": "", "criticality": 3, "date": "",
+                            "usom_id": None,
+                        })
+                    if items:
+                        return items, feed_url + " (TXT fallback)"
+                except httpx.HTTPError:
+                    continue
+    raise HTTPException(502, f"USOM feed çekilemedi: {last_err or 'unknown error'}")
 
 
 # Backwards compat: eski test'ler _fetch_usom_urls'ı çağırıyor
@@ -600,3 +678,276 @@ async def delete_usom(payload: UsomDeleteIn, request: Request, license_key: Opti
     return {"ok": True,
             "removed_iocs": r_ioc.deleted_count,
             "removed_from_lists": r_list.deleted_count}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# v44.00.32 — Async Fetch + Progress + Bulk Delete
+# ═══════════════════════════════════════════════════════════════════
+
+USOM_FETCH_PROGRESS_KEY = "usom_fetch_progress"
+
+
+async def _ingest_usom_items(items: list[dict], source_url: str) -> dict:
+    """Fetch edilmiş item listesini DB'ye yazar (IOC + auto-blacklist)."""
+    now = _iso()
+    expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    added_urls = added_domains = added_ips = added_to_blacklist = 0
+    seen_domains: set = set()
+
+    for it in items:
+        val = it["value"]; typ = it["type"]; tag = it["tag"]
+        conf = min(99, 70 + it["criticality"] * 6)
+        note = (f"USOM {it['desc_code']} · seviye {it['criticality']}"
+                if it["desc_code"] else "USOM Zararlı Bağlantı Listesi")
+        r_ioc = await db.threat_iocs.update_one(
+            {"type": typ, "value": val},
+            {"$setOnInsert": {
+                "id": str(uuid.uuid4()), "type": typ, "value": val,
+                "tag": tag, "confidence": conf, "source": "usom",
+                "feed": "usom-json-api", "note": note,
+                "created_at": now, "expires_at": expires,
+                "usom_id": it.get("usom_id"),
+                "criticality": it["criticality"],
+                "usom_date": it.get("date") or "",
+            }, "$set": {"last_seen_at": now}},
+            upsert=True,
+        )
+        if r_ioc.upserted_id:
+            if typ == "url": added_urls += 1
+            elif typ == "domain": added_domains += 1
+            elif typ == "ip": added_ips += 1
+
+        host = None
+        if typ == "domain": host = val
+        elif typ == "url":
+            try:
+                u = val if val.startswith(("http://", "https://")) else f"http://{val}"
+                host = (urlparse(u).hostname or "").lower()
+            except Exception:
+                host = None
+        if host and "." in host and not re.match(r"^\d+\.\d+\.\d+\.\d+$", host) and host not in seen_domains:
+            seen_domains.add(host)
+            if typ == "url":
+                r_dom = await db.threat_iocs.update_one(
+                    {"type": "domain", "value": host},
+                    {"$setOnInsert": {
+                        "id": str(uuid.uuid4()), "type": "domain", "value": host,
+                        "tag": tag, "confidence": max(80, conf - 5),
+                        "source": "usom", "feed": "usom-json-api",
+                        "note": f"USOM URL'in domain'i · {it['desc_code'] or 'zararlı'}",
+                        "created_at": now, "expires_at": expires,
+                    }, "$set": {"last_seen_at": now}}, upsert=True,
+                )
+                if r_dom.upserted_id:
+                    added_domains += 1
+            existing = await db.lists.find_one(
+                {"entry_type": "domain", "value": host, "list_type": "black"},
+                {"_id": 0, "id": 1},
+            )
+            if not existing:
+                await db.lists.insert_one({
+                    "id": str(uuid.uuid4()), "list_type": "black",
+                    "entry_type": "domain", "value": host, "scope": "global",
+                    "user": None, "note": f"USOM otomatik ekleme · {tag}",
+                    "source": "usom_auto", "created_at": now,
+                })
+                added_to_blacklist += 1
+        if typ == "ip":
+            existing_ip = await db.lists.find_one(
+                {"entry_type": "ip", "value": val, "list_type": "black"},
+                {"_id": 0, "id": 1},
+            )
+            if not existing_ip:
+                await db.lists.insert_one({
+                    "id": str(uuid.uuid4()), "list_type": "black",
+                    "entry_type": "ip", "value": val, "scope": "global",
+                    "user": None, "note": f"USOM otomatik ekleme · {tag}",
+                    "source": "usom_auto", "created_at": now,
+                })
+                added_to_blacklist += 1
+
+    await db.settings.update_one(
+        {"_key": "usom_last_run"},
+        {"$set": {"_key": "usom_last_run",
+                  "date": datetime.now(timezone.utc).date().isoformat(),
+                  "count": len(items), "added_urls": added_urls,
+                  "added_domains": added_domains, "added_ips": added_ips,
+                  "added_to_blacklist": added_to_blacklist,
+                  "source": source_url, "at": now}},
+        upsert=True,
+    )
+    return {
+        "total_fetched": len(items),
+        "added_urls": added_urls, "added_domains": added_domains,
+        "added_ips": added_ips, "added_to_blacklist": added_to_blacklist,
+        "source": source_url,
+    }
+
+
+async def _run_async_fetch(min_year: int):
+    """Background task: fetch + ingest + progress."""
+    started = _iso()
+    try:
+        items, src = await _fetch_usom_iocs(
+            min_year=min_year,
+            progress_key=USOM_FETCH_PROGRESS_KEY,
+            max_pages=USOM_MAX_PAGES_HARDCAP,
+        )
+        # Ingest phase
+        await db.settings.update_one(
+            {"_key": USOM_FETCH_PROGRESS_KEY},
+            {"$set": {"state": "ingesting", "fetched": len(items),
+                      "updated_at": _iso()}},
+            upsert=True,
+        )
+        result = await _ingest_usom_items(items, src)
+        await db.settings.update_one(
+            {"_key": USOM_FETCH_PROGRESS_KEY},
+            {"$set": {
+                "state": "done",
+                "fetched": len(items),
+                "updated_at": _iso(),
+                "finished_at": _iso(),
+                "started_at": started,
+                "result": result,
+                "min_year": min_year,
+                "source": src,
+            }},
+            upsert=True,
+        )
+    except Exception as ex:
+        await db.settings.update_one(
+            {"_key": USOM_FETCH_PROGRESS_KEY},
+            {"$set": {"state": "error", "error": str(ex)[:400],
+                      "updated_at": _iso(), "started_at": started,
+                      "finished_at": _iso()}},
+            upsert=True,
+        )
+
+
+class UsomFetchAsyncIn(BaseModel):
+    min_year: int | None = None  # default 2024
+
+
+@router.post("/fetch-async")
+async def fetch_usom_async(payload: UsomFetchAsyncIn, request: Request,
+                            license_key: Optional[str] = None):
+    """v44.00.32 — Async USOM fetch başlat. min_year kayıtları (default 2024)
+    çekilene kadar arka planda çalışır. Frontend `/fetch-progress` ile polling yapar."""
+    await _require_master(request, license_key)
+    # Check if already running
+    current = await db.settings.find_one({"_key": USOM_FETCH_PROGRESS_KEY}, {"_id": 0})
+    if current and current.get("state") in ("running", "ingesting"):
+        # 15 dk'dan uzunsa stale kabul et → yeniden başlat
+        try:
+            updated = datetime.fromisoformat((current.get("updated_at") or "").replace("Z", "+00:00"))
+            if (datetime.now(timezone.utc) - updated).total_seconds() < 900:
+                return {"ok": False, "state": current.get("state"),
+                        "message": "Fetch zaten çalışıyor",
+                        "started_at": current.get("started_at")}
+        except Exception:
+            pass
+    min_year = payload.min_year or USOM_MIN_YEAR_DEFAULT
+    await db.settings.update_one(
+        {"_key": USOM_FETCH_PROGRESS_KEY},
+        {"$set": {"_key": USOM_FETCH_PROGRESS_KEY, "state": "running",
+                  "page": 0, "fetched": 0, "min_year": min_year,
+                  "started_at": _iso(), "updated_at": _iso()}},
+        upsert=True,
+    )
+    asyncio.create_task(_run_async_fetch(min_year))
+    return {"ok": True, "state": "running", "min_year": min_year}
+
+
+@router.get("/fetch-progress")
+async def fetch_progress(request: Request, license_key: Optional[str] = None):
+    """v44.00.32 — Async fetch progress polling."""
+    await _require_master(request, license_key)
+    doc = await db.settings.find_one({"_key": USOM_FETCH_PROGRESS_KEY}, {"_id": 0}) or {}
+    return {
+        "state": doc.get("state") or "idle",
+        "page": doc.get("page") or 0,
+        "fetched": doc.get("fetched") or 0,
+        "min_year": doc.get("min_year"),
+        "total_count": doc.get("total_count"),
+        "started_at": doc.get("started_at"),
+        "updated_at": doc.get("updated_at"),
+        "finished_at": doc.get("finished_at"),
+        "result": doc.get("result"),
+        "error": doc.get("error"),
+        "source": doc.get("source"),
+    }
+
+
+class UsomBulkDeleteIn(BaseModel):
+    ids: list[str] | None = None
+    values: list[str] | None = None
+    all: bool = False              # ⚠ Tüm USOM kayıtları
+    filter_type: Optional[str] = None    # domain / url / ip
+    filter_tag: Optional[str] = None     # phishing / malware ...
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_usom(payload: UsomBulkDeleteIn, request: Request,
+                            license_key: Optional[str] = None):
+    """v44.00.32 — USOM IOC toplu silme.
+    - ids: uuid listesi (IOC.id)
+    - values: value listesi
+    - all=true: tüm USOM kaynaklı IOC'lar (⚠ tehlikeli, master onayı gerekir)
+    - filter_type / filter_tag: type=domain, tag=phishing gibi kısmi filtre
+    Kara liste (lists) kayıtlarını da temizler."""
+    await _require_master(request, license_key)
+    filt: dict = {"source": "usom"}
+    values_removed: list[str] = []
+
+    if payload.ids:
+        filt["id"] = {"$in": payload.ids}
+    elif payload.values:
+        vals = [v.strip().lower() for v in payload.values if v and v.strip()]
+        if not vals:
+            raise HTTPException(400, "values boş")
+        filt["value"] = {"$in": vals}
+        values_removed = vals
+    elif payload.all:
+        pass  # tüm USOM
+    elif payload.filter_type or payload.filter_tag:
+        if payload.filter_type:
+            filt["type"] = payload.filter_type
+        if payload.filter_tag:
+            filt["tag"] = payload.filter_tag
+    else:
+        raise HTTPException(400, "ids / values / all / filter_* birinden en az biri gerekli")
+
+    # ids/filter tipinde önce silinecek value'leri bul (kara liste temizliği için)
+    if not values_removed:
+        vals_docs = await db.threat_iocs.find(filt, {"_id": 0, "value": 1}).to_list(50000)
+        values_removed = [d.get("value") for d in vals_docs if d.get("value")]
+
+    r_ioc = await db.threat_iocs.delete_many(filt)
+    r_list = 0
+    if values_removed:
+        r_list_res = await db.lists.delete_many({
+            "value": {"$in": values_removed},
+            "source": "usom_auto",
+        })
+        r_list = r_list_res.deleted_count
+
+    # History kaydı
+    try:
+        await db.list_history.insert_one({
+            "id": str(uuid.uuid4()),
+            "action": "usom_bulk_delete",
+            "removed_iocs": r_ioc.deleted_count,
+            "removed_from_lists": r_list,
+            "filter": {k: v for k, v in payload.model_dump().items() if v},
+            "at": _iso(),
+        })
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "removed_iocs": r_ioc.deleted_count,
+        "removed_from_lists": r_list,
+    }
+

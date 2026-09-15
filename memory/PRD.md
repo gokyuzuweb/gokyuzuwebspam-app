@@ -14,7 +14,50 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
-## Feb 15, 2026 (Session 26, v44.00.31) — Hosted Domains Push Bağlantısı + JSX/Cron Doom Loop Fix ✅
+## Feb 15, 2026 (Session 26, v44.00.32) — USOM 2024+ Async Fetch + Karantina Modül Konsolidasyonu ✅
+
+### 🎯 (1) USOM 2024+ Yıl Bazlı Async Fetch + Canlı Progress Bar
+Kullanıcı: "usom 456 domain eklemiş ama 20 bin kusur var. son 2024-2025-2026 yıllarını çeksin. güncel olanları çeksin. çekerken loading gibi bir şey görelim. toplu silme de ekle."
+
+- **Backend `_fetch_usom_iocs()` refactor** (routes/usom.py):
+  - `min_year` param: tarih-desc sıralı gelen kayıtlar `< 2024` görünce durur → tam 2024+2025+2026 penceresi
+  - `progress_key` param: `settings._key` altına her 5 sayfada bir state (page/fetched/total_count) yazar
+  - `max_pages` hard cap: 5000 (güvenlik)
+  - httpx timeout 30→45s + retry mekanizması
+- **Yeni endpoint'ler**:
+  - `POST /api/threat-intel/usom/fetch-async` — arka plan asyncio task başlatır; response anında döner
+  - `GET  /api/threat-intel/usom/fetch-progress` — polling için state/page/fetched/total
+  - `POST /api/threat-intel/usom/bulk-delete` — `{ids | values | all | filter_type | filter_tag}` ile toplu sil; IOC + auto-blacklist temizler; history log
+- **Idempotent kilitleme**: aynı anda 2 fetch başlamaz (running/ingesting kontrolü); 15 dk'dan uzun stale ise yeniden başlar
+- **Frontend `UsomTab` + yeni `UsomFetchProgress` component**:
+  - **"🔥 Tam Çek (2024+)"** butonu → async endpoint; başladığında sonner toast
+  - Progress card: RefreshCw spinner + progress bar (%pct hesaplı) + Sayfa/Çekilen/API toplam/geçen süre canlı
+  - Otomatik refetch 1.5sn (running/ingesting), done'da liste invalidate
+  - **Toplu silme toolbar**: "Tümünü Seç (N)" · "Seçilenleri Sil (M)" · "⚠ Tümünü Sil" (2-adım onay: confirm + prompt "SIL" yaz)
+  - Tabloda **checkbox sütunu** (per-row + sayfa top-header toplu seç)
+- **Live doğrulama**: 195 sayfa / 3900 kayıt / 492466 API toplam süresince canlı progress akıyor
+
+### 🎯 (2) Karantina Modül Konsolidasyonu — Tek Merkez, 4 Sekme
+Kullanıcı: "kontrol paneli karantina var, modullerde karantina var. hepsini bir yere topla. skorları yeniden hesapla, karantinayı doldur, spam değil seçenekleri de ekle. gelen giden postalar hepsi tek yerde."
+
+- **`/panel/quarantine` sayfasına 4 ana sekme eklendi** (data-testid=`q-tab-*`):
+  1. **Özet** — Verdict progress bar grafiği + Son Karantina (10) + Hızlı Aksiyon şeridi ("Skorları Yeniden Hesapla", "Karantinayı Doldur", "Tüm Mesajları Aç →")
+  2. **Tüm Mesajlar** — Direction tabs (Tümü/Gelen/Giden) + Search + Verdict/Engine/Age filter + SavedFilters + tam tablo + row-level aksiyonlar
+  3. **Toplu İşlemler** — 4 kart (Skorları Yeniden Hesapla, Karantinayı Doldur, Hepsini Temizle, CSV İndir) + "Spam Değil" akış ipucu
+  4. **Ayarlar** — Placeholder (retention/eşik ayarları yakında)
+- **"Serbest Bırak" → "Spam Değil (Serbest Bırak)"** label değişikliği + tooltip: "Serbest bırak + Beyaz Liste'ye ekle + Bayes'e ham öğret"
+- **"Spam Öğret" (Report)** row aksiyonu net etiketle
+- **Dashboard Quarantine tab** sadeleştirildi:
+  - Son 10 → Son 5 mesaja indirildi
+  - Alt kısımda `data-testid=dashboard-open-quarantine` **"Karantina Modülünü Aç →"** CTA + bilgilendirme metni
+- **Tüm mevcut fonksiyonalite korundu**: `q-release`, `q-delete`, `q-report`, `q-forward-open`, `q-purge-open`, `q-rescore`, `q-backfill`, `q-export-csv` — hepsi çalışıyor, sadece uygun sekmelere dağıtıldı
+
+### 📦 Version Bump
+`v44.00.31` → **`v44.00.32`**
+
+---
+
+
 
 ### 🐛 P0 FIX (kullanıcı raporu — session 25'ten devir)
 - **USOM sekmesi tıklanınca sayfa çökmesi**: `UsomPagedTable` component `useEffect`

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -167,13 +168,13 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Quarantine tab */}
+      {/* Quarantine tab — v44.00.32: konsolide Karantina modülüne yönlendir */}
       {show("quarantine") && (
         <Card>
-          <CardHeader title="Son Karantina" subtitle="Otomatik olarak izole edilen son mesajlar" />
+          <CardHeader title="Karantina" subtitle="Son 5 karantina mesajı · tam yönetim için modülü aç" />
           <CardBody className="p-0">
             <div className="divide-y divide-slate-800">
-              {(quarantine.data || []).slice(0, 10).map((q) => (
+              {(quarantine.data || []).slice(0, 5).map((q) => (
                 <div key={q.id} data-testid={`recent-q-${q.id}`} className="px-5 py-3 hover:bg-slate-800/40 transition-colors">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -190,6 +191,17 @@ export default function Dashboard() {
               {(quarantine.data?.length ?? 0) === 0 && (
                 <div className="p-6 text-center text-sm text-slate-500">Karantinada mesaj yok</div>
               )}
+            </div>
+            <div className="px-5 py-3 border-t border-slate-800 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500">
+                Toplu işlemler, "Spam Değil", Skor Yeniden Hesapla, Karantinayı Doldur, Ayarlar → Karantina modülünde
+              </span>
+              <Link
+                to="/panel/quarantine"
+                data-testid="dashboard-open-quarantine"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 text-xs font-semibold">
+                Karantina Modülünü Aç →
+              </Link>
             </div>
           </CardBody>
         </Card>
