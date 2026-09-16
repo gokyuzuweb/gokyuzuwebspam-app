@@ -688,14 +688,14 @@ function SaOverridesTab() {
       <Card>
         <CardHeader
           title="🎭 Kimlik Taklidi (From-name Spoof) Koruması"
-          subtitle="Yeni! Panel artık `handizayn.com <hacker@evil.com>` gibi klasik phishing paternini otomatik yakalıyor (+5.5 puan)"
+          subtitle="Yeni! Panel artık `sirketiniz.com <saldirgan@evil.com>` gibi klasik phishing paternini otomatik yakalıyor (+5.5 puan)"
         />
         <CardBody className="space-y-3">
           <div className="text-xs text-slate-300 leading-relaxed">
             <p className="mb-2">
               <b>Sorun:</b> Saldırgan, From header'ın display name'ine alıcının kendi domain'ini
-              yazarak (ör. <span className="mono text-amber-300">handizayn.com &lt;miya@skyverticals.com&gt;</span>)
-              kullanıcıyı kandırıyor. SA sadece 3.6 puan verip mail Gelen Kutusu'na düşüyor.
+              yazarak (ör. <span className="mono text-amber-300">sirketiniz.com &lt;saldirgan@evil.com&gt;</span>)
+              kullanıcıyı kandırıyor. SA sadece 3-4 puan verip mail Gelen Kutusu'na düşüyor.
             </p>
             <p className="mb-2">
               <b>Panel çözümü (otomatik):</b> Ingest sırasında bu paterni tespit edip
