@@ -1,0 +1,63 @@
+# =============================================================================
+# GökyüzüWebSpam — Custom SpamAssassin Rules (v44.00.40)
+# =============================================================================
+# Bu dosyayı mail sunucunuzda SpamAssassin custom rules klasörüne kopyalayın:
+#   /etc/mail/spamassassin/GokyuzuWebSpam.cf    (WHM/cPanel varsayilan)
+# veya
+#   /var/lib/mailscanner/local.cf              (MailScanner override)
+#
+# Sonra SpamAssassin'i reload edin:
+#   sa-compile
+#   systemctl restart spamassassin
+#   /usr/mailscanner/bin/check_spamassassin --lint
+#
+# Kural amaci: SA'nin varsayilan olarak yakalayamadigi kimlik taklidi (display
+# name spoofing) ve Turk kurumsal ortama zararli phishing paterni.
+# =============================================================================
+
+# --- 1) FROM-name = alici domain'i taklidi (5.5 puan) -----------------------
+# Ornekler:
+#   From: handizayn.com <miya@skyverticals.com>
+#   From: "your-bank.com" <hacker@evil.com>
+# Bunlar klasik phishing paterni. SA cogunlukla yakalayamaz.
+#
+# Bu regex, From: header'da display name olarak bir domain gorurse ve o domain
+# envelope-from domain'inden farkli ise +5.5 puan verir.
+
+header  GWS_FROM_SPOOF_DISPLAY_HAS_DOMAIN  From =~ /(?:^|["\s])([a-z0-9][a-z0-9-]{1,62}\.(?:com|net|org|com\.tr|net\.tr|org\.tr|info|biz|co|io|xyz|top))\s*<[^@>]+@(?!\1)[a-z0-9.-]+>/i
+score   GWS_FROM_SPOOF_DISPLAY_HAS_DOMAIN  5.5
+describe GWS_FROM_SPOOF_DISPLAY_HAS_DOMAIN Display name bir domain gibi gorunuyor ama gercek gonderici farkli — kimlik taklidi
+
+# --- 2) Kurumsal "Mailbox Full / Kota" phishing paterni (3.0 puan) ---------
+# Turkce ve Ingilizce varyantlar
+header   __GWS_MAILBOX_FULL_SUBJ_TR  Subject =~ /(?:posta\s*kutu(?:s[uü])?|kota|depolama).{0,20}(?:dolu|doldu|%\s*9\d|yeterli\s+alan)/i
+header   __GWS_MAILBOX_FULL_SUBJ_EN  Subject =~ /(?:mailbox|storage|quota).{0,20}(?:full|exceed|limit|99\s*%)/i
+meta     GWS_PHISH_MAILBOX_FULL  ( __GWS_MAILBOX_FULL_SUBJ_TR || __GWS_MAILBOX_FULL_SUBJ_EN )
+score    GWS_PHISH_MAILBOX_FULL  3.0
+describe GWS_PHISH_MAILBOX_FULL  Klasik "posta kutunuz dolu" phishing paterni
+
+# --- 3) Sifre sifirlama / hesap askiya alindi paterni (2.5 puan) -----------
+header   __GWS_ACCT_SUSPEND_SUBJ  Subject =~ /(?:hesab[ıi]n[ıi]z|account).{0,20}(?:ask[ıi]ya|suspend|kilit|lock|dondur)/i
+score    __GWS_ACCT_SUSPEND_SUBJ  2.5
+describe __GWS_ACCT_SUSPEND_SUBJ  Sifre sifirlama / hesap askiya alindi paterni
+
+# --- 4) URL kisaltici + kurumsal from taklidi (3.5 puan) --------------------
+# Butun body kisaltici link + display name kurumsal → tehlikeli
+uri      __GWS_URL_SHORTENER  m{https?://(?:bit\.ly|goo\.gl|tinyurl\.com|ow\.ly|t\.co|is\.gd|buff\.ly|adf\.ly|shorte\.st|cutt\.ly)/}i
+meta     GWS_SHORTENER_WITH_SPOOF  ( __GWS_URL_SHORTENER && GWS_FROM_SPOOF_DISPLAY_HAS_DOMAIN )
+score    GWS_SHORTENER_WITH_SPOOF  3.5
+describe GWS_SHORTENER_WITH_SPOOF  URL kisaltici + kimlik taklidi (compound risk)
+
+# --- 5) DKIM valid ama envelope-from domain match etmiyor (2.0 puan) -------
+# Attacker DKIM aliyor own domain'inde ama From header'da baska domain gosteriyor
+# NOT: SA'nin DKIM_ADSP_ALL / DKIM_ADSP_DISCARD ile ust uste dusebilir; ozel
+# olarak "envelope domain != From header domain" durumunu isaretler.
+header   __GWS_ENV_FROM_MISMATCH  ALL =~ /^Return-Path:\s*<[^@]+@([a-z0-9.-]+)>.*?^From:\s*[^<]*<[^@]+@(?!\1)([a-z0-9.-]+)>/msi
+score    __GWS_ENV_FROM_MISMATCH  2.0
+describe __GWS_ENV_FROM_MISMATCH  Return-Path domain != From header domain
+
+# =============================================================================
+# Kurulum sonrasi test:
+#   spamassassin --lint 2>&1 | grep -i error
+#   echo "Subject: Test\nFrom: paypal.com <x@evil.com>\n\ntest" | spamassassin -t
+# =============================================================================

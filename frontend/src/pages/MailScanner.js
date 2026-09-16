@@ -7,7 +7,7 @@ import {
 import { api, client } from "@/lib/api";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader, Badge } from "@/components/ui-primitives";
-import { Filter, Brain, Sliders, Users, Trash2, Plus, Beaker, Link as LinkIcon, Sparkles, Info, TrendingUp, Mail, Globe2 } from "lucide-react";
+import { Filter, Brain, Sliders, Users, Trash2, Plus, Beaker, Link as LinkIcon, Sparkles, Info, TrendingUp, Mail, Globe2, Download } from "lucide-react";
 import ModuleFooter from "@/components/ModuleFooter";
 
 const LICKEY = () => (typeof window !== "undefined"
@@ -684,6 +684,47 @@ function SaOverridesTab() {
 
   return (
     <div className="space-y-3" data-testid="sa-overrides-tab">
+      {/* v44.00.40 — Phishing / From-name Spoof Info Card */}
+      <Card>
+        <CardHeader
+          title="🎭 Kimlik Taklidi (From-name Spoof) Koruması"
+          subtitle="Yeni! Panel artık `handizayn.com <hacker@evil.com>` gibi klasik phishing paternini otomatik yakalıyor (+5.5 puan)"
+        />
+        <CardBody className="space-y-3">
+          <div className="text-xs text-slate-300 leading-relaxed">
+            <p className="mb-2">
+              <b>Sorun:</b> Saldırgan, From header'ın display name'ine alıcının kendi domain'ini
+              yazarak (ör. <span className="mono text-amber-300">handizayn.com &lt;miya@skyverticals.com&gt;</span>)
+              kullanıcıyı kandırıyor. SA sadece 3.6 puan verip mail Gelen Kutusu'na düşüyor.
+            </p>
+            <p className="mb-2">
+              <b>Panel çözümü (otomatik):</b> Ingest sırasında bu paterni tespit edip
+              <b className="text-emerald-300"> +5.5 puan</b> ekliyoruz → mail Karantina'ya taşınıyor
+              ve <b>🎭 GWS_FROM_SPOOF_RECIPIENT_DOMAIN</b> etiketiyle işaretleniyor.
+            </p>
+            <p className="mb-3">
+              <b>Mail sunucu çözümü (pre-delivery blok):</b> Aşağıdaki custom SpamAssassin
+              kural dosyasını sunucunuza kopyalarsanız, mail INBOX'a düşmeden önce
+              SA seviyesinde bloklanır.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 p-3 bg-slate-950/60 border border-cyan-500/30 rounded-md">
+            <a
+              data-testid="sa-cf-download"
+              href="/api/mailscanner/sa-custom-rules.cf"
+              download
+              className="text-xs px-3 py-1.5 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30"
+            >
+              <Download className="w-3 h-3 inline mr-1" />GokyuzuWebSpam.cf İndir
+            </a>
+            <div className="text-[11px] text-slate-400 flex-1">
+              Sunucuda: <span className="mono">/etc/mail/spamassassin/GokyuzuWebSpam.cf</span>
+              &nbsp;→&nbsp;<span className="mono">systemctl restart spamassassin</span>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
+
       <Card>
         <CardHeader
           title="SpamAssassin Kural Skor Ayarları"

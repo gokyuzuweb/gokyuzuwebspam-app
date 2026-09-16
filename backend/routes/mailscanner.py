@@ -284,6 +284,26 @@ async def delete_rule(rule_id: str, license_key: str = Query(..., min_length=8))
     return {"ok": True}
 
 
+# v44.00.40 — Custom SpamAssassin rule dosyasi (sunucuya kopyalanacak)
+@router.get("/sa-custom-rules.cf")
+async def download_sa_custom_rules():
+    """WHM/cPanel/MailScanner sunucusuna kopyalanacak SA kural dosyasi.
+    Uretim: /app/whm-plugin/config/GokyuzuWebSpam.cf
+    Hedef: /etc/mail/spamassassin/GokyuzuWebSpam.cf
+    """
+    from fastapi.responses import PlainTextResponse
+    path = "/app/whm-plugin/config/GokyuzuWebSpam.cf"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except FileNotFoundError:
+        raise HTTPException(404, "Kural dosyasi bulunamadi")
+    return PlainTextResponse(
+        content,
+        headers={"Content-Disposition": 'attachment; filename="GokyuzuWebSpam.cf"'},
+    )
+
+
 # --- v44.00.39 — SpamAssassin Rule Score Overrides -----------------------
 # Turkce kurumsal MTA'lar icin MISSING_MID gibi kurallarin agirligini
 # license bazinda azaltir/sifirlar. Ingestion sirasinda uygulanir.

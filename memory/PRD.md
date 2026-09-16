@@ -14,6 +14,53 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 28, v44.00.40) — From-name Spoofing Detector ✅
+
+### 🐛 Kullanıcı raporu
+Kullanıcı ekran görüntüsü paylaştı: `From: handizayn.com <miya@skyverticals.com>` biçiminde bir phishing mail, alıcının kendi mail hesabı `gamze@handizayn.com`'un **Gelen Kutusu**'na düştü. Panel bu maili SPAM (9.60) olarak yakalamıştı ama mail sunucusundaki SpamAssassin sadece 3.6 puan verdiği için threshold (5.0) altı → teslim edildi. Kullanıcı sender'ı bloke etmesine rağmen sonraki mailleri de blocked oldu ama önceki geldi. Sinirli: "BLOKE YAPTIĞI HALDE NEDEN DÜZGÜN YAPAMIYORSUN".
+
+### 🔍 Kök Neden
+- **From-header spoofing** kurumsal phishing paterni. SA display-name analizini yapmıyor — bu paterni yakalayamıyor.
+- Panelin skoru post-facto (log tabanlı) → SA'nın canlı skoru düşükse mail zaten INBOX'a girdikten sonra bizim rulelar çalışıyor.
+- Blacklist enforcement ancak post-add gelen mailleri etkiliyor.
+
+### 🎯 Çözüm — İki Katmanlı Korunma
+
+**Katman 1: Panel (post-facto tespit)** — `routes/events.py`:
+- `_parse_from_display(header_value)` — display name + email split (`"Ad Soyad" <x@y>` formatları dahil).
+- `_detect_from_spoof(headers, from_addr, to_addr)` — iki case:
+  * `recipient_domain_impersonation` (+5.5): display name alıcı domain'ini içeriyor + envelope farklı domain (KRİTİK).
+  * `display_name_is_foreign_domain` (+4.0): display name bir domain formatında (`paypal.com`) ama envelope başka.
+- Ingest sonunda (SA/no-SA her iki path'ta da çalışır) verdict + skor yeniden hesaplanır.
+- Metadata: `doc.from_spoof = {kind, score, reason, evidence}`, `sa_rules` içine `GWS_FROM_SPOOF_*` entry.
+- Whitelist / virus / phish / blocked verdict'leri her koşulda korunur.
+
+**Katman 2: Mail sunucusu (pre-delivery blok)** — `whm-plugin/config/GokyuzuWebSpam.cf`:
+- 5 custom SA rule dosyası oluşturuldu:
+  1. `GWS_FROM_SPOOF_DISPLAY_HAS_DOMAIN` (+5.5) — regex: display domain != envelope domain
+  2. `GWS_PHISH_MAILBOX_FULL` (+3.0) — "posta kutunuz dolu" TR/EN paternleri
+  3. `__GWS_ACCT_SUSPEND_SUBJ` (+2.5) — hesap askıya alma paternleri
+  4. `GWS_SHORTENER_WITH_SPOOF` (+3.5) — meta: URL kısaltıcı + spoof
+  5. `__GWS_ENV_FROM_MISMATCH` (+2.0) — Return-Path domain != From header domain
+- Yeni endpoint `GET /api/mailscanner/sa-custom-rules.cf` → `PlainTextResponse` ile indirilebilir.
+
+**Frontend** — MailScanner → "SA Skor Ayarı" tab üstüne yeni info card:
+- Sorun açıklaması + panel çözümü + sunucu çözümü açık dilde.
+- "GokyuzuWebSpam.cf İndir" butonu → dosyayı çeker.
+- Kullanıcının kopyalaması gereken sunucu adımları vurgulandı.
+
+**Tests**: `tests/test_v44_00_40_from_spoof.py` — 6/6 PASS:
+- recipient_domain_impersonation happy path
+- Tırnaklı display name (`"handizayn.com"`)
+- Legit intra-domain (spoof değil)
+- Legit farklı domain, farklı alıcı (spoof değil)
+- display_name_is_foreign_domain case
+- Whitelist spoof'dan üstün gelir
+
+**Full regression**: 19/19 test PASS (v44.00.38 whitelist + v44.00.39 SA overrides + v44.00.39b rescore backfill + v44.00.40 from-spoof).
+
+
+
 ## Feb 15, 2026 (Session 27, v44.00.39) — SA Kural Skor Override Sistemi ✅
 
 ### 🐛 Kullanıcı raporu (devam)

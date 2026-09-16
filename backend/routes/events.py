@@ -161,6 +161,111 @@ async def _load_sa_overrides(license_key: str) -> dict[str, Any]:
     return merged
 
 
+# v44.00.40 — From-name Spoofing Detector -----------------------------------
+# Yaygin phishing: `From: aliciDomain.com <hacker@evil.com>`
+# Display name aliciDomain.com'u tasir (kullaniciyi kandirmak icin) ama
+# gercek gonderici cok farkli. SA cogunlukla bu paterni yakalayamiyor.
+#
+# Ayrica su varyantlari:
+#   * Display name basli basina alici domain'in exact stringi
+#   * Display name'de "@recipient.com" ya da "recipient.com" gecer
+#   * "IT Support", "System Admin", "Mailbox Full" gibi kurumsal sahtekarlik
+#     (yalnizca inbox'ta hedef domain'in birebir gecmesiyle yuksek risk)
+_FROM_HEADER_RE = re.compile(r"^From:\s*(.+?)$", re.MULTILINE | re.IGNORECASE)
+_TO_HEADER_RE = re.compile(r"^(?:To|Delivered-To|Envelope-to):\s*(.+?)$", re.MULTILINE | re.IGNORECASE)
+_ADDR_IN_ANGLE_RE = re.compile(r"<([^<>@\s]+@[^<>@\s]+)>")
+_BARE_EMAIL_RE = re.compile(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+
+
+def _parse_from_display(from_header_value: str) -> tuple[str, str]:
+    """Returns (display_name, email_addr) both lowercase, stripped."""
+    if not from_header_value:
+        return ("", "")
+    v = from_header_value.strip()
+    m = _ADDR_IN_ANGLE_RE.search(v)
+    if m:
+        addr = m.group(1).lower().strip()
+        # Display name = everything before `<`
+        idx = v.find("<")
+        name = v[:idx].strip() if idx > 0 else ""
+        # Strip quotes
+        name = name.strip('"').strip("'").strip()
+        return (name.lower(), addr)
+    # Sadece cikilmemis email
+    m2 = _BARE_EMAIL_RE.search(v)
+    if m2:
+        return ("", m2.group(1).lower().strip())
+    return (v.lower(), "")
+
+
+def _detect_from_spoof(headers: str, from_addr: str, to_addr: str) -> dict | None:
+    """Ingest yardimcisi: display name alici domain'ini tasiyor ama envelope-from
+    farkli domain ise, `{kind, score, reason, evidence}` doner. Match yoksa None."""
+    if not headers or not from_addr:
+        return None
+    m = _FROM_HEADER_RE.search(headers)
+    if not m:
+        return None
+    from_val = m.group(1)
+    # Cok satirli From: (folded header) — sonraki space-prefix satirini ekle
+    display, header_email = _parse_from_display(from_val)
+    if not display:
+        return None
+    # Envelope-from domain
+    env_domain = ""
+    if "@" in from_addr:
+        env_domain = from_addr.split("@", 1)[1].lower().strip()
+    header_email_domain = ""
+    if header_email and "@" in header_email:
+        header_email_domain = header_email.split("@", 1)[1].lower().strip()
+    # Alici domain (To veya Delivered-To)
+    to_domains: set[str] = set()
+    if to_addr and "@" in to_addr:
+        to_domains.add(to_addr.split("@", 1)[1].lower().strip())
+    for tm in _TO_HEADER_RE.finditer(headers):
+        for em in _BARE_EMAIL_RE.finditer(tm.group(1)):
+            e = em.group(1).lower()
+            if "@" in e:
+                to_domains.add(e.split("@", 1)[1])
+    # Envelope-domain ile display uyusuyor mu?
+    def _domain_in(s: str, dom: str) -> bool:
+        if not dom or not s:
+            return False
+        s = s.strip().strip('"').strip()
+        # Direkt domain match veya "@domain"
+        return (s == dom) or (dom in s.split()) or (f"@{dom}" in s)
+    # Case 1: display, alici domain'ini tasir + envelope farkli domain → SPOOF
+    for td in to_domains:
+        if td and _domain_in(display, td):
+            eff_domain = header_email_domain or env_domain
+            if eff_domain and eff_domain != td:
+                return {
+                    "kind": "recipient_domain_impersonation",
+                    "score": 5.5,
+                    "reason": f"Display name alıcı domain'i ({td}) taşıyor ama gerçek gönderici farklı ({eff_domain}).",
+                    "evidence": {
+                        "display": display, "envelope_from": from_addr,
+                        "header_from": header_email, "recipient_domain": td,
+                    },
+                }
+    # Case 2: display bir domain gibi gorunuyor ve envelope farkli domain
+    #   (ornek: `handizayn.com <miya@skyverticals.com>` — alici belirsiz olsa bile)
+    #   Sadece display TAM DOMAIN gibi ise (nokta iceriyor, bosluk yok):
+    if re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", display):
+        eff_domain = header_email_domain or env_domain
+        if eff_domain and eff_domain != display:
+            return {
+                "kind": "display_name_is_foreign_domain",
+                "score": 4.0,
+                "reason": f"Display name bir domain gibi ({display}) ama gerçek gönderici başka bir domain ({eff_domain}).",
+                "evidence": {
+                    "display": display, "envelope_from": from_addr,
+                    "header_from": header_email,
+                },
+            }
+    return None
+
+
 class MailEvent(BaseModel):
     license_key: str = Field(..., min_length=8)
     server_ip: Optional[str] = None
@@ -531,6 +636,44 @@ async def ingest_event(evt: MailEvent, request: Request):
                 doc["score_clamped"] = True
         except (TypeError, ValueError):
             doc["total_score"] = 0
+
+    # v44.00.40 — FROM-NAME SPOOFING DETECTOR (kritik phishing paterni)
+    # Display name alıcı domain'ini taşırsa + envelope farklı domain →
+    # +5.5 puan, kural adı "GWS_FROM_SPOOF_RECIPIENT_DOMAIN".
+    # SA'nin cogunlukla yakalayamadigi klasik impersonation saldirisi.
+    # ORNEK: `From: handizayn.com <miya@skyverticals.com>` → alici handizayn.com
+    # domain'i icin gelen mail → gercek gonderici skyverticals.com → SPOOF!
+    try:
+        spoof = _detect_from_spoof(
+            headers,
+            doc.get("from_addr") or "",
+            doc.get("to_addr") or "",
+        )
+        if spoof:
+            extra = float(spoof["score"])
+            new_total = float(doc.get("total_score") or 0) + extra
+            doc["total_score_pre_spoof"] = doc.get("total_score") or 0
+            doc["total_score"] = new_total
+            doc["from_spoof"] = spoof
+            # sa_rules'a da ekle
+            rule_name = (
+                "GWS_FROM_SPOOF_RECIPIENT_DOMAIN"
+                if spoof["kind"] == "recipient_domain_impersonation"
+                else "GWS_FROM_SPOOF_DISPLAY_DOMAIN"
+            )
+            doc.setdefault("sa_rules", []).append({
+                "name": rule_name, "score": extra,
+                "override": None, "final": extra,
+            })
+            # Verdict'i yeniden hesapla (whitelist/virus/phish/blocked'a dokunma)
+            cur_v = (doc.get("verdict") or "").lower()
+            if cur_v not in ("virus", "phish", "phishing", "blocked", "whitelisted"):
+                if new_total >= 10:
+                    doc["verdict"] = "high_spam"
+                elif new_total >= 5:
+                    doc["verdict"] = "spam"
+    except Exception as _sp_ex:
+        log.warning("from-spoof detect skip: %s", _sp_ex)
     # ---------------------------------------------------------------------
     # v43.1 BOUNCE FIX: `<>` (null envelope sender, RFC 5321 §4.5.5) veya
     # sistem pseudo-user'ları (mailnull, Debian-exim vs) her zaman inbound
@@ -1386,9 +1529,17 @@ async def backfill_quarantine(request: Request, license_key: Optional[str] = Non
 
 @router.post("/rescore")
 async def rescore_events(request: Request, license_key: Optional[str] = None,
-                          dry_run: bool = False):
+                          dry_run: bool = False,
+                          apply_sa_overrides: bool = True,
+                          apply_whitelist: bool = True):
     """Mevcut mail_events kayıtlarında `total_score`'u `scores.spamassassin`
     üzerinden yeniden hesapla ve verdict'i standart SA eşikleriyle düzelt.
+
+    v44.00.39 EKLEME:
+     * `apply_sa_overrides=True` (default): license'in SA rule override
+       tablosunu geriye dönük uygular → MISSING_MID vb. kuralları yumuşatır.
+     * `apply_whitelist=True` (default): mevcut `db.lists` whitelist'ini
+       uygula, uyanları `verdict=whitelisted` yap ve karantinadan temizle.
 
     Kullanım: Plugin `total_score` alanına yanlış değer yollamış (ör: motor
     kural numaralarını toplamış) → panelde 27, 81 gibi anormal skorlar +
@@ -1410,41 +1561,150 @@ async def rescore_events(request: Request, license_key: Optional[str] = None,
 
     updated = 0
     fixed_verdicts = 0
+    whitelisted = 0
+    override_applied = 0
     scanned = 0
-    async for ev in db.mail_events.find(q, {"_id": 0, "id": 1, "scores": 1, "total_score": 1, "verdict": 1}).limit(50000):
+
+    # v44.00.39 — Whitelist entries onceden cek (lookup icin)
+    wl_index: dict[tuple[str, str], dict] = {}
+    if apply_whitelist:
+        wl_scope_filter: dict = {"list_type": "white"}
+        if not scope["is_master"] and scope["owner_license_key"]:
+            wl_scope_filter["$or"] = [
+                {"scope": "global"},
+                {"scope": {"$exists": False}},
+                {"owner_license_key": scope["owner_license_key"]},
+            ]
+        async for w in db.lists.find(wl_scope_filter, {"_id": 0}):
+            et = (w.get("entry_type") or "").lower()
+            val = (w.get("value") or "").lower().strip()
+            if et and val:
+                wl_index[(et, val)] = w
+
+    # v44.00.39 — Per-license SA override cache
+    sa_ov_cache: dict[str, dict] = {}
+
+    async def _get_sa_ov(lk: str) -> dict:
+        if lk in sa_ov_cache:
+            return sa_ov_cache[lk]
+        ov = await _load_sa_overrides(lk)
+        sa_ov_cache[lk] = ov
+        return ov
+
+    projection = {
+        "_id": 0, "id": 1, "license_key": 1,
+        "scores": 1, "total_score": 1, "verdict": 1,
+        "from_addr": 1, "sender_ip": 1, "client_ip": 1,
+        "sa_rules": 1, "headers_full": 1, "headers_preview": 1,
+    }
+
+    async for ev in db.mail_events.find(q, projection).limit(50000):
         scanned += 1
         try:
             sa = (ev.get("scores") or {}).get("spamassassin")
             sa = float(sa) if sa is not None else None
         except (TypeError, ValueError):
             sa = None
-        if sa is None:
-            continue
         cur_total = ev.get("total_score") or 0
         cur_verdict = (ev.get("verdict") or "").lower()
-        target_verdict = cur_verdict
-        if cur_verdict not in ("virus", "phish", "phishing", "blocked"):
-            if sa >= 10: target_verdict = "high_spam"
-            elif sa >= 5: target_verdict = "spam"
-            else: target_verdict = "clean"
-        if abs(float(cur_total) - sa) > 0.01 or target_verdict != cur_verdict:
-            updated += 1
-            if target_verdict != cur_verdict:
-                fixed_verdicts += 1
-            if not dry_run:
-                await db.mail_events.update_one(
-                    {"id": ev["id"]},
-                    {"$set": {
-                        "total_score": sa,
-                        "verdict": target_verdict,
-                        "score_normalized": True,
-                        "score_source": "spamassassin",
-                        "total_score_original": cur_total,
-                    }},
+        lk = ev.get("license_key") or ""
+
+        # ---- 1) SA override backfill --------------------------------------
+        adj_sa = sa
+        set_extra: dict = {}
+        if apply_sa_overrides and sa is not None and lk:
+            ov = await _get_sa_ov(lk)
+            if ov:
+                # sa_rules yoksa header'lardan yeniden parse et
+                rules = ev.get("sa_rules") or _parse_sa_rules(
+                    ev.get("headers_full") or ev.get("headers_preview") or ""
                 )
+                if rules:
+                    adj, ann, delta = _apply_sa_score_overrides(rules, ov, sa)
+                    if adj is not None and abs(delta) > 0.0001:
+                        adj_sa = adj
+                        override_applied += 1
+                        set_extra["sa_rules"] = ann
+                        set_extra["sa_score_delta"] = round(delta, 2)
+                        set_extra["total_score_pre_override"] = sa
+                        set_extra["sa_overrides_applied"] = True
+
+        # ---- 2) Verdict recalc (SA overrides sonrasinda) ------------------
+        target_verdict = cur_verdict
+        # KRITIK: whitelisted / virus / phish / blocked verdict'lerine
+        # dokunma — bunlar SA skorundan bagimsiz kararlar.
+        _untouchable = ("virus", "phish", "phishing", "blocked", "whitelisted")
+        if adj_sa is not None and cur_verdict not in _untouchable:
+            if adj_sa >= 10: target_verdict = "high_spam"
+            elif adj_sa >= 5: target_verdict = "spam"
+            else: target_verdict = "clean"
+
+        # ---- 3) Whitelist backfill (verdict recalc'ten sonra) -------------
+        wl_hit = None
+        if apply_whitelist and wl_index:
+            from_addr = (ev.get("from_addr") or "").strip().lower()
+            from_domain = from_addr.split("@", 1)[1] if "@" in from_addr else ""
+            sip = (ev.get("sender_ip") or ev.get("client_ip") or "").strip()
+            for key in [("email", from_addr), ("domain", from_domain), ("ip", sip)]:
+                if key[1] and key in wl_index:
+                    wl_hit = wl_index[key]
+                    break
+        # Historical fallback: event zaten whitelist_hit meta'sina sahip ama
+        # verdict spam/high_spam ise (eski buggy ingest'ten kaldi) restore et.
+        if not wl_hit and apply_whitelist and ev.get("whitelist_hit") and cur_verdict in ("spam", "high_spam"):
+            wl_hit = ev["whitelist_hit"]
+            wl_hit["from_history"] = True
+        if wl_hit and cur_verdict not in ("whitelisted",):
+            target_verdict = "whitelisted"
+            set_extra["verdict_original"] = cur_verdict
+            set_extra["whitelist_hit"] = {
+                "entry_type": wl_hit.get("entry_type"),
+                "value": wl_hit.get("value"),
+                "list_id": wl_hit.get("id"),
+                "note": wl_hit.get("note"),
+                "backfilled": True,
+            }
+            whitelisted += 1
+
+        # ---- 4) Update tetiklemek gerekiyor mu? ---------------------------
+        should_update = False
+        if adj_sa is not None and abs(float(cur_total) - adj_sa) > 0.01:
+            should_update = True
+        if target_verdict != cur_verdict:
+            should_update = True
+            fixed_verdicts += 1
+        if set_extra:
+            should_update = True
+
+        if should_update:
+            updated += 1
+            if not dry_run:
+                set_doc: dict = {
+                    "verdict": target_verdict,
+                    "score_normalized": True,
+                    "score_source": "spamassassin",
+                    "total_score_original": cur_total,
+                    **set_extra,
+                }
+                if adj_sa is not None:
+                    set_doc["total_score"] = adj_sa
+                await db.mail_events.update_one(
+                    {"id": ev["id"]}, {"$set": set_doc},
+                )
+                # Whitelist hit → karantinadan temizle
+                if wl_hit:
+                    try:
+                        await db.quarantine.delete_many({
+                            "id": ev["id"],
+                        })
+                    except Exception:
+                        pass
+
     return {
         "ok": True, "scanned": scanned,
         "updated": updated, "fixed_verdicts": fixed_verdicts,
+        "whitelisted": whitelisted,
+        "sa_override_applied": override_applied,
         "dry_run": dry_run,
         "scope": {"is_master": scope["is_master"], "owner": scope["owner_license_key"]},
     }

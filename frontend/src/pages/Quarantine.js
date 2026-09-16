@@ -121,7 +121,13 @@ export default function Quarantine() {
   const rescoreMut = useMutation({
     mutationFn: () => api.eventsRescore(),
     onSuccess: (data) => {
-      toast.success(`Skorlar yeniden hesaplandı: ${data.updated}/${data.scanned} kayıt düzeltildi (${data.fixed_verdicts} verdict değişti)`);
+      const parts = [
+        `${data.updated}/${data.scanned} kayıt güncellendi`,
+        `${data.fixed_verdicts} verdict değişti`,
+      ];
+      if (data.whitelisted) parts.push(`${data.whitelisted} whitelist'e alındı`);
+      if (data.sa_override_applied) parts.push(`${data.sa_override_applied} SA override uygulandı`);
+      toast.success(`Skorlar yeniden hesaplandı — ${parts.join(" · ")}`);
       qc.invalidateQueries({ queryKey: ["quarantine"] });
       qc.invalidateQueries({ queryKey: ["quarantine-stats"] });
       qc.invalidateQueries({ queryKey: ["queue-list"] });
@@ -491,9 +497,10 @@ function QuarantineOverviewPane({ stats, recent, onGotoAll, onRescore, onBackfil
           <button
             data-testid="q-quick-rescore"
             onClick={onRescore} disabled={rescorePending}
+            title="Geçmiş mailleri: SA override tablosunu uygular + mevcut whitelist ile eşleşenleri whitelist'e taşır"
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-sm disabled:opacity-50">
             <Calculator className="w-3.5 h-3.5" />
-            {rescorePending ? "Hesaplanıyor…" : "Skorları Yeniden Hesapla"}
+            {rescorePending ? "Hesaplanıyor…" : "Yeniden Hesapla + Whitelist Uygula"}
           </button>
           <button
             data-testid="q-quick-backfill"
