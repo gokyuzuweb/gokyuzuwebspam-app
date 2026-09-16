@@ -53,6 +53,75 @@ function verdictBadge(v, t) {
   return <Badge tone={m.tone}>{String(m.label).toUpperCase()}</Badge>;
 }
 
+// v44.00.40 — Yeni Özellikler Banner (dismissable)
+function WhatsNewBanner() {
+  const [hidden, setHidden] = useState(() => {
+    try { return localStorage.getItem("gws.whatsnew.v44_00_40") === "1"; } catch { return false; }
+  });
+  if (hidden) return null;
+  const dismiss = () => {
+    try { localStorage.setItem("gws.whatsnew.v44_00_40", "1"); } catch {}
+    setHidden(true);
+  };
+  return (
+    <div
+      data-testid="whats-new-banner"
+      className="relative overflow-hidden rounded-xl border border-cyan-500/30 bg-gradient-to-br from-cyan-950/60 via-slate-950 to-indigo-950/60 p-4"
+    >
+      <button
+        onClick={dismiss}
+        data-testid="whats-new-dismiss"
+        className="absolute top-2 right-2 text-slate-500 hover:text-slate-200 text-xs px-2 py-1"
+        aria-label="Kapat"
+      >✕</button>
+      <div className="flex items-start gap-3">
+        <div className="text-3xl leading-none">🎭</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-[11px] uppercase tracking-widest text-cyan-400 font-bold">Yeni Sürüm</span>
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 mono">v44.00.40</span>
+            <span className="text-[11px] text-slate-500">· 16 Eylül 2026</span>
+          </div>
+          <h3 className="text-lg font-bold text-slate-100 mb-2">Kimlik Taklidi (From-name Spoof) Koruması + SA Skor Ayarı</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-300">
+            <div className="space-y-2">
+              <div>
+                <div className="text-cyan-300 font-semibold mb-0.5">🎭 From-name Spoof Detector</div>
+                <div>Panel <b>`sirketiniz.com &lt;saldirgan@evil.com&gt;`</b> gibi klasik phishing paternini otomatik yakalıyor (+7.5 puan → SPAM/HIGH_SPAM)</div>
+              </div>
+              <div>
+                <div className="text-cyan-300 font-semibold mb-0.5">🛡️ SA Skor Ayarı Sekmesi</div>
+                <div>Türk kurumsal MTA'lar için tek tık <b>preset</b> — MISSING_MID, DOS_BODY_HIGH_NO_MID vb. false-positive kurallarını yumuşat</div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div>
+                <div className="text-cyan-300 font-semibold mb-0.5">📥 Custom SA Rule Dosyası</div>
+                <div>WHM sunucunuza <b>tek tık .cf indir</b> — 5 kural (spoof, phishing subject, URL kısaltıcı, envelope mismatch)</div>
+              </div>
+              <div>
+                <div className="text-cyan-300 font-semibold mb-0.5">🔄 Whitelist Retroaktif</div>
+                <div><b>Yeniden Hesapla + Whitelist Uygula</b> butonu → eski mailleri de whitelist'e alır, karantinadan temizler</div>
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link to="/panel/mailscanner" className="text-xs px-3 py-1.5 rounded-md bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 hover:bg-cyan-500/30" data-testid="whats-new-goto-sa">
+              🎯 SA Skor Ayarı Sekmesi
+            </Link>
+            <Link to="/panel/quarantine" className="text-xs px-3 py-1.5 rounded-md bg-indigo-500/20 text-indigo-200 border border-indigo-500/40 hover:bg-indigo-500/30" data-testid="whats-new-goto-quarantine">
+              🔄 Karantina + Rescore
+            </Link>
+            <a href="/api/mailscanner/sa-custom-rules.cf" download className="text-xs px-3 py-1.5 rounded-md bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/30" data-testid="whats-new-download-cf">
+              📥 GokyuzuWebSpam.cf İndir
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const TABS = [
   { key: "overview",  label: "Genel Bakış",   Icon: LayoutDashboard },
   { key: "geo",       label: "Coğrafi",       Icon: Globe2 },
@@ -79,6 +148,9 @@ export default function Dashboard() {
   return (
     <div className="p-6 space-y-5">
       <OnboardingWizard />
+
+      {/* v44.00.40 — Yeni Özellikler Duyuru Banner'ı */}
+      <WhatsNewBanner />
 
       {/* v44.00.04 — Kişisel Koruma Panosu (Bayi Analytics) */}
       <ResellerAnalyticsWidget />

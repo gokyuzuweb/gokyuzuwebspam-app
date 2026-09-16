@@ -14,6 +14,34 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 29, v44.00.40 Publish) — Home Banner + Landing Strip + install.sh Auto .cf Push ✅
+
+### 🎯 Kapsam
+Kullanıcı: "eksik bir şey kaldı mı kontrol et. Home kısmına da yeni modülleri ekleyelim, bilgilensinler. Web/panel/demo/müşteri kurulumları hepsi tek seferde."
+
+### 🎯 Yapılanlar
+- **VERSION dosyaları güncellendi**: `/app/VERSION`, `/app/backend/VERSION`, `/app/whm-plugin/VERSION` hepsi `v44.00.40`. `_PACKAGE_VERSION` fallback da güncellendi. `/api/version/panel` artık `v44.00.40` dönüyor → header rozeti ve bayi plugin update mekanizması doğru sürümü görüyor.
+- **Dashboard.js — `WhatsNewBanner`**: Kontrol Paneli üstünde dismissable duyuru kartı: v44.00.40 rozeti + 4 özellik (From-Spoof Detector, SA Skor Ayarı, Custom SA Rule Dosyası, Whitelist Retroaktif). CTA butonları: SA Skor Ayarı Sekmesi, Karantina + Rescore, `.cf` İndir. localStorage `gws.whatsnew.v44_00_40` ile dismiss.
+- **Landing.js — `WhatsNewStrip`**: Public landing sayfasında Hero'nun altına eklendi. Aynı v44.00.40 mesajı + "Özellikleri Gör" / "Hemen Başla" CTA. Ayrıca hero'daki version rozeti `v44.00.10` → `v44.00.40`.
+- **install.sh — Otomatik .cf Push (v44.00.40 kritik)**: Config yerleştirme bölümüne blok eklendi. WHM'de plugin yüklenirken `$SRC/config/GokyuzuWebSpam.cf` dosyası `/etc/mail/spamassassin/GokyuzuWebSpam.cf`'e kopyalanıyor, cPanel path'inden `spamassassin --lint` çağrılıp `/usr/local/cpanel/scripts/restartsrv_spamd` ile spamd restart ediliyor. Idempotent — her `gwsm-update`'de güncel `.cf`'i alır.
+- **Manuel test onayı (canlı sunucu)**: Kullanıcının cPanel/WHM sunucusunda `spamc -R` ile test yapıldı → `9.9/5.0 SPAM` sonucu → `GWS_FROM_SPOOF_DISPLAY_HAS_DOMAIN 7.5` puan hit'lediği doğrulandı.
+- **Kural skoru: 5.5 → 7.5** — Local test'te `ALL_TRUSTED (-1.8)` ve `NO_RELAYS (-1.2)` bypass'larını da yenmek için skor yükseltildi.
+
+### 📊 Full Regression
+**19/19 test PASS** — v44.00.38 whitelist enforce, v44.00.39 SA overrides, v44.00.39b rescore backfill, v44.00.40 from-spoof detector.
+
+### 🚀 Yayın Durumu
+- Master preview: **v44.00.40** yayında (settings + release_history + cache flush)
+- Production `panel.gokyuzuhosting.com`: Hala v44.00.38 (kullanıcı git push yaparsa deploy edilecek — Emergent "Save to Github" özelliği)
+- Kullanıcının WHM sunucusundaki plugin: v44.00.38 (production master 44.00.38 dönüyor, prev'e switch edilebilir ya da git push edildikten sonra `gwsm-update` çalıştırılabilir)
+
+### 📋 Kalan İşler (Kullanıcının onayıyla ertelendi — context bitti)
+- **Retroaktif Inbox Temizle (IMAP purge)**: Blacklist eklendiğinde `doveadm expunge` ile eski maili sil (WHM plugin + backend + UI). BÜYÜK iş.
+- **Spoof Alarm Popup**: `master_alerts` insert (backend hook) — ingest'te `from_spoof` yakalandığında.
+- **Test rehberi otomatize**: `swaks` + Exim log parser endpoint.
+
+
+
 ## Feb 15, 2026 (Session 28, v44.00.40) — From-name Spoofing Detector ✅
 
 ### 🐛 Kullanıcı raporu

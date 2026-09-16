@@ -544,7 +544,7 @@ function NavBar() {
           </div>
           <div className="leading-tight">
             <div className="text-slate-100 font-bold tracking-tight text-[17px]">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v44.00.10</div>
+            <div className="text-[9px] uppercase tracking-widest text-slate-500 mono">WHM / cPanel · v44.00.40</div>
           </div>
         </Link>
         <nav className="hidden md:flex items-center gap-7 text-sm text-slate-400">
@@ -702,6 +702,47 @@ const TONE_MAP = {
   rose: "border-rose-500/30 bg-rose-500/5 text-rose-300",
   sky: "border-sky-500/30 bg-sky-500/5 text-sky-300",
 };
+
+// v44.00.40 — What's New Strip (public landing)
+function WhatsNewStrip() {
+  return (
+    <section className="py-8 border-t border-slate-800/60 relative overflow-hidden" data-testid="landing-whats-new">
+      <div className="max-w-7xl mx-auto px-6">
+        <div className="rounded-2xl border border-cyan-500/30 bg-gradient-to-r from-cyan-950/40 via-slate-950 to-indigo-950/40 p-5 relative overflow-hidden">
+          <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-cyan-500/10 blur-3xl"/>
+          <div className="relative flex flex-col md:flex-row items-start md:items-center gap-4">
+            <div className="shrink-0 flex items-center gap-2">
+              <span className="text-3xl">🎭</span>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-cyan-400 mono font-bold">Yeni Sürüm</div>
+                <div className="mono text-cyan-200 text-sm font-bold">v44.00.40</div>
+              </div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-slate-100 font-semibold text-sm md:text-base">
+                Kimlik Taklidi (From-name Spoof) Koruması + Türk Kurumsal SA Skor Ayarı
+              </div>
+              <div className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+                <b className="text-cyan-300">"sirketiniz.com &lt;saldirgan@evil.com&gt;"</b> paterni artık otomatik +7.5 puan alıyor →
+                phishing mailleri INBOX'a düşmüyor. Ayrıca WHM sunucusuna kopyalanabilir <b>custom SA rule dosyası</b> ve
+                <b> Türk kurumsal MTA preset'i</b> (MISSING_MID vb.).
+              </div>
+            </div>
+            <div className="shrink-0 flex flex-wrap gap-2">
+              <a href="#features" className="text-xs px-3 py-1.5 rounded-md bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 hover:bg-cyan-500/30">
+                Özellikleri Gör
+              </a>
+              <a href="#pricing" className="text-xs px-3 py-1.5 rounded-md bg-indigo-500/20 text-indigo-200 border border-indigo-500/40 hover:bg-indigo-500/30">
+                Hemen Başla
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 
 function Features() {
   const s = useLandingStrings();
@@ -1975,6 +2016,7 @@ export default function Landing() {
       {isLight && <LandingLightThemeStyles />}
       <NavBar />
       <Hero />
+      <WhatsNewStrip />
       <BlockedTrendWidget />
       <ActivityHeatmap />
       <CostSavingsWidget />
