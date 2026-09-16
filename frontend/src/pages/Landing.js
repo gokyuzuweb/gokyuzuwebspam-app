@@ -2017,22 +2017,8 @@ export default function Landing() {
       <NavBar />
       <Hero />
       <WhatsNewStrip />
-      <BlockedTrendWidget />
-      <ActivityHeatmap />
-      <CostSavingsWidget />
-      <AchievementBadges />
-      <Features />
       <ModulesShowcase />
-      <ModuleTourCTA />
-      <GeoBlockedHeatmap />
-      <Stats />
-      <HowItWorks />
       <Pricing />
-      <PaymentOptions />
-      <FAQ />
-      <Testimonials />
-      <MarketplaceTrendingWidget />
-      <CTABottom />
       <Footer />
       <FloatingPanelButton />
       <LicenseEntryModal />
