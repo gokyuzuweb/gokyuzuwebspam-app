@@ -751,6 +751,29 @@ async def _startup() -> None:
         log.warning("ai analysis cron register failed: %s", _e)
     asyncio.create_task(_daily_ai_rule_performance_task())  # v44.00.26 — günlük AI kural perf ölçümü + auto-disable
     asyncio.create_task(_daily_dmarc_attack_alarm_task())   # v44.00.26 — %70+ DMARC fail → saldırı alarmı
+    # v44.00.42 — DMARC uygulanma doğrulaması (6 saatte bir DNS lookup)
+    async def _dmarc_verify_task():
+        while True:
+            try:
+                from routes.threat_intel import _verify_domain_dns
+                async for lic in db.hosted_domains.find({}, {"license_key": 1, "domains": 1}):
+                    lk = lic.get("license_key")
+                    for dom in (lic.get("domains") or [])[:50]:
+                        try:
+                            st = await _verify_domain_dns(dom)
+                            st["license_key"] = lk
+                            await db.dmarc_verify_status.update_one(
+                                {"license_key": lk, "domain": st["domain"]},
+                                {"$set": st}, upsert=True,
+                            )
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.2)  # DNS rate-limit
+                log.info("dmarc verify cron: completed")
+            except Exception as _e:
+                log.warning("dmarc verify cron: %s", _e)
+            await asyncio.sleep(6 * 3600)  # 6 saatte bir
+    asyncio.create_task(_dmarc_verify_task())
     asyncio.create_task(_hourly_feed_health_check_task())   # v44.00.31 — feed 24s+ error → notif
     asyncio.create_task(_pos_health_monitor_task())
     asyncio.create_task(_daily_violations_cleanup_task())

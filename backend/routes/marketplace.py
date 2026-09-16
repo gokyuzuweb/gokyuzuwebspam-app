@@ -21,7 +21,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Literal
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from deps import db
 
@@ -38,6 +38,114 @@ async def _validate_license(license_key: str) -> dict:
     if not lic:
         raise HTTPException(403, "Geçersiz veya pasif lisans")
     return lic
+
+
+# v44.00.42 — Marketplace SA Custom Rules (.cf snippet paylaşımı) ---------
+# Bayiler kendi custom SpamAssassin kurallarını paylaşabilir. Diğer bayiler
+# görüntüler, upvote atar, tek tıkla kendi .cf dosyasına ekler.
+
+class SaSnippetPublish(BaseModel):
+    license_key: str = Field(..., min_length=8)
+    name: str = Field(..., min_length=3, max_length=64)   # RULE_NAME
+    snippet: str = Field(..., min_length=20, max_length=4000)  # .cf içeriği
+    description: str = Field(..., min_length=5, max_length=300)
+    score: float = Field(..., ge=-10, le=20)
+    category: str = Field("phishing", pattern="^(phishing|malware|spam|other)$")
+
+
+@router.post("/sa-rules/publish")
+async def sa_rule_publish(payload: SaSnippetPublish):
+    """Bayi kendi SA custom rule'ünü marketplace'e gönderir."""
+    await _validate_license(payload.license_key)
+    # Aynı publisher aynı isimde tekrar publish edemez
+    existing = await db.marketplace_sa_rules.count_documents({
+        "publisher": payload.license_key,
+        "name": payload.name.upper(),
+    })
+    if existing:
+        raise HTTPException(409, "Bu isimde bir kuralı zaten yayınladın")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "publisher": payload.license_key,
+        "name": payload.name.upper(),
+        "snippet": payload.snippet,
+        "description": payload.description,
+        "score": float(payload.score),
+        "category": payload.category,
+        "upvotes": 0,
+        "installs": 0,
+        "status": "pending",  # master onayı bekliyor
+        "created_at": _iso(),
+    }
+    await db.marketplace_sa_rules.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return {"ok": True, "item": doc}
+
+
+@router.get("/sa-rules")
+async def sa_rules_list(category: Optional[str] = None, limit: int = 50):
+    """Onaylı SA kurallarını listele."""
+    q: dict = {"status": "approved"}
+    if category:
+        q["category"] = category
+    docs = []
+    async for d in db.marketplace_sa_rules.find(q, {"_id": 0}) \
+            .sort("upvotes", -1).limit(limit):
+        docs.append(d)
+    return {"count": len(docs), "items": docs}
+
+
+@router.post("/sa-rules/{rule_id}/install")
+async def sa_rule_install(rule_id: str, license_key: str = Query(..., min_length=8)):
+    """Kuralı kendi license'ının active_sa_rules listesine ekler."""
+    await _validate_license(license_key)
+    r = await db.marketplace_sa_rules.find_one({"id": rule_id, "status": "approved"}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Kural bulunamadı veya onaylı değil")
+    # License'ın custom sa_rules_installed listesine ekle
+    await db.mailscanner_config.update_one(
+        {"license_key": license_key},
+        {"$addToSet": {"sa_rules_installed": rule_id},
+         "$setOnInsert": {"license_key": license_key, "created_at": _iso()}},
+        upsert=True,
+    )
+    await db.marketplace_sa_rules.update_one({"id": rule_id}, {"$inc": {"installs": 1}})
+    return {"ok": True, "rule": r, "installed": True}
+
+
+@router.post("/sa-rules/{rule_id}/upvote")
+async def sa_rule_upvote(rule_id: str, license_key: str = Query(..., min_length=8)):
+    await _validate_license(license_key)
+    # Duplicate upvote engelle
+    existing = await db.marketplace_sa_rule_votes.find_one({
+        "rule_id": rule_id, "license_key": license_key,
+    })
+    if existing:
+        return {"ok": True, "already_voted": True}
+    await db.marketplace_sa_rule_votes.insert_one({
+        "rule_id": rule_id, "license_key": license_key, "ts": _iso(),
+    })
+    await db.marketplace_sa_rules.update_one({"id": rule_id}, {"$inc": {"upvotes": 1}})
+    return {"ok": True, "already_voted": False}
+
+
+@router.post("/sa-rules/{rule_id}/moderate")
+async def sa_rule_moderate(rule_id: str, request: Request,
+                            approve: bool = Query(True)):
+    """Master onayı/red."""
+    from .events import _validate_master_key
+    await _validate_master_key(request)
+    r = await db.marketplace_sa_rules.update_one(
+        {"id": rule_id},
+        {"$set": {"status": "approved" if approve else "rejected",
+                   "moderated_at": _iso()}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "Kural bulunamadı")
+    return {"ok": True, "status": "approved" if approve else "rejected"}
+
+
+
 
 
 # ============================================================================

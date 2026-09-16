@@ -681,6 +681,80 @@ async def dmarc_setup_bulk(request: Request, license_key: str = Query(..., min_l
 
 
 
+
+# v44.00.42 — DMARC Uygulanma Doğrulaması (per-hosted-domain SPF/DMARC/DKIM check)
+async def _verify_domain_dns(domain: str) -> dict:
+    """Tek domain için SPF/DMARC/DKIM canlı DNS lookup. Cache-safe."""
+    import dns.resolver as _dnsr
+    import re as _re
+    d = (domain or "").strip().lower().rstrip(".")
+    out = {"domain": d, "checked_at": datetime.now(timezone.utc).isoformat()}
+    # SPF
+    try:
+        txt = _dnsr.resolve(d, "TXT", lifetime=4)
+        spf = [str(r).strip('"') for r in txt if "v=spf1" in str(r)]
+        out["spf_ok"] = bool(spf)
+        out["spf_record"] = spf[0] if spf else None
+    except Exception as ex:
+        out["spf_ok"] = False
+        out["spf_error"] = type(ex).__name__
+    # DMARC
+    try:
+        dmarc = _dnsr.resolve(f"_dmarc.{d}", "TXT", lifetime=4)
+        recs = [str(r).strip('"') for r in dmarc if "v=DMARC1" in str(r)]
+        pol = None
+        if recs:
+            m = _re.search(r"p=(none|quarantine|reject)", recs[0])
+            pol = m.group(1) if m else None
+        out["dmarc_ok"] = bool(recs)
+        out["dmarc_record"] = recs[0] if recs else None
+        out["dmarc_policy"] = pol
+    except Exception as ex:
+        out["dmarc_ok"] = False
+        out["dmarc_error"] = type(ex).__name__
+    # DKIM (default selector — cPanel default)
+    try:
+        dkim = _dnsr.resolve(f"default._domainkey.{d}", "TXT", lifetime=4)
+        out["dkim_ok"] = bool(list(dkim))
+    except Exception:
+        out["dkim_ok"] = False
+    return out
+
+
+@router.get("/dmarc/domain-verify-status")
+async def dmarc_domain_verify_status(request: Request, license_key: str = Query(..., min_length=8)):
+    """Kaydedilmiş verify sonuçlarını döner (cron her 6 saatte bir günceller).
+    İstersen live=true ile senkron yeniden kontrol tetiklenir (max 20 domain)."""
+    await _require_master(request, license_key)
+    docs = []
+    async for doc in db.dmarc_verify_status.find(
+        {"license_key": license_key}, {"_id": 0}
+    ).sort("domain", 1):
+        docs.append(doc)
+    return {"count": len(docs), "items": docs}
+
+
+@router.post("/dmarc/domain-verify-run")
+async def dmarc_domain_verify_run(request: Request, license_key: str = Query(..., min_length=8)):
+    """Şu andaki hosted domain listesi için senkron verify yapar (max 20).
+    Sonucu `db.dmarc_verify_status`'a upsert eder ve döner."""
+    await _require_master(request, license_key)
+    pushed = await db.hosted_domains.find_one(
+        {"license_key": license_key}, {"_id": 0, "domains": 1}
+    ) or {}
+    domains = (pushed.get("domains") or [])[:50]
+    results = []
+    for dom in domains:
+        st = await _verify_domain_dns(dom)
+        st["license_key"] = license_key
+        await db.dmarc_verify_status.update_one(
+            {"license_key": license_key, "domain": st["domain"]},
+            {"$set": st}, upsert=True,
+        )
+        results.append(st)
+    return {"count": len(results), "items": results}
+
+
 # v44.00.31 — Hosted Domain push (cPanel'den kesin liste)
 class HostedDomainsIn(BaseModel):
     license_key: str

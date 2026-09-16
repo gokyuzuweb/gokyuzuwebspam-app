@@ -79,6 +79,24 @@ function alertMeta(a) {
       linkTitle: "Ödemeye git",
     };
   }
+  // v44.00.42 — AI daily report alarm
+  if (type === "ai_daily_report") {
+    return {
+      Icon: Activity,
+      iconCls: sev === "danger" ? "text-rose-400" : sev === "warning" ? "text-amber-400" : "text-cyan-400",
+      linkHref: a?.action_url || "/panel/mailscanner",
+      linkTitle: "AI raporu",
+    };
+  }
+  // v44.00.41 — From-name spoof alarm
+  if (type === "from_spoof") {
+    return {
+      Icon: ShieldAlert,
+      iconCls: "text-fuchsia-400",
+      linkHref: "/panel/quarantine",
+      linkTitle: "Karantina",
+    };
+  }
   // Reseller-based threat (default)
   const rid = a?.reseller_id ? `?rid=${encodeURIComponent(a.reseller_id)}` : "";
   return {
@@ -229,6 +247,9 @@ export default function ThreatAlertBell() {
               </div>
             </div>
 
+            {/* v44.00.42 — Health Score Trend sparkline */}
+            <HealthTrendSparkline />
+
             {/* List */}
             <div className="flex-1 overflow-y-auto">
               {items.length === 0 ? (
@@ -333,3 +354,74 @@ export default function ThreatAlertBell() {
     </div>
   );
 }
+
+// v44.00.42 — Health Score Trend Sparkline (bell popup içi)
+function HealthTrendSparkline() {
+  const q = useQuery({
+    queryKey: ["health-trend-30d"],
+    queryFn: () => api.aiSystemAnalysisHistory(LICKEY(), 30),
+    refetchInterval: 5 * 60 * 1000,
+    staleTime: 60000,
+  });
+  const items = (q.data?.items || [])
+    .filter(x => typeof x.health_score === "number")
+    .slice()
+    .reverse(); // eskiden yeniye
+  if (items.length < 2) {
+    return null;
+  }
+  const w = 340, h = 58, pad = 6;
+  const scores = items.map(x => x.health_score);
+  const latest = scores[scores.length - 1];
+  const prev = scores[scores.length - 2];
+  const delta = latest - prev;
+  const min = Math.min(...scores, 0);
+  const max = Math.max(...scores, 100);
+  const range = max - min || 1;
+  const points = scores.map((s, i) => {
+    const x = pad + (i / (scores.length - 1)) * (w - 2 * pad);
+    const y = h - pad - ((s - min) / range) * (h - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const areaPath = `M ${pad},${h - pad} L ${points.replace(/,/g, " ").split(" ").join(",").replace(/,\s/g, " L ")} L ${w - pad},${h - pad} Z`;
+  const stroke = latest >= 80 ? "#10b981" : latest >= 60 ? "#f59e0b" : "#f43f5e";
+  return (
+    <div className="px-3 py-2 border-b border-slate-800 bg-slate-950/60" data-testid="bell-health-trend">
+      <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+        <span className="uppercase tracking-widest">🤖 AI Sağlık Skoru — Son {items.length} Gün</span>
+        <span className="mono">
+          <span className={latest >= 80 ? "text-emerald-300" : latest >= 60 ? "text-amber-300" : "text-rose-300"}>{latest}</span>
+          <span className="text-slate-600">/100</span>
+          {delta !== 0 && (
+            <span className={`ml-1.5 ${delta > 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {delta > 0 ? "▲" : "▼"} {Math.abs(delta).toFixed(0)}
+            </span>
+          )}
+        </span>
+      </div>
+      <svg width={w} height={h} className="block">
+        <defs>
+          <linearGradient id="grad-hs" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity="0.35" />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {/* 50 ve 80 thresholds */}
+        <line x1={pad} y1={h - pad - ((80 - min) / range) * (h - 2 * pad)} x2={w - pad}
+              y2={h - pad - ((80 - min) / range) * (h - 2 * pad)}
+              stroke="#334155" strokeDasharray="2,3" strokeWidth="0.5" />
+        <line x1={pad} y1={h - pad - ((50 - min) / range) * (h - 2 * pad)} x2={w - pad}
+              y2={h - pad - ((50 - min) / range) * (h - 2 * pad)}
+              stroke="#7f1d1d" strokeDasharray="2,3" strokeWidth="0.5" />
+        <polyline points={points} fill="url(#grad-hs)" stroke="none" />
+        <polyline points={points} fill="none" stroke={stroke} strokeWidth="1.5" />
+        {/* Last dot */}
+        {scores.length > 0 && (() => {
+          const [lx, ly] = points.split(" ").pop().split(",");
+          return <circle cx={lx} cy={ly} r="2.5" fill={stroke} />;
+        })()}
+      </svg>
+    </div>
+  );
+}
+

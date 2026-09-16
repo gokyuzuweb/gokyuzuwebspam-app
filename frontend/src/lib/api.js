@@ -828,6 +828,11 @@ export const api = {
   mpSeed: () => client.post("/marketplace/seed-demo").then(r => r.data),
   // v43.38 — Master alerts (Threat Intel sync fails vs.)
   masterAlerts: (opts = {}) => client.get("/master/alerts", { params: opts }).then(r => r.data),
+  // v44.00.42 — AI Health Score History (trend chart için)
+  aiSystemAnalysisHistory: (licenseKey, limit = 30) =>
+    client.get("/ai/system-analysis/history", {
+      params: { license_key: licenseKey, limit }
+    }).then(r => r.data),
   // v43.30 — User detay + bulk import + dashboard top domains
   userDetail: (username) => client.get(`/users/${username}/detail`).then(r => r.data),
   usersBulkImport: (payload) => client.post("/users/bulk-import", payload).then(r => r.data),
@@ -855,6 +860,11 @@ export const api = {
   // v44.00.41 — Toplu DMARC setup (tüm hosted domain'ler için DNS kayıtları)
   tiDmarcSetupBulk: (licenseKey) =>
     client.get("/threat-intel/dmarc/setup-bulk", { params: { license_key: licenseKey } }).then(r => r.data),
+  // v44.00.42 — DMARC uygulanma doğrulaması
+  tiDmarcVerifyStatus: (licenseKey) =>
+    client.get("/threat-intel/dmarc/domain-verify-status", { params: { license_key: licenseKey } }).then(r => r.data),
+  tiDmarcVerifyRun: (licenseKey) =>
+    client.post("/threat-intel/dmarc/domain-verify-run", null, { params: { license_key: licenseKey } }).then(r => r.data),
   tiCompliance: () => client.get("/threat-intel/compliance").then(r => r.data),
   tiTodayStats: () => client.get("/threat-intel/ioc/today-stats").then(r => r.data),
   tiComplianceToggle: (payload) => client.post("/threat-intel/compliance/toggle", payload).then(r => r.data),

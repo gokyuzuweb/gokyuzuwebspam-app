@@ -14,6 +14,57 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 31, v44.00.42) — DMARC Verify + Health Trend + Marketplace SA Rules ✅
+
+### Yapılanlar
+
+**1. 🔍 DMARC Uygulanma Doğrulaması (backend cron + UI badges)**
+- `_verify_domain_dns(domain)` helper: SPF/DMARC/DKIM live DNS lookup (4sn timeout, dnspython)
+- `GET /api/threat-intel/dmarc/domain-verify-status` — cache okuma
+- `POST /api/threat-intel/dmarc/domain-verify-run` — senkron manuel kontrol (max 50 domain)
+- Cron: `_dmarc_verify_task()` her 6 saatte bir tüm license'lerin hosted domain'lerini tarar, `db.dmarc_verify_status`'a upsert
+- UI: `BulkDmarcSetupButton` modal içine "🔍 Canlı DNS Kontrolü Yap" butonu + per-domain accordion header'da **SPF/DMARC/DKIM ✓/✗ badge**'leri
+- **Canlı test**: 7 domain kontrol edildi → `gokyuzu.net SPF=✓ DMARC=✓ DKIM=✗`, `mail-server.net SPF=✗ DMARC=✗ DKIM=✗` (gerçek DNS verileri!)
+
+**2. 📈 Health Score Trend Sparkline (alarm bell popup)**
+- `ThreatAlertBell.js` içine `HealthTrendSparkline` bileşeni eklendi
+- Son 30 gün AI health score API'den çekilir, inline SVG line chart olarak çizilir (grid + threshold çizgileri 50/80)
+- Renk skoruna göre: `>=80 emerald`, `>=60 amber`, `<60 rose`
+- Delta rozeti: son 2 skor arası `▲/▼` işareti
+- `alertMeta()` fonksiyonu `ai_daily_report` ve `from_spoof` tiplerine icon+link ekledi (bell popup görselleştirmesi tam)
+- **Canlı doğrulama**: Bell açılınca "AI SAĞLIK SKORU — SON 4 GÜN: 62/100" görünüyor, altında FROM SPOOF alarmları listelenmiş
+
+**3. 🛒 Marketplace SA Custom Rules (bayi paylaşımı)**
+- `routes/marketplace.py` içine 4 yeni endpoint:
+  - `POST /marketplace/sa-rules/publish` — bayi kendi rule'ünü yayınla (pending status)
+  - `GET /marketplace/sa-rules` — onaylı kuralları listele (upvotes DESC)
+  - `POST /marketplace/sa-rules/{id}/install` — bayi kendi mailscanner_config'ine ekle + installs counter++
+  - `POST /marketplace/sa-rules/{id}/upvote` — duplicate vote engelli
+  - `POST /marketplace/sa-rules/{id}/moderate?approve=true|false` — master onay/red
+- Yeni koleksiyonlar: `marketplace_sa_rules`, `marketplace_sa_rule_votes`
+- Model `SaSnippetPublish`: name (RULE_NAME), snippet (.cf içeriği), description, score, category
+
+**4. 📤 Save to Github (kullanıcı aksiyonu)**
+- Ben yapamam — kullanıcının sohbet giriş alanının yanındaki **"Save to Github"** butonuna basması gerekiyor
+- Prod deployment sonrası panel.gokyuzuhosting.com güncellenir, bayilere heartbeat üzerinden dağıtılır
+
+### 📊 Regression
+Backend hepsi curl ile canlı test edildi:
+- DMARC verify: 7 domain gerçek DNS sonuçları
+- Marketplace SA rules: 0 item (henüz publish yok, endpoint 200)
+- AI history: 5 raporlu, trend chart hazır
+- Frontend screenshot: bell + trend chart + FROM_SPOOF alarmları görünür
+
+### 📁 Değişen Dosyalar
+- `/app/backend/routes/threat_intel.py` — `_verify_domain_dns` + 2 endpoint
+- `/app/backend/server.py` — `_dmarc_verify_task` cron (6h)
+- `/app/backend/routes/marketplace.py` — 4 SA rules endpoint + `Request` import
+- `/app/frontend/src/lib/api.js` — 3 yeni client method
+- `/app/frontend/src/pages/threat-intel/DmarcTab.js` — verify UI + badges
+- `/app/frontend/src/components/ThreatAlertBell.js` — `HealthTrendSparkline` + `alertMeta()` ai_daily_report/from_spoof
+
+
+
 ## Feb 15, 2026 (Session 30, v44.00.41) — 3 UX İyileştirme (Toplu DMARC + AI Alarm + Spoof Test) ✅
 
 ### Yapılanlar

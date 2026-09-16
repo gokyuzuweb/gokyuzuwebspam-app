@@ -142,11 +142,28 @@ export function DmarcTab() {
 // v44.00.41 — Toplu DMARC setup modal (tüm hosted domain'ler için DNS kayıtları)
 function BulkDmarcSetupButton({ licenseKey }) {
   const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["dmarc-setup-bulk", licenseKey],
     queryFn: () => api.tiDmarcSetupBulk(licenseKey),
     enabled: open && !!licenseKey,
   });
+  // v44.00.42 — Verify status (badge kaynağı)
+  const vq = useQuery({
+    queryKey: ["dmarc-verify-status", licenseKey],
+    queryFn: () => api.tiDmarcVerifyStatus(licenseKey),
+    enabled: open && !!licenseKey,
+  });
+  const verifyMut = useMutation({
+    mutationFn: () => api.tiDmarcVerifyRun(licenseKey),
+    onSuccess: (d) => {
+      toast.success(`${d.count} domain kontrol edildi`);
+      qc.invalidateQueries({ queryKey: ["dmarc-verify-status", licenseKey] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  const statusByDomain = {};
+  (vq.data?.items || []).forEach(it => { statusByDomain[it.domain] = it; });
   const copy = async (txt, label) => {
     try {
       await navigator.clipboard.writeText(txt);
@@ -191,6 +208,30 @@ function BulkDmarcSetupButton({ licenseKey }) {
           )}
           {items.length > 0 && (
             <>
+              {/* v44.00.42 — Verify butonu + toplu durum */}
+              <div className="rounded-lg border border-fuchsia-500/40 bg-fuchsia-500/5 p-3 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => verifyMut.mutate()}
+                  disabled={verifyMut.isPending}
+                  data-testid="dmarc-verify-run"
+                  className="text-xs px-3 py-1.5 rounded bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-500/30 disabled:opacity-50 inline-flex items-center gap-1"
+                >
+                  {verifyMut.isPending ? "Kontrol ediliyor…" : "🔍 Canlı DNS Kontrolü Yap"}
+                </button>
+                <div className="text-[11px] text-slate-400 flex-1">
+                  DNS'te SPF/DMARC/DKIM kayıtlarının uygulandığını doğrular (max 20-30 sn).
+                </div>
+                {vq.data?.count > 0 && (() => {
+                  const oks = (vq.data.items || []).filter(x => x.spf_ok && x.dmarc_ok).length;
+                  return (
+                    <div className="text-[11px] mono">
+                      <span className="text-emerald-300">{oks}</span>
+                      <span className="text-slate-500"> / {vq.data.count} tam kurulu</span>
+                    </div>
+                  );
+                })()}
+              </div>
+
               {/* Tümünü kopyala (BIND format) */}
               <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3">
                 <div className="flex items-center justify-between mb-2">
@@ -206,11 +247,28 @@ function BulkDmarcSetupButton({ licenseKey }) {
 
               {/* Per-domain accordion */}
               <div className="space-y-2">
-                {items.map((it) => (
+                {items.map((it) => {
+                  const st = statusByDomain[it.domain];
+                  return (
                   <details key={it.domain} className="rounded border border-slate-800 bg-slate-950/40 group" data-testid={`dmarc-bulk-domain-${it.domain}`}>
-                    <summary className="cursor-pointer p-3 flex items-center gap-2 select-none">
+                    <summary className="cursor-pointer p-3 flex items-center gap-2 select-none flex-wrap">
                       <span className="mono text-sm text-slate-100 font-semibold">{it.domain}</span>
-                      <span className="text-[10px] text-slate-500 ml-auto">SPF · DMARC · DKIM</span>
+                      {st ? (
+                        <>
+                          <span data-testid={`badge-spf-${it.domain}`} className={`text-[10px] px-1.5 py-0.5 rounded mono ${st.spf_ok ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"}`}>
+                            SPF {st.spf_ok ? "✓" : "✗"}
+                          </span>
+                          <span data-testid={`badge-dmarc-${it.domain}`} className={`text-[10px] px-1.5 py-0.5 rounded mono ${st.dmarc_ok ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"}`}>
+                            DMARC {st.dmarc_ok ? (st.dmarc_policy || "✓") : "✗"}
+                          </span>
+                          <span data-testid={`badge-dkim-${it.domain}`} className={`text-[10px] px-1.5 py-0.5 rounded mono ${st.dkim_ok ? "bg-emerald-500/20 text-emerald-300" : "bg-slate-800 text-slate-500"}`}>
+                            DKIM {st.dkim_ok ? "✓" : "—"}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded mono bg-slate-800 text-slate-500">Kontrol edilmedi</span>
+                      )}
+                      <span className="text-[10px] text-slate-500 ml-auto">detay</span>
                     </summary>
                     <div className="p-3 pt-0 space-y-2">
                       <DnsRow label="SPF (TXT)" name={it.spf.name} value={it.spf.value} onCopy={() => copy(it.spf.value, `SPF (${it.domain})`)} />
@@ -220,7 +278,7 @@ function BulkDmarcSetupButton({ licenseKey }) {
                       </div>
                     </div>
                   </details>
-                ))}
+                );})}
               </div>
               <div className="text-[11px] text-amber-300/80 bg-amber-500/5 border border-amber-500/20 rounded p-2">
                 💡 {q.data?.note}
