@@ -323,6 +323,71 @@ _SA_PRESETS: dict[str, dict[str, float | None]] = {
 }
 
 
+# v44.00.41 — 1-tık Spoof Test simulasyonu (ingest edip sonucu doner)
+@router.post("/spoof-test/run")
+async def spoof_test_run(license_key: str = Query(..., min_length=8)):
+    """Panel'de "Spoof Testini Çalıştır" butonu için: bir fake spoof
+    event'i ingest pipeline'ından geçirir ve sonucu (adjusted_score,
+    verdict, yakalanan sa_rules, from_spoof) doner. Gerçek mail göndermez.
+
+    Kullanıcının "kural çalışıyor mu?" endişesini 1 tıkla çözer.
+    """
+    import uuid as _uuid
+    from datetime import datetime as _dt, timezone as _tz
+    subj = f"__SPOOF_TEST_{_uuid.uuid4().hex[:6]}"
+    fake_headers = (
+        "Return-Path: <saldirgan@evil.com>\n"
+        "Received: from mail.evil.com ([203.0.113.99]) by ns1.local\n"
+        "From: sirketiniz.com <saldirgan@evil.com>\n"
+        f"To: user@sirketiniz.com\nSubject: {subj}\n"
+        "X-Spam-Status: No, score=3.6 tests=BAYES_50\n"
+        "X-Spam-Report:\n"
+        " *  0.8 BAYES_50 Bayes classifier says spam probability 40-60%\n"
+    )
+    body = {
+        "license_key": license_key,
+        "server_hostname": "spoof-test.local",
+        "exim_mid": f"1t{_uuid.uuid4().hex[:10]}-000001",
+        "from_addr": "saldirgan@evil.com",
+        "to_addr": "user@sirketiniz.com",
+        "subject": subj,
+        "verdict": "clean",
+        "total_score": 3.6,
+        "scores": {"spamassassin": 3.6},
+        "headers_full": fake_headers,
+        "ts": _dt.now(_tz.utc).isoformat(),
+    }
+    # Doğrudan ingest fonksiyonunu çağırmak zor (Request objesi lazım) — HTTP hop
+    import httpx
+    port = os.environ.get("PORT", "8001")
+    async with httpx.AsyncClient(timeout=15.0) as cli:
+        r = await cli.post(f"http://127.0.0.1:{port}/api/events/ingest", json=body)
+    if r.status_code not in (200, 201):
+        raise HTTPException(500, f"Ingest baştaki hata: {r.status_code} {r.text[:200]}")
+    # DB'den oku (result event'i)
+    doc = await db.mail_events.find_one({"subject": subj}, {"_id": 0}) or {}
+    # Test event'ini işaretle
+    await db.mail_events.update_one(
+        {"subject": subj},
+        {"$set": {"is_synthetic_test": True}},
+    )
+    return {
+        "ok": True,
+        "subject": subj,
+        "score_before": 3.6,
+        "score_after": doc.get("total_score"),
+        "verdict": doc.get("verdict"),
+        "from_spoof": doc.get("from_spoof"),
+        "sa_rules": doc.get("sa_rules") or [],
+        "passed": (doc.get("verdict") in ("spam", "high_spam")) and bool(doc.get("from_spoof")),
+        "message": (
+            "✅ Kural çalışıyor — spoof paterni yakalandı"
+            if doc.get("from_spoof")
+            else "⚠️ Kural tetiklenmedi — regex kontrolü gerekli"
+        ),
+    }
+
+
 class SAOverridesUpdate(BaseModel):
     license_key: str = Field(..., min_length=8)
     # {RULE_NAME: float | null}. null = kural devre disi (0 puan).

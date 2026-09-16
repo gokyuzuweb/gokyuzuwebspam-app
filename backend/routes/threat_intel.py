@@ -379,17 +379,21 @@ async def dmarc_summary(days: int = Query(30, ge=1, le=180),
         })
     # v44.00.29 — Sunucuda olan ama DMARC raporu OLMAYAN domain'leri de ekle
     # (kullanıcıya "Bu domain'in DMARC'ı yok" uyarısı için)
+    # v44.00.41 — Slice'i 20 → 100'e çıkardık ve TOPLAM sayıyı ayrı döndürüyoruz.
     domains_with_reports = {d["domain"] for d in domains}
     missing = []
     if hosted_domains is not None:
         for d in hosted_domains:
             if d not in domains_with_reports:
                 missing.append(d)
+    missing_sorted = sorted(missing)
     return {
         "days": days, "domains": domains, "count": len(domains),
         "hosted_count": len(hosted_domains) if hosted_domains is not None else None,
         "hosted_source": hosted_source,
-        "hosted_without_reports": sorted(missing)[:20],
+        "hosted_without_reports": missing_sorted[:100],           # UI listeler
+        "hosted_without_reports_total": len(missing_sorted),      # Gerçek toplam
+        "hosted_without_reports_truncated": len(missing_sorted) > 100,
         "filtered": license_key is not None and only_hosted,
     }
 

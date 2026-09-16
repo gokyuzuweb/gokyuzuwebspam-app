@@ -722,6 +722,36 @@ if [[ $DRY_RUN -eq 0 ]]; then
   /scripts/restartsrv_cpsrvd
 fi
 
+# v44.00.41 — Retroaktif Inbox Purge daemon (doveadm expunge)
+echo "==> [SA] Inbox Purge daemon kuruluyor (v44.00.41)"
+if [[ -f "$SRC/scripts/mailshield-inbox-purge.pl" ]]; then
+  run "install -m 0755 '$SRC/scripts/mailshield-inbox-purge.pl' /usr/local/bin/mailshield-inbox-purge.pl"
+  cat > /etc/systemd/system/mailshield-inbox-purge.service <<'IPSVC'
+[Unit]
+Description=GokyuzuWebSpam — Retroaktif Inbox Purge (doveadm expunge)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mailshield-inbox-purge.pl
+StandardOutput=journal
+StandardError=journal
+IPSVC
+  cat > /etc/systemd/system/mailshield-inbox-purge.timer <<'IPTMR'
+[Unit]
+Description=Inbox Purge her 2 dakikada bir
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=mailshield-inbox-purge.service
+[Install]
+WantedBy=timers.target
+IPTMR
+  if [[ $DRY_RUN -eq 0 ]]; then
+    systemctl daemon-reload
+    systemctl enable --now mailshield-inbox-purge.timer 2>/dev/null && \
+      echo "    ✓ mailshield-inbox-purge.timer aktif (2dk'da bir)"
+  fi
+fi
+
 cat <<EOF
 
 ============================================================

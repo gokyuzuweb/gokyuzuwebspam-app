@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -99,11 +99,53 @@ function AiAnalyzeCard() {
   const [report, setReport] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [ts, setTs] = useState(null);
+  const [durationMs, setDurationMs] = useState(null);
+  const [error, setError] = useState(null);
+  const [progressPct, setProgressPct] = useState(0);
+  const startRef = useRef(null);
+
   const run = useMutation({
     mutationFn: () => api.msAiAnalyze(LICKEY()),
-    onSuccess: (d) => { setReport(d.report); setMetrics(d.metrics); setTs(d.generated_at); toast.success("Yapay zeka raporu hazır"); },
-    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+    onMutate: () => {
+      setError(null);
+      setReport(null);
+      setMetrics(null);
+      setTs(null);
+      setDurationMs(null);
+      setProgressPct(5);
+      startRef.current = Date.now();
+      toast.info("🤖 Claude motoru MailScanner metriklerini okuyor…", { id: "ai-analyze" });
+    },
+    onSuccess: (d) => {
+      const dur = Date.now() - (startRef.current || Date.now());
+      setReport(d.report);
+      setMetrics(d.metrics);
+      setTs(d.generated_at);
+      setDurationMs(dur);
+      setProgressPct(100);
+      toast.success(`✅ Rapor hazır (${(dur / 1000).toFixed(1)}sn)`, { id: "ai-analyze" });
+    },
+    onError: (e) => {
+      setError(e?.response?.data?.detail || e.message || "Bilinmeyen hata");
+      setProgressPct(0);
+      toast.error("❌ Analiz başarısız — detay için karta bakın", { id: "ai-analyze" });
+    },
   });
+
+  // Yapay progress bar (Claude 8-15sn arası — kullanıcı beklerken canlı olsun)
+  useEffect(() => {
+    if (!run.isPending) return;
+    const interval = setInterval(() => {
+      setProgressPct((p) => {
+        if (p < 92) return p + Math.max(1, Math.round((92 - p) / 15));
+        return p;
+      });
+    }, 400);
+    return () => clearInterval(interval);
+  }, [run.isPending]);
+
+  const wordCount = report ? report.trim().split(/\s+/).length : 0;
+
   return (
     <Card data-testid="ai-analyze-card">
       <CardHeader
@@ -111,13 +153,57 @@ function AiAnalyzeCard() {
         subtitle="Claude motoru MailScanner konfigürasyonunu ve son 24s metriklerini okur, aksiyon önerisi çıkarır"
         right={
           <button data-testid="ai-analyze-btn" onClick={() => run.mutate()} disabled={run.isPending}
-                  className="text-xs px-3 py-1.5 rounded-md bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-500/30 disabled:opacity-40">
-            <Sparkles className="w-3 h-3 inline mr-1"/>{run.isPending ? "Analiz ediliyor…" : "Sistemi Analiz Et"}
+                  className="text-xs px-3 py-1.5 rounded-md bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-500/30 disabled:opacity-40 inline-flex items-center gap-2">
+            {run.isPending ? (
+              <>
+                <span className="inline-block w-3 h-3 border-2 border-fuchsia-400 border-t-transparent rounded-full animate-spin"/>
+                Analiz ediliyor… %{progressPct}
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3 h-3"/>{report ? "Yeniden Analiz Et" : "Sistemi Analiz Et"}
+              </>
+            )}
           </button>
         }
       />
-      {(report || metrics) && (
+      {/* Progress bar canlı akış */}
+      {run.isPending && (
+        <div className="px-4 pb-3">
+          <div className="h-1.5 bg-slate-800 rounded overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-fuchsia-500 to-pink-500 transition-all duration-500 ease-out"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+          <div className="flex items-center justify-between mt-1.5 text-[10px] text-slate-500 mono">
+            <span>{progressPct < 30 ? "Motor durumu okunuyor..." : progressPct < 60 ? "Son 24 saat metrikleri işleniyor..." : progressPct < 90 ? "Claude Sonnet 4.6'ya soruluyor..." : "Rapor formatlanıyor..."}</span>
+            <span>~10-15 sn</span>
+          </div>
+        </div>
+      )}
+      {/* Hata durumu */}
+      {error && !run.isPending && (
         <CardBody className="pt-0">
+          <div className="bg-rose-500/10 border border-rose-500/40 rounded p-3 text-sm text-rose-200" data-testid="ai-analyze-error">
+            <div className="font-semibold mb-1">❌ Analiz Başarısız</div>
+            <div className="text-xs text-rose-300/90 mono break-all">{error}</div>
+            <div className="text-xs text-slate-400 mt-2">Sık nedenler: (1) Emergent LLM Key bakiyesi bitti (2) Backend'e ulaşılamıyor (3) Rate limit. Tekrar deneyin ya da 1-2 dk sonra yeniden çalıştırın.</div>
+          </div>
+        </CardBody>
+      )}
+      {(report || metrics) && !run.isPending && (
+        <CardBody className="pt-0">
+          {/* Başarılı özet çubuğu */}
+          {report && (
+            <div className="flex flex-wrap items-center gap-2 mb-3 p-2 rounded bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200" data-testid="ai-analyze-success">
+              <span className="font-semibold">✅ Rapor hazır</span>
+              {durationMs != null && <span className="text-slate-400">· {(durationMs / 1000).toFixed(1)}sn</span>}
+              <span className="text-slate-400">· {wordCount} kelime</span>
+              <span className="text-slate-400">· Claude Sonnet 4.6</span>
+              {ts && <span className="text-slate-500 mono ml-auto">Üretildi: {new Date(ts).toLocaleString("tr-TR")}</span>}
+            </div>
+          )}
           {metrics && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
               <MetricPill label="Son 24s Spam" v={metrics.spam_24h} tone="text-amber-300"/>
@@ -127,11 +213,10 @@ function AiAnalyzeCard() {
             </div>
           )}
           {report && (
-            <div className="bg-slate-950 border border-slate-800 rounded p-3 text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
+            <div className="bg-slate-950 border border-slate-800 rounded p-3 text-sm text-slate-200 whitespace-pre-wrap leading-relaxed" data-testid="ai-analyze-report">
               {report}
             </div>
           )}
-          {ts && <div className="text-[10px] mono text-slate-500 mt-2">Üretildi: {ts}</div>}
         </CardBody>
       )}
     </Card>

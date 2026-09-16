@@ -8262,6 +8262,11 @@ class UnifiedListEntryIn(BaseModel):
     entry_type: str  # ip | domain | email
     value: str
     note: Optional[str] = ""
+    # v44.00.41 — Retroaktif Inbox Purge
+    # True ise, blacklist eklendiginde `doveadm expunge` icin pending action olusturur.
+    # Sadece kind=blacklist icin anlamli.
+    purge_from_inbox: Optional[bool] = False
+    purge_days: Optional[int] = 30  # Son N gunde teslim edilmis mailleri temizle
 
 
 @api.post("/lists-manager/add")
@@ -8319,7 +8324,45 @@ async def lists_unified_add(payload: UnifiedListEntryIn, request: Request,
         "kind": kind, "entry_type": et, "value": val, "note": note,
         "actor": "master", "ts": now,
     })
-    return {"ok": True, "kind": kind, "entry_type": et, "value": val, "added": not existing}
+    # v44.00.41 — Retroaktif Inbox Purge (blacklist only)
+    purge_queued = 0
+    if kind == "blacklist" and payload.purge_from_inbox:
+        # Etkilenen license'lari bul: son N gunde bu senderdan mail alan tenant'lar
+        since = (datetime.now(timezone.utc) - timedelta(days=int(payload.purge_days or 30))).isoformat()
+        match: dict = {"ts": {"$gte": since}, "direction": "in"}
+        if et == "email":
+            match["from_addr"] = {"$regex": f"^{re.escape(val)}$", "$options": "i"}
+        elif et == "domain":
+            match["from_addr"] = {"$regex": f"@{re.escape(val)}$", "$options": "i"}
+        elif et == "ip":
+            match["$or"] = [{"sender_ip": val}, {"client_ip": val}]
+        # Distinct license_key'ler icin action olustur
+        licenses = await db.mail_events.distinct("license_key", match)
+        for lk in licenses:
+            if not lk:
+                continue
+            action_id = str(_uuid.uuid4())
+            await db.pending_quarantine_actions.insert_one({
+                "id": action_id,
+                "license_key": lk,
+                "action": "inbox_purge",
+                "match": {
+                    "entry_type": et,
+                    "value": val,
+                    "since_days": int(payload.purge_days or 30),
+                },
+                "reason": f"blacklist_add:{et}:{val}",
+                "created_at": now,
+                "completed_at": None,
+                "result": None,
+                "message": None,
+            })
+            purge_queued += 1
+    return {
+        "ok": True, "kind": kind, "entry_type": et, "value": val,
+        "added": not existing,
+        "purge_queued_licenses": purge_queued,
+    }
 
 
 class UnifiedListDeleteIn(BaseModel):

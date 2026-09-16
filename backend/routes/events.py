@@ -672,6 +672,30 @@ async def ingest_event(evt: MailEvent, request: Request):
                     doc["verdict"] = "high_spam"
                 elif new_total >= 5:
                     doc["verdict"] = "spam"
+            # v44.00.41 — Master Alert push (idempotent, saatlik dedupe)
+            try:
+                hour_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+                dk = f"from_spoof:{evt.license_key}:{spoof['kind']}:{hour_bucket}"
+                exists = await db.master_alerts.find_one({"dedupe_key": dk}, {"_id": 1})
+                if not exists:
+                    await db.master_alerts.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "type": "from_spoof",
+                        "severity": "warning" if extra < 6 else "danger",
+                        "license_key": evt.license_key,
+                        "kind": spoof["kind"],
+                        "score_added": extra,
+                        "reason": spoof.get("reason"),
+                        "evidence": spoof.get("evidence"),
+                        "sample_from": doc.get("from_addr"),
+                        "sample_to": doc.get("to_addr"),
+                        "sample_subject": doc.get("subject"),
+                        "dedupe_key": dk,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "seen": False,
+                    })
+            except Exception:
+                pass
     except Exception as _sp_ex:
         log.warning("from-spoof detect skip: %s", _sp_ex)
     # ---------------------------------------------------------------------
