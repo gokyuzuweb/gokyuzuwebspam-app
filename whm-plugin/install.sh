@@ -308,6 +308,37 @@ fi
 if [[ ! -f "$ETC_DIR/policy.json" ]]; then
   run "cp '$SRC/config/policy.default.json' '$ETC_DIR/policy.json'"
 fi
+
+# v44.00.40 — Custom SpamAssassin rules (From-name spoof + phishing patterns)
+# Bu dosya `/etc/mail/spamassassin/` altina kopyalanir → spamd otomatik okur.
+# Idempotent: her install'da yeniden yazilir (guncellemeleri almak icin).
+SA_RULES_TARGET="/etc/mail/spamassassin/GokyuzuWebSpam.cf"
+if [[ -f "$SRC/config/GokyuzuWebSpam.cf" ]]; then
+  echo "==> [SA] Custom SpamAssassin kural dosyasi yerlestiriliyor"
+  run "install -m 0644 '$SRC/config/GokyuzuWebSpam.cf' '$SA_RULES_TARGET'"
+  # Syntax check + spamd restart (cPanel path)
+  SA_BIN=""
+  if [[ -x /usr/local/cpanel/3rdparty/bin/spamassassin ]]; then
+    SA_BIN=/usr/local/cpanel/3rdparty/bin/spamassassin
+  elif command -v spamassassin >/dev/null 2>&1; then
+    SA_BIN=$(command -v spamassassin)
+  fi
+  if [[ -n "$SA_BIN" && $DRY_RUN -eq 0 ]]; then
+    if "$SA_BIN" --lint 2>/dev/null; then
+      echo "    ✓ SA lint OK ($SA_RULES_TARGET)"
+    else
+      echo "    ⚠ SA lint uyarısı — kurallar yine de yüklenir ama detay için:" >&2
+      "$SA_BIN" --lint 2>&1 | tail -5 >&2 || true
+    fi
+  fi
+  # cPanel spamd restart (varsa)
+  if [[ -x /usr/local/cpanel/scripts/restartsrv_spamd && $DRY_RUN -eq 0 ]]; then
+    /usr/local/cpanel/scripts/restartsrv_spamd >/dev/null 2>&1 && \
+      echo "    ✓ cPanel spamd yeniden başlatıldı" || \
+      echo "    ⚠ cPanel spamd restart başarısız — manuel: /usr/local/cpanel/scripts/restartsrv_spamd"
+  fi
+fi
+
 # v44.00.01 — Plugin sürümünü kaydet (heartbeat.pl bu dosyayı okur)
 PLUGIN_VER="$(cat "$SRC/VERSION" 2>/dev/null || echo '44.00.01')"
 PLUGIN_VER="${PLUGIN_VER#v}"
