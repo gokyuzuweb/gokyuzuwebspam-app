@@ -926,11 +926,11 @@ function Pricing() {
                     <div className="text-lg font-bold text-slate-100 mb-1">{p.name}</div>
                     <div className="text-xs text-slate-500 uppercase tracking-widest mono mb-5">{p.code}</div>
                     <div className="flex items-baseline gap-1 mb-2">
-                      <span className="text-4xl font-bold text-slate-100 mono">${p.monthly}</span>
+                      <span className="text-4xl font-bold text-slate-100 mono">${p.monthly_price ?? p.monthly ?? 0}</span>
                       <span className="text-slate-500 text-sm">{s.per_month}</span>
                     </div>
                     <div className="text-xs text-slate-500 mb-6">
-                      ${p.yearly} <span className="text-slate-600">{s.per_year}</span>
+                      ${p.yearly_price ?? p.yearly ?? 0} <span className="text-slate-600">{s.per_year}</span>
                       <span className="ml-1.5 text-emerald-400 mono">({s.yearly_save})</span>
                     </div>
                     <ul className="space-y-2 text-sm text-slate-300 mb-6 flex-1">

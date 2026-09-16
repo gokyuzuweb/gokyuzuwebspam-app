@@ -13,6 +13,36 @@ import {
 
 const MODULES = [
   {
+    id: "from-spoof",
+    title: "🎭 Kimlik Taklidi Koruması",
+    subtitle: "v44.00.40 · From-name spoof",
+    icon: ShieldCheck,
+    color: "cyan",
+    highlights: [
+      "`sirketiniz.com <hacker@evil.com>` paterni auto +7.5 puan",
+      "Pre-delivery blok (custom SA rule .cf)",
+      "Panel + mail sunucusu iki katmanlı koruma",
+      "Türk kurumsal MTA'lar için preset",
+      "Retroaktif whitelist backfill",
+    ],
+    testid: "landing-mod-from-spoof",
+  },
+  {
+    id: "sa-overrides",
+    title: "SpamAssassin Skor Ayarı",
+    subtitle: "v44.00.39 · Rule tuning",
+    icon: Filter,
+    color: "indigo",
+    highlights: [
+      "Kural bazında skor override (per-license)",
+      "Türk Kurumsal Preset (MISSING_MID vb.)",
+      "7 gün hit istatistiği + quick-add",
+      "Custom SA rule .cf dosyası indir",
+      "Rescore + retroaktif uygulama",
+    ],
+    testid: "landing-mod-sa-overrides",
+  },
+  {
     id: "quarantine",
     title: "Karantina Yönetimi",
     subtitle: "Gelen / Giden ayrımlı",
