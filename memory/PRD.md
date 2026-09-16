@@ -14,6 +14,42 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 15, 2026 (Session 30, v44.00.41) — 3 UX İyileştirme (Toplu DMARC + AI Alarm + Spoof Test) ✅
+
+### Yapılanlar
+
+**1. 🧪 1-Tık Spoof Testi (SA Skor Ayarı sekmesi)**
+- Yeni endpoint: `POST /api/mailscanner/spoof-test/run` — fake spoof event üretip ingest pipeline'ından geçirir, sonucu döner.
+- Frontend `SpoofTestButton` bileşeni SA Overrides tab'ında "GokyuzuWebSpam.cf İndir" butonunun yanına eklendi.
+- Sonuç kartı: 3 metrik (Önce / Sonra / Verdict) + tetiklenen SA kuralları listesi (GWS_ kuralları emerald renkte vurgulanmış) + spoof reason mesajı.
+- **Canlı doğrulama**: `passed=True score_after=9.1 verdict=spam` — panel içinde direkt görsel geri bildirim.
+
+**2. 🔔 AI Sistem Analizi → Master Alarm Bell**
+- `routes/ai_analysis.py` günlük cron içine `master_alerts.insert_one({type: "ai_daily_report", severity: ...})` bloku eklendi.
+- Severity mantığı: skor <60 danger, <80 warning, drop ≥15 danger.
+- Idempotent `dedupe_key: ai_daily:{YYYY-MM-DD}` — aynı gün ikinci alarm oluşmaz.
+- Mevcut ThreatAlertBell UI otomatik olarak yeni alarm tipini göstermeye başlar.
+
+**3. 🎯 Toplu DMARC Setup Modal**
+- Yeni endpoint: `GET /api/threat-intel/dmarc/setup-bulk?license_key=` — hosted domain'lerin hepsi için SPF/DMARC TXT kayıtları + BIND zone snippet tek çağrıda.
+- Frontend `BulkDmarcSetupButton` bileşeni DmarcTab header'ına eklendi. Modal içinde:
+  - "TÜMÜNÜ KOPYALA (BIND Zone Format)" tek tık pano.
+  - Her domain için accordion: SPF (kopya) · DMARC (kopya) · DKIM talimatı · mxtoolbox test linki.
+- **Test**: `/setup-bulk` → 7 domain, ilk domain: `gokyuzu.net` doğru.
+
+### 📊 Regression
+19 backend test PASS izole çalışma modunda. Paralel modda 1 flake (`test_whitelist_domain_matches`, pytest-xdist yarışı, bu turdaki kodla ilgisiz). Frontend spoof test butonu canlı ekran görüntüsü ile doğrulandı.
+
+### 📁 Değişen Dosyalar
+- `/app/backend/routes/mailscanner.py` — `/spoof-test/run` endpoint
+- `/app/backend/routes/ai_analysis.py` — master_alerts pin block
+- `/app/backend/routes/threat_intel.py` — `/dmarc/setup-bulk` endpoint
+- `/app/frontend/src/lib/api.js` — `msSpoofTest`, `tiDmarcSetupBulk` client methodları
+- `/app/frontend/src/pages/MailScanner.js` — `SpoofTestButton` bileşeni
+- `/app/frontend/src/pages/threat-intel/DmarcTab.js` — `BulkDmarcSetupButton` + `DnsRow` bileşenleri
+
+
+
 ## Feb 15, 2026 (Session 29, v44.00.40 Publish) — Home Banner + Landing Strip + install.sh Auto .cf Push ✅
 
 ### 🎯 Kapsam

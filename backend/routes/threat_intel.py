@@ -640,6 +640,47 @@ async def dmarc_setup_wizard(domain: str, request: Request, license_key: str | N
     }
 
 
+# v44.00.41 — Toplu DMARC Setup: license'in tüm hosted domain'leri için DNS
+# kayıtlarını tek çağrıda döner (kopyala-yapıştır listesi).
+@router.get("/dmarc/setup-bulk")
+async def dmarc_setup_bulk(request: Request, license_key: str = Query(..., min_length=8)):
+    await _require_master(request, license_key)
+    pushed = await db.hosted_domains.find_one(
+        {"license_key": license_key}, {"_id": 0, "domains": 1}
+    ) or {}
+    domains = pushed.get("domains") or []
+    items = []
+    for dom in sorted(set([d.lower().strip().rstrip(".") for d in domains if d])):
+        rua = f"dmarc@{dom}"
+        items.append({
+            "domain": dom,
+            "spf": {"name": dom, "type": "TXT", "value": "v=spf1 mx a ~all"},
+            "dmarc": {
+                "name": f"_dmarc.{dom}", "type": "TXT",
+                "value": f"v=DMARC1; p=quarantine; rua=mailto:{rua}; pct=100; adkim=r; aspf=r",
+            },
+            "rua_email": rua,
+            "mxtoolbox_test": f"https://mxtoolbox.com/SuperTool.aspx?action=dmarc%3a{dom}",
+        })
+    # BIND zone snippet (tüm domain'ler için tek blok)
+    bind_snippet = "\n".join(
+        f"; --- {it['domain']} ---\n"
+        f"{it['domain']}.        IN TXT \"{it['spf']['value']}\"\n"
+        f"_dmarc.{it['domain']}. IN TXT \"{it['dmarc']['value']}\""
+        for it in items
+    )
+    return {
+        "count": len(items),
+        "items": items,
+        "bind_snippet": bind_snippet,
+        "note": (
+            "cPanel/WHM → Zone Editor → her domain için 2 TXT kayıt: SPF (@) + DMARC (_dmarc). "
+            "DKIM cPanel'in Email Deliverability → Repair butonuyla otomatik gelir."
+        ),
+    }
+
+
+
 # v44.00.31 — Hosted Domain push (cPanel'den kesin liste)
 class HostedDomainsIn(BaseModel):
     license_key: str

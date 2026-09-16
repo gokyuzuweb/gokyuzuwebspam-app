@@ -655,6 +655,10 @@ export const api = {
   msSaOverridesPreset: (licenseKey, preset, merge = false) =>
     client.post(`/mailscanner/sa-overrides/preset/${preset}`, null,
       { params: { license_key: licenseKey, merge } }).then(r => r.data),
+  // v44.00.41 — 1-tık spoof test
+  msSpoofTest: (licenseKey) =>
+    client.post(`/mailscanner/spoof-test/run`, null,
+      { params: { license_key: licenseKey } }).then(r => r.data),
 
   msPolicies: (licenseKey) =>
     client.get("/mailscanner/user-policy", { params: { license_key: licenseKey } }).then(r => r.data),
@@ -848,6 +852,9 @@ export const api = {
   tiAutoSyncSet: (cfg) => client.post("/threat-intel/auto-sync", cfg).then(r => r.data),
   tiAutoSyncRunNow: () => client.post("/threat-intel/auto-sync/run-now").then(r => r.data),
   tiDmarcSeedDemo: () => client.post("/threat-intel/dmarc/seed-demo").then(r => r.data),
+  // v44.00.41 — Toplu DMARC setup (tüm hosted domain'ler için DNS kayıtları)
+  tiDmarcSetupBulk: (licenseKey) =>
+    client.get("/threat-intel/dmarc/setup-bulk", { params: { license_key: licenseKey } }).then(r => r.data),
   tiCompliance: () => client.get("/threat-intel/compliance").then(r => r.data),
   tiTodayStats: () => client.get("/threat-intel/ioc/today-stats").then(r => r.data),
   tiComplianceToggle: (payload) => client.post("/threat-intel/compliance/toggle", payload).then(r => r.data),

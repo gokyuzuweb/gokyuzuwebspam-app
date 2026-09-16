@@ -699,6 +699,95 @@ function RulesTab() {
 }
 
 // v44.00.39 — SpamAssassin Rule Score Overrides Tab
+// v44.00.41 — 1-tık Spoof Test butonu + canlı sonuç
+function SpoofTestButton() {
+  const [result, setResult] = useState(null);
+  const run = useMutation({
+    mutationFn: () => api.msSpoofTest(LICKEY()),
+    onSuccess: (d) => {
+      setResult(d);
+      toast[d.passed ? "success" : "warning"](d.message);
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
+  });
+  return (
+    <>
+      <button
+        data-testid="sa-spoof-test-run"
+        onClick={() => run.mutate()}
+        disabled={run.isPending}
+        className="text-xs px-3 py-1.5 rounded-md bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-500/30 disabled:opacity-40 inline-flex items-center gap-1"
+      >
+        {run.isPending ? (
+          <>
+            <span className="inline-block w-3 h-3 border-2 border-fuchsia-400 border-t-transparent rounded-full animate-spin"/>
+            Test ediliyor…
+          </>
+        ) : (
+          <>🧪 1-Tık Spoof Testi</>
+        )}
+      </button>
+      {result && (
+        <div
+          data-testid="sa-spoof-test-result"
+          className={`w-full mt-2 rounded-md border p-3 text-xs ${
+            result.passed
+              ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-200"
+              : "bg-amber-500/10 border-amber-500/40 text-amber-200"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-semibold">{result.message}</span>
+            <button
+              onClick={() => setResult(null)}
+              className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-slate-800/60 text-slate-400 hover:bg-slate-800"
+            >Kapat ✕</button>
+          </div>
+          <div className="grid grid-cols-3 gap-2 mb-2">
+            <div className="p-2 rounded bg-slate-950/60">
+              <div className="text-[9px] uppercase tracking-widest text-slate-500">Önce</div>
+              <div className="text-lg mono text-slate-200">{result.score_before?.toFixed(1)}</div>
+            </div>
+            <div className="p-2 rounded bg-slate-950/60">
+              <div className="text-[9px] uppercase tracking-widest text-slate-500">Sonra</div>
+              <div className={`text-lg mono font-bold ${result.passed ? "text-emerald-300" : "text-amber-300"}`}>
+                {result.score_after?.toFixed(1)}
+              </div>
+            </div>
+            <div className="p-2 rounded bg-slate-950/60">
+              <div className="text-[9px] uppercase tracking-widest text-slate-500">Verdict</div>
+              <div className={`text-lg font-bold uppercase mono ${result.passed ? "text-emerald-300" : "text-amber-300"}`}>
+                {result.verdict}
+              </div>
+            </div>
+          </div>
+          {result.sa_rules?.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">Tetiklenen Kurallar</div>
+              <div className="space-y-1">
+                {result.sa_rules.map((r, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[11px] mono">
+                    <span className="text-slate-300 flex-1 truncate">{r.name}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${r.name?.startsWith("GWS_") ? "bg-emerald-500/20 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>
+                      +{r.final?.toFixed(1) ?? r.score?.toFixed(1)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {result.from_spoof && (
+            <div className="mt-2 text-[11px] text-slate-300 italic">
+              🎭 {result.from_spoof.reason}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+
 function SaOverridesTab() {
   const qc = useQueryClient();
   const q = useQuery({
@@ -802,6 +891,7 @@ function SaOverridesTab() {
             >
               <Download className="w-3 h-3 inline mr-1" />GokyuzuWebSpam.cf İndir
             </a>
+            <SpoofTestButton />
             <div className="text-[11px] text-slate-400 flex-1">
               Sunucuda: <span className="mono">/etc/mail/spamassassin/GokyuzuWebSpam.cf</span>
               &nbsp;→&nbsp;<span className="mono">systemctl restart spamassassin</span>

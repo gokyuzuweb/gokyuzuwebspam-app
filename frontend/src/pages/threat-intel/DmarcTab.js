@@ -39,6 +39,7 @@ export function DmarcTab() {
           : "Son 30 gün · Alıcı ISP'lerden gelen aggregate XML rapor özetleri"}
         right={
           <div className="flex items-center gap-2">
+            <BulkDmarcSetupButton licenseKey={lk()} />
             <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
               <input type="checkbox" checked={onlyHosted} onChange={e => setOnlyHosted(e.target.checked)}
                      data-testid="dmarc-only-hosted"
@@ -137,6 +138,115 @@ export function DmarcTab() {
 }
 
 // v44.00.30 — DMARC Dashboard KPI'ları
+
+// v44.00.41 — Toplu DMARC setup modal (tüm hosted domain'ler için DNS kayıtları)
+function BulkDmarcSetupButton({ licenseKey }) {
+  const [open, setOpen] = useState(false);
+  const q = useQuery({
+    queryKey: ["dmarc-setup-bulk", licenseKey],
+    queryFn: () => api.tiDmarcSetupBulk(licenseKey),
+    enabled: open && !!licenseKey,
+  });
+  const copy = async (txt, label) => {
+    try {
+      await navigator.clipboard.writeText(txt);
+      toast.success(`${label} kopyalandı`);
+    } catch {
+      toast.error("Kopyalama başarısız");
+    }
+  };
+  if (!open) {
+    return (
+      <button
+        data-testid="dmarc-bulk-setup-open"
+        onClick={() => setOpen(true)}
+        className="text-xs px-2.5 py-1 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30 inline-flex items-center gap-1"
+      >
+        <Zap className="w-3 h-3" /> Toplu DMARC Setup
+      </button>
+    );
+  }
+  const items = q.data?.items || [];
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4" onClick={() => setOpen(false)}>
+      <div
+        className="bg-slate-900 border border-cyan-500/30 rounded-xl max-w-4xl w-full my-8 shadow-2xl"
+        onClick={e => e.stopPropagation()}
+        data-testid="dmarc-bulk-modal"
+      >
+        <div className="flex items-start justify-between p-5 border-b border-slate-800">
+          <div>
+            <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+              <Zap className="w-5 h-5 text-cyan-400" /> Toplu DMARC/SPF Kurulum
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">{q.data?.count || 0} hosted domain için hazır DNS kayıtları · cPanel Zone Editor'a yapıştır</p>
+          </div>
+          <button onClick={() => setOpen(false)} className="text-slate-500 hover:text-slate-100 text-xl leading-none">✕</button>
+        </div>
+        <div className="p-5 space-y-4">
+          {q.isPending && <div className="text-center py-8 text-slate-400"><Loader2 className="w-6 h-6 mx-auto animate-spin mb-2" />Domain'ler taranıyor...</div>}
+          {q.isError && <div className="p-3 bg-rose-500/10 border border-rose-500/40 rounded text-sm text-rose-300">Hata: {q.error?.message}</div>}
+          {items.length === 0 && !q.isPending && !q.isError && (
+            <div className="text-center py-6 text-slate-500">Hosted domain listesi boş. Önce cPanel plugin'i çalıştırın (mailshield-domains-push).</div>
+          )}
+          {items.length > 0 && (
+            <>
+              {/* Tümünü kopyala (BIND format) */}
+              <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs text-emerald-300 font-semibold">📋 TÜMÜNÜ KOPYALA (BIND Zone Format)</div>
+                  <button
+                    onClick={() => copy(q.data?.bind_snippet || "", "Tüm DNS kayıtları")}
+                    data-testid="dmarc-bulk-copy-all"
+                    className="text-xs px-3 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30"
+                  >Panoya Kopyala</button>
+                </div>
+                <pre className="text-[10px] mono text-slate-300 bg-slate-950/70 p-2 rounded max-h-40 overflow-auto whitespace-pre-wrap break-all">{q.data?.bind_snippet}</pre>
+              </div>
+
+              {/* Per-domain accordion */}
+              <div className="space-y-2">
+                {items.map((it) => (
+                  <details key={it.domain} className="rounded border border-slate-800 bg-slate-950/40 group" data-testid={`dmarc-bulk-domain-${it.domain}`}>
+                    <summary className="cursor-pointer p-3 flex items-center gap-2 select-none">
+                      <span className="mono text-sm text-slate-100 font-semibold">{it.domain}</span>
+                      <span className="text-[10px] text-slate-500 ml-auto">SPF · DMARC · DKIM</span>
+                    </summary>
+                    <div className="p-3 pt-0 space-y-2">
+                      <DnsRow label="SPF (TXT)" name={it.spf.name} value={it.spf.value} onCopy={() => copy(it.spf.value, `SPF (${it.domain})`)} />
+                      <DnsRow label="DMARC (TXT)" name={it.dmarc.name} value={it.dmarc.value} onCopy={() => copy(it.dmarc.value, `DMARC (${it.domain})`)} />
+                      <div className="text-[10px] text-slate-500">
+                        DKIM: cPanel → Email Deliverability → <b>Repair</b> · Test: <a href={it.mxtoolbox_test} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">mxtoolbox</a> · rua: <span className="mono text-slate-400">{it.rua_email}</span>
+                      </div>
+                    </div>
+                  </details>
+                ))}
+              </div>
+              <div className="text-[11px] text-amber-300/80 bg-amber-500/5 border border-amber-500/20 rounded p-2">
+                💡 {q.data?.note}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DnsRow({ label, name, value, onCopy }) {
+  return (
+    <div className="rounded bg-slate-950/60 border border-slate-800 p-2">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] uppercase tracking-widest text-slate-500">{label}</span>
+        <button onClick={onCopy} className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25">Kopyala</button>
+      </div>
+      <div className="mono text-[11px] text-slate-400">Name: <span className="text-slate-100">{name}</span></div>
+      <div className="mono text-[11px] text-slate-400">Value: <span className="text-slate-100 break-all">{value}</span></div>
+    </div>
+  );
+}
+
+
 function DmarcDashboard({ domains, hostedCount, missing, filtered }) {
   const totalMsgs = domains.reduce((s, d) => s + (d.total_msgs || 0), 0);
   const totalReports = domains.reduce((s, d) => s + (d.reports || 0), 0);

@@ -359,6 +359,38 @@ async def _daily_ai_analysis_task():
                         )
                         log.info("ai analysis cron: score=%s prev=%s drop=%s report=%s",
                                  new_score, prev_score, drop, doc.get("id"))
+                        # v44.00.41 — Master Alarm Bell'e günlük AI raporu PIN et
+                        try:
+                            dk = f"ai_daily:{today}"
+                            exists = await db.master_alerts.find_one({"dedupe_key": dk}, {"_id": 1})
+                            if not exists:
+                                # Severity mantığı: skor < 60 → danger, < 80 → warning, aksi → info
+                                sev = ("danger" if (new_score or 100) < 60
+                                       else "warning" if (new_score or 100) < 80
+                                       else "info")
+                                if drop and drop >= 15:
+                                    sev = "danger"
+                                await db.master_alerts.insert_one({
+                                    "id": str(uuid.uuid4()),
+                                    "type": "ai_daily_report",
+                                    "severity": sev,
+                                    "title": f"🤖 Günlük AI Sağlık Raporu — {new_score}/100",
+                                    "subtitle": (
+                                        f"Skor: {prev_score}→{new_score}" +
+                                        (f" (−{drop} puan)" if drop else "")
+                                    ),
+                                    "report_id": doc.get("id"),
+                                    "health_score": new_score,
+                                    "prev_score": prev_score,
+                                    "drop": drop,
+                                    "action_url": "/panel/mailscanner?tab=stats",
+                                    "dedupe_key": dk,
+                                    "created_at": now.isoformat(),
+                                    "seen": False,
+                                })
+                                log.info("ai analysis cron: master_alert pinned (severity=%s)", sev)
+                        except Exception as ex_pin:
+                            log.warning("ai analysis cron pin failed: %s", ex_pin)
                         # v44.00.37 — PDF'i master admin'e mail at
                         try:
                             master_email = os.environ.get("MASTER_ADMIN_EMAIL") or ""
