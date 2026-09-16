@@ -119,8 +119,8 @@ export default function GeoBlockedHeatmap({ compact = false }) {
             <span className="text-rose-300 font-semibold tabular-nums">{total.toLocaleString("tr-TR")}</span> kötü niyetli IP · <span className="text-orange-300 font-semibold">{items.length}</span> farklı ülke
             <span className="text-slate-500"> · Bir ülkeye tıklayın</span>
           </p>
-          {/* Master için bayi filtresi */}
-          {isMaster && (
+          {/* v44.00.41 — Bayi filtresi kaldırıldı (kullanıcı talebi). */}
+          {false && isMaster && (
             <div className="mt-4 inline-flex items-center gap-2 text-xs bg-slate-900/70 border border-slate-800 rounded-lg px-3 py-2" data-testid="geo-bayi-filter">
               <span className="text-slate-500 uppercase tracking-widest text-[10px]">Bayi:</span>
               <select
