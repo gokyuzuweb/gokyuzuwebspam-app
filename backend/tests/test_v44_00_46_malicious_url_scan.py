@@ -53,7 +53,8 @@ def _ingest(subject: str, from_addr: str, body_preview: str,
 
 
 def test_seed_contains_reported_url():
-    r = requests.get(f"{BACKEND}/api/threat-intel/malicious-urls?limit=100", timeout=10)
+    # v44.00.48: URLhaus feed cok fazla kayit ekliyor; direkt file id ile ara
+    r = requests.get(f"{BACKEND}/api/threat-intel/malicious-urls?q=1kmhmdic&limit=10", timeout=10)
     assert r.status_code == 200
     items = r.json().get("items", [])
     patterns = [i["pattern"] for i in items]

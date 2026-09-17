@@ -803,6 +803,80 @@ SASYNC
   echo "    ✓ Ilk SA list sync tetiklendi"
 fi
 
+# v44.00.49 — Roundcube Webmail Toast Plugin (auto-deploy)
+# Kullanicilarin webmail'e her giriste "son 24 saatte X zararli mail engellendi"
+# toast'u gorebilmesi icin cPanel Roundcube'un plugins dizinine plugin kopyalar.
+echo "==> [Webmail] Roundcube toast plugin kuruluyor (v44.00.49)"
+RC_PLUGINS_DIR=""
+for _cand in \
+    /usr/local/cpanel/base/3rdparty/roundcube/plugins \
+    /usr/local/cpanel/3rdparty/roundcube/plugins \
+    /usr/share/roundcubemail/plugins ; do
+  if [[ -d "$_cand" ]]; then RC_PLUGINS_DIR="$_cand"; break; fi
+done
+if [[ -n "$RC_PLUGINS_DIR" ]] && [[ -d "$SRC/scripts/roundcube-plugin/gokyuzuwebspam" ]]; then
+  # Plugin dizinini kopyala (idempotent)
+  run "mkdir -p '$RC_PLUGINS_DIR/gokyuzuwebspam'"
+  run "install -m 0644 '$SRC/scripts/roundcube-plugin/gokyuzuwebspam/gokyuzuwebspam.php' '$RC_PLUGINS_DIR/gokyuzuwebspam/gokyuzuwebspam.php'"
+  run "install -m 0644 '$SRC/scripts/roundcube-plugin/gokyuzuwebspam/webmail-toast.js' '$RC_PLUGINS_DIR/gokyuzuwebspam/webmail-toast.js'"
+  # config.inc.php sadece yoksa yaz (bayi degistirmisse ustune yazma)
+  if [[ ! -f "$RC_PLUGINS_DIR/gokyuzuwebspam/config.inc.php" ]] && [[ $DRY_RUN -eq 0 ]]; then
+    PANEL_URL_RC="${LICENSE_SERVER:-https://panel.gokyuzuhosting.com}"
+    cat > "$RC_PLUGINS_DIR/gokyuzuwebspam/config.inc.php" <<PHPCFG
+<?php
+\$config['gws_panel_url'] = '$PANEL_URL_RC';
+PHPCFG
+    chmod 0644 "$RC_PLUGINS_DIR/gokyuzuwebspam/config.inc.php"
+  fi
+  echo "    ✓ Plugin dosyalari: $RC_PLUGINS_DIR/gokyuzuwebspam/"
+  # Roundcube config.inc.php'ye plugin listesine ekle (cPanel path)
+  RC_CFG=""
+  for _c in \
+      /usr/local/cpanel/base/3rdparty/roundcube/config/config.inc.php \
+      /usr/local/cpanel/3rdparty/roundcube/config/config.inc.php \
+      /etc/roundcubemail/config.inc.php ; do
+    if [[ -f "$_c" ]]; then RC_CFG="$_c"; break; fi
+  done
+  if [[ -n "$RC_CFG" ]] && [[ $DRY_RUN -eq 0 ]]; then
+    if grep -q "'gokyuzuwebspam'" "$RC_CFG"; then
+      echo "    → Plugin config'de zaten kayitli: $RC_CFG"
+    elif grep -qE "\\\$config\\['plugins'\\]" "$RC_CFG"; then
+      # Mevcut plugins array'ine ekle (in-place, backup ile)
+      cp "$RC_CFG" "$RC_CFG.gws.bak.$(date +%s)"
+      # Python one-liner ile guvenli edit
+      python3 - <<PYEDIT
+import re, sys
+p = "$RC_CFG"
+s = open(p, "r", encoding="utf-8", errors="ignore").read()
+# En son plugins = [ ... ] array'ini bul ve icine 'gokyuzuwebspam' ekle
+m = re.search(r"(\\\$config\\[\\'plugins\\'\\]\\s*=\\s*\\[)([^\\]]*)(\\])", s, re.M)
+if not m:
+    m = re.search(r"(\\\$config\\[\\'plugins\\'\\]\\s*=\\s*array\\()([^\\)]*)(\\))", s, re.M)
+if m and "'gokyuzuwebspam'" not in m.group(2):
+    body = m.group(2)
+    sep = "" if body.strip().endswith(",") or not body.strip() else ", "
+    new_body = body.rstrip() + sep + "'gokyuzuwebspam'"
+    s = s[:m.start()] + m.group(1) + new_body + m.group(3) + s[m.end():]
+    open(p, "w", encoding="utf-8").write(s)
+    print("    ✓ Plugin config'e eklendi")
+else:
+    print("    ! Plugins array bulunamadi/plugin zaten kayitli")
+PYEDIT
+    else
+      # plugins array yok — sonuna ekle
+      echo "" >> "$RC_CFG"
+      echo "// Added by GokyuzuWebSpam installer v44.00.49" >> "$RC_CFG"
+      echo "\$config['plugins'] = array_merge((array)(\$config['plugins'] ?? []), ['gokyuzuwebspam']);" >> "$RC_CFG"
+      echo "    ✓ Plugins direktifi eklendi: $RC_CFG"
+    fi
+  else
+    echo "    ⚠ Roundcube config.inc.php bulunamadi — manuel ekleme gerekir:"
+    echo "      \$config['plugins'] = array('archive', 'zipdownload', 'gokyuzuwebspam');"
+  fi
+else
+  [[ -z "$RC_PLUGINS_DIR" ]] && echo "    ATLANDI: Roundcube plugin dizini yok (webmail kurulu degil)"
+fi
+
 cat <<EOF
 
 ============================================================

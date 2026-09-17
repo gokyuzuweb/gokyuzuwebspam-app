@@ -14,6 +14,47 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 32f, v44.00.49) — Roundcube Plugin Auto-Deploy + Docs ✅
+
+### Yapilanlar
+
+**1. Roundcube Plugin dizini** (`whm-plugin/scripts/roundcube-plugin/gokyuzuwebspam/`)
+- `gokyuzuwebspam.php`: rcube_plugin sarmalayicisi
+  - `mail` task'inde init olur, `webmail-toast.js`'i output'a ekler
+  - `rcmail.env.gws_panel_url` + `rcmail.env.gws_user_email` inject eder (JS boylece kullanicinin gercek email'ini garantili alir)
+- `config.inc.php.dist`: gws_panel_url default template
+- `webmail-toast.js`: JS toast (env.gws_user_email oncelikli okuma)
+
+**2. `install.sh` otomatik deploy**
+- Roundcube plugins dizinini 3 farkli yolda arar (cPanel base/3rdparty/roundcube, /usr/share/roundcubemail)
+- Plugin dosyalarini kopyalar
+- `config.inc.php`'yi `--license-server` URL'iyle olusturur (idempotent - bayi degistirmisse ustune yazmaz)
+- Roundcube ana `config.inc.php`'deki `$config['plugins']` array'ine `'gokyuzuwebspam'` ekler (Python one-liner ile guvenli edit + backup)
+- Fallback: plugins direktifi yoksa `array_merge` ile yeni satir append eder
+
+**3. Dokumantasyon** — `whm-plugin/docs/WEBMAIL_TOAST.md`
+- Ne ise yaradiği + toast ornek gorsel metni
+- Otomatik kurulum akisi
+- Manuel kurulum adimlari (dizin bulunamazsa)
+- Teknik detay (nasil calisir + guvenlik degerlendirmesi)
+- Master panel gorsuu (yeni endpoint listesi)
+
+**4. Testler** — `test_v44_00_49_roundcube_plugin.py`
+- Plugin PHP dogru class + hook + inject alanlari ✔
+- config.inc.php.dist mevcut + gws_panel_url ✔
+- Plugin dizininde bundled webmail-toast.js ✔
+- install.sh Roundcube deploy adimlarini iceriyor ✔
+- Dokumantasyon tum bolumleri (Otomatik/Manuel/for-recipient/config) icerir ✔
+- **5/5 yeni pytest passed** — v44.00.44-49 kombine: **28/28 passed**
+
+### Kullanim
+Bayi `bash install.sh --license=MS-XXXX --license-server=https://panel-x.com` çalıştırdığında Roundcube plugin otomatik yerleşir; kullanıcı bir sonraki webmail login'inde toast'u görür.
+
+### Version bump
+- `whm-plugin/VERSION` → `v44.00.49`
+
+
+
 ## Feb 17, 2026 (Session 32e, v44.00.48) — Recipient Toast + URLhaus Feed ✅
 
 ### Yapilanlar

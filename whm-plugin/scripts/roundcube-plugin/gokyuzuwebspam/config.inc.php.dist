@@ -1,0 +1,9 @@
+<?php
+/**
+ * GokyuzuWebSpam Roundcube plugin config
+ *
+ * Bu dosya `config.inc.php` olarak kopyalanir (install.sh yapar).
+ */
+
+// Panel URL - bayi kendi panel domain'ine gore degistirir
+$config['gws_panel_url'] = 'https://panel.gokyuzuhosting.com';
