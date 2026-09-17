@@ -304,6 +304,53 @@ async def download_sa_custom_rules():
     )
 
 
+# v44.00.43 — SA Whitelist dinamik cf (panel whitelist'inden SA whitelist_from ureti)
+# `whitelist_from *@domain` SA seviyesinde -100 puan verir → asla spam yapmaz
+# `X-Spam-Flag: NO` olur → cPanel/Dovecot Junk'a taşımaz.
+@router.get("/sa-whitelist.cf")
+async def download_sa_whitelist_cf(license_key: str = Query(..., min_length=8)):
+    """License'in whitelist entries'inden dinamik SA whitelist_from dosyasi."""
+    from fastapi.responses import PlainTextResponse
+    lines = [
+        "# GokyuzuWebSpam — Dynamic Whitelist (v44.00.43)",
+        f"# License: {license_key}",
+        f"# Uretilme: {datetime.now(timezone.utc).isoformat()}",
+        "# Bu dosya panel /api/mailscanner/sa-whitelist.cf'ten cron ile alinir.",
+        "#",
+        "# whitelist_from → SA skoruna -100 puan → SPAM etiketlenmez → INBOX'a duser",
+        "# NOT: Bu sadece SA'yi etkiler, whitelist_from_rcvd tercih edilir (SPF check ile).",
+        "",
+    ]
+    # Global + license'a ait whitelist entries (email/domain)
+    async for w in db.lists.find(
+        {"list_type": "white",
+         "$or": [
+             {"scope": "global"},
+             {"scope": {"$exists": False}},
+             {"owner_license_key": license_key},
+             {"owner_license_key": {"$exists": False}},
+         ]}, {"_id": 0, "entry_type": 1, "value": 1, "note": 1}
+    ):
+        et = (w.get("entry_type") or "").lower()
+        val = (w.get("value") or "").strip().lower()
+        note = (w.get("note") or "").replace("\n", " ")[:60]
+        if not val:
+            continue
+        if et == "email":
+            lines.append(f"whitelist_from {val}    # {note}")
+        elif et == "domain":
+            lines.append(f"whitelist_from *@{val}    # {note}")
+            lines.append(f"whitelist_from_rcvd *@{val} {val}    # SPF-verified variant")
+        # IP whitelist SA'da yok — Exim ACL yapar (bu dosyada değil)
+    lines.append("")
+    lines.append("# End of file")
+    content = "\n".join(lines) + "\n"
+    return PlainTextResponse(
+        content,
+        headers={"Content-Disposition": 'attachment; filename="GokyuzuWebSpam-whitelist.cf"'},
+    )
+
+
 # --- v44.00.39 — SpamAssassin Rule Score Overrides -----------------------
 # Turkce kurumsal MTA'lar icin MISSING_MID gibi kurallarin agirligini
 # license bazinda azaltir/sifirlar. Ingestion sirasinda uygulanir.

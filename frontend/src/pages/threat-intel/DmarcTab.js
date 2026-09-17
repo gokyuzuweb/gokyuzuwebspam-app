@@ -627,7 +627,7 @@ function DmarcSetupWizard({ domain, onClose }) {
                 <b className="text-emerald-300">SPF</b> (Sender Policy Framework), sunucundan mail göndermeye YETKİLİ IP/host'ları tanımlar.
                 Aşağıdaki kaydı <span className="mono text-indigo-300">TXT</span> olarak DNS Zone'una ekle:
               </p>
-              <DnsRecord label="Ad" value={spfHost} copy={copy} />
+              <DnsRecord label="Ad" value={domain} copy={copy} />
               <DnsRecord label="Tip" value="TXT" copy={copy} />
               <DnsRecord label="Değer (Basit — sadece sunucun)" value={spfValueSimple} copy={copy} multiline />
               <details className="text-xs text-slate-400">
