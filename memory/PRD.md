@@ -14,6 +14,42 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 32i, v44.00.52) — Master Panel Malware Widget ✅
+
+### Kullanici sorunu
+"Webmail Toast: ben goremiyorum bu nerede." Kullanici master paneline giriyor ama toast cPanel Roundcube webmail (son kullanici gorunumu) icin tasarlanmis, master panelde gorunmuyordu.
+
+### Yapilanlar
+
+**1. Yeni component: `MalwareActivityWidget.js`**
+- Dashboard'un tepesine yerlestirilmis, `/api/notifications/recipient-alerts/digest` cagirir
+- **3 durum**:
+  - 0 tehdit → yesil "Son 24 saatte zararli mail engellenmedi" karti
+  - N tehdit → **kirmizi banner**: "🛡️ Son 24 saatte 8 zararli mail engellendi"
+  - Loading → gri iskele
+- Ust: Ikon + toplam sayi + N alici sayisi
+- Alt: Top 5 alici listesi (email + kind badge + count)
+- Sag: "Yonet →" butonu (Liste Merkezi'ne link)
+- 30 sn'de auto-refresh
+
+**2. Dashboard entegrasyonu**
+- `import MalwareActivityWidget` + `<MalwareActivityWidget />` OnboardingWizard'in altina
+- Bayi kendi lisansiyla, master tum tenant'lari gorur (endpoint zaten scope-aware)
+
+**3. Canli test**
+- 3 test event ingest edildi → widget kirmizi banner + top alicilar dogru gosterdi
+- Screenshot dogrulama: v44.00.51 rozet + "8 zararli mail engellendi" widget
+
+### Cevap kullanici sorusuna
+- **cPanel Webmail toast**: sadece cPanel/Roundcube webmail'e login yapan **son kullanici** goruyor (info@seridokum.com sifresiyle giris)
+- **Master panel widget** (v44.00.52 yeni): admin `/panel`'e girer girmez ilk sey olarak `MalwareActivityWidget` goruyor
+- Endpoint ayni: `/api/notifications/recipient-alerts/digest`
+
+### Version bump
+- Tum VERSION -> **v44.00.52** (drift guard testi passed)
+
+
+
 ## Feb 17, 2026 (Session 32h, v44.00.51) — Proaktif Junk-Move (KRITIK FIX) ✅
 
 ### Sorun (Kullanici bildirimi + ekran goruntusu)

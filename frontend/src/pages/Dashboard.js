@@ -37,6 +37,7 @@ import PushHealthWidget from "@/components/PushHealthWidget";
 import VersionChangeLogWidget from "@/components/VersionChangeLogWidget";
 import VerdictStatsWidget from "@/components/VerdictStatsWidget";
 import MailboxPurgeWidget from "@/components/MailboxPurgeWidget";
+import MalwareActivityWidget from "@/components/MalwareActivityWidget";
 
 const LICKEY = () => (typeof window !== "undefined"
   ? (localStorage.getItem("gws.event_license") || "")
@@ -151,6 +152,9 @@ export default function Dashboard() {
 
       {/* v44.00.40 — Yeni Özellikler Duyuru Banner'ı */}
       <WhatsNewBanner />
+
+      {/* v44.00.52 — Malware Activity Widget (webmail toast'un master karsiligi) */}
+      <MalwareActivityWidget />
 
       {/* v44.00.04 — Kişisel Koruma Panosu (Bayi Analytics) */}
       <ResellerAnalyticsWidget />
