@@ -14,6 +14,48 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 32, v44.00.44) — Genel Whitelist/Blacklist Motoru (Ekle-de-Unut) ✅
+
+### Sorun
+Kullanıcı `Modern-Ambalaj` domain'i için whitelist test etti ama diğer domain'ler için de aynı davranışın **her whitelist eklemesinde otomatik** çalışmasını istedi. Ek olarak **blacklist ekleyince otomatik istenmeyene** taşınsın istedi. Yani "ekle-de-unut" — kullanıcı hiçbir buton tıklamasın, panel otomatik hem pre-delivery (SA) hem retroaktif (dovecot) uygulasın.
+
+### Yapılanlar
+
+**1. `sa-whitelist.cf` + YENİ `sa-blacklist.cf` endpoint**
+- `GET /api/mailscanner/sa-blacklist.cf?license_key=…` → tüm blacklist entries için `blacklist_from *@domain` (SA +100 puan → HER ZAMAN spam → Junk'a düşer)
+- Whitelist tarafı zaten mevcuttu (`whitelist_from` + `whitelist_from_rcvd`, -100 puan)
+- Simetrik iki-yönlü SA senkronu tamamlandı
+
+**2. Ekle-de-Unut motoru (`/api/lists-manager/add`)**
+- Whitelist eklenince → OTOMATIK `action=junk_to_inbox` pending action üret (son 30 gün, `doveadm move` Junk→INBOX)
+- Blacklist eklenince → OTOMATIK `action=inbox_purge` pending action üret (son 30 gün, `doveadm expunge`)
+- Frontend'de artık checkbox yok — her ikisi de her zaman aktif. Info banner: "Ekle-de-Unut motoru aktif"
+
+**3. WHM plugin `mailshield-inbox-purge.pl` genişletildi**
+- Hem `inbox_purge` (blacklist → expunge) hem `junk_to_inbox` (whitelist → doveadm move Junk→INBOX) işliyor
+- Junk / Spam mailbox fallback (bazı cPanel kurulumları Junk yerine Spam kullanır)
+
+**4. `install.sh` yeni cron: `gws-sa-listsync`**
+- 10 dk'da bir sa-whitelist.cf + sa-blacklist.cf çeker → `/etc/mail/spamassassin/GokyuzuWebSpam-{whitelist,blacklist}.cf`'e yazar → değişiklik varsa spamd restart
+- Idempotent (cmp -s → sadece diff varsa dosya güncellenir)
+
+**5. Testler** — `test_v44_00_44_bidirectional_backfill.py`
+- Whitelist ekle → `junk_to_inbox` action queue'lanır ✔
+- Blacklist ekle → `inbox_purge` action queue'lanır ✔
+- `sa-whitelist.cf` yeni whitelist domain'i içerir ✔
+- `sa-blacklist.cf` yeni blacklist domain'i içerir ✔
+- Toplam pytest suite: **14/14 pass** (regresyon dahil)
+
+### API Değişiklikleri
+- **YENİ**: `GET /api/mailscanner/sa-blacklist.cf`
+- **Değişti**: `POST /api/lists-manager/add` — response'a `action_type` field eklendi (`junk_to_inbox`|`inbox_purge`), `purge_from_inbox` artık her zaman effective (frontend default `true`).
+
+### Version bump
+- `whm-plugin/VERSION` → `v44.00.44`
+- Kullanıcı üretim (`panel.gokyuzuhosting.com`) push için hâlâ "Save to Github" kullanmalı.
+
+
+
 ## Feb 15, 2026 (Session 31, v44.00.42) — DMARC Verify + Health Trend + Marketplace SA Rules ✅
 
 ### Yapılanlar

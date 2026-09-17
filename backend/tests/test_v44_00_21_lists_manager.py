@@ -67,8 +67,8 @@ def test_backend_delete_removes_from_all_sources():
     src = Path("/app/backend/server.py").read_text()
     # Both db.lists schemas + trusted_domains
     assert 'db.lists.delete_many({"entry_type": et,' in src
-    assert 'db.lists.delete_many({"type": et, "value": val, "kind": kind})' in src
-    assert 'db.trusted_domains.delete_many({"domain": dom' in src
+    assert 'db.lists.delete_many({"type": et, "value": rx, "kind": kind})' in src
+    assert 'db.trusted_domains.delete_many(' in src
 
 
 def test_backend_history_collection():

@@ -48,25 +48,30 @@ function AddForm({ onAdded }) {
   const [entry_type, setEntryType] = useState("domain");
   const [value, setValue] = useState("");
   const [note, setNote] = useState("");
-  // v44.00.41 — Retroaktif Inbox Purge
-  const [purgeInbox, setPurgeInbox] = useState(false);
-  const [purgeDays, setPurgeDays] = useState(30);
+  // v44.00.44 — Ekle-de-Unut: hem whitelist hem blacklist otomatik
+  // (whitelist -> Junk'tan INBOX'a tasi, blacklist -> INBOX'tan sil)
+  // Kullaniciya cekbox gostermiyoruz; her zaman calisir.
+  const purgeInbox = true;
+  const purgeDays = 30;
 
   const add = useMutation({
     mutationFn: async () => {
       const r = await client.post("/lists-manager/add", {
         kind, entry_type, value: value.trim(), note,
-        purge_from_inbox: kind === "blacklist" && purgeInbox,
+        purge_from_inbox: purgeInbox,
         purge_days: purgeDays,
       });
       return r.data;
     },
     onSuccess: (d) => {
+      const isWhite = d.kind === "whitelist";
+      const emoji = isWhite ? "📥" : "🧹";
+      const verb = isWhite ? "Junk'tan INBOX'a tasima" : "INBOX'tan temizleme";
       const suffix = d.purge_queued_licenses
-        ? ` · 🧹 ${d.purge_queued_licenses} sunucuda inbox temizleme kuyruklandı (2dk içinde çalışır)`
+        ? ` · ${emoji} ${d.purge_queued_licenses} sunucuda ${verb} kuyruklandi (2dk icinde)`
         : "";
       toast.success((d.added ? `✓ ${d.value} eklendi` : `${d.value} zaten mevcut`) + suffix);
-      setValue(""); setNote(""); setPurgeInbox(false);
+      setValue(""); setNote("");
       onAdded?.();
     },
     onError: (e) => toast.error("Ekleme başarısız: " + e.message),
@@ -110,34 +115,15 @@ function AddForm({ onAdded }) {
         <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="iş ortağı, yanlış pozitif, …"
           className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm" />
       </div>
-      {/* v44.00.41 — Retroaktif Inbox Purge (sadece blacklist) */}
-      {kind === "blacklist" && (
-        <div className="w-full flex flex-wrap items-center gap-3 pt-1 pl-1 border-t border-slate-800/40 mt-2">
-          <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={purgeInbox}
-              onChange={(e) => setPurgeInbox(e.target.checked)}
-              data-testid="lm-purge-inbox"
-              className="accent-rose-500"
-            />
-            🧹 <b>Gelen kutusundan da temizle</b> — bu göndericiden zaten teslim edilmiş maili sil
-          </label>
-          {purgeInbox && (
-            <label className="flex items-center gap-1 text-xs text-slate-400">
-              Son
-              <input
-                type="number" min="1" max="365"
-                value={purgeDays}
-                onChange={(e) => setPurgeDays(Math.max(1, Math.min(365, +e.target.value || 30)))}
-                data-testid="lm-purge-days"
-                className="w-16 bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-center"
-              />
-              gün
-            </label>
-          )}
+      {/* v44.00.44 — Ekle-de-Unut bilgi banner'i */}
+      <div className="w-full text-[11px] text-slate-400 border-t border-slate-800/40 mt-2 pt-2 flex items-start gap-2">
+        <Sparkles className="w-3.5 h-3.5 text-amber-400 flex-none mt-0.5" />
+        <div>
+          <b className="text-amber-300">Ekle-de-Unut motoru aktif</b> — {kind === "whitelist"
+            ? "Beyaz listeye eklediginiz domain'in son 30 gunluk mailleri Junk'tan INBOX'a otomatik geri gelir. SA seviyesinde -100 puan verilir (asla spam yapilmaz)."
+            : "Kara listeye eklediginiz domain'in son 30 gunluk mailleri INBOX'tan otomatik silinir. SA seviyesinde +100 puan verilir (her zaman spam)."} 2 dakika icinde tum sunuculara yayilir.
         </div>
-      )}
+      </div>
       <button type="submit" disabled={add.isPending} data-testid="lm-add-btn"
         className="px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center gap-1 disabled:opacity-60">
         <Plus className="w-4 h-4" /> {add.isPending ? "Ekleniyor…" : "Ekle"}

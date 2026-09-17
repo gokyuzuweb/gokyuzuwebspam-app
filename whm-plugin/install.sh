@@ -722,13 +722,14 @@ if [[ $DRY_RUN -eq 0 ]]; then
   /scripts/restartsrv_cpsrvd
 fi
 
-# v44.00.41 — Retroaktif Inbox Purge daemon (doveadm expunge)
-echo "==> [SA] Inbox Purge daemon kuruluyor (v44.00.41)"
+# v44.00.44 — Retroaktif Inbox Purge + Junk-Reclaim daemon
+# (blacklist -> doveadm expunge, whitelist -> doveadm move Junk->INBOX)
+echo "==> [SA] Inbox Purge & Junk-Reclaim daemon kuruluyor (v44.00.44)"
 if [[ -f "$SRC/scripts/mailshield-inbox-purge.pl" ]]; then
   run "install -m 0755 '$SRC/scripts/mailshield-inbox-purge.pl' /usr/local/bin/mailshield-inbox-purge.pl"
   cat > /etc/systemd/system/mailshield-inbox-purge.service <<'IPSVC'
 [Unit]
-Description=GokyuzuWebSpam — Retroaktif Inbox Purge (doveadm expunge)
+Description=GokyuzuWebSpam — Retroaktif Inbox Purge & Junk-Reclaim (doveadm)
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/mailshield-inbox-purge.pl
@@ -737,7 +738,7 @@ StandardError=journal
 IPSVC
   cat > /etc/systemd/system/mailshield-inbox-purge.timer <<'IPTMR'
 [Unit]
-Description=Inbox Purge her 2 dakikada bir
+Description=Inbox Purge & Junk-Reclaim her 2 dakikada bir
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=2min
@@ -750,6 +751,56 @@ IPTMR
     systemctl enable --now mailshield-inbox-purge.timer 2>/dev/null && \
       echo "    ✓ mailshield-inbox-purge.timer aktif (2dk'da bir)"
   fi
+fi
+
+# v44.00.44 — SA Whitelist & Blacklist cf senkron cron (10 dk'da bir)
+# Panel /api/mailscanner/sa-whitelist.cf ve /api/mailscanner/sa-blacklist.cf
+# endpoint'lerinden dinamik CF dosyalarini ceker ve
+# /etc/mail/spamassassin/GokyuzuWebSpam-{whitelist,blacklist}.cf'e yazar.
+# whitelist_from -> -100 puan (asla spam), blacklist_from -> +100 puan (her zaman spam).
+echo "==> [SA] Dinamik Whitelist/Blacklist CF senkron cron kuruluyor (v44.00.44)"
+if [[ -n "$LICENSE_KEY" ]] && [[ $DRY_RUN -eq 0 ]]; then
+  PANEL_URL="${LICENSE_SERVER:-https://panel.gokyuzuhosting.com}"
+  cat > /usr/local/bin/gws-sa-listsync <<SASYNC
+#!/bin/bash
+# GokyuzuWebSpam — dynamic SA list sync (v44.00.44)
+set -e
+PANEL="$PANEL_URL"
+LIC="$LICENSE_KEY"
+SA_DIR="/etc/mail/spamassassin"
+WL="\$SA_DIR/GokyuzuWebSpam-whitelist.cf"
+BL="\$SA_DIR/GokyuzuWebSpam-blacklist.cf"
+CHANGED=0
+# whitelist
+TMPW=\$(mktemp)
+if curl -sSf --max-time 30 "\$PANEL/api/mailscanner/sa-whitelist.cf?license_key=\$LIC" -o "\$TMPW"; then
+  if ! cmp -s "\$TMPW" "\$WL" 2>/dev/null; then
+    install -m 0644 "\$TMPW" "\$WL"; CHANGED=1
+  fi
+fi
+rm -f "\$TMPW"
+# blacklist
+TMPB=\$(mktemp)
+if curl -sSf --max-time 30 "\$PANEL/api/mailscanner/sa-blacklist.cf?license_key=\$LIC" -o "\$TMPB"; then
+  if ! cmp -s "\$TMPB" "\$BL" 2>/dev/null; then
+    install -m 0644 "\$TMPB" "\$BL"; CHANGED=1
+  fi
+fi
+rm -f "\$TMPB"
+# Sadece degisiklik varsa spamd restart (idempotent)
+if [[ \$CHANGED -eq 1 ]]; then
+  if [[ -x /usr/local/cpanel/scripts/restartsrv_spamd ]]; then
+    /usr/local/cpanel/scripts/restartsrv_spamd >/dev/null 2>&1 || true
+  fi
+fi
+SASYNC
+  chmod +x /usr/local/bin/gws-sa-listsync
+  # Cron entry - 10 dk'da bir
+  (crontab -l 2>/dev/null | grep -v gws-sa-listsync; echo '*/10 * * * * /usr/local/bin/gws-sa-listsync >/dev/null 2>&1') | crontab -
+  echo "    ✓ /usr/local/bin/gws-sa-listsync kuruldu (10 dk'da bir)"
+  # Ilk sync'i ANINDA calistir
+  /usr/local/bin/gws-sa-listsync >/dev/null 2>&1 || true
+  echo "    ✓ Ilk SA list sync tetiklendi"
 fi
 
 cat <<EOF

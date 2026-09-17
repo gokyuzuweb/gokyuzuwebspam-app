@@ -351,6 +351,54 @@ async def download_sa_whitelist_cf(license_key: str = Query(..., min_length=8)):
     )
 
 
+# v44.00.44 — SA Blacklist dinamik cf (panel blacklist'inden SA blacklist_from ureti)
+# `blacklist_from *@domain` SA seviyesinde +100 puan verir → HER ZAMAN spam
+# `X-Spam-Flag: YES` olur → cPanel/Dovecot otomatik Junk'a tasir.
+@router.get("/sa-blacklist.cf")
+async def download_sa_blacklist_cf(license_key: str = Query(..., min_length=8)):
+    """License'in blacklist entries'inden dinamik SA blacklist_from dosyasi.
+    WHM tarafi bu dosyayi 10 dk'da bir cron ile ceker ve
+    /etc/mail/spamassassin/GokyuzuWebSpam-blacklist.cf'e yazar.
+
+    Whitelist ile birlikte iki-yonlu 'ekle-de-unut' motorunu tamamlar."""
+    from fastapi.responses import PlainTextResponse
+    lines = [
+        "# GokyuzuWebSpam — Dynamic Blacklist (v44.00.44)",
+        f"# License: {license_key}",
+        f"# Uretilme: {datetime.now(timezone.utc).isoformat()}",
+        "# Bu dosya panel /api/mailscanner/sa-blacklist.cf'ten cron ile alinir.",
+        "#",
+        "# blacklist_from → SA skoruna +100 puan → HER ZAMAN SPAM → Junk'a duser",
+        "",
+    ]
+    async for b in db.lists.find(
+        {"list_type": "black",
+         "$or": [
+             {"scope": "global"},
+             {"scope": {"$exists": False}},
+             {"owner_license_key": license_key},
+             {"owner_license_key": {"$exists": False}},
+         ]}, {"_id": 0, "entry_type": 1, "value": 1, "note": 1}
+    ):
+        et = (b.get("entry_type") or "").lower()
+        val = (b.get("value") or "").strip().lower()
+        note = (b.get("note") or "").replace("\n", " ")[:60]
+        if not val:
+            continue
+        if et == "email":
+            lines.append(f"blacklist_from {val}    # {note}")
+        elif et == "domain":
+            lines.append(f"blacklist_from *@{val}    # {note}")
+        # IP blacklist SA'da yok — Exim ACL yapar
+    lines.append("")
+    lines.append("# End of file")
+    content = "\n".join(lines) + "\n"
+    return PlainTextResponse(
+        content,
+        headers={"Content-Disposition": 'attachment; filename="GokyuzuWebSpam-blacklist.cf"'},
+    )
+
+
 # --- v44.00.39 — SpamAssassin Rule Score Overrides -----------------------
 # Turkce kurumsal MTA'lar icin MISSING_MID gibi kurallarin agirligini
 # license bazinda azaltir/sifirlar. Ingestion sirasinda uygulanir.

@@ -8285,10 +8285,11 @@ class UnifiedListEntryIn(BaseModel):
     entry_type: str  # ip | domain | email
     value: str
     note: Optional[str] = ""
-    # v44.00.41 — Retroaktif Inbox Purge
-    # True ise, blacklist eklendiginde `doveadm expunge` icin pending action olusturur.
-    # Sadece kind=blacklist icin anlamli.
-    purge_from_inbox: Optional[bool] = False
+    # v44.00.44 — Ekle-de-unut: her whitelist/blacklist ekleme OTOMATIK
+    # `pending_quarantine_actions` uretir (whitelist -> junk_to_inbox,
+    # blacklist -> inbox_purge). Ayri secim gerekmez.
+    # Geriye uyum icin bu alanlar kaldi ama backend artik always-on isliyor.
+    purge_from_inbox: Optional[bool] = True
     purge_days: Optional[int] = 30  # Son N gunde teslim edilmis mailleri temizle
 
 
@@ -8347,43 +8348,49 @@ async def lists_unified_add(payload: UnifiedListEntryIn, request: Request,
         "kind": kind, "entry_type": et, "value": val, "note": note,
         "actor": "master", "ts": now,
     })
-    # v44.00.41 — Retroaktif Inbox Purge (blacklist only)
+    # v44.00.44 — Genel Whitelist/Blacklist Motoru (Ekle-de-Unut)
+    # * Whitelist eklendiginde  -> junk_to_inbox action (Junk klasorunden INBOX'a tasi)
+    # * Blacklist eklendiginde  -> inbox_purge action (INBOX'tan sil / Junk'a tasi)
+    # Kullanici hicbir buton tiklamadan otomatik calisir. Frontend `purge_from_inbox`
+    # bayragi geriye uyum icin var; artik varsayilan olarak True + whitelist icin de
+    # her zaman calisir (ekle-de-unut mantigi).
     purge_queued = 0
-    if kind == "blacklist" and payload.purge_from_inbox:
-        # Etkilenen license'lari bul: son N gunde bu senderdan mail alan tenant'lar
-        since = (datetime.now(timezone.utc) - timedelta(days=int(payload.purge_days or 30))).isoformat()
-        match: dict = {"ts": {"$gte": since}, "direction": "in"}
-        if et == "email":
-            match["from_addr"] = {"$regex": f"^{re.escape(val)}$", "$options": "i"}
-        elif et == "domain":
-            match["from_addr"] = {"$regex": f"@{re.escape(val)}$", "$options": "i"}
-        elif et == "ip":
-            match["$or"] = [{"sender_ip": val}, {"client_ip": val}]
-        # Distinct license_key'ler icin action olustur
-        licenses = await db.mail_events.distinct("license_key", match)
-        for lk in licenses:
-            if not lk:
-                continue
-            action_id = str(_uuid.uuid4())
-            await db.pending_quarantine_actions.insert_one({
-                "id": action_id,
-                "license_key": lk,
-                "action": "inbox_purge",
-                "match": {
-                    "entry_type": et,
-                    "value": val,
-                    "since_days": int(payload.purge_days or 30),
-                },
-                "reason": f"blacklist_add:{et}:{val}",
-                "created_at": now,
-                "completed_at": None,
-                "result": None,
-                "message": None,
-            })
-            purge_queued += 1
+    action_type = "junk_to_inbox" if kind == "whitelist" else "inbox_purge"
+    days_int = int(payload.purge_days or 30)
+    since = (datetime.now(timezone.utc) - timedelta(days=days_int)).isoformat()
+    match: dict = {"ts": {"$gte": since}, "direction": "in"}
+    if et == "email":
+        match["from_addr"] = {"$regex": f"^{re.escape(val)}$", "$options": "i"}
+    elif et == "domain":
+        match["from_addr"] = {"$regex": f"@{re.escape(val)}$", "$options": "i"}
+    elif et == "ip":
+        match["$or"] = [{"sender_ip": val}, {"client_ip": val}]
+    # Distinct license_key'ler icin action olustur
+    licenses = await db.mail_events.distinct("license_key", match)
+    for lk in licenses:
+        if not lk:
+            continue
+        action_id = str(_uuid.uuid4())
+        await db.pending_quarantine_actions.insert_one({
+            "id": action_id,
+            "license_key": lk,
+            "action": action_type,
+            "match": {
+                "entry_type": et,
+                "value": val,
+                "since_days": days_int,
+            },
+            "reason": f"{kind}_add:{et}:{val}",
+            "created_at": now,
+            "completed_at": None,
+            "result": None,
+            "message": None,
+        })
+        purge_queued += 1
     return {
         "ok": True, "kind": kind, "entry_type": et, "value": val,
         "added": not existing,
+        "action_type": action_type,
         "purge_queued_licenses": purge_queued,
     }
 
