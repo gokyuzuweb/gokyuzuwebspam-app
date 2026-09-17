@@ -703,6 +703,9 @@ async def ingest_event(evt: MailEvent, request: Request):
     # download link'leri, drive.google.com/uc?export=download, dropbox/onedrive
     # abuse, sunucu tarafinda body + subject + headers icinde regex + koleksiyon
     # match'i. Match olursa +50 puan, verdict=malware, karantinaya kilit).
+    # v44.00.47 — Ayrica attachment MIME/filename tabanli executable kontrolu:
+    # mail'e ekli .jar/.exe/.scr/.vbs/.bat/.cmd/.msi/.hta/.ps1/.apk/.dll varsa
+    # +30 puan, verdict=malware, kesin karantina + recipient alert insertion.
     try:
         _mal_scan_text = " ".join([
             doc.get("subject") or "",
@@ -713,6 +716,45 @@ async def ingest_event(evt: MailEvent, request: Request):
         _mal_hit = None
         _mal_score = 0.0
         _mal_rules: list[str] = []
+        # v44.00.47 — 0) ATTACHMENT EXECUTABLE CHECK
+        # Ekli dosya filename veya content_type MIME tipinden executable tespit
+        _EXEC_EXT_RE = re.compile(
+            r"\.(jar|exe|scr|vbs|js|msi|bat|cmd|hta|ps1|com|pif|apk|dll|lnk|wsf|jse|vbe)"
+            r"(?:\.[a-z0-9]{1,4})?$", re.IGNORECASE,
+        )
+        _EXEC_MIME_HINTS = (
+            "application/java-archive",     # .jar
+            "application/x-java-archive",
+            "application/x-msdownload",     # .exe .dll
+            "application/x-msdos-program",  # .exe .bat
+            "application/x-executable",
+            "application/x-ms-installer",   # .msi
+            "application/vnd.microsoft.portable-executable",
+            "application/x-bat",
+            "application/x-sh",
+        )
+        _bad_atts: list[dict] = []
+        for _att in (doc.get("attachments") or []):
+            try:
+                _fn = (_att.get("filename") or "").strip().lower()
+                _mime = (_att.get("content_type") or "").strip().lower()
+                _hit_ext = bool(_EXEC_EXT_RE.search(_fn)) if _fn else False
+                _hit_mime = any(m in _mime for m in _EXEC_MIME_HINTS) if _mime else False
+                # Cift uzanti tuzagi: fatura.pdf.exe / rapor.doc.jar (klasik)
+                _double_ext = bool(re.search(r"\.(?:pdf|doc|docx|xls|xlsx|jpg|png|zip|rar)\.(?:jar|exe|scr|vbs|bat|cmd|msi|com)$", _fn, re.I)) if _fn else False
+                if _hit_ext or _hit_mime or _double_ext:
+                    _bad_atts.append({
+                        "filename": _fn, "content_type": _mime,
+                        "reason": "double_ext" if _double_ext else ("mime" if _hit_mime else "ext"),
+                    })
+            except Exception:
+                continue
+        if _bad_atts:
+            _mal_score += 30.0
+            _mal_rules.append("GWS_ATTACHMENT_EXECUTABLE")
+            _mal_hit = {"kind": "executable_attachment",
+                        "sample": _bad_atts[0]["filename"],
+                        "attachments": _bad_atts[:5]}
         # 1) Executable extension in URL (.jar/.exe/.scr/.vbs/.js/.msi/.bat/.cmd/.hta/.ps1)
         _exec_url = re.search(
             r"https?://[^\s\"'<>]{0,300}\.(?:jar|exe|scr|vbs|js|msi|bat|cmd|hta|ps1|com|pif|apk|dll)"
@@ -722,7 +764,8 @@ async def ingest_event(evt: MailEvent, request: Request):
         if _exec_url:
             _mal_score += 8.0
             _mal_rules.append("GWS_URL_EXECUTABLE_EXT")
-            _mal_hit = {"kind": "executable_url", "sample": _exec_url.group(0)[:200]}
+            if not _mal_hit:
+                _mal_hit = {"kind": "executable_url", "sample": _exec_url.group(0)[:200]}
         # 2) Drive/Dropbox/OneDrive download lure
         _drive_dl = re.search(
             r"(?:drive\.google\.com/(?:uc\?export=download|file/d/[^/]+/view)"
@@ -811,6 +854,31 @@ async def ingest_event(evt: MailEvent, request: Request):
                         "dedupe_key": dk,
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "seen": False,
+                    })
+            except Exception:
+                pass
+            # v44.00.47 — Recipient Alert Insertion (alici bazli takip)
+            # Bir alici (to_addr) icin engellenen zararli mail'i kaydeder,
+            # bayi gunluk digest icin `/api/notifications/recipient-alerts`
+            # endpoint'inden ceker. Alici'yi bilgilendirme kanali (SMTP/webmail
+            # panel bildirim) sonradan bu koleksiyonu okur.
+            try:
+                _to = (doc.get("to_addr") or "").strip().lower()
+                if _to and _mal_score >= 15:
+                    await db.recipient_alerts.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "license_key": evt.license_key,
+                        "recipient": _to,
+                        "sender": doc.get("from_addr"),
+                        "subject": doc.get("subject"),
+                        "verdict": doc.get("verdict"),
+                        "score": _new_total,
+                        "malware_kind": (_mal_hit or {}).get("kind"),
+                        "rules": _mal_rules,
+                        "sample": (_mal_hit or {}).get("sample", "")[:120],
+                        "ts": doc.get("ts"),
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "notified": False,
                     })
             except Exception:
                 pass

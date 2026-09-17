@@ -85,6 +85,20 @@ meta     GWS_MALWARE_EXEC_TR_LURE  ( __GWS_URL_EXEC_EXT && __GWS_TR_PHISH_LURE )
 score    GWS_MALWARE_EXEC_TR_LURE  4.0
 describe GWS_MALWARE_EXEC_TR_LURE  Turkce lure + executable download URL = yuksek risk
 
+# --- v44.00.47 — ATTACHMENT EXECUTABLE DETECTION -------------------------
+# Ekli dosyanin filename'inde executable uzanti (SA ClamAV yerine full-body scan)
+# NOT: MailScanner/Milter tarafi zaten attachment quarantine yapar; bu SA
+# uzerinden extra puanlama saglar (Content-Disposition header taramasi).
+
+full     __GWS_ATT_EXEC_EXT  /Content-Disposition:[^\n]{0,200}filename=(?:"[^"]*|)[^"\n]*\.(?:jar|exe|scr|vbs|js|msi|bat|cmd|hta|ps1|com|pif|apk|dll|lnk|wsf|jse|vbe)(?:"|\s|$)/i
+score    __GWS_ATT_EXEC_EXT  9.0
+describe __GWS_ATT_EXEC_EXT  Ekli dosyanin adinda dogrudan executable uzantisi
+
+# Cift uzanti tuzagi: fatura.pdf.exe / rapor.doc.jar
+full     __GWS_ATT_DOUBLE_EXT  /filename=(?:"[^"]*|)[^"\n]*\.(?:pdf|doc|docx|xls|xlsx|jpg|png|zip|rar)\.(?:jar|exe|scr|vbs|bat|cmd|msi|com)(?:"|\s|$)/i
+score    __GWS_ATT_DOUBLE_EXT  10.0
+describe __GWS_ATT_DOUBLE_EXT  Cift uzanti tuzagi (fatura.pdf.exe) - klasik phishing
+
 # =============================================================================
 # Kurulum sonrasi test:
 #   spamassassin --lint 2>&1 | grep -i error

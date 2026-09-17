@@ -14,6 +14,46 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 32d, v44.00.47) — Attachment Blocker + Recipient Alerts ✅
+
+### Kullanici Baglami
+Kullanici drive.google + .jar RAT/ransomware kampanyasi soyledi, "PC tum sifreleniyor" dedi. v44.00.46 URL tarafini yakaladi; bu surum **attachment** tarafini + **alici bildirim** altyapisini ekliyor.
+
+### Yapilanlar
+
+**1. Attachment Executable Blocker (ingest hook)**
+- `attachments[]` alanindaki her ek icin 3 katmanli kontrol:
+  - Filename extension: `.jar/.exe/.scr/.vbs/.js/.msi/.bat/.cmd/.hta/.ps1/.com/.pif/.apk/.dll/.lnk/.wsf/.jse/.vbe`
+  - MIME tipi: `application/java-archive`, `x-msdownload`, `x-msdos-program`, `x-ms-installer` vs.
+  - Cift uzanti tuzagi: `fatura.pdf.exe`, `rapor.doc.jar` gibi klasik phishing
+- Match olursa **+30 puan**, `verdict=malware`, `sa_rules` icine `GWS_ATTACHMENT_EXECUTABLE`, master alert push
+
+**2. `db.recipient_alerts` koleksiyonu + `routes/notifications.py`**
+- Malware verdict (>= 15 puan) alan her mail icin alici bazli kayit
+- Endpoint'ler:
+  - `GET /api/notifications/recipient-alerts?license_key=&recipient=&hours=` — liste
+  - `GET /api/notifications/recipient-alerts/digest?license_key=&hours=` — Top 50 alici (kim en cok saldiri aldi + kaynak/kinds)
+  - `POST /api/notifications/recipient-alerts/mark-notified` — bildirim gonderildi isareti
+- Bayi kendi kullanicilarina "size 3 zararli mail geldi engellendi" ozet mail dokebilir
+
+**3. SpamAssassin cf ek kurallar**
+- `__GWS_ATT_EXEC_EXT` — Content-Disposition filename ext match → +9.0
+- `__GWS_ATT_DOUBLE_EXT` — cift uzanti pattern → +10.0
+
+**4. Testler** — `test_v44_00_47_attachment_blocker.py`
+- Jar attachment → malware ✔
+- Cift uzanti (.pdf.exe) → malware ✔
+- MIME hint (java-archive) → malware ✔
+- PDF false positive testi ✔
+- Recipient alert insertion ✔
+- Notifications endpoint'leri (list + digest) ✔
+- **6/6 pytest passed** — v44.00.38–47 kombine suite: **29/29 passed**
+
+### Version bump
+- `whm-plugin/VERSION` → `v44.00.47`
+
+
+
 ## Feb 17, 2026 (Session 32c, v44.00.46) — Malware/Phish URL Blocker ✅
 
 ### Sorun

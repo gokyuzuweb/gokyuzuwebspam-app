@@ -14148,8 +14148,10 @@ from routes.install_videos import router as _install_videos_router  # noqa: E402
 from routes.install_screenshots import router as _install_screenshots_router  # noqa: E402 v43.99.18
 from routes.ai_analysis import router as _ai_analysis_router  # noqa: E402 v44.00.35
 from routes.malicious_urls import router as _malicious_urls_router, seed_malicious_urls as _seed_mal_urls  # noqa: E402 v44.00.46
+from routes.notifications import router as _notifications_router  # noqa: E402 v44.00.47
 app.include_router(_ai_analysis_router, prefix="/api")
 app.include_router(_malicious_urls_router, prefix="/api")
+app.include_router(_notifications_router, prefix="/api")
 app.include_router(_reports_router, prefix="/api")
 app.include_router(_pin_approvals_router, prefix="/api")
 app.include_router(_report_schedules_router, prefix="/api")
