@@ -448,6 +448,11 @@ async def seed_if_empty() -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     await seed_if_empty()
+    # v44.00.46 — Malicious URL seed (bilinen RAT/phishing patternleri)
+    try:
+        await _seed_mal_urls()
+    except Exception as _e:
+        logging.warning(f"[startup] malicious url seed skip: {_e}")
     # v43.17 — Toplu Türkçe subject mojibake fix (background task, idempotent)
     # v43.18 — Regex genişletildi: `â` (DISKWARN warning triangle) ve `\ufffd` (replacement char)
     async def _migrate_subjects():
@@ -14142,7 +14147,9 @@ from routes.auto_backup import router as _auto_backup_router, start_scheduler as
 from routes.install_videos import router as _install_videos_router  # noqa: E402 v43.99.13
 from routes.install_screenshots import router as _install_screenshots_router  # noqa: E402 v43.99.18
 from routes.ai_analysis import router as _ai_analysis_router  # noqa: E402 v44.00.35
+from routes.malicious_urls import router as _malicious_urls_router, seed_malicious_urls as _seed_mal_urls  # noqa: E402 v44.00.46
 app.include_router(_ai_analysis_router, prefix="/api")
+app.include_router(_malicious_urls_router, prefix="/api")
 app.include_router(_reports_router, prefix="/api")
 app.include_router(_pin_approvals_router, prefix="/api")
 app.include_router(_report_schedules_router, prefix="/api")

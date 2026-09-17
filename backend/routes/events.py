@@ -699,6 +699,124 @@ async def ingest_event(evt: MailEvent, request: Request):
     except Exception as _sp_ex:
         log.warning("from-spoof detect skip: %s", _sp_ex)
     # ---------------------------------------------------------------------
+    # v44.00.46 — MALWARE/PHISH URL SCANNER (kritik: .jar/.exe/.scr payload
+    # download link'leri, drive.google.com/uc?export=download, dropbox/onedrive
+    # abuse, sunucu tarafinda body + subject + headers icinde regex + koleksiyon
+    # match'i. Match olursa +50 puan, verdict=malware, karantinaya kilit).
+    try:
+        _mal_scan_text = " ".join([
+            doc.get("subject") or "",
+            doc.get("body_preview") or "",
+            doc.get("body_html") or "",
+            headers or "",
+        ]).lower()
+        _mal_hit = None
+        _mal_score = 0.0
+        _mal_rules: list[str] = []
+        # 1) Executable extension in URL (.jar/.exe/.scr/.vbs/.js/.msi/.bat/.cmd/.hta/.ps1)
+        _exec_url = re.search(
+            r"https?://[^\s\"'<>]{0,300}\.(?:jar|exe|scr|vbs|js|msi|bat|cmd|hta|ps1|com|pif|apk|dll)"
+            r"(?:[\s\"'<>?&#]|$)",
+            _mal_scan_text, re.IGNORECASE,
+        )
+        if _exec_url:
+            _mal_score += 8.0
+            _mal_rules.append("GWS_URL_EXECUTABLE_EXT")
+            _mal_hit = {"kind": "executable_url", "sample": _exec_url.group(0)[:200]}
+        # 2) Drive/Dropbox/OneDrive download lure
+        _drive_dl = re.search(
+            r"(?:drive\.google\.com/(?:uc\?export=download|file/d/[^/]+/view)"
+            r"|dropbox\.com/s/[a-z0-9]+/[^\s\"'<>?]+"
+            r"|onedrive\.live\.com/download"
+            r"|mediafire\.com/file/[^\s\"'<>?]+"
+            r"|wetransfer\.com/downloads/[^\s\"'<>?]+"
+            r"|sendspace\.com/file/[^\s\"'<>?]+)",
+            _mal_scan_text, re.IGNORECASE,
+        )
+        if _drive_dl:
+            _mal_score += 5.0
+            _mal_rules.append("GWS_CLOUD_DL_LURE")
+            if not _mal_hit:
+                _mal_hit = {"kind": "cloud_download_lure", "sample": _drive_dl.group(0)[:200]}
+        # 3) Turkce phishing tuzak metni ("dosyayi goruntule", "belgeyi goruntule" vs)
+        _tr_lure = re.search(
+            r"(?:dosyay[ıi]\s*g[oö]r[uü]nt[uü]le|belgey[ıi]\s*g[oö]r[uü]nt[uü]le|"
+            r"dosyay[ıi]\s*g[oö]r|belgey[ıi]\s*a[cç]|belgey[ıi]\s*indir|"
+            r"faturay[ıi]\s*g[oö]r[uü]nt[uü]le|ekli\s*belge|ekli\s*dosya)",
+            _mal_scan_text, re.IGNORECASE,
+        )
+        if _tr_lure and (_exec_url or _drive_dl):
+            _mal_score += 5.0
+            _mal_rules.append("GWS_TR_PHISH_LURE")
+        # 4) Bilinen kotu URL/hash koleksiyonu (kullanici tanimli + otomatik feed)
+        # `db.malicious_urls` -> {pattern, kind, source, note}
+        # `pattern` icinde substring/regex — basitlik icin substring (case-insens.)
+        try:
+            async for m in db.malicious_urls.find(
+                {"active": {"$ne": False}}, {"_id": 0, "pattern": 1, "kind": 1, "note": 1}
+            ):
+                pat = (m.get("pattern") or "").strip().lower()
+                if pat and pat in _mal_scan_text:
+                    _mal_score += 20.0
+                    _mal_rules.append(f"GWS_MAL_URL_DB")
+                    _mal_hit = {
+                        "kind": m.get("kind") or "known_malicious",
+                        "sample": pat,
+                        "note": m.get("note"),
+                    }
+                    break  # bir match yeter
+        except Exception:
+            pass
+        # Uygula
+        if _mal_score > 0:
+            _old_total = float(doc.get("total_score") or 0)
+            _new_total = _old_total + _mal_score
+            doc["total_score_pre_malscan"] = _old_total
+            doc["total_score"] = _new_total
+            doc["malware_scan"] = {
+                "score_added": _mal_score,
+                "rules": _mal_rules,
+                "hit": _mal_hit,
+            }
+            for _r in _mal_rules:
+                doc.setdefault("sa_rules", []).append({
+                    "name": _r, "score": _mal_score / max(1, len(_mal_rules)),
+                    "override": None, "final": _mal_score / max(1, len(_mal_rules)),
+                })
+            # Verdict override — 20+ puan malware, degilse high_spam
+            _cur_v = (doc.get("verdict") or "").lower()
+            if _cur_v not in ("virus", "whitelisted"):
+                if _mal_score >= 15 or (_mal_hit and _mal_hit.get("kind") in ("known_malicious", "executable_url")):
+                    doc["verdict"] = "malware"
+                elif _new_total >= 10:
+                    doc["verdict"] = "high_spam"
+                elif _new_total >= 5:
+                    doc["verdict"] = "spam"
+            # Master alert push (idempotent)
+            try:
+                hour_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+                dk = f"malware_url:{evt.license_key}:{hour_bucket}:{(_mal_hit or {}).get('sample','')[:40]}"
+                if not await db.master_alerts.find_one({"dedupe_key": dk}, {"_id": 1}):
+                    await db.master_alerts.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "type": "malware_url",
+                        "severity": "danger" if _mal_score >= 15 else "warning",
+                        "license_key": evt.license_key,
+                        "score_added": _mal_score,
+                        "rules": _mal_rules,
+                        "hit": _mal_hit,
+                        "sample_from": doc.get("from_addr"),
+                        "sample_to": doc.get("to_addr"),
+                        "sample_subject": doc.get("subject"),
+                        "dedupe_key": dk,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "seen": False,
+                    })
+            except Exception:
+                pass
+    except Exception as _mal_ex:
+        log.warning("malware-url scan skip: %s", _mal_ex)
+    # ---------------------------------------------------------------------
     # v43.1 BOUNCE FIX: `<>` (null envelope sender, RFC 5321 §4.5.5) veya
     # sistem pseudo-user'ları (mailnull, Debian-exim vs) her zaman inbound
     # olarak sınıflandır. Bunlar Exim'in bounce/DSN mesajları — user gerçek

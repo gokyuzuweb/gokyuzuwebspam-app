@@ -1,5 +1,5 @@
 # =============================================================================
-# GökyüzüWebSpam — Custom SpamAssassin Rules (v44.00.40)
+# GökyüzüWebSpam — Custom SpamAssassin Rules (v44.00.46)
 # =============================================================================
 # Bu dosyayı mail sunucunuzda SpamAssassin custom rules klasörüne kopyalayın:
 #   /etc/mail/spamassassin/GokyuzuWebSpam.cf    (WHM/cPanel varsayilan)
@@ -55,6 +55,35 @@ describe GWS_SHORTENER_WITH_SPOOF  URL kisaltici + kimlik taklidi (compound risk
 header   __GWS_ENV_FROM_MISMATCH  ALL =~ /^Return-Path:\s*<[^@]+@([a-z0-9.-]+)>.*?^From:\s*[^<]*<[^@]+@(?!\1)([a-z0-9.-]+)>/msi
 score    __GWS_ENV_FROM_MISMATCH  2.0
 describe __GWS_ENV_FROM_MISMATCH  Return-Path domain != From header domain
+
+# =============================================================================
+# v44.00.46 — MALWARE / EXECUTABLE URL DEFENSE
+# =============================================================================
+# Body veya URI icinde .jar/.exe/.scr/.vbs/.js/.msi/.hta gibi executable
+# uzantili link → yuksek puan. Panel de ayni tesbiti yapip verdict=malware
+# koyar; SA ayrica MTA seviyesinde extra guvence saglar.
+
+uri      __GWS_URL_EXEC_EXT  m{https?://[^\s]{0,300}\.(?:jar|exe|scr|vbs|js|msi|bat|cmd|hta|ps1|com|pif|apk|dll)(?:\?|$|["'<>\s])}i
+score    __GWS_URL_EXEC_EXT  6.5
+describe __GWS_URL_EXEC_EXT  Body'de dogrudan calistirilabilir dosya download linki (RAT/trojan taşiyicisi)
+
+# Google Drive / Dropbox / OneDrive dogrudan indirme URL'i - klasik payload lure
+uri      __GWS_CLOUD_DL_LURE  m{(?:drive\.google\.com/(?:uc\?export=download|file/d/)|dropbox\.com/s/|onedrive\.live\.com/download|mediafire\.com/file/|wetransfer\.com/downloads/|sendspace\.com/file/)}i
+score    __GWS_CLOUD_DL_LURE  4.0
+describe __GWS_CLOUD_DL_LURE  Cloud file-share dogrudan indirme linki (phishing payload lure)
+
+# Türkçe phishing tuzak metni ("dosyayı görüntüle", "belgeyi görüntüle" vs.)
+body     __GWS_TR_PHISH_LURE  /(?:dosyay[ıi]\s*g[oö]r[uü]nt[uü]le|belgey[ıi]\s*g[oö]r[uü]nt[uü]le|dosyay[ıi]\s*a[cç]|belgey[ıi]\s*indir|faturay[ıi]\s*g[oö]r[uü]nt[uü]le|ekli\s*belge|ekli\s*dosya)/i
+
+# Cloud DL + Türkçe lure kombosu (compound risk — kesin phishing)
+meta     GWS_MALWARE_CLOUD_TR_LURE  ( __GWS_CLOUD_DL_LURE && __GWS_TR_PHISH_LURE )
+score    GWS_MALWARE_CLOUD_TR_LURE  5.5
+describe GWS_MALWARE_CLOUD_TR_LURE  Turkce "dosyayi goruntule" + cloud indirme linki = kesin phishing
+
+# Executable URL + Türkçe lure kombosu
+meta     GWS_MALWARE_EXEC_TR_LURE  ( __GWS_URL_EXEC_EXT && __GWS_TR_PHISH_LURE )
+score    GWS_MALWARE_EXEC_TR_LURE  4.0
+describe GWS_MALWARE_EXEC_TR_LURE  Turkce lure + executable download URL = yuksek risk
 
 # =============================================================================
 # Kurulum sonrasi test:

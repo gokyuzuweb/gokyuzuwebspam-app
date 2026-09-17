@@ -530,6 +530,165 @@ function CountryBlockPane({ onChange }) {
   );
 }
 
+// v44.00.46 — Kotu URL Yonetimi (Malware/Phish payload URL blocklist)
+function MaliciousUrlPane() {
+  const qc = useQueryClient();
+  const [pattern, setPattern] = useState("");
+  const [kind, setKind] = useState("known_malicious");
+  const [note, setNote] = useState("");
+  const [q, setQ] = useState("");
+
+  const list = useQuery({
+    queryKey: ["malicious-urls", q],
+    queryFn: async () => (await client.get(`/threat-intel/malicious-urls?q=${encodeURIComponent(q)}&limit=500`)).data,
+    refetchInterval: 30000,
+  });
+  const add = useMutation({
+    mutationFn: async () => (await client.post("/threat-intel/malicious-urls/add",
+      { pattern: pattern.trim(), kind, note })).data,
+    onSuccess: (d) => {
+      toast.success(d.added ? `🦠 ${d.pattern} eklendi` : `${d.pattern} zaten kayıtlı`);
+      setPattern(""); setNote("");
+      qc.invalidateQueries({ queryKey: ["malicious-urls"] });
+    },
+    onError: (e) => toast.error(e.response?.data?.detail || e.message),
+  });
+  const del = useMutation({
+    mutationFn: async (id) => (await client.delete(`/threat-intel/malicious-urls/${id}`)).data,
+    onSuccess: () => {
+      toast.success("Kayıt silindi");
+      qc.invalidateQueries({ queryKey: ["malicious-urls"] });
+    },
+  });
+  const toggle = useMutation({
+    mutationFn: async (id) => (await client.post(`/threat-intel/malicious-urls/toggle/${id}`)).data,
+    onSuccess: (d) => {
+      toast.success(d.active ? "Aktif edildi" : "Pasif edildi");
+      qc.invalidateQueries({ queryKey: ["malicious-urls"] });
+    },
+  });
+
+  const items = list.data?.items || [];
+  const kindColor = {
+    rat: "#f43f5e", trojan: "#f43f5e", c2: "#f43f5e",
+    phishing: "#f59e0b", known_malicious: "#a855f7",
+  };
+
+  return (
+    <div className="space-y-4 p-4" data-testid="malurl-pane">
+      <div className="bg-amber-500/5 border border-amber-500/20 rounded-md p-3 flex items-start gap-3">
+        <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+        <div className="text-xs text-slate-300">
+          <div className="font-semibold text-amber-300 mb-0.5">🦠 Kötü URL / Payload Blocklist</div>
+          <div className="text-slate-400">
+            Bilinen RAT/trojan/phishing indirme URL'lerini, Google Drive file ID'lerini veya
+            substring pattern'leri ekleyin. Gelen mail'lerin body/subject'inde eşleşme bulunursa
+            <b className="text-amber-300"> otomatik verdict=malware</b> + <b className="text-amber-300">+20 puan</b> uygulanır,
+            karantinaya taşınır.
+          </div>
+        </div>
+      </div>
+
+      <form
+        onSubmit={(e) => { e.preventDefault(); if (pattern.trim().length < 4) return toast.error("En az 4 karakter"); add.mutate(); }}
+        className="flex flex-wrap items-end gap-2 p-3 border border-slate-800 rounded-md bg-slate-900/40"
+      >
+        <div className="flex-1 min-w-[280px]">
+          <label className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 block">
+            URL / Pattern / File ID
+          </label>
+          <input value={pattern} onChange={(e) => setPattern(e.target.value)}
+            placeholder="drive.google.com/uc?export=download veya 1KmHmdIc… veya evil.com/payload.jar"
+            data-testid="malurl-pattern"
+            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm mono placeholder:text-slate-600" />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 block">Tür</label>
+          <select value={kind} onChange={(e) => setKind(e.target.value)} data-testid="malurl-kind"
+            className="bg-slate-950 border border-slate-800 rounded-md px-2 py-2 text-sm">
+            <option value="known_malicious">Kötü Amaçlı</option>
+            <option value="rat">RAT</option>
+            <option value="trojan">Trojan</option>
+            <option value="phishing">Phishing</option>
+            <option value="c2">C2 Sunucu</option>
+          </select>
+        </div>
+        <div className="flex-1 min-w-[180px]">
+          <label className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 block">Not</label>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ör: 2026-02 phishing kampanyası"
+            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm" />
+        </div>
+        <button type="submit" disabled={add.isPending} data-testid="malurl-add-btn"
+          className="px-4 py-2 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-sm font-bold flex items-center gap-1 disabled:opacity-60">
+          <Plus className="w-4 h-4" /> {add.isPending ? "Ekleniyor…" : "Kaydet"}
+        </button>
+      </form>
+
+      <div className="flex items-center gap-2">
+        <div className="flex-1 relative">
+          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-1/2 -translate-y-1/2" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Kayıtlarda ara…"
+            data-testid="malurl-search"
+            className="w-full bg-slate-950 border border-slate-800 rounded-md pl-8 pr-3 py-1.5 text-xs mono" />
+        </div>
+        <span className="text-[10px] text-slate-500 mono">{items.length} / {list.data?.total || 0}</span>
+      </div>
+
+      {list.isLoading ? (
+        <div className="p-6 text-slate-500 text-sm">Yükleniyor…</div>
+      ) : items.length === 0 ? (
+        <div className="p-8 text-center text-slate-500 text-sm">Kayıt yok. Yukarıdan ekleyin.</div>
+      ) : (
+        <div className="overflow-x-auto border border-slate-800 rounded-md">
+          <table className="min-w-full">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-800 bg-slate-950/60">
+                <th className="px-3 py-2 text-left">Pattern</th>
+                <th className="px-3 py-2 text-left">Tür</th>
+                <th className="px-3 py-2 text-left">Kaynak</th>
+                <th className="px-3 py-2 text-left">Not</th>
+                <th className="px-3 py-2 text-left">Durum</th>
+                <th className="px-3 py-2 text-right">İşlem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((r) => (
+                <tr key={r.id} className="border-b border-slate-800/60 hover:bg-slate-900/40 text-sm" data-testid={`malurl-row-${r.id}`}>
+                  <td className="px-3 py-2 mono text-slate-100 break-all max-w-md">{r.pattern}</td>
+                  <td className="px-3 py-2">
+                    <span className="text-[10px] mono uppercase px-1.5 py-0.5 rounded"
+                      style={{ background: (kindColor[r.kind] || "#94a3b8") + "22", color: kindColor[r.kind] || "#94a3b8" }}>
+                      {r.kind}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-[11px] text-slate-500">{r.source}</td>
+                  <td className="px-3 py-2 text-[11px] text-slate-400 max-w-xs">{r.note}</td>
+                  <td className="px-3 py-2">
+                    <button onClick={() => toggle.mutate(r.id)}
+                      className={`text-[10px] mono uppercase px-2 py-0.5 rounded ${
+                        r.active !== false ? "bg-emerald-500/10 text-emerald-400" : "bg-slate-800 text-slate-500"
+                      }`}>
+                      {r.active !== false ? "Aktif" : "Pasif"}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <button onClick={() => { if (window.confirm(`Sil: ${r.pattern}?`)) del.mutate(r.id); }}
+                      className="text-rose-400 hover:text-rose-300" title="Sil"
+                      data-testid={`malurl-del-${r.id}`}>
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export default function ListsManager() {
   // v44.00.24 — Modernize + Toplu İşlemler + Ülke Engelleme
   const [tab, setTab] = useState("all");    // all | whitelist | blacklist | country | history
@@ -635,6 +794,7 @@ export default function ListsManager() {
           { k: "whitelist", lbl: "Beyaz Liste",  Icon: ShieldCheck, color: "text-emerald-400" },
           { k: "blacklist", lbl: "Kara Liste",   Icon: ShieldX,     color: "text-rose-400" },
           { k: "country",   lbl: "🌐 Ülke Engelle", Icon: Globe2,   color: "text-pink-400" },
+          { k: "malurl",    lbl: "🦠 Kötü URL",  Icon: AlertTriangle, color: "text-amber-400" },
           { k: "history",   lbl: "Geçmiş",       Icon: History,     color: "text-indigo-400" },
         ].map((t) => (
           <button key={t.k} onClick={() => { setTab(t.k); setSelected(new Map()); }} data-testid={`lm-tab-${t.k}`}
@@ -651,6 +811,8 @@ export default function ListsManager() {
           <HistoryPane />
         ) : tab === "country" ? (
           <CountryBlockPane onChange={() => qc.invalidateQueries({ queryKey: ["lists-manager-unified"] })} />
+        ) : tab === "malurl" ? (
+          <MaliciousUrlPane />
         ) : (
           <>
             <AddForm onAdded={() => qc.invalidateQueries({ queryKey: ["lists-manager-unified"] })} />

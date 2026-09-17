@@ -14,6 +14,54 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 32c, v44.00.46) — Malware/Phish URL Blocker ✅
+
+### Sorun
+Kullanici yandex forward uzerinden gelen ve SPF FAIL etmesine ragmen 4.8 puanda kalip INBOX'a dusen bir mail paylasti. Body'de `https://drive.google.com/uc?export=download&id=1KmHmdIcNsAQlGi1_1MgQJaEMnTnbdJm2` linki + Turkce "DOSYAYI GORUNTULE" tuzak metniyle .jar payload dagitiyordu. RAT/trojan phishing kampanyasi.
+
+### Yapilanlar
+
+**1. Yeni koleksiyon `db.malicious_urls`** + endpoint (`routes/malicious_urls.py`)
+- `POST /api/threat-intel/malicious-urls/add` — pattern (URL substring / file ID / hash) ekle
+- `GET /api/threat-intel/malicious-urls?q=` — arama ile liste
+- `DELETE /api/threat-intel/malicious-urls/{id}` — sil
+- `POST /api/threat-intel/malicious-urls/toggle/{id}` — aktif/pasif
+- **Seed**: Kullanici raporlu Google Drive file ID `1kmhmdicnsaqlgi1_1mgqjaemntnbdjm2` + generic `drive.google.com/uc?export=download` patterni
+
+**2. Ingest hook (`events.py`)**
+- Body/subject/headers.lower() taranir; 4 kural katmani:
+  - `GWS_URL_EXECUTABLE_EXT` (.jar/.exe/.scr/.vbs/.js/.msi/.bat/.cmd/.hta/.ps1/...) → **+8.0**
+  - `GWS_CLOUD_DL_LURE` (drive.google/dropbox/onedrive/mediafire/wetransfer/sendspace download) → **+5.0**
+  - `GWS_TR_PHISH_LURE` (Turkce "dosyayi/belgeyi goruntule" + download URL) → **+5.0**
+  - `GWS_MAL_URL_DB` (koleksiyon substring match) → **+20.0**
+- Match olursa `verdict=malware`, sa_rules'a eklenir, master_alerts'a `malware_url` alert push
+- **End-to-end test edildi**: Yandex mail'i şimdi verdict=malware, total_score=34.8 (4.8'den +30)
+
+**3. SpamAssassin cf (`GokyuzuWebSpam.cf` v44.00.46)**
+- Ayni desenler MTA seviyesinde de: `__GWS_URL_EXEC_EXT`, `__GWS_CLOUD_DL_LURE`, `__GWS_TR_PHISH_LURE`
+- Kombo meta rules: `GWS_MALWARE_CLOUD_TR_LURE` (+5.5), `GWS_MALWARE_EXEC_TR_LURE` (+4.0)
+- SMTP kabul seviyesinde de yakaliyor (panel ingest'e gerek kalmadan)
+
+**4. Frontend "🦠 Kötü URL" sekmesi (Liste Merkezi)**
+- `MaliciousUrlPane` bileseni — pattern ekle, kind seç (RAT/trojan/phishing/C2/malicious), not gir
+- Kayit tablosu: pattern, kind badge, kaynak, not, active toggle, sil
+- Amber `AlertTriangle` info banner ile açıklama
+
+**5. Testler** — `test_v44_00_46_malicious_url_scan.py`
+- `test_seed_contains_reported_url`: kullanici raporlu URL seed'de ✔
+- `test_jar_download_url_detected_as_malware`: .jar → +8 malware ✔
+- `test_google_drive_download_lure_detected`: bu spesifik file ID → 25+ puan malware ✔
+- `test_turkish_phishing_lure_boosts_score`: "dosyayi goruntule" + exec URL ✔
+- `test_clean_mail_not_flagged`: temiz mail'de false positive yok ✔
+- `test_add_and_list_malicious_url_endpoint`: CRUD çalışıyor ✔
+- **6/6 test passed** — toplam v44.00.44–46 suite: **13/13 pytest passed**
+
+### Version bump
+- `whm-plugin/VERSION` → `v44.00.46`
+- `Save to Github` ile üretim push edilmeli (bayı SA cf otomatik güncellenir 10 dk cron ile)
+
+
+
 ## Feb 17, 2026 (Session 32b, v44.00.45) — Bayi INBOX/Junk Ozet Karti ✅
 
 ### Yapılanlar
