@@ -108,3 +108,142 @@ async def seed_malicious_urls():
                 "active": True,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
+
+
+# ============================================================================
+# v44.00.48 — URLhaus otomatik feed senkron
+# ============================================================================
+# Kaynak: https://urlhaus.abuse.ch/downloads/csv_recent/
+# Son 30 gunde raporlanan malware URL'leri (Emotet, TrickBot, IcedID, vs)
+# Format: CSV — id,dateadded,url,url_status,last_online,threat,tags,urlhaus_link,reporter
+# Sync stratejisi: URL'nin domain kismini (netloc) `malicious_urls` koleksiyonuna
+# `source="urlhaus"` ile idempotent yaz. Duplicate skip. Cron 6 saatte bir.
+URLHAUS_FEED_URL = "https://urlhaus.abuse.ch/downloads/csv_recent/"
+
+
+async def sync_urlhaus_feed(max_entries: int = 2000) -> dict:
+    """URLhaus CSV feed'ini cek ve `malicious_urls`'a yaz.
+    Idempotent (pattern tekilligi ile). Bir cagriya max_entries kotasi.
+    Sadece `url_status=online` olanlari alir.
+    """
+    import httpx
+    import csv
+    from io import StringIO
+    from urllib.parse import urlparse
+
+    added = 0
+    skipped = 0
+    errors = 0
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as cx:
+            r = await cx.get(URLHAUS_FEED_URL)
+            r.raise_for_status()
+            content = r.text
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200], "added": 0}
+
+    # URLhaus CSV'sinin ilk 8 satiri comment (#). csv.reader satirlarin
+    # `# ` ile baslamayanlarini islesin.
+    lines = [l for l in content.splitlines() if l and not l.startswith("#")]
+    reader = csv.reader(lines, quotechar='"', delimiter=",", skipinitialspace=True)
+    processed = 0
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for row in reader:
+        if processed >= max_entries:
+            break
+        try:
+            # Kolon indeksi: 0=id, 1=dateadded, 2=url, 3=url_status, 4=last_online, 5=threat, 6=tags
+            if len(row) < 7:
+                continue
+            url = (row[2] or "").strip().strip('"')
+            status = (row[3] or "").strip().strip('"').lower()
+            threat = (row[5] or "").strip().strip('"').lower() or "malware"
+            tags = (row[6] or "").strip().strip('"')
+            if not url or status != "online":
+                continue
+            # domain + path'i pattern olarak kaydet (case-insensitive substring match)
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").lower()
+            if not host or "." not in host:
+                continue
+            # Cok kisa pattern'lerden kacin (ornegin "bit.ly" gibi legit)
+            # host + path[:40] gibi bir dize kullanmak spesifikligi arttirir
+            path = (parsed.path or "").lower()[:60]
+            pattern = f"{host}{path}".rstrip("/")
+            if len(pattern) < 6:
+                continue
+            existing = await db.malicious_urls.find_one({"pattern": pattern}, {"_id": 1})
+            if existing:
+                skipped += 1
+            else:
+                # Threat -> kind mapping
+                _kind = "known_malicious"
+                if "ransom" in threat: _kind = "trojan"
+                elif "rat" in tags.lower(): _kind = "rat"
+                elif "emotet" in tags.lower() or "trickbot" in tags.lower(): _kind = "trojan"
+                elif "phish" in threat: _kind = "phishing"
+                await db.malicious_urls.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "pattern": pattern,
+                    "kind": _kind,
+                    "note": f"URLhaus feed · threat={threat} · tags={tags[:60]}",
+                    "source": "urlhaus",
+                    "active": True,
+                    "created_at": now_iso,
+                })
+                added += 1
+            processed += 1
+        except Exception:
+            errors += 1
+            continue
+
+    # Sync durumunu kaydet
+    await db.threat_feed_status.update_one(
+        {"_key": "urlhaus"},
+        {"$set": {
+            "_key": "urlhaus",
+            "last_sync": now_iso,
+            "last_added": added,
+            "last_skipped": skipped,
+            "last_errors": errors,
+            "processed": processed,
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "added": added, "skipped": skipped, "errors": errors, "processed": processed}
+
+
+@router.post("/sync-urlhaus")
+async def sync_urlhaus_manual(max_entries: int = 2000):
+    """URLhaus feed'i manuel tetikle (cron dışı test/urgent sync)."""
+    return await sync_urlhaus_feed(max_entries=max_entries)
+
+
+@router.get("/feed-status")
+async def feed_status():
+    """URLhaus + digger otomatik feed'lerin son senkronize durumu."""
+    rows = await db.threat_feed_status.find({}, {"_id": 0}).to_list(50)
+    total_urls = await db.malicious_urls.count_documents({})
+    by_source = {}
+    async for r in db.malicious_urls.aggregate([
+        {"$group": {"_id": "$source", "count": {"$sum": 1}}},
+    ]):
+        by_source[r["_id"] or "unknown"] = r["count"]
+    return {"feeds": rows, "total_urls": total_urls, "by_source": by_source}
+
+
+async def urlhaus_sync_loop():
+    """Her 6 saatte bir URLhaus feed'ini senkronize et."""
+    import asyncio as _asyncio
+    # Baslangicta 60sn bekle (servis warmup)
+    await _asyncio.sleep(60)
+    while True:
+        try:
+            res = await sync_urlhaus_feed()
+            import logging
+            logging.info(f"[urlhaus-sync] {res}")
+        except Exception as e:
+            import logging
+            logging.warning(f"[urlhaus-sync] error: {e}")
+        await _asyncio.sleep(6 * 3600)  # 6 saat

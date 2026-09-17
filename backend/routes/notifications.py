@@ -86,3 +86,69 @@ async def recipient_alerts_mark(license_key: str, recipient: Optional[str] = Non
         filt, {"$set": {"notified": True, "notified_at": datetime.now(timezone.utc).isoformat()}}
     )
     return {"updated": r.modified_count}
+
+
+# ============================================================================
+# v44.00.48 — Alici Panel Bildirimi (Webmail / User Portal ilk-giris toast)
+# ============================================================================
+# Webmail veya bayi kullanici paneli JS'den bu endpoint'i cagirir:
+#   fetch('/api/notifications/for-recipient?email=user@site.com')
+# Doner:
+#   { count: 3, since: "...", latest: [...], samples: {senders, kinds} }
+# Kimliksiz cagrilabilir cunku recipient email + son 24 saat = zayif secret;
+# ancak bayi paneline entegre edilirse zaten user session variyla korunacak.
+@router.get("/webmail-toast.js")
+async def webmail_toast_js():
+    """cPanel Webmail'e enjekte edilecek JS toast script.
+    Her bayi ayni URL ile ceker; PANEL degiskeni default gokyuzuhosting.com,
+    override icin <script data-panel="https://panel-bayi.com" src="..."/> kullanilabilir.
+    """
+    from fastapi.responses import PlainTextResponse
+    from pathlib import Path
+    p = Path(__file__).parent.parent.parent / "whm-plugin" / "scripts" / "webmail-toast.js"
+    if not p.exists():
+        # Alternative path
+        p = Path("/app/whm-plugin/scripts/webmail-toast.js")
+    if not p.exists():
+        from fastapi import HTTPException
+        raise HTTPException(404, "webmail-toast.js not found")
+    return PlainTextResponse(
+        p.read_text(encoding="utf-8"),
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.get("/for-recipient")
+async def for_recipient(email: str = Query(..., min_length=5),
+                          hours: int = Query(24, ge=1, le=168)):
+    """Bir alici email icin son N saatteki engellenen zararli mail sayisi + ozet.
+    Webmail veya bayi kullanici panelinin ilk-giris toast'unu besler.
+    """
+    _rcp = email.lower().strip()
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    filt = {"recipient": _rcp, "created_at": {"$gte": since}}
+    count = await db.recipient_alerts.count_documents(filt)
+    if count == 0:
+        return {"email": _rcp, "hours": hours, "count": 0, "message": None}
+    # Son 5 kaydi getir
+    latest = await db.recipient_alerts.find(
+        filt, {"_id": 0, "sender": 1, "subject": 1, "malware_kind": 1, "created_at": 1}
+    ).sort("created_at", -1).limit(5).to_list(5)
+    # Ozet
+    senders = list({(r.get("sender") or "").lower() for r in latest if r.get("sender")})[:3]
+    kinds = list({r.get("malware_kind") for r in latest if r.get("malware_kind")})
+    # Turkce toast mesaji
+    if count == 1:
+        msg = f"🛡️ Son {hours} saatte size 1 zararlı e-posta gönderildi. Panel tarafından engellendi."
+    else:
+        msg = f"🛡️ Son {hours} saatte size {count} zararlı e-posta gönderildi. Hepsi panel tarafından engellendi."
+    return {
+        "email": _rcp,
+        "hours": hours,
+        "count": count,
+        "message": msg,
+        "senders": senders,
+        "kinds": kinds,
+        "latest": latest,
+    }

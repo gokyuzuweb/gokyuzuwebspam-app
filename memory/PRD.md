@@ -14,6 +14,38 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 32e, v44.00.48) — Recipient Toast + URLhaus Feed ✅
+
+### Yapilanlar
+
+**1. Alici Panel Bildirimi (Webmail First-Login Toast)**
+- Yeni endpoint: `GET /api/notifications/for-recipient?email=&hours=24` — bir alici email icin son N saatteki engel sayisi + Turkce toast mesaji + top 3 gonderici + kind
+- Yeni endpoint: `GET /api/notifications/webmail-toast.js` — cPanel webmail template'ine `<script>` ile enjekte edilecek IIFE JS
+- Script Roundcube/Horde/cPanel default'undan kullanici email'ini algilar, `for-recipient`'i cagirir, `count > 0` ise sag-alt kirmizi toast (localStorage'la gunde 1 kez)
+- Kurulum notu: cPanel admin bunu `/usr/local/cpanel/base/webmail/roundcube/plugins/gokyuzuwebspam/` altina koyar ya da bayi kendi kullanici panelinde import eder
+
+**2. URLhaus Otomatik Feed (6 saatte bir cron)**
+- `sync_urlhaus_feed()` — `https://urlhaus.abuse.ch/downloads/csv_recent/` CSV feed'ini ceker, sadece `url_status=online` olanlari alir, `host+path[:60]` pattern'ini `db.malicious_urls`'a `source="urlhaus"` ile idempotent yazar
+- Threat→kind mapping: ransom→trojan, RAT tag→rat, emotet/trickbot→trojan, phish→phishing
+- Startup'ta 60sn warmup, sonra 6 saatte bir dongu (`urlhaus_sync_loop`)
+- Yeni endpoint'ler:
+  - `POST /api/threat-intel/malicious-urls/sync-urlhaus?max_entries=` — manuel tetikle
+  - `GET  /api/threat-intel/malicious-urls/feed-status` — feed son sync durumu + source dagilimi
+- `db.threat_feed_status` koleksiyonu — sync sonuclarini kaydeder
+- **Canli test**: 50 entry cekildi, 45 yeni eklendi, 0 hata
+
+**3. Testler** — `test_v44_00_48_toast_and_urlhaus.py`
+- for-recipient zero + non-zero durumlari ✔
+- webmail-toast.js content-type + content dogrulamasi ✔
+- URLhaus sync + feed-status endpoint'leri ✔
+- **4/4 pytest passed** — v44.00.44-48 kombine: **23/23 passed**
+
+### Version bump
+- `whm-plugin/VERSION` → `v44.00.48`
+- `Save to Github` sonrasi bayi sunucular otomatik yeni endpoint'e sahip olur; webmail JS integrasyonu bayi tarafinda manuel/cPanel plugin.
+
+
+
 ## Feb 17, 2026 (Session 32d, v44.00.47) — Attachment Blocker + Recipient Alerts ✅
 
 ### Kullanici Baglami
