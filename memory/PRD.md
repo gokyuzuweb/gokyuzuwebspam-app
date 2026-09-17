@@ -14,6 +14,41 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 32g, v44.00.50) — Version Drift Fix + gwsm-update Robustness ✅
+
+### Sorun
+Kullanici bildirdi: bayi sunucu `v44.00.40`'ta takili kaldi, `gws-update` yeni surumu almadi. Kok neden: **VERSION drift**:
+- `/app/whm-plugin/VERSION` → v44.00.49 (bump edildi)
+- `/app/VERSION` + `/app/backend/VERSION` → v44.00.40 (**bump edilmedi**)
+- `server.py::_PACKAGE_VERSION` fallback → v44.00.40
+
+Sonucta `/api/version/panel` v44.00.40 donuyor, bayinin `plugin.version`'u da v44.00.40 → "Zaten guncel" → update atlaniyor.
+
+### Yapilanlar
+
+**1. Tum VERSION dosyalari eşitlendi → v44.00.50**
+- `/app/VERSION`, `/app/backend/VERSION`, `/app/whm-plugin/VERSION`
+- `server.py::_PACKAGE_VERSION` = "v44.00.50"
+- `/api/version/panel` artik `v44.00.50` donuyor
+
+**2. `gwsm-update` script robustness (`install.sh`)**
+- `CURR="${CURR#v}"` → v prefix normalize (eski install'larda `v44...`, yenilerde `44...` — comparison hep esit taban)
+- Master surumu `?` donerse (endpoint erisilemez) explicit hata mesaji + `sudo gwsm-update --force` yonlendirmesi (silent skip yerine)
+
+**3. Regresyon testi** — `test_v44_00_50_version_consistency.py`
+- `test_all_version_files_equal` — 3 VERSION dosyasi ayni olmali (**drift'i bir daha yasamamak icin**)
+- `test_server_py_package_version_matches` — hardcoded fallback root VERSION ile ayni
+- `test_version_format_valid` — vXX.YY.ZZ formati zorunlu
+- **3/3 pytest passed** — bir sonraki bump'ta agent tum 4 noktayi birlikte gunceller
+
+### Bayinin nasil aksiyona gecmesi gerekir?
+
+1. Master panel (`panel.gokyuzuhosting.com`) icin **Save to Github** ile v44.00.50 push edilmeli
+2. Bayi sunucuda: `sudo gwsm-update` (24 saat cron zaten aktif, hemen isterse elle tetikler)
+3. Master erisim yoksa: `sudo gwsm-update --force`
+
+
+
 ## Feb 17, 2026 (Session 32f, v44.00.49) — Roundcube Plugin Auto-Deploy + Docs ✅
 
 ### Yapilanlar

@@ -545,6 +545,8 @@ echo "🌐 Master: $SRV"
 
 # Mevcut sürüm
 CURR=$(cat /etc/mailshield/plugin.version 2>/dev/null || echo "?")
+# v44.00.50 — v prefix normalize et (bazi eski installlarda 'v44...' bazi yerlerde '44...')
+CURR="${CURR#v}"
 echo "📌 Mevcut sürüm: $CURR"
 
 # Master'dan mevcut sürümü sorgula
@@ -553,6 +555,13 @@ echo "🌐 Master sürüm: $MASTER_VER"
 
 if [ "$CURR" = "$MASTER_VER" ] && [ "$1" != "--force" ]; then
   echo "✓ Zaten güncel. Yine de zorla güncellemek için: sudo gwsm-update --force"; exit 0
+fi
+# v44.00.50 — Master ? donerse (endpoint erisilemez) bilinmeyen durumu — force yoksa cik
+if [ "$MASTER_VER" = "?" ] && [ "$1" != "--force" ]; then
+  echo "✗ Master sürüm okunamadı ($SRV/api/version/panel erisilemedi)."
+  echo "  Ag kontrolu: curl -v $SRV/api/version/panel"
+  echo "  Zorla dene: sudo gwsm-update --force"
+  exit 1
 fi
 
 # Yeni tarball indir
