@@ -14,6 +14,32 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 32b, v44.00.45) — Bayi INBOX/Junk Ozet Karti ✅
+
+### Yapılanlar
+
+**1. YENI backend endpoint**: `GET /api/lists-manager/inbox-summary?license_key=…&hours=24`
+- Bayi kendi lisansi icin son N saatteki metrikler; master key ise tum tenant'lari birlestirir
+- Metrikler: `inbox_delivered`, `junked`, `quarantined`, `retro_junk_to_inbox`, `retro_inbox_purged`, `retro_completed`, `retro_pending`, `whitelist_size`, `blacklist_size`
+- Ekle-de-Unut motorunun retroaktif etkisini goruntuler (Junk'tan kac mail alindi + INBOX'tan kac mail silindi)
+
+**2. Frontend `InboxSummaryCard` bileseni** (Liste Merkezi ust kart)
+- 4 buyuk metrik kutusu: INBOX'a alindi (emerald), Junk'a atildi (rose), Geri getirilen WL (cyan), Silinen BL (amber)
+- Kuyruk durumu badge'i: `X islem kuyrukta`
+- Alt satirda liste boyutlari + tamamlanan retro is sayisi
+- 30 sn'de bir auto-refresh
+
+**3. Testler** — `test_v44_00_45_inbox_summary.py`
+- Endpoint shape (11 field): ✔
+- Verdict counting (clean/spam): ✔
+- Retro action counting (junk_to_inbox/inbox_purge): ✔
+- **7/7 pytest passed** (v44.00.44 + v44.00.45 birlikte)
+
+### Version bump
+- `whm-plugin/VERSION` → `v44.00.45`
+
+
+
 ## Feb 17, 2026 (Session 32, v44.00.44) — Genel Whitelist/Blacklist Motoru (Ekle-de-Unut) ✅
 
 ### Sorun

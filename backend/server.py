@@ -8448,6 +8448,94 @@ async def lists_unified_history(request: Request, license_key: Optional[str] = N
     return {"items": rows, "count": len(rows)}
 
 
+# v44.00.45 — Bayi INBOX/Junk Özet Kartı (son 24 saat)
+# "White/Black Listem Nerede?" sorusuna cevap — bayi kendi lisansi icin son 24
+# saatte kac mail INBOX'a girdi, kac tanesi Junk'a atildi, ekle-de-unut motoru
+# retroaktif olarak kac mail tasidi/sildi.
+@api.get("/lists-manager/inbox-summary")
+async def lists_inbox_summary(request: Request, license_key: Optional[str] = None,
+                                 hours: int = 24):
+    """Bayi INBOX/Junk ozeti — kendi lisansi icin son N saat.
+    * `license_key` query param verildiyse → o lisansin verisini gosterir.
+    * `MASTER_LICENSE_KEY` verildiyse veya master header/cookie varsa → tum tenant.
+    """
+    master_env = os.environ.get("MASTER_LICENSE_KEY", "")
+    is_master_call = False
+    if license_key and master_env and license_key == master_env:
+        is_master_call = True
+    else:
+        scope = await _tenant_scope(request, license_key)
+        is_master_call = bool(scope.get("is_master"))
+    hours = max(1, min(168, int(hours or 24)))
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    mev_filter: dict = {"ts": {"$gte": since}, "direction": "in"}
+    action_filter: dict = {"created_at": {"$gte": since}}
+    list_filter: dict = {}
+    effective_lk = None
+    if not is_master_call:
+        # Bayi kendi verisi — query param license_key veya scope owner
+        effective_lk = license_key or "__none__"
+        mev_filter["license_key"] = effective_lk
+        action_filter["license_key"] = effective_lk
+        list_filter["$or"] = [
+            {"scope": "global"},
+            {"scope": {"$exists": False}},
+            {"owner_license_key": effective_lk},
+        ]
+
+    # 1) INBOX'a giren (clean / whitelisted verdict)
+    inbox_delivered = await db.mail_events.count_documents(
+        {**mev_filter, "verdict": {"$in": ["clean", "whitelisted", "ok"]}}
+    )
+    # 2) Junk'a atilan (spam / high_spam / blacklisted verdict)
+    junked = await db.mail_events.count_documents(
+        {**mev_filter, "verdict": {"$in": ["spam", "high_spam", "blacklisted"]}}
+    )
+    # 3) Karantina / reddedilen
+    quarantined = await db.mail_events.count_documents(
+        {**mev_filter, "verdict": {"$in": ["quarantined", "rejected"]}}
+    )
+
+    # 4) Retroaktif motor sayaclari (pending_quarantine_actions)
+    retro_junk_to_inbox = await db.pending_quarantine_actions.count_documents(
+        {**action_filter, "action": "junk_to_inbox"}
+    )
+    retro_inbox_purged = await db.pending_quarantine_actions.count_documents(
+        {**action_filter, "action": "inbox_purge"}
+    )
+    retro_completed = await db.pending_quarantine_actions.count_documents(
+        {**action_filter,
+         "action": {"$in": ["junk_to_inbox", "inbox_purge"]},
+         "completed_at": {"$ne": None}, "result": "ok"}
+    )
+    retro_pending = await db.pending_quarantine_actions.count_documents(
+        {**action_filter,
+         "action": {"$in": ["junk_to_inbox", "inbox_purge"]},
+         "completed_at": None}
+    )
+
+    # 5) Aktif liste boyutlari
+    whitelist_size = await db.lists.count_documents({**list_filter, "list_type": "white"})
+    blacklist_size = await db.lists.count_documents({**list_filter, "list_type": "black"})
+
+    return {
+        "hours": hours,
+        "since": since,
+        "is_master": is_master_call,
+        "license_key": effective_lk,
+        "inbox_delivered": inbox_delivered,
+        "junked": junked,
+        "quarantined": quarantined,
+        "retro_junk_to_inbox": retro_junk_to_inbox,
+        "retro_inbox_purged": retro_inbox_purged,
+        "retro_completed": retro_completed,
+        "retro_pending": retro_pending,
+        "whitelist_size": whitelist_size,
+        "blacklist_size": blacklist_size,
+    }
+
+
 # v44.00.24 — TOPLU İŞLEMLER + ÜLKE ENGELLEME (Country Block via GeoIP)
 class UnifiedListBulkDeleteIn(BaseModel):
     kind: Optional[str] = None          # whitelist | blacklist | None (both)

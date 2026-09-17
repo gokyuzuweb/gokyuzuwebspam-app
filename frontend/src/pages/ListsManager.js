@@ -43,6 +43,89 @@ function TypeBadge({ t }) {
   );
 }
 
+// v44.00.45 — INBOX/Junk Ozet Karti (Ekle-de-Unut motorunun canli metrikleri)
+function InboxSummaryCard() {
+  const summary = useQuery({
+    queryKey: ["lists-inbox-summary"],
+    queryFn: async () => (await client.get("/lists-manager/inbox-summary?hours=24")).data,
+    refetchInterval: 30000,
+    staleTime: 15000,
+  });
+  const d = summary.data;
+  const StatBox = ({ label, value, color, hint, testid }) => (
+    <div
+      data-testid={testid}
+      className="rounded-md border p-3"
+      style={{ borderColor: color + "33", background: color + "0d" }}
+    >
+      <div className="text-[10px] uppercase tracking-widest text-slate-500">{label}</div>
+      <div className="text-2xl font-bold mono mt-1" style={{ color }}>
+        {summary.isLoading ? "…" : (value ?? 0).toLocaleString("tr-TR")}
+      </div>
+      {hint && <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div>}
+    </div>
+  );
+  return (
+    <div className="rounded-md border border-slate-800 bg-slate-900/30 p-4" data-testid="inbox-summary-card">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            White/Black Listem Nerede? — Son 24 Saat
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">
+            Ekle-de-Unut motorunun canli sonuclari. Whitelist ekledigin domainler INBOX'a,
+            blacklist ekledigin domainler Junk'a otomatik tasindi.
+          </div>
+        </div>
+        {d?.retro_pending > 0 && (
+          <span className="text-[10px] uppercase mono px-2 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
+            {d.retro_pending} islem kuyrukta
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatBox
+          testid="isc-inbox"
+          label="INBOX'a alindi"
+          value={d?.inbox_delivered}
+          color="#10b981"
+          hint="temiz / whitelisted"
+        />
+        <StatBox
+          testid="isc-junk"
+          label="Junk'a atildi"
+          value={d?.junked}
+          color="#f43f5e"
+          hint="spam / high_spam"
+        />
+        <StatBox
+          testid="isc-retro-inbox"
+          label="Geri getirilen (WL)"
+          value={d?.retro_junk_to_inbox}
+          color="#22d3ee"
+          hint="Junk -> INBOX (whitelist)"
+        />
+        <StatBox
+          testid="isc-retro-junk"
+          label="Silinen (BL)"
+          value={d?.retro_inbox_purged}
+          color="#f59e0b"
+          hint="INBOX'tan silindi (blacklist)"
+        />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+        <span data-testid="isc-wl-size">Beyaz liste: <b className="text-emerald-400">{d?.whitelist_size ?? 0}</b></span>
+        <span>·</span>
+        <span data-testid="isc-bl-size">Kara liste: <b className="text-rose-400">{d?.blacklist_size ?? 0}</b></span>
+        <span>·</span>
+        <span data-testid="isc-retro-done">Tamamlanan retro is: <b className="text-slate-300">{d?.retro_completed ?? 0}</b></span>
+      </div>
+    </div>
+  );
+}
+
+
 function AddForm({ onAdded }) {
   const [kind, setKind] = useState("whitelist");
   const [entry_type, setEntryType] = useState("domain");
@@ -541,6 +624,9 @@ export default function ListsManager() {
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
+
+      {/* v44.00.45 — INBOX/Junk Ozet Karti */}
+      <InboxSummaryCard />
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-slate-800 overflow-x-auto">
