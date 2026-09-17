@@ -965,6 +965,45 @@ async def ingest_event(evt: MailEvent, request: Request):
     # ---------------------------------------------------------------------
     await db.mail_events.insert_one(doc)
 
+    # v44.00.51 — PROAKTIF JUNK-MOVE (kritik fix)
+    # Panel verdict=spam/high_spam/malware ise mail zaten INBOX'a teslim edilmis
+    # olabilir (SA X-Spam-Flag YES vermediyse). Otomatik `doveadm move INBOX->Junk`
+    # aksiyon kuyrukla — 2 dk icinde mail Junk'a tasinacak.
+    # Whitelisted/temiz mail'lere dokunulmaz.
+    try:
+        _final_verdict = (doc.get("verdict") or "").lower()
+        if _final_verdict in ("spam", "high_spam", "malware", "phishing", "phish", "virus") \
+                and doc.get("direction") == "in":
+            _to = (doc.get("to_addr") or "").strip().lower()
+            _mid = (doc.get("exim_mid") or "").strip()
+            _msg_id = ""
+            # Message-Id header'i cek (doveadm HEADER match ile spesifik mail'i bulmak icin)
+            _hf = headers or ""
+            _mm = re.search(r"^Message-Id:\s*<([^>]+)>", _hf, re.IGNORECASE | re.MULTILINE)
+            if _mm:
+                _msg_id = _mm.group(1)
+            if _to:
+                await db.pending_quarantine_actions.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "license_key": evt.license_key,
+                    "action": "move_to_junk",
+                    "match": {
+                        "recipient": _to,
+                        "message_id": _msg_id or None,
+                        "exim_mid": _mid or None,
+                        "subject": doc.get("subject") or "",
+                        "from_addr": doc.get("from_addr") or "",
+                        "ts": doc.get("ts"),
+                    },
+                    "reason": f"auto_move_verdict:{_final_verdict}:score={doc.get('total_score')}",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "completed_at": None,
+                    "result": None,
+                    "message": None,
+                })
+    except Exception as _mj_ex:
+        log.warning("proactive junk-move queue skip: %s", _mj_ex)
+
     # ---- OUTBOUND BULK DETECTION (v43) ----------------------------------
     # Aynı `from_user` (Exim originator_login) 1 saatte threshold'u aşarsa:
     #   1) master_alerts'a "outbound_bulk" tipi alert yaz (throttle uygula)

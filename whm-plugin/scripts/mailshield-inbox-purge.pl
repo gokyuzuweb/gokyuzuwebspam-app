@@ -53,27 +53,47 @@ if ($@ or !$data->{items}) { exit 0; }
 
 foreach my $action (@{$data->{items}}) {
     my $atype = $action->{action} || "";
-    # v44.00.44 — hem inbox_purge (blacklist) hem junk_to_inbox (whitelist) destegi
-    next unless $atype eq "inbox_purge" || $atype eq "junk_to_inbox";
+    # v44.00.51 — 3 action tipi: inbox_purge (BL), junk_to_inbox (WL), move_to_junk (proaktif spam)
+    next unless $atype eq "inbox_purge" || $atype eq "junk_to_inbox" || $atype eq "move_to_junk";
     my $aid = $action->{id};
     my $m = $action->{match} or next;
     my $since_days = $m->{since_days} || 30;
     my $et = $m->{entry_type} || "";
     my $val = $m->{value} || "";
+    # v44.00.51 — move_to_junk icin recipient + message_id kullanilir
+    my $recipient = $m->{recipient} || "";
+    my $message_id = $m->{message_id} || "";
+    my $msg_from = $m->{from_addr} || "";
+    my $msg_subj = $m->{subject} || "";
 
-    log_msg("processing $aid: type=$atype $et=$val since ${since_days}d");
+    log_msg("processing $aid: type=$atype " .
+            ($atype eq "move_to_junk" ? "recipient=$recipient msgid=$message_id" : "$et=$val since ${since_days}d"));
 
     # doveadm search kriteri olustur
     my @search_args;
-    if ($et eq "email") {
+    if ($atype eq "move_to_junk") {
+        # Tek mesaj hedef — Message-Id > exim_mid > from+subject fallback
+        if ($message_id) {
+            push @search_args, "HEADER", "Message-Id", $message_id;
+        } elsif ($msg_from && $msg_subj) {
+            push @search_args, "FROM", $msg_from, "SUBJECT", $msg_subj;
+        } else {
+            log_msg("skip $aid: no match criteria");
+            next;
+        }
+    } elsif ($et eq "email") {
         push @search_args, "FROM", $val;
     } elsif ($et eq "domain") {
         push @search_args, "FROM", "\@$val";
     } elsif ($et eq "ip") {
-        # Dovecot direkt IP arama desteklemez; Received header'i ile:
         push @search_args, "HEADER", "Received", $val;
     }
-    push @search_args, "SINCE", "${since_days}d";
+    if ($atype ne "move_to_junk") {
+        push @search_args, "SINCE", "${since_days}d";
+    } else {
+        # Son 1 gunde (yeni gelen mail)
+        push @search_args, "SINCE", "1d";
+    }
 
     my $result = "ok";
     my $message = "";
@@ -84,7 +104,7 @@ foreach my $action (@{$data->{items}}) {
         $message = "doveadm bulunamadi";
     } else {
         my @cmd;
-        my $args_str = join(" ", @search_args);
+        my $args_str = join(" ", map { /\s/ ? "\"$_\"" : $_ } @search_args);
         if ($atype eq "inbox_purge") {
             # Blacklist -> INBOX'tan sil
             @cmd = ($doveadm, "expunge", "-A", "mailbox", "INBOX", @search_args);
@@ -100,13 +120,11 @@ foreach my $action (@{$data->{items}}) {
             }
         } elsif ($atype eq "junk_to_inbox") {
             # Whitelist -> Junk klasorunden INBOX'a tasi
-            # doveadm move [-A] destination-mailbox search-query
-            # -A: tum kullanicilar; move: INBOX'a; search: Junk mailbox + FROM ...
             @cmd = ($doveadm, "move", "-A", "INBOX", "mailbox", "Junk", @search_args);
             log_msg("cmd: " . join(" ", @cmd));
             my $out = `$doveadm move -A INBOX mailbox Junk $args_str 2>&1`;
             my $rc = $? >> 8;
-            # Bazi kurulumlarda "Junk" yerine "Spam" kullanilir; ilkinde bulamazsa dene
+            # Junk bulunamazsa Spam mailbox dene
             if ($rc != 0 && $out =~ /No mailbox/i) {
                 log_msg("Junk not found, trying Spam mailbox");
                 $out = `$doveadm move -A INBOX mailbox Spam $args_str 2>&1`;
@@ -114,6 +132,36 @@ foreach my $action (@{$data->{items}}) {
             }
             if ($rc == 0) {
                 $message = "doveadm move Junk->INBOX ok";
+                $affected = () = $out =~ /moved|move/gi;
+            } else {
+                $result = "error";
+                $message = "doveadm rc=$rc: " . substr($out, 0, 200);
+            }
+        } elsif ($atype eq "move_to_junk") {
+            # v44.00.51 — Proaktif: gelen SPAM verdict'li tek mesaji INBOX->Junk
+            # -u ile spesifik kullanici (recipient), -A yerine (butun account'lari
+            # taramamak icin performans).
+            my @user_args = $recipient ? ("-u", $recipient) : ("-A");
+            @cmd = ($doveadm, "move", @user_args, "Junk", "mailbox", "INBOX", @search_args);
+            log_msg("cmd: " . join(" ", @cmd));
+            my $user_flag = $recipient ? "-u \"$recipient\"" : "-A";
+            my $out = `$doveadm move $user_flag Junk mailbox INBOX $args_str 2>&1`;
+            my $rc = $? >> 8;
+            # Bazi kurulumlarda hedef "Junk" yerine "Spam" — deneyip fail ederse
+            if ($rc != 0 && $out =~ /No mailbox|does not exist/i) {
+                log_msg("Junk mailbox not found for $recipient, trying Spam");
+                $out = `$doveadm move $user_flag Spam mailbox INBOX $args_str 2>&1`;
+                $rc = $? >> 8;
+                # Yine yoksa Junk mailbox olustur
+                if ($rc != 0 && $out =~ /No mailbox|does not exist/i) {
+                    log_msg("Creating Junk mailbox for $recipient");
+                    `$doveadm mailbox create $user_flag Junk 2>&1`;
+                    $out = `$doveadm move $user_flag Junk mailbox INBOX $args_str 2>&1`;
+                    $rc = $? >> 8;
+                }
+            }
+            if ($rc == 0) {
+                $message = "doveadm move INBOX->Junk ok";
                 $affected = () = $out =~ /moved|move/gi;
             } else {
                 $result = "error";

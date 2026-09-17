@@ -14,6 +14,52 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 17, 2026 (Session 32h, v44.00.51) — Proaktif Junk-Move (KRITIK FIX) ✅
+
+### Sorun (Kullanici bildirimi + ekran goruntusu)
+Bir mail:
+- From: `seridokum.comaW5mb0BzZXJpZG9rdW0uY29tOz2x35IeEMz9f...` (display-name spoofing: alici domain'i taklit + rasgele encoded envelope)
+- Subject: `URGENT: Your mailbox info@seridokum.com has restrictions` (klasik phishing lure)
+- Panel `verdict=SPAM`, skor **8.10** goruyor
+- **AMA mail INBOX'a dusmus.** Kullanici: "sakama sin nasil bir sistem yaptin"
+
+**Kok neden**: Panel post-facto (mail teslim edildikten SONRA) SA spoof detector'unu calistirip skoru 8.10'a yukseltiyor. SA server tarafi X-Spam-Flag=YES vermedigi icin Dovecot mail'i INBOX'a birakiyor. Panel "spam" deme ama Dovecot mail'i hala INBOX'ta.
+
+### Yapilanlar
+
+**1. Proaktif `move_to_junk` action queue (`events.py`)**
+- Ingest sonrasi `verdict in {spam, high_spam, malware, phishing, phish, virus}` VE `direction=in` olan **her** mail icin otomatik `pending_quarantine_actions` insert
+- Match kriterleri: `recipient` (kullanici mailbox belirlemek icin), `message_id` (headers'tan cikarilan), `exim_mid`, `subject`, `from_addr`, `ts`
+- Whitelisted mail'lere kesinlikle dokunulmaz (verdict=whitelisted ise skip)
+
+**2. Perl daemon 3. action tipi (`mailshield-inbox-purge.pl`)**
+- Onceden: `inbox_purge` (blacklist BL) + `junk_to_inbox` (whitelist WL)
+- Yeni: **`move_to_junk`** (proaktif spam)
+- Komut: `doveadm move -u <recipient> Junk mailbox INBOX HEADER Message-Id <mid>`
+- Fallback: Junk yok ise Spam mailbox dene, o da yok ise `doveadm mailbox create Junk` sonra tekrar dene
+- Message-Id oncelikli (spesifik mail), yok ise `FROM + SUBJECT` combined match (fallback)
+
+**3. Testler** — `test_v44_00_51_proactive_junk_move.py`
+- `test_spam_verdict_queues_move_to_junk` ✔
+- `test_high_spam_verdict_queues_move` ✔
+- `test_malware_verdict_queues_move` (ingest hook malware'e yukseltir) ✔
+- `test_clean_verdict_does_not_queue_move` (false positive yok) ✔
+- `test_message_id_captured_from_headers` (doveadm HEADER match hazir) ✔
+- `test_display_name_spoofing_scenario` (kullanicinin ekran goruntusu birebir simulasyonu) ✔
+- **6/6 pytest passed** — v44.00.40-51 kombine: **43/43 passed**
+
+### Nasil devreye girer
+1. Kullanici `Save to Github` -> production push v44.00.51
+2. Bayi: `sudo gwsm-update` (v50 -> v51)
+3. `mailshield-inbox-purge.timer` (2 dk'da bir) yeni action tipini otomatik isliyor
+4. Sonuc: Spam verdict alan mail 2 dakika icinde INBOX'tan Junk'a otomatik tasiniyor
+
+### Version bump
+- `/app/VERSION`, `/app/backend/VERSION`, `/app/whm-plugin/VERSION` -> **v44.00.51**
+- `server.py::_PACKAGE_VERSION` -> v44.00.51 (drift guard testi kabul etti)
+
+
+
 ## Feb 17, 2026 (Session 32g, v44.00.50) — Version Drift Fix + gwsm-update Robustness ✅
 
 ### Sorun
