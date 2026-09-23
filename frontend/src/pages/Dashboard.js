@@ -38,6 +38,7 @@ import VersionChangeLogWidget from "@/components/VersionChangeLogWidget";
 import VerdictStatsWidget from "@/components/VerdictStatsWidget";
 import MailboxPurgeWidget from "@/components/MailboxPurgeWidget";
 import MalwareActivityWidget from "@/components/MalwareActivityWidget";
+import MasterUpdateCard from "@/components/MasterUpdateCard";
 
 const LICKEY = () => (typeof window !== "undefined"
   ? (localStorage.getItem("gws.event_license") || "")
@@ -152,6 +153,9 @@ export default function Dashboard() {
 
       {/* v44.00.40 — Yeni Özellikler Duyuru Banner'ı */}
       <WhatsNewBanner />
+
+      {/* v44.00.54 — Master Panel Update Card (yeni surum varsa Deploy butonu) */}
+      <MasterUpdateCard />
 
       {/* v44.00.52 — Malware Activity Widget (webmail toast'un master karsiligi) */}
       <MalwareActivityWidget />

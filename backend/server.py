@@ -5020,7 +5020,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.53"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.54"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
@@ -5050,6 +5050,59 @@ async def version_panel():
     """Preview/panel şu anki sürümü döndürür (Header rozeti için).
     Kaynak: repo kökündeki VERSION dosyası (deploy sırasında güncellenir)."""
     return {"version": _read_panel_version(), "source": "VERSION"}
+
+
+# v44.00.54 — Master Panel Update Card destegi
+@api.get("/version/bundle")
+async def version_bundle():
+    """Kod tabaninda paketlenen (whm-plugin/VERSION) surum. Live surumden farkli
+    ise Dashboard'da 'Deploy' butonu gorunur.
+    """
+    import os as _os
+    candidates = [
+        "/app/whm-plugin/VERSION",
+        _os.path.join(_os.path.dirname(_VERSION_FILE), "whm-plugin", "VERSION"),
+    ]
+    for p in candidates:
+        try:
+            if _os.path.exists(p):
+                v = open(p, "r", encoding="utf-8").read().strip()
+                if v:
+                    return {"version": v if v.startswith("v") else f"v{v}", "source": "whm-plugin/VERSION"}
+        except Exception:
+            continue
+    # Fallback: panel VERSION
+    return {"version": _read_panel_version(), "source": "fallback"}
+
+
+@api.post("/version/deploy-trigger")
+async def version_deploy_trigger(request: Request):
+    """Emergent Deploy tetikleyicisi.
+
+    Emergent platformunda deploy webhook URL'i env variable olarak set edilirse
+    (EMERGENT_DEPLOY_WEBHOOK), butona basildiginda POST yapilir. Aksi halde
+    kullaniciyi Emergent workspace Deploy sayfasina yonlendirmek uzere
+    `emergent_url` doner.
+    """
+    webhook = os.environ.get("EMERGENT_DEPLOY_WEBHOOK", "").strip()
+    workspace = os.environ.get("EMERGENT_WORKSPACE_URL", "https://app.emergent.sh").strip()
+    if webhook:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=15) as cx:
+                r = await cx.post(webhook, json={"trigger": "manual_ui", "ts": _iso()})
+                r.raise_for_status()
+            await db.logs.insert_one(ActivityLog(
+                source="deploy", level="info",
+                message=f"Deploy webhook tetiklendi (UI) — status={r.status_code}",
+            ).model_dump())
+            return {"ok": True, "triggered": True, "via": "webhook"}
+        except Exception as e:
+            return {"ok": False, "message": f"Webhook hatasi: {str(e)[:120]}",
+                    "emergent_url": workspace}
+    # Webhook yoksa kullaniciyi Emergent panele yonlendir
+    return {"ok": False, "triggered": False, "emergent_url": workspace,
+            "message": "Deploy webhook tanimli degil. Emergent panelinden 'Deploy' tikla."}
 
 
 @api.get("/version/current")

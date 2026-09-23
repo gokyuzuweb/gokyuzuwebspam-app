@@ -14,6 +14,54 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 23, 2026 (Session 32k, v44.00.54) — Master Panel Update Card ✅
+
+### Kullanici sorunu
+"panel.gokyuzuhosting.com da 44.00.40 olmus whm plugin guncellerken panel.gokyuzu otomatik guncellesin" — kullanici manual `Save to Github` + `Deploy` yapmak istemiyor, tek tik istiyor.
+
+### Yapilanlar
+
+**1. `MasterUpdateCard` React bileseni** (Dashboard tepesi)
+- `/api/version/panel` (canli deploy edilmis) vs `/api/version/bundle` (kod tabanindaki whm-plugin/VERSION) karsilastir
+- 3 durum:
+  - Guncel → yesil rozet "Master panel guncel"
+  - Yeni surum var → **sari/turuncu banner** + "🚀 Panel'i Guncelle" butonu
+  - Loading → hicbir sey render etme
+- Butona tiklayinca `POST /api/version/deploy-trigger` cagrilir
+
+**2. Yeni backend endpoint'leri**
+- `GET /api/version/bundle` — whm-plugin/VERSION okur, v prefix normalize
+- `POST /api/version/deploy-trigger` — `EMERGENT_DEPLOY_WEBHOOK` env'i tanimliysa webhook POST, yoksa `emergent_url` (workspace URL) doner (kullaniciyi Emergent Deploy sayfasina yonlendirmek icin)
+- Deploy webhook activity_log'a yazilir
+
+**3. `scripts/bump-version.sh`** — gelecekte 4 nokta senkron bump icin tek komut helper
+- Kullanim: `bash scripts/bump-version.sh v44.00.55`
+- Yaptigi: 3 VERSION dosyasi + `_PACKAGE_VERSION` bumplar, dogrulama gosterir
+- Post-bump: "Save to Github + Deploy" rehberi print eder
+
+**4. Emergent Deploy tetiklendi (50 ECU onayli)**
+- Kullanici ilk deploy icin 50 ECU'yu kabul etti
+- v44.00.40 → v44.00.54 tarafina panel yayinlaniyor
+- 13 minor arasi TUM guvenlik katmani deploy edildi
+
+**5. Testler** — `test_v44_00_54_master_update_card.py`
+- version/bundle endpoint dogru version doner ✔
+- version/panel hala calisir ✔
+- deploy-trigger fallback (webhook yoksa emergent_url doner) ✔
+- bump-version.sh executable + 4 nokta ele alir ✔
+- MasterUpdateCard bileseni + Dashboard'a import ✔
+- **6/6 pytest passed** — v44.00.50-54 kombine: **13/13**
+
+### Kalici cozum: Otomatik CI/CD ihtimali
+- **Simdiki**: Master admin Dashboard'daki "Panel'i Guncelle" butonuna tiklar → webhook (ayarli ise) veya Emergent Deploy sayfasi acilir
+- **Ileri**: `EMERGENT_DEPLOY_WEBHOOK` env'i bir kez set edilirse tam otomatik (kullanici hicbir sey yapmaz)
+- **En ileri**: Save-to-Github push -> Emergent auto-deploy webhook (bu Emergent platform tarafi)
+
+### Version bump
+- 4 nokta -> **v44.00.54** (bump-version.sh ile bumpladi, drift guard passed)
+
+
+
 ## Feb 22, 2026 (Session 32j, v44.00.53) — Exim system_filter + cPanel SpamBox Zorla ✅
 
 ### Kullanici raporu
