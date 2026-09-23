@@ -14,6 +14,56 @@ gokyuzuhosting.com.
 - Impersonation: `gws_impersonate` cookie.
 
 
+## Feb 22, 2026 (Session 32j, v44.00.53) — Exim system_filter + cPanel SpamBox Zorla ✅
+
+### Kullanici raporu
+`X-Spam-Flag: YES`, `X-Spam-Status: Yes, score=5.6` header'lari OLAN mail hala INBOX'a dusuyor. Kullanici hakli olarak "bu program neden stabil sekilde spamlari engellemiyor" diyor.
+
+### Kok neden (2 katman birden)
+1. **cPanel SpamBox off**: cPanel'in `SpamAssassin > Move Spam Emails` (spam_box) default'ta kapali. SA `X-Spam-Flag: YES` yaziyor ama Dovecot header'i gormezden gelip INBOX'a atiyor.
+2. **v44.00.51 yok**: `move_to_junk` panel motoru henuz uretim panel'de degil. `Save to Github` yapilmadi.
+
+### Yapilanlar
+
+**1. Exim system_filter (`install.sh`)**
+- `/etc/gws-spam-system-filter.exim` yazilir:
+  ```
+  if $h_X-Spam-Flag: matches "YES" then
+    save $home/mail/.spam/new
+    finish
+  endif
+  ```
+- SA "Yes" etiketli her mail Exim tarafindan (Dovecot'a teslim edilmeden) alicinin `.spam/new` klasorune yonlendirir. Roundcube bunu "Spam" olarak gosterir.
+- `/etc/exim.conf.localopts` icine `system_filter=/etc/gws-spam-system-filter.exim` eklenir
+- `buildeximconf` + `restartsrv_exim` calisir → derhal aktif
+
+**2. WHM API1 ile SpamBox toplu aktive**
+- `whmapi1 save_spamassassin_config enable_spam_box=1 default_spam_box=1` → yeni acilan hesaplar otomatik
+- `listaccts` ile mevcut hesaplari cikarip her biri icin `whmapi1 update_spam_options spam_box=1 auto_learn_enabled=1` (arka planda)
+- Log: `/var/log/mailshield/spam-box-migration.log`
+
+**3. Testler** — `test_v44_00_53_exim_spamflag_routing.py`
+- system_filter dosyasi yazilir ✔
+- exim.conf.localopts guncellenir + build/restart ✔
+- WHM save_spamassassin_config aktif ✔
+- Mevcut hesaplar bulk migrate ediliyor ✔
+- **4/4 pytest passed** — 13/13 kombine
+
+### Uc katmanli savunma (v44.00.53 sonrasi)
+1. **SMTP kabul seviyesi** (bu commit): Exim system_filter → SPAM header'li mail asla INBOX'a ulasmaz
+2. **Delivery seviyesi**: cPanel spam_box → Dovecot spam mail'leri .spam'e yazar
+3. **Panel post-facto** (v44.00.51): `move_to_junk` daemon 2 dk'da bir geriye donuk temizler
+
+### Bayinin aksiyonu
+1. `Save to Github` → v44.00.53 uretime
+2. Bayi: `sudo gwsm-update` → install.sh yeni system_filter'i deploy eder
+3. `X-Spam-Flag: YES` olan her mail bundan sonra Junk'a — daha INBOX'a dokunmadan
+
+### Version bump
+- 4 nokta -> **v44.00.53** (drift guard passed)
+
+
+
 ## Feb 17, 2026 (Session 32i, v44.00.52) — Master Panel Malware Widget ✅
 
 ### Kullanici sorunu

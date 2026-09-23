@@ -339,6 +339,78 @@ if [[ -f "$SRC/config/GokyuzuWebSpam.cf" ]]; then
   fi
 fi
 
+# v44.00.53 — KRITIK: X-Spam-Flag: YES header'i olan mail'i otomatik Junk'a
+# yonlendiren Exim system_filter. Bu SA'nin spam etiketlemesine ragmen
+# INBOX'a dusen mail sorununu SMTP kabul seviyesinde cozer (Dovecot LDA
+# devreye girmeden once).
+echo "==> [Exim] X-Spam-Flag: YES → Junk otomatik yonlendirme filtresi (v44.00.53)"
+SYSTEM_FILTER="/etc/gws-spam-system-filter.exim"
+cat > "$SYSTEM_FILTER" <<'EXIMFILT'
+# GokyuzuWebSpam — X-Spam-Flag routing filter
+# SA "Yes" etiketli mail'i alicinin Junk klasorune yonlendirir.
+# cPanel Roundcube/Horde bu klasoru "Spam" olarak gosterir.
+if $h_X-Spam-Flag: matches "YES" then
+  save $home/mail/.spam/new
+  finish
+endif
+# High score (>=8) — yuksek riskli spam, doveadm-kolay klasore
+if $h_X-Spam-Score: matches "^\\d\\d+$" or ${if >{$h_X-Spam-Score:}{80}{true}{false}} then
+  save $home/mail/.spam/new
+  finish
+endif
+EXIMFILT
+chmod 644 "$SYSTEM_FILTER"
+echo "    ✓ $SYSTEM_FILTER yazildi"
+
+# WHM Exim Configuration Manager'a `system_filter` direktifini ekle.
+# cPanel Exim'in advanced editor'unde `Custom system_filter` slotu var —
+# oradan cekilen file'a `system_filter = /etc/gws-spam-system-filter.exim`
+# ekler. Idempotent.
+EXIM_CONF_LOCAL="/etc/exim.conf.localopts"
+if [[ -f "/etc/exim.conf" ]] && [[ $DRY_RUN -eq 0 ]]; then
+  if [[ -f "$EXIM_CONF_LOCAL" ]] && grep -q "^system_filter=" "$EXIM_CONF_LOCAL"; then
+    echo "    → Exim system_filter zaten kurulu ($EXIM_CONF_LOCAL)"
+  else
+    # cPanel exim.conf.localopts'a append (buradaki direktifler exim.conf'a build sirasinda gelir)
+    touch "$EXIM_CONF_LOCAL"
+    if ! grep -q "gws-spam-system-filter" "$EXIM_CONF_LOCAL"; then
+      echo "system_filter=$SYSTEM_FILTER" >> "$EXIM_CONF_LOCAL"
+      echo "    ✓ system_filter direktifi $EXIM_CONF_LOCAL'e eklendi"
+    fi
+    # Exim conf'u yeniden derle
+    if [[ -x /usr/local/cpanel/scripts/buildeximconf ]]; then
+      /usr/local/cpanel/scripts/buildeximconf >/dev/null 2>&1 || true
+    fi
+    if [[ -x /usr/local/cpanel/scripts/restartsrv_exim ]]; then
+      /usr/local/cpanel/scripts/restartsrv_exim >/dev/null 2>&1 && \
+        echo "    ✓ Exim yeniden baslatildi" || \
+        echo "    ⚠ Exim restart basarisiz — manuel: /usr/local/cpanel/scripts/restartsrv_exim"
+    fi
+  fi
+fi
+
+# v44.00.53 — Ayrica TUM cPanel hesaplarinda SpamBox (auto-move to spam folder)
+# ozelligini toplu aktive et. WHM tarafta default'ta acik degil.
+if command -v whmapi1 >/dev/null 2>&1 && [[ $DRY_RUN -eq 0 ]]; then
+  echo "==> [cPanel] Tum hesaplarda SpamBox (auto-move) aktive ediliyor"
+  # Global default: yeni acilan hesaplar icin default spam_box acik
+  whmapi1 save_spamassassin_config \
+    enable_spam_assassin=1 \
+    enable_spam_box=1 \
+    default_spam_box=1 >/dev/null 2>&1 && \
+    echo "    ✓ Global SpamBox varsayilani aktif (yeni hesaplar otomatik)" || \
+    echo "    ⚠ save_spamassassin_config API cagrisi basarisiz"
+  # Mevcut hesaplar icin de zorla aktifle (background - uzun surerse etkilemez)
+  (
+    for user in $(whmapi1 --output=jsonpretty listaccts 2>/dev/null | python3 -c 'import sys,json;[print(a["user"]) for a in json.load(sys.stdin).get("data",{}).get("acct",[])]' 2>/dev/null); do
+      whmapi1 update_spam_options user="$user" spam_box=1 auto_learn_enabled=1 >/dev/null 2>&1 || true
+    done
+    echo "    ✓ Mevcut hesaplar icin SpamBox toplu aktive edildi" >> /var/log/mailshield/spam-box-migration.log
+  ) &
+  echo "    → Mevcut hesap migration arka planda calisiyor (log: /var/log/mailshield/spam-box-migration.log)"
+fi
+
+
 # v44.00.01 — Plugin sürümünü kaydet (heartbeat.pl bu dosyayı okur)
 PLUGIN_VER="$(cat "$SRC/VERSION" 2>/dev/null || echo '44.00.01')"
 PLUGIN_VER="${PLUGIN_VER#v}"
