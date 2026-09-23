@@ -125,8 +125,12 @@ async def sync_urlhaus_feed(max_entries: int = 2000) -> dict:
     """URLhaus CSV feed'ini cek ve `malicious_urls`'a yaz.
     Idempotent (pattern tekilligi ile). Bir cagriya max_entries kotasi.
     Sadece `url_status=online` olanlari alir.
+
+    v44.00.55 — CSV parse blocking operasyon, `asyncio.to_thread`'a taşındı
+    ki uvicorn tek-worker'da event loop bloklanmasın (health probe flap fix).
     """
     import httpx
+    import asyncio as _asyncio
     import csv
     from io import StringIO
     from urllib.parse import urlparse
@@ -142,42 +146,47 @@ async def sync_urlhaus_feed(max_entries: int = 2000) -> dict:
     except Exception as e:
         return {"ok": False, "error": str(e)[:200], "added": 0}
 
-    # URLhaus CSV'sinin ilk 8 satiri comment (#). csv.reader satirlarin
-    # `# ` ile baslamayanlarini islesin.
-    lines = [l for l in content.splitlines() if l and not l.startswith("#")]
-    reader = csv.reader(lines, quotechar='"', delimiter=",", skipinitialspace=True)
-    processed = 0
+    def _parse_lines(text: str):
+        """Blocking CSV parse — thread'a alinacak."""
+        lines = [l for l in text.splitlines() if l and not l.startswith("#")]
+        rows: list[dict] = []
+        reader = csv.reader(lines, quotechar='"', delimiter=",", skipinitialspace=True)
+        for row in reader:
+            try:
+                if len(row) < 7:
+                    continue
+                url = (row[2] or "").strip().strip('"')
+                status = (row[3] or "").strip().strip('"').lower()
+                threat = (row[5] or "").strip().strip('"').lower() or "malware"
+                tags = (row[6] or "").strip().strip('"')
+                if not url or status != "online":
+                    continue
+                parsed = urlparse(url)
+                host = (parsed.hostname or "").lower()
+                if not host or "." not in host:
+                    continue
+                path = (parsed.path or "").lower()[:60]
+                pattern = f"{host}{path}".rstrip("/")
+                if len(pattern) < 6:
+                    continue
+                rows.append({"pattern": pattern, "threat": threat, "tags": tags})
+            except Exception:
+                continue
+        return rows
+
+    # Parse'i thread'e ver — event loop bloklanmasın
+    parsed_rows = await _asyncio.to_thread(_parse_lines, content)
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    for row in reader:
-        if processed >= max_entries:
-            break
+    for item in parsed_rows[:max_entries]:
         try:
-            # Kolon indeksi: 0=id, 1=dateadded, 2=url, 3=url_status, 4=last_online, 5=threat, 6=tags
-            if len(row) < 7:
-                continue
-            url = (row[2] or "").strip().strip('"')
-            status = (row[3] or "").strip().strip('"').lower()
-            threat = (row[5] or "").strip().strip('"').lower() or "malware"
-            tags = (row[6] or "").strip().strip('"')
-            if not url or status != "online":
-                continue
-            # domain + path'i pattern olarak kaydet (case-insensitive substring match)
-            parsed = urlparse(url)
-            host = (parsed.hostname or "").lower()
-            if not host or "." not in host:
-                continue
-            # Cok kisa pattern'lerden kacin (ornegin "bit.ly" gibi legit)
-            # host + path[:40] gibi bir dize kullanmak spesifikligi arttirir
-            path = (parsed.path or "").lower()[:60]
-            pattern = f"{host}{path}".rstrip("/")
-            if len(pattern) < 6:
-                continue
+            pattern = item["pattern"]
+            threat = item["threat"]
+            tags = item["tags"]
             existing = await db.malicious_urls.find_one({"pattern": pattern}, {"_id": 1})
             if existing:
                 skipped += 1
             else:
-                # Threat -> kind mapping
                 _kind = "known_malicious"
                 if "ransom" in threat: _kind = "trojan"
                 elif "rat" in tags.lower(): _kind = "rat"
@@ -193,12 +202,11 @@ async def sync_urlhaus_feed(max_entries: int = 2000) -> dict:
                     "created_at": now_iso,
                 })
                 added += 1
-            processed += 1
         except Exception:
             errors += 1
             continue
 
-    # Sync durumunu kaydet
+    processed = min(len(parsed_rows), max_entries)
     await db.threat_feed_status.update_one(
         {"_key": "urlhaus"},
         {"$set": {

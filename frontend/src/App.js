@@ -19,7 +19,7 @@ import { ImpersonationBar } from "@/components/Impersonate";
 import PushToastBridge from "@/components/PushToastBridge";
 import BayiEventBridge from "@/components/BayiEventBridge";
 import { useIsMaster } from "@/hooks/useIsMaster";
-import { api } from "@/lib/api";
+import { api, client } from "@/lib/api";
 
 // v43.99.1 — Synchronously capture ?master_key=... before React renders,
 // so useIsMaster() hook picks up the key on the very first whoami call.
@@ -185,8 +185,19 @@ const TONE_STYLES = {
   slate:   { text: "text-slate-200",   barBg: "bg-slate-400",   grad: "from-slate-500/15",   border: "border-slate-500/30",   dot: "bg-slate-700/60 text-slate-300",   icon: "text-slate-400",   hoverBg: "hover:bg-slate-800/50",   hoverBorder: "hover:border-slate-700/40" },
 };
 
+// v44.00.54 — Sidebar sürüm rozeti (dinamik, /api/version/panel'den okunur)
+function VersionBadge() {
+  const q = useQuery({
+    queryKey: ["sidebar-panel-version"],
+    queryFn: async () => (await client.get("/version/panel")).data,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+  return <span data-testid="version-badge">{q.data?.version || "v?"}</span>;
+}
+
 function Sidebar() {
-  const t = useT();
+const t = useT();
   const { effective } = useI18n();
   const mode = useQuery({ queryKey: ["system-mode"], queryFn: api.systemMode });
   const isSeller = mode.data?.mode === "seller";
@@ -266,7 +277,7 @@ function Sidebar() {
         </NavLink>
         <div className="leading-tight min-w-0">
           <div className="text-slate-100 font-bold tracking-tight text-[15px] truncate">Gökyüzü<span className="text-indigo-400">WebSpam</span></div>
-          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono">v44.00.10 · {effective.toUpperCase()}</div>
+          <div className="text-[10px] uppercase tracking-widest text-slate-500 mono" data-testid="sidebar-version"><VersionBadge /> · {effective.toUpperCase()}</div>
         </div>
       </div>
       <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto sidebar-scroll">

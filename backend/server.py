@@ -445,6 +445,19 @@ async def seed_if_empty() -> None:
     log.info("Seed complete: %d quarantine items", len(quarantine_docs))
 
 
+@app.get("/health")
+async def _health_root():
+    """v44.00.55 — Hafif health probe (DB, feed, LLM'e dokunmaz).
+    K8s liveness/readiness için sadece FastAPI event loop cevap veriyor mu bakar."""
+    return {"ok": True, "service": "gws-backend"}
+
+
+@app.get("/api/health")
+async def _health_api():
+    """API prefix'i altındaki alternatif; ingress /api/* -> backend routing dogrulamasi."""
+    return {"ok": True, "service": "gws-backend", "version": _read_panel_version()}
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     await seed_if_empty()
@@ -5020,7 +5033,7 @@ def _read_panel_version() -> str:
       2. Git commit'ten en yakın vX.Y tag (git binary varsa)
       3. Backend paket varsayılanı `_PACKAGE_VERSION` — "unknown" görüntülemez
     """
-    _PACKAGE_VERSION = "v44.00.54"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
+    _PACKAGE_VERSION = "v44.00.55"  # backend bundle içindeki varsayılan (VERSION dosyası bulunamazsa)
     # v43.61 — Multi-location VERSION file reader (Docker mount sorununu çözer)
     for candidate in [_VERSION_FILE_ENV, _VERSION_FILE, _VERSION_FILE_BACKEND]:
         if not candidate:
