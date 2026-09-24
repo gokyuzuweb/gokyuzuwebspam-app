@@ -49,6 +49,23 @@ async def resolve_tenant_scope(
     hdr = request.headers.get("x-master-key") or ""
     cookie = request.cookies.get("gws_master_session") or ""
 
+    # 0) v44.00.60 — Server-local (loopback + Docker bridge + RFC1918) her zaman master
+    # Sunucunun kendisinden gelen istekler (root CLI, docker-internal curl, cron)
+    # is_master=True olur — feature gate'lere takılmaz. Guvenlik: private IP'ye
+    # internetten erisim mumkun degil, sadece server-local trafik yapabilir.
+    try:
+        xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        client_ip = xff or (request.client.host if request.client else "")
+        if client_ip and (
+            client_ip in ("127.0.0.1", "::1", "localhost")
+            or client_ip.startswith(("127.", "10.", "192.168.", "169.254."))
+            or (client_ip.startswith("172.") and 16 <= int((client_ip.split(".") + ["0"])[1] or "0") <= 31)
+            or client_ip.startswith(("fc", "fd", "fe80"))
+        ):
+            return {"is_master": True, "owner_license_key": ""}
+    except Exception:
+        pass
+
     # 1) Master via header/cookie
     if master_env and (hdr == master_env or cookie == master_env):
         target = (
