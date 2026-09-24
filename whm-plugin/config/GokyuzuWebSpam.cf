@@ -1,5 +1,13 @@
 # =============================================================================
-# GökyüzüWebSpam — Custom SpamAssassin Rules (v44.00.46)
+# GökyüzüWebSpam — Custom SpamAssassin Rules (v44.00.61)
+# =============================================================================
+# v44.00.61 (24 Eylul 2026): False positive audit + rule tuning
+#   - __GWS_SELF_ADDRESSED: 4.5 -> 0.5 (forward mail'ler false positive uretiyordu)
+#   - __GWS_BULK_LOOPBACK_SEND: 2.0 -> 0.1 (Roundcube 127.0.0.1'den gonderir - normal)
+#   - GWS_BANGLADESH_RFQ_SCAM meta: 6.0 -> 4.0 (dengeleme)
+#   - SMTP-level reject tamamen KAPATILDI, sadece INBOX.Junk routing
+# v44.00.57: Turkish password expiry phishing detection
+# v44.00.56: Bangladesh RFQ + typosquat (siatex1td) detection
 # =============================================================================
 # Bu dosyayı mail sunucunuzda SpamAssassin custom rules klasörüne kopyalayın:
 #   /etc/mail/spamassassin/GokyuzuWebSpam.cf    (WHM/cPanel varsayilan)
