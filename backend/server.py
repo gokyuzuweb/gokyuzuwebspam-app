@@ -14478,6 +14478,13 @@ async def demo_write_guard(request: Request, call_next):
             pass
         if master_ip_env and client_ip and client_ip == master_ip_env:
             return await call_next(request)
+        # v44.00.58 — Loopback (server-local CLI) bypass:
+        # Sunucunun kendisinden (127.0.0.1 / ::1) gelen istekler her zaman
+        # yazabilir. root'un curl ile local backend'e vurduğu senaryolarda
+        # (blacklist ekle, seed, cron) BAYI_ON_MASTER_PANEL hatasını cozer.
+        # Guvenlik: local root olmadan loopback'e erisim yok.
+        if client_ip in ("127.0.0.1", "::1", "localhost"):
+            return await call_next(request)
         # v43.68 — KRİTİK MİMARİ FIX: Master panelinde (MASTER_LICENSE_KEY env
         # tanımlıysa) bayi lisansı ile giriş yapan kullanıcı MASTER değildir.
         # Bayi kendi sunucusunda kendi paneline erişmelidir. Master panelde
