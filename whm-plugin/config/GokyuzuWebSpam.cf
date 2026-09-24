@@ -164,6 +164,51 @@ score    __GWS_BULK_LOOPBACK_SEND  2.0
 describe __GWS_BULK_LOOPBACK_SEND  Sender kendi loopback'inden bulk mailer olarak gonderdi
 
 # =============================================================================
+# v44.00.57 — TURKISH PASSWORD EXPIRY PHISHING (credential harvesting)
+# =============================================================================
+# Ornek: "info@seridokum.com Parola Suresi Dolma Bildirimi"
+# "seriisdokum.com Sifre Mesaji", "Ayni sifreyi kullanin" butonu
+# Bu klasik Turkish credential harvesting paterni.
+
+header   __GWS_PW_EXPIRY_SUBJ  Subject =~ /(?:parola\s*s[uü]resi\s*dolma|sifre\s*(?:mesaj|s[uü]resi|bildirim)|parola\s*bildirim|password\s+expir|hesap.{0,20}dondur)/i
+score    __GWS_PW_EXPIRY_SUBJ  3.0
+describe __GWS_PW_EXPIRY_SUBJ  Turkce parola/sifre suresi phishing subject
+
+body     __GWS_PW_EXPIRY_CTA  /(?:ayn[ıi]\s*[sş]ifreyi\s*kullan|ayn[ıi]\s*parolayi\s*kullan|ayn[ıi]\s*[sş]ifreyle\s*devam|[sş]ifre(?:yi|nizi)\s*(?:g[uü]ncelle|yenile|do[gğ]rula)|posta\s*hesab[ıi]n[ıi]z[ıi]n\s*[sş]ifresi)/i
+score    __GWS_PW_EXPIRY_CTA  2.5
+describe __GWS_PW_EXPIRY_CTA  Turkce "ayni sifreyi kullan" credential CTA
+
+body     __GWS_PW_EXPIRY_URGENCY  /(?:2\s*saat\s*i[cç]inde\s*dolacak|alan\s*ad[ıi]n[ıi]z\s*engellenecek|engelleyecek|24\s*saat\s*i[cç]inde\s*(?:silinecek|dondurul)|hesab[ıi]n[ıi]z\s*devre\s*d[ıi][sş][ıi])/i
+score    __GWS_PW_EXPIRY_URGENCY  1.5
+describe __GWS_PW_EXPIRY_URGENCY  Aciliyet paterni (X saat icinde dolacak/silinecek)
+
+meta     GWS_TR_CREDENTIAL_HARVEST  ( __GWS_PW_EXPIRY_SUBJ && ( __GWS_PW_EXPIRY_CTA || __GWS_PW_EXPIRY_URGENCY ) )
+score    GWS_TR_CREDENTIAL_HARVEST  5.5
+describe GWS_TR_CREDENTIAL_HARVEST  Turkce parola/sifre credential harvest phishing paterni
+
+# --- 11) Extra-letter typosquat (seriisdokum vs seridokum) (+4.5) ----------
+# Ornek: seri__i__sdokum.com (fazladan 'i'), y__aa__ndex.com (fazla 'a')
+# Ayni harf art arda 3+ kez tekrariyorsa typosquat kokusuyor.
+header   __GWS_TYPOSQUAT_EXTRA_LETTER  From =~ /@[a-z]*([a-z])\1{2,}[a-z]*\./i
+score    __GWS_TYPOSQUAT_EXTRA_LETTER  1.5
+describe __GWS_TYPOSQUAT_EXTRA_LETTER  Uc kez ust uste tekrarli harf iceren gonderici domain (fazla harf ekleme typosquat)
+
+# From display name = sender domain (kendi kendini adresliyor gorsel spoof)
+header   __GWS_FROM_DOM_AS_NAME  From =~ /^([a-z0-9-]+\.[a-z0-9-]+(?:\.[a-z]+)?)\s*<[^@>]+@\1>/i
+score    __GWS_FROM_DOM_AS_NAME  2.5
+describe __GWS_FROM_DOM_AS_NAME  From display name = ayni domain (kimlik taklidi paterni)
+
+# Password expiry + typosquat kombosu = phishing (+7.0 meta)
+meta     GWS_TR_PHISH_TYPOSQUAT_PW  ( GWS_TR_CREDENTIAL_HARVEST && ( __GWS_TYPOSQUAT_EXTRA_LETTER || __GWS_TYPOSQUAT_L_AS_1 || __GWS_FROM_DOM_AS_NAME ) )
+score    GWS_TR_PHISH_TYPOSQUAT_PW  6.0
+describe GWS_TR_PHISH_TYPOSQUAT_PW  Turkce sifre phishing + typosquat sender = kesin credential harvest
+
+# HTML-only mail + password harvest = daha da suspicious
+meta     GWS_TR_PHISH_HTML_ONLY  ( GWS_TR_CREDENTIAL_HARVEST && (MIME_HTML_ONLY || HTML_MESSAGE) )
+score    GWS_TR_PHISH_HTML_ONLY  2.0
+describe GWS_TR_PHISH_HTML_ONLY  HTML-only phishing mail credential harvest
+
+# =============================================================================
 # Kurulum sonrasi test:
 #   spamassassin --lint 2>&1 | grep -i error
 #   echo "Subject: Test\nFrom: paypal.com <x@evil.com>\n\ntest" | spamassassin -t
