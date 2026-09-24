@@ -10131,10 +10131,19 @@ async def plugin_download_latest(request: Request):
     import tarfile as _tar
     ver = await _current_version()
     plugin_dir = Path("/app/whm-plugin")
+    backend_dir = Path("/app/backend")
     if plugin_dir.exists():
         buf = _io.BytesIO()
         with _tar.open(fileobj=buf, mode="w:gz") as tar:
             tar.add(str(plugin_dir), arcname="gokyuzuwebspam")
+            # v44.00.58 — Backend server.py + routes'u da paket icine kat
+            # (whm-plugin/install.sh backend rsync ile kopyalar)
+            if backend_dir.exists():
+                # server.py + routes/ + tests/ + requirements.txt
+                for item in ["server.py", "routes", "requirements.txt", "VERSION"]:
+                    src = backend_dir / item
+                    if src.exists():
+                        tar.add(str(src), arcname=f"gokyuzuwebspam/backend/{item}")
         buf.seek(0)
         from fastapi.responses import StreamingResponse
         return StreamingResponse(
