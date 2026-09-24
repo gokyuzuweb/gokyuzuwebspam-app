@@ -14487,13 +14487,32 @@ async def demo_write_guard(request: Request, call_next):
             pass
         if master_ip_env and client_ip and client_ip == master_ip_env:
             return await call_next(request)
-        # v44.00.58 — Loopback (server-local CLI) bypass:
-        # Sunucunun kendisinden (127.0.0.1 / ::1) gelen istekler her zaman
-        # yazabilir. root'un curl ile local backend'e vurduğu senaryolarda
-        # (blacklist ekle, seed, cron) BAYI_ON_MASTER_PANEL hatasını cozer.
-        # Guvenlik: local root olmadan loopback'e erisim yok.
-        if client_ip in ("127.0.0.1", "::1", "localhost"):
-            return await call_next(request)
+        # v44.00.58 — Loopback + Docker bridge network bypass:
+        # Sunucunun kendisinden gelen istekler (root CLI, docker-internal curl)
+        # her zaman yazabilir. Docker networking'de container'a gelen istegin
+        # kaynak IP'si 172.17.x.x (docker-bridge) olur, 127.0.0.1 olmaz.
+        # Bu yuzden RFC1918 private range + loopback whitelist edilir.
+        # Guvenlik: private IP'ye erisim host-local; internetten mumkun degil.
+        def _is_local_ip(ip: str) -> bool:
+            if not ip:
+                return False
+            if ip in ("127.0.0.1", "::1", "localhost"):
+                return True
+            # RFC1918 + Docker bridge + link-local
+            return (
+                ip.startswith("127.")
+                or ip.startswith("10.")
+                or ip.startswith("192.168.")
+                or ip.startswith("169.254.")
+                or (ip.startswith("172.") and 16 <= int(ip.split(".")[1] or "0") <= 31)
+                or ip.startswith("fc") or ip.startswith("fd")  # IPv6 ULA
+                or ip.startswith("fe80")  # IPv6 link-local
+            )
+        try:
+            if _is_local_ip(client_ip):
+                return await call_next(request)
+        except Exception:
+            pass
         # v43.68 — KRİTİK MİMARİ FIX: Master panelinde (MASTER_LICENSE_KEY env
         # tanımlıysa) bayi lisansı ile giriş yapan kullanıcı MASTER değildir.
         # Bayi kendi sunucusunda kendi paneline erişmelidir. Master panelde
