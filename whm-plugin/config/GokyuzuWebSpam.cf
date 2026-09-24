@@ -100,6 +100,70 @@ score    __GWS_ATT_DOUBLE_EXT  10.0
 describe __GWS_ATT_DOUBLE_EXT  Cift uzanti tuzagi (fatura.pdf.exe) - klasik phishing
 
 # =============================================================================
+# v44.00.56 — TYPOSQUAT + BULK SCAM DETECTION (Bangladesh RFQ / Fake Tender)
+# =============================================================================
+# Bu bolum "siatex1td.com" gibi rakam-harf ikame typosquat domain'leri ve
+# klasik "From = To, BCC bulk" tender scam paternini yakalar.
+
+# --- 6) Rakam-harf ikame typosquat (1→l, 0→o) domain'leri (+5.0) ----------
+# Ornekler: siatex1td.com (ltd), micr0soft.com (o), g00gle.com, paypa1.com
+# Sadece From/Return-Path domain'inde bu patern varsa (rakam bir kelimenin ortasinda) tetikler.
+header   __GWS_TYPOSQUAT_L_AS_1  From =~ /@[a-z]{2,}1(?:td|lc|nk|ne|st|te|sa|ne|ke|ve|de|me)\b/i
+score    __GWS_TYPOSQUAT_L_AS_1  5.0
+describe __GWS_TYPOSQUAT_L_AS_1  Rakam-harf ikame domain (ornek: siatex1td.com — l yerine 1)
+
+header   __GWS_TYPOSQUAT_O_AS_0  From =~ /@[a-z]*0[a-z]{2,}(?:soft|line|gle|book|mail|shop|bank|pay)\b/i
+score    __GWS_TYPOSQUAT_O_AS_0  4.5
+describe __GWS_TYPOSQUAT_O_AS_0  Rakam-harf ikame domain (o yerine 0)
+
+# --- 7) Self-addressed BCC bulk pattern (From = To) (+4.5) ------------------
+# Ornek: From: gm@siatex1td.com, To: gm@siatex1td.com, Envelope-To: kurban@baska.com
+# Bulk mailer klasigi — SA'nin default rule seti bunu low score verir.
+header   __GWS_SELF_ADDRESSED  ALL =~ /^From:\s*(?:[^<\n]*<)?([^\s<>@]+@[^\s<>@,]+)>?[^\n]*$[\s\S]*?^To:\s*(?:[^<\n]*<)?\1>?/mi
+score    __GWS_SELF_ADDRESSED  4.5
+describe __GWS_SELF_ADDRESSED  From adresi = To adresi (BCC bulk pattern)
+
+# --- 8) RFQ / Tender / Inquiry scam paterni (+3.5) --------------------------
+header   __GWS_RFQ_SUBJ  Subject =~ /(?:\b(?:RFQ|inquiry\s+ref|quotation\s+request|tender\s+submission|request\s+for\s+quotation)\b)/i
+score    __GWS_RFQ_SUBJ  1.0
+describe __GWS_RFQ_SUBJ  Subject RFQ/tender/quotation icerir
+
+body     __GWS_RFQ_BANGLADESH  /(?:\bDhaka\b|\bBangladesh\b|Gulshan|Niketon|Chittagong|Chattogram|\bBD\b\s+Limited)/i
+score    __GWS_RFQ_BANGLADESH  1.5
+describe __GWS_RFQ_BANGLADESH  Body Bangladesh/Dhaka pattern
+
+body     __GWS_RFQ_TENDER_CTA  /(?:submission\s+deadline|tender\s+package|kindly\s+provide\s+your\s+best\s+offer|please\s+find\s+attached\s+our\s+inquiry|end\s*user\s*:.*SIATEX)/i
+score    __GWS_RFQ_TENDER_CTA  1.5
+describe __GWS_RFQ_TENDER_CTA  Body tender scam CTA paterni
+
+# RFQ + Bangladesh + attachment kombosu = kesin scam (+7.0 toplam meta ile)
+meta     GWS_BANGLADESH_RFQ_SCAM  ( __GWS_RFQ_SUBJ && __GWS_RFQ_BANGLADESH && __GWS_RFQ_TENDER_CTA )
+score    GWS_BANGLADESH_RFQ_SCAM  6.0
+describe GWS_BANGLADESH_RFQ_SCAM  Bangladesh RFQ/tender scam paterni (Siatex vs.)
+
+# --- 9) .docx / .xlsx ekli belge + suspicious sender (+3.0) ----------------
+full     __GWS_ATT_OFFICE_DOC  /Content-Disposition:[^\n]{0,200}filename=(?:"[^"]*|)[^"\n]*\.(?:docx|xlsx|pptx|docm|xlsm|pptm|dotm|xltm)(?:"|\s|$)/i
+score    __GWS_ATT_OFFICE_DOC  0.1
+describe __GWS_ATT_OFFICE_DOC  Ekli Office belgesi
+
+# Office belge + typosquat sender = phishing payload olma ihtimali cok yuksek
+meta     GWS_OFFICE_DOC_TYPOSQUAT  ( __GWS_ATT_OFFICE_DOC && ( __GWS_TYPOSQUAT_L_AS_1 || __GWS_TYPOSQUAT_O_AS_0 ) )
+score    GWS_OFFICE_DOC_TYPOSQUAT  4.0
+describe GWS_OFFICE_DOC_TYPOSQUAT  Office belgesi + typosquat gonderici = malware taşiyicisi
+
+# Macro-enabled Office format (docm/xlsm/dotm) her zaman yuksek risk
+full     __GWS_ATT_MACRO_DOC  /Content-Disposition:[^\n]{0,200}filename=(?:"[^"]*|)[^"\n]*\.(?:docm|xlsm|pptm|dotm|xltm|xlam|xll)(?:"|\s|$)/i
+score    __GWS_ATT_MACRO_DOC  6.5
+describe __GWS_ATT_MACRO_DOC  Macro-enabled Office belgesi (docm/xlsm) - buyuk olasilikla malware
+
+# --- 10) Bulk mailer localhost Received hop (+2.0) -------------------------
+# Received: from siatex1td.com (localhost [127.0.0.1]) by mail.siatex1td.com
+# Bulk mailer kendi loopback'inden gonderiyorsa suspicious.
+header   __GWS_BULK_LOOPBACK_SEND  Received =~ /\bfrom\s+[a-z0-9.-]+\s+\(localhost\s+\[127\.0\.0\.1\]\)\s+by\s+mail\./i
+score    __GWS_BULK_LOOPBACK_SEND  2.0
+describe __GWS_BULK_LOOPBACK_SEND  Sender kendi loopback'inden bulk mailer olarak gonderdi
+
+# =============================================================================
 # Kurulum sonrasi test:
 #   spamassassin --lint 2>&1 | grep -i error
 #   echo "Subject: Test\nFrom: paypal.com <x@evil.com>\n\ntest" | spamassassin -t
