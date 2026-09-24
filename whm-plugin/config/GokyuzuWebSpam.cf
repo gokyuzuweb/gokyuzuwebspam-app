@@ -116,12 +116,23 @@ header   __GWS_TYPOSQUAT_O_AS_0  From =~ /@[a-z]*0[a-z]{2,}(?:soft|line|gle|book
 score    __GWS_TYPOSQUAT_O_AS_0  4.5
 describe __GWS_TYPOSQUAT_O_AS_0  Rakam-harf ikame domain (o yerine 0)
 
-# --- 7) Self-addressed BCC bulk pattern (From = To) (+4.5) ------------------
+# --- 7) Self-addressed BCC bulk pattern (From = To) --------------------------
 # Ornek: From: gm@siatex1td.com, To: gm@siatex1td.com, Envelope-To: kurban@baska.com
-# Bulk mailer klasigi — SA'nin default rule seti bunu low score verir.
+# Bulk mailer klasigi — ama TEK BASINA firing FALSE POSITIVE uretir (meshur forward'lar
+# From=To olur). Bu yuzden dusuk puan + META olarak diger sinyallerle birlestirilir.
 header   __GWS_SELF_ADDRESSED  ALL =~ /^From:\s*(?:[^<\n]*<)?([^\s<>@]+@[^\s<>@,]+)>?[^\n]*$[\s\S]*?^To:\s*(?:[^<\n]*<)?\1>?/mi
-score    __GWS_SELF_ADDRESSED  4.5
-describe __GWS_SELF_ADDRESSED  From adresi = To adresi (BCC bulk pattern)
+score    __GWS_SELF_ADDRESSED  0.5
+describe __GWS_SELF_ADDRESSED  From adresi = To adresi (BCC bulk pattern - tek basina zayif sinyal)
+
+# Self-addressed + typosquat domain = kesin phishing (+4.5 meta)
+meta     GWS_SELF_ADDRESSED_TYPOSQUAT  ( __GWS_SELF_ADDRESSED && ( __GWS_TYPOSQUAT_L_AS_1 || __GWS_TYPOSQUAT_O_AS_0 ) )
+score    GWS_SELF_ADDRESSED_TYPOSQUAT  4.5
+describe GWS_SELF_ADDRESSED_TYPOSQUAT  Self-addressed + typosquat domain
+
+# Self-addressed + bulk loopback = suspicious (+3.0 meta)
+meta     GWS_SELF_ADDRESSED_BULK  ( __GWS_SELF_ADDRESSED && __GWS_BULK_LOOPBACK_SEND )
+score    GWS_SELF_ADDRESSED_BULK  3.0
+describe GWS_SELF_ADDRESSED_BULK  Self-addressed + loopback bulk mailer
 
 # --- 8) RFQ / Tender / Inquiry scam paterni (+3.5) --------------------------
 header   __GWS_RFQ_SUBJ  Subject =~ /(?:\b(?:RFQ|inquiry\s+ref|quotation\s+request|tender\s+submission|request\s+for\s+quotation)\b)/i
@@ -138,7 +149,7 @@ describe __GWS_RFQ_TENDER_CTA  Body tender scam CTA paterni
 
 # RFQ + Bangladesh + attachment kombosu = kesin scam (+7.0 toplam meta ile)
 meta     GWS_BANGLADESH_RFQ_SCAM  ( __GWS_RFQ_SUBJ && __GWS_RFQ_BANGLADESH && __GWS_RFQ_TENDER_CTA )
-score    GWS_BANGLADESH_RFQ_SCAM  6.0
+score    GWS_BANGLADESH_RFQ_SCAM  4.0
 describe GWS_BANGLADESH_RFQ_SCAM  Bangladesh RFQ/tender scam paterni (Siatex vs.)
 
 # --- 9) .docx / .xlsx ekli belge + suspicious sender (+3.0) ----------------
@@ -156,12 +167,14 @@ full     __GWS_ATT_MACRO_DOC  /Content-Disposition:[^\n]{0,200}filename=(?:"[^"]
 score    __GWS_ATT_MACRO_DOC  6.5
 describe __GWS_ATT_MACRO_DOC  Macro-enabled Office belgesi (docm/xlsm) - buyuk olasilikla malware
 
-# --- 10) Bulk mailer localhost Received hop (+2.0) -------------------------
+# --- 10) Bulk mailer localhost Received hop --------------------------------
 # Received: from siatex1td.com (localhost [127.0.0.1]) by mail.siatex1td.com
 # Bulk mailer kendi loopback'inden gonderiyorsa suspicious.
+# NOT: Roundcube/Webmail de localhost'tan gonderir — bu yuzden TEK BASINA
+# yeterli sinyal DEGIL. Sadece typosquat + self-addressed ile birlikte fire eder.
 header   __GWS_BULK_LOOPBACK_SEND  Received =~ /\bfrom\s+[a-z0-9.-]+\s+\(localhost\s+\[127\.0\.0\.1\]\)\s+by\s+mail\./i
-score    __GWS_BULK_LOOPBACK_SEND  2.0
-describe __GWS_BULK_LOOPBACK_SEND  Sender kendi loopback'inden bulk mailer olarak gonderdi
+score    __GWS_BULK_LOOPBACK_SEND  0.1
+describe __GWS_BULK_LOOPBACK_SEND  Sender kendi loopback'inden gonderdi (zayif sinyal)
 
 # =============================================================================
 # v44.00.57 — TURKISH PASSWORD EXPIRY PHISHING (credential harvesting)
