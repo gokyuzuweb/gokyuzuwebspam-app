@@ -458,6 +458,26 @@ async def _health_api():
     return {"ok": True, "service": "gws-backend", "version": _read_panel_version()}
 
 
+# v44.00.55 — Frontend build tarball servis (master panel self-upgrade icin)
+@app.get("/api/plugin/frontend-build")
+async def download_frontend_build():
+    """Frontend production build'ini tarball olarak servisler.
+    Kullanici master panel sunucusunda:
+      curl ... /api/plugin/frontend-build -o build.tar.gz
+      tar -xzf build.tar.gz -C /home/USER/public_html/DOMAIN/
+    seklinde deploy edebilir. Docroot senkron icin en pratik yol."""
+    from fastapi.responses import FileResponse
+    from fastapi import HTTPException
+    import os as _os
+    p = "/app/frontend-build.tar.gz"
+    if not _os.path.exists(p):
+        raise HTTPException(404, "frontend build tarball hazir degil - yarn build calistirilmali")
+    return FileResponse(
+        p, media_type="application/gzip",
+        filename=f"gokyuzuwebspam-frontend-{_read_panel_version()}.tar.gz",
+    )
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     await seed_if_empty()
