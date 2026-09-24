@@ -10139,8 +10139,8 @@ async def plugin_download_latest(request: Request):
             # v44.00.58 — Backend server.py + routes'u da paket icine kat
             # (whm-plugin/install.sh backend rsync ile kopyalar)
             if backend_dir.exists():
-                # server.py + routes/ + tests/ + requirements.txt
-                for item in ["server.py", "routes", "requirements.txt", "VERSION"]:
+                # server.py + tenant.py + routes/ + tests/ + requirements.txt + VERSION
+                for item in ["server.py", "tenant.py", "deps.py", "routes", "requirements.txt", "VERSION"]:
                     src = backend_dir / item
                     if src.exists():
                         tar.add(str(src), arcname=f"gokyuzuwebspam/backend/{item}")
