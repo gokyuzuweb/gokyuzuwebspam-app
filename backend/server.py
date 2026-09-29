@@ -10132,6 +10132,7 @@ async def plugin_download_latest(request: Request):
     ver = await _current_version()
     plugin_dir = Path("/app/whm-plugin")
     backend_dir = Path("/app/backend")
+    deployment_dir = Path("/app/deployment")
     if plugin_dir.exists():
         buf = _io.BytesIO()
         with _tar.open(fileobj=buf, mode="w:gz") as tar:
@@ -10144,6 +10145,14 @@ async def plugin_download_latest(request: Request):
                     src = backend_dir / item
                     if src.exists():
                         tar.add(str(src), arcname=f"gokyuzuwebspam/backend/{item}")
+            # v44.00.63 — deployment/gws-update.sh de dahil olsun ki kullanici
+            # `gws-update` scriptini de guncel tutabilsin (Docker container'lari sync eder)
+            if deployment_dir.exists():
+                tar.add(str(deployment_dir), arcname="gokyuzuwebspam/deployment")
+            # v44.00.63 — VERSION dosyasi da root'a
+            version_file = Path("/app/VERSION")
+            if version_file.exists():
+                tar.add(str(version_file), arcname="gokyuzuwebspam/VERSION")
         buf.seek(0)
         from fastapi.responses import StreamingResponse
         return StreamingResponse(

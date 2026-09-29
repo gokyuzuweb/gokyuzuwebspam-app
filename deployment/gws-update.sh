@@ -110,9 +110,44 @@ LATEST=$(git rev-parse "origin/$BRANCH")
 LATEST_VER=$(read_version_at "origin/$BRANCH")
 
 if [ "$CURRENT" = "$LATEST" ] && [ "$FORCE" = "0" ]; then
-    log "✓ $CURRENT_VER zaten güncel — güncelleme atlandı"
+    log "✓ $CURRENT_VER zaten güncel — git atlanıyor"
     # State güncelle (heartbeat için son check zamanı)
     echo "{\"last_check\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"version\":\"$CURRENT_VER\"}" > "$STATE_FILE"
+
+    # v44.00.63 — Git zaten guncel olsa bile Docker container'lari sync et
+    # (kullanicinin panelinde yeni JS/backend dosyalari varsa Docker restart lazim)
+    if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qE '^gws-(backend|frontend)$'; then
+        log "🐳 Docker container'lar guncelligi doğrulaniyor…"
+        # Backend
+        if BE=$(docker ps --format '{{.Names}}' | grep -E '^gws-backend$' | head -1); [ -n "$BE" ]; then
+            HOST_VER=$(cat "$APP_DIR/VERSION" 2>/dev/null || echo "")
+            DOCKER_VER=$(docker exec "$BE" cat /app/VERSION 2>/dev/null || echo "")
+            if [ -n "$HOST_VER" ] && [ "$HOST_VER" != "$DOCKER_VER" ]; then
+                log "  → Backend surum farkli (host=$HOST_VER, docker=$DOCKER_VER) - sync"
+                docker cp "$APP_DIR/backend/server.py" "$BE":/app/backend/server.py 2>/dev/null
+                [ -f "$APP_DIR/backend/tenant.py" ] && docker cp "$APP_DIR/backend/tenant.py" "$BE":/app/backend/tenant.py 2>/dev/null
+                [ -d "$APP_DIR/backend/routes" ] && docker cp "$APP_DIR/backend/routes" "$BE":/app/backend/ 2>/dev/null
+                docker cp "$APP_DIR/VERSION" "$BE":/app/VERSION 2>/dev/null
+                docker restart "$BE" >/dev/null 2>&1 && log "    ✓ Backend restart"
+            fi
+        fi
+        # Frontend
+        if FE=$(docker ps --format '{{.Names}}' | grep -E '^gws-frontend$' | head -1); [ -n "$FE" ]; then
+            # Frontend build eskiyse (JS bundle'i host ile uyusmuyorsa) yeniden yukle
+            HOST_HASH=$(ls "$APP_DIR/frontend/build/static/js/main."*.js 2>/dev/null | head -1 | grep -oE 'main\.[a-f0-9]+\.js' | head -1)
+            DOCKER_HASH=$(docker exec "$FE" sh -c 'ls /usr/share/nginx/html/static/js/main.*.js 2>/dev/null' | head -1 | grep -oE 'main\.[a-f0-9]+\.js' | head -1)
+            if [ -n "$HOST_HASH" ] && [ "$HOST_HASH" != "$DOCKER_HASH" ]; then
+                log "  → Frontend bundle farkli (host=$HOST_HASH, docker=$DOCKER_HASH) - sync"
+                TMPTAR="/tmp/gws-fe-sync-$$.tar.gz"
+                (cd "$APP_DIR/frontend/build" && tar -czf "$TMPTAR" .) 2>/dev/null
+                docker exec "$FE" sh -c 'rm -rf /usr/share/nginx/html/*' 2>/dev/null
+                docker cp "$TMPTAR" "$FE":/tmp/fe.tar.gz 2>/dev/null
+                docker exec "$FE" sh -c 'cd /usr/share/nginx/html && tar -xzf /tmp/fe.tar.gz && rm /tmp/fe.tar.gz' 2>/dev/null
+                rm -f "$TMPTAR"
+                docker restart "$FE" >/dev/null 2>&1 && log "    ✓ Frontend restart"
+            fi
+        fi
+    fi
     exit 0
 fi
 
@@ -161,7 +196,8 @@ if [ "$SKIP_FRONTEND" = "0" ] && [ -d "$APP_DIR/frontend" ]; then
         fi
         # Prod deploylarda build çalışır; supervisor dev-server ile çalışıyorsa hot reload kullanır
         if [ -f "$APP_DIR/frontend/build" ] || grep -q '"build"' package.json; then
-            yarn build 2>&1 | tee -a "$LOG_FILE" || err "yarn build uyarıları"
+            # v44.00.63 — VERSION'i build-time env var olarak inject et (Landing.js icin)
+            REACT_APP_VERSION="$LATEST_VER" yarn build 2>&1 | tee -a "$LOG_FILE" || err "yarn build uyarıları"
         fi
         cd "$APP_DIR"
     else
@@ -257,6 +293,60 @@ if [ "$SKIP_BACKEND" = "0" ] && command -v supervisorctl >/dev/null 2>&1; then
         log "  ✓ Backend RUNNING"
     else
         err "  ✗ Backend başlatılamadı — supervisor logu kontrol edin"
+    fi
+fi
+
+# ============================================================================
+# 6.5) DOCKER — Container'lar (backend + frontend) her zaman güncelle
+# ============================================================================
+# v44.00.63 — gws-update artik Docker container'larini da otomatik gunceller
+# Kullanicinin bir daha manuel `docker cp` yapmasina gerek yok.
+if command -v docker >/dev/null 2>&1; then
+    log "🐳 Docker container'lar guncelleniyor…"
+
+    # --- Backend container ---
+    CONTAINER_BE=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^gws-backend$' | head -1)
+    if [ -n "$CONTAINER_BE" ]; then
+        log "  → gws-backend"
+        docker cp "$APP_DIR/backend/server.py" "$CONTAINER_BE":/app/backend/server.py 2>>"$LOG_FILE" && vlog "    ✓ server.py"
+        [ -f "$APP_DIR/backend/tenant.py" ] && \
+            docker cp "$APP_DIR/backend/tenant.py" "$CONTAINER_BE":/app/backend/tenant.py 2>>"$LOG_FILE" && vlog "    ✓ tenant.py"
+        [ -f "$APP_DIR/backend/deps.py" ] && \
+            docker cp "$APP_DIR/backend/deps.py" "$CONTAINER_BE":/app/backend/deps.py 2>>"$LOG_FILE" && vlog "    ✓ deps.py"
+        if [ -d "$APP_DIR/backend/routes" ]; then
+            docker cp "$APP_DIR/backend/routes" "$CONTAINER_BE":/app/backend/ 2>>"$LOG_FILE" && vlog "    ✓ routes/"
+        fi
+        # VERSION senkronu (source of truth)
+        docker cp "$APP_DIR/VERSION" "$CONTAINER_BE":/app/VERSION 2>>"$LOG_FILE"
+        docker restart "$CONTAINER_BE" >/dev/null 2>&1 && log "    ✓ Backend container restart"
+        sleep 3
+    fi
+
+    # --- Frontend container ---
+    CONTAINER_FE=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^gws-frontend$' | head -1)
+    if [ -n "$CONTAINER_FE" ]; then
+        log "  → gws-frontend"
+        if [ -d "$APP_DIR/frontend/build" ]; then
+            # Local build hazir - tarball'a paketle ve container'a bas
+            TMPTAR="/tmp/gws-fe-$$.tar.gz"
+            (cd "$APP_DIR/frontend/build" && tar -czf "$TMPTAR" .) 2>>"$LOG_FILE"
+            if [ -s "$TMPTAR" ]; then
+                docker exec "$CONTAINER_FE" sh -c 'rm -rf /usr/share/nginx/html/*' 2>>"$LOG_FILE"
+                docker cp "$TMPTAR" "$CONTAINER_FE":/tmp/fe-build.tar.gz 2>>"$LOG_FILE"
+                docker exec "$CONTAINER_FE" sh -c 'cd /usr/share/nginx/html && tar -xzf /tmp/fe-build.tar.gz && rm /tmp/fe-build.tar.gz' 2>>"$LOG_FILE"
+                log "    ✓ Frontend build container'a yuklendi (nginx html)"
+                rm -f "$TMPTAR"
+                docker restart "$CONTAINER_FE" >/dev/null 2>&1 && log "    ✓ Frontend container restart"
+            fi
+        elif [ -f /app/frontend-build.tar.gz ]; then
+            # Alternatif: hazir tarball varsa onu kullan
+            docker cp /app/frontend-build.tar.gz "$CONTAINER_FE":/tmp/fe-build.tar.gz 2>>"$LOG_FILE"
+            docker exec "$CONTAINER_FE" sh -c 'cd /usr/share/nginx/html && rm -rf ./* && tar -xzf /tmp/fe-build.tar.gz && rm /tmp/fe-build.tar.gz' 2>>"$LOG_FILE" && \
+                log "    ✓ Frontend build (cached tarball) container'a yuklendi"
+            docker restart "$CONTAINER_FE" >/dev/null 2>&1
+        else
+            vlog "    ⚠ Frontend build bulunamadi — atlaniyor"
+        fi
     fi
 fi
 

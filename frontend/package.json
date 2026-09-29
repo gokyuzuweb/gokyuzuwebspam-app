@@ -68,7 +68,7 @@
   },
   "scripts": {
     "start": "craco start",
-    "build": "craco build",
+    "build": "REACT_APP_VERSION=$(cat ../VERSION 2>/dev/null || echo dev) craco build",
     "test": "craco test"
   },
   "browserslist": {
