@@ -661,6 +661,43 @@ systemctl restart mailshield-api mailshield-logtail 2>/dev/null || true
 # formatı (VER dosyasını her seferinde okuyan yeni ExecStart) devreye girsin
 systemctl restart gws-simple-push.service 2>/dev/null || true
 
+# v44.00.62 — Docker container'lari da guncelle (backend/frontend)
+# gwsm-update artik hem sistem servislerini hem Docker'i tek seferde gunceller
+if command -v docker >/dev/null 2>&1; then
+  CONTAINER_BE=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^gws-backend$' | head -1)
+  if [ -n "$CONTAINER_BE" ]; then
+    echo "🐳 Docker backend container guncelleniyor: $CONTAINER_BE"
+    # Yeni backend dosyalarini container'a kopyala
+    docker cp "$TMP/gokyuzuwebspam/backend/server.py" "$CONTAINER_BE":/app/backend/server.py 2>/dev/null && echo "    ✓ server.py"
+    [ -f "$TMP/gokyuzuwebspam/backend/tenant.py" ] && \
+      docker cp "$TMP/gokyuzuwebspam/backend/tenant.py" "$CONTAINER_BE":/app/backend/tenant.py 2>/dev/null && echo "    ✓ tenant.py"
+    [ -f "$TMP/gokyuzuwebspam/backend/deps.py" ] && \
+      docker cp "$TMP/gokyuzuwebspam/backend/deps.py" "$CONTAINER_BE":/app/backend/deps.py 2>/dev/null && echo "    ✓ deps.py"
+    [ -d "$TMP/gokyuzuwebspam/backend/routes" ] && \
+      docker cp "$TMP/gokyuzuwebspam/backend/routes" "$CONTAINER_BE":/app/backend/ 2>/dev/null && echo "    ✓ routes/"
+    # VERSION dosyasini guncelle (source of truth)
+    echo "$NEW" | docker exec -i "$CONTAINER_BE" sh -c 'cat > /app/VERSION' 2>/dev/null
+    docker restart "$CONTAINER_BE" >/dev/null 2>&1 && echo "    ✓ Backend restart"
+  fi
+
+  CONTAINER_FE=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^gws-frontend$' | head -1)
+  if [ -n "$CONTAINER_FE" ]; then
+    echo "🐳 Docker frontend container guncelleniyor: $CONTAINER_FE"
+    # Frontend build tarball'i indir (varsa)
+    if curl -fsSL "$SRV/api/plugin/frontend-build" -o "$TMP/gws-frontend-build.tar.gz" 2>/dev/null; then
+      FSZ=$(stat -c%s "$TMP/gws-frontend-build.tar.gz" 2>/dev/null || echo 0)
+      if [ "$FSZ" -gt 100000 ]; then
+        # Container icindeki nginx docroot'una ac
+        docker exec "$CONTAINER_FE" sh -c 'rm -rf /usr/share/nginx/html/*' 2>/dev/null
+        docker cp "$TMP/gws-frontend-build.tar.gz" "$CONTAINER_FE":/tmp/ 2>/dev/null
+        docker exec "$CONTAINER_FE" sh -c 'cd /usr/share/nginx/html && tar -xzf /tmp/gws-frontend-build.tar.gz && rm /tmp/gws-frontend-build.tar.gz' 2>/dev/null && echo "    ✓ Frontend build guncellendi"
+        docker restart "$CONTAINER_FE" >/dev/null 2>&1 && echo "    ✓ Frontend restart"
+      fi
+    fi
+  fi
+  sleep 4
+fi
+
 # Health check
 sleep 3
 NEW=$(cat /etc/mailshield/plugin.version 2>/dev/null || echo "?")
