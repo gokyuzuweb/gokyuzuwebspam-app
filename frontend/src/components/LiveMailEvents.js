@@ -186,6 +186,13 @@ export default function LiveMailEvents() {
     return Number.isFinite(v) && v > 0 ? v : 100;
   });
   const [advOpen, setAdvOpen] = useState(false);
+  // v44.00.62 — Bulk delete modal state
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDateFrom, setBulkDateFrom] = useState("");
+  const [bulkDateTo, setBulkDateTo] = useState("");
+  const [bulkVerdict, setBulkVerdict] = useState("");
+  const [bulkPreview, setBulkPreview] = useState(null);  // {would_delete: N}
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [fromSearch, setFromSearch] = useState("");
   const [toSearch, setToSearch] = useState("");
   const [subjectSearch, setSubjectSearch] = useState("");
@@ -519,7 +526,12 @@ export default function LiveMailEvents() {
                 <option value={500}>Son 500</option>
                 <option value={1000}>Son 1000</option>
                 <option value={2500}>Son 2500</option>
-                <option value={5000}>Sınırsız (5000)</option>
+                <option value={5000}>Son 5000</option>
+                <option value={10000}>Son 10.000</option>
+                <option value={25000}>Son 25.000</option>
+                <option value={50000}>Son 50.000</option>
+                <option value={100000}>Son 100.000</option>
+                <option value={500000}>Sınırsız (500.000)</option>
               </select>
               <button
                 onClick={() => setAdvOpen(v => !v)}
@@ -559,6 +571,14 @@ export default function LiveMailEvents() {
                  title="Filtreye uyan tüm mail'leri CSV olarak indir">
                 CSV
               </a>
+              <button
+                onClick={() => setBulkDeleteOpen(true)}
+                data-testid="live-events-bulk-delete-btn"
+                className="text-xs px-3 py-1.5 rounded border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                title="Tarih aralığı seçerek log kayıtlarını sil"
+              >
+                🗑 Log Sil
+              </button>
               <span className="text-xs text-slate-500 self-center" data-testid="live-events-filter-count">
                 Gösterilen: <span className="mono text-slate-300">{filtered.length}</span> / {items.length}
                 {events.data?.limit_applied && (
@@ -725,6 +745,24 @@ export default function LiveMailEvents() {
           onAction={handleAction}
         />
       )}
+      {bulkDeleteOpen && (
+        <BulkDeleteModal
+          licenseKey={licenseKey}
+          dateFrom={bulkDateFrom} setDateFrom={setBulkDateFrom}
+          dateTo={bulkDateTo} setDateTo={setBulkDateTo}
+          verdict={bulkVerdict} setVerdict={setBulkVerdict}
+          preview={bulkPreview} setPreview={setBulkPreview}
+          deleting={bulkDeleting} setDeleting={setBulkDeleting}
+          onClose={() => {
+            setBulkDeleteOpen(false);
+            setBulkPreview(null);
+          }}
+          onDeleted={() => {
+            events.refetch?.();
+            summary.refetch?.();
+          }}
+        />
+      )}
     </Card>
   );
 
@@ -797,4 +835,126 @@ function ReasonChips({ event }) {
   );
 }
 
+}
+
+// v44.00.62 — Bulk delete modal (tarih araligi + verdict filtreli log silme)
+function BulkDeleteModal({ licenseKey, dateFrom, setDateFrom, dateTo, setDateTo, verdict, setVerdict, preview, setPreview, deleting, setDeleting, onClose, onDeleted }) {
+  const runPreview = async () => {
+    try {
+      const params = new URLSearchParams({ license_key: licenseKey, confirm: "false" });
+      if (dateFrom) params.set("date_from", new Date(dateFrom).toISOString());
+      if (dateTo) params.set("date_to", new Date(dateTo).toISOString());
+      if (verdict) params.set("verdict", verdict);
+      const base = process.env.REACT_APP_BACKEND_URL || "";
+      const res = await fetch(`${base}/api/events/bulk?${params.toString()}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.error) { toast.error(data.error); return; }
+      setPreview(data);
+    } catch (e) {
+      toast.error("Onizleme hatasi: " + e.message);
+    }
+  };
+
+  const runDelete = async () => {
+    if (!preview || !preview.would_delete) { toast.error("Once onizleme calistirin"); return; }
+    if (!window.confirm(`${preview.would_delete} kayit KALICI silinecek. Emin misiniz?`)) return;
+    setDeleting(true);
+    try {
+      const params = new URLSearchParams({ license_key: licenseKey, confirm: "true" });
+      if (dateFrom) params.set("date_from", new Date(dateFrom).toISOString());
+      if (dateTo) params.set("date_to", new Date(dateTo).toISOString());
+      if (verdict) params.set("verdict", verdict);
+      const base = process.env.REACT_APP_BACKEND_URL || "";
+      const res = await fetch(`${base}/api/events/bulk?${params.toString()}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success(`${data.deleted} kayit silindi`);
+        onDeleted?.();
+        onClose();
+      } else {
+        toast.error(data.error || "Silme basarisiz");
+      }
+    } catch (e) {
+      toast.error("Silme hatasi: " + e.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+         onClick={onClose} data-testid="bulk-delete-modal">
+      <div className="bg-slate-900 border border-rose-500/40 rounded-lg shadow-2xl w-full max-w-lg p-5"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-2xl">🗑</span>
+          <h3 className="text-lg font-bold text-rose-300">Log Kayıtlarını Sil</h3>
+        </div>
+        <p className="text-xs text-slate-400 mb-4">
+          Belirtilen tarih aralığındaki mail log kayıtları <span className="text-rose-400 font-semibold">kalıcı olarak silinir</span>.
+          Önce "Önizle" ile kaç kayıt etkileneceğini gör.
+        </p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Başlangıç Tarihi</label>
+            <input type="datetime-local" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPreview(null); }}
+                   data-testid="bulk-delete-date-from"
+                   className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Bitiş Tarihi</label>
+            <input type="datetime-local" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPreview(null); }}
+                   data-testid="bulk-delete-date-to"
+                   className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Sadece Belirli Verdict (opsiyonel)</label>
+            <select value={verdict} onChange={(e) => { setVerdict(e.target.value); setPreview(null); }}
+                    data-testid="bulk-delete-verdict"
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500">
+              <option value="">Hepsi (tarih aralığındaki tümü)</option>
+              <option value="clean">Sadece Clean (temiz)</option>
+              <option value="spam">Sadece Spam</option>
+              <option value="high_spam">Sadece Yüksek Spam</option>
+              <option value="virus">Sadece Virüs</option>
+              <option value="blocked">Sadece Blocked</option>
+            </select>
+          </div>
+        </div>
+
+        {preview && (
+          <div className="mt-4 p-3 rounded bg-rose-500/10 border border-rose-500/30 text-sm">
+            <span className="text-rose-300 font-bold">{preview.would_delete}</span>
+            <span className="text-slate-300"> kayıt silinecek. </span>
+            {preview.would_delete === 0 ? (
+              <span className="text-slate-500">(Filtreye uyan kayıt yok)</span>
+            ) : (
+              <span className="text-slate-400 text-xs block mt-1">Silmek için "Kesin Sil" butonuna bas.</span>
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose}
+                  data-testid="bulk-delete-cancel"
+                  className="text-xs px-4 py-2 rounded border border-slate-700 text-slate-400 hover:bg-slate-800">
+            İptal
+          </button>
+          <button onClick={runPreview}
+                  disabled={!dateFrom && !dateTo && !verdict}
+                  data-testid="bulk-delete-preview"
+                  className="text-xs px-4 py-2 rounded border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
+            🔍 Önizle
+          </button>
+          <button onClick={runDelete}
+                  disabled={!preview || !preview.would_delete || deleting}
+                  data-testid="bulk-delete-confirm"
+                  className="text-xs px-4 py-2 rounded bg-rose-500 text-white hover:bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed">
+            {deleting ? "Siliniyor…" : `🗑 Kesin Sil${preview?.would_delete ? ` (${preview.would_delete})` : ""}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

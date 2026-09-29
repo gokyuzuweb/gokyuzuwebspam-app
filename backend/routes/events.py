@@ -2061,7 +2061,7 @@ async def normalization_health(request: Request, license_key: Optional[str] = No
 @router.get("")
 async def list_events(
     license_key: str = Query(..., min_length=8),
-    limit: int = Query(50, ge=1, le=5000),
+    limit: int = Query(50, ge=1, le=500000),
     verdict: Optional[str] = Query(None),
     since: Optional[str] = Query(None),
     scope_user: Optional[str] = Query(None),
@@ -2148,6 +2148,80 @@ async def list_events(
     cursor = db.mail_events.find(q, {"_id": 0}).sort([("ts", -1), ("ingested_at", -1)]).limit(limit)
     items = await cursor.to_list(length=limit)
     return {"items": items, "count": len(items), "limit_applied": limit}
+
+
+@router.delete("/bulk")
+async def bulk_delete_events(
+    license_key: str = Query(..., min_length=8),
+    date_from: Optional[str] = Query(None, description="ISO tarih baslangic (dahil), orn: 2026-01-01T00:00:00Z"),
+    date_to: Optional[str] = Query(None, description="ISO tarih bitis (dahil), orn: 2026-12-31T23:59:59Z"),
+    verdict: Optional[str] = Query(None, description="Sadece belirli verdict silinir: clean/spam/high_spam/virus/blocked"),
+    confirm: bool = Query(False, description="Silme onayi - True olmali"),
+):
+    """v44.00.62 — Canli Mail Trafigi log silme (tarih araligi + verdict filtreli).
+    
+    Master anahtar: KENDI altyapisindaki (master + AUTO-*) trafigi siler.
+    Bayi anahtar: sadece kendi lisans trafigini siler.
+    Confirm=false ise sadece kac kayit silineceginin dry-run'i doner.
+    
+    Ornek: DELETE /api/events/bulk?license_key=X&date_from=2026-01-01&date_to=2026-06-30&confirm=true
+    """
+    await _validate_license(license_key)
+    master_key = os.environ.get("MASTER_LICENSE_KEY", "")
+    is_master = master_key and license_key == master_key
+
+    if is_master:
+        q: dict[str, Any] = {
+            "$or": [
+                {"license_key": master_key},
+                {"license_key": {"$regex": "^AUTO-"}},
+            ]
+        }
+    else:
+        q = {"license_key": license_key}
+
+    # Tarih araligi
+    ts_q: dict = {}
+    if date_from:
+        ts_q["$gte"] = date_from
+    if date_to:
+        ts_q["$lte"] = date_to
+    if ts_q:
+        q["ts"] = ts_q
+
+    if verdict:
+        q["verdict"] = verdict
+
+    # Sadece tarih verilirse veya verdict verilirse silinir - guvenlik
+    if not date_from and not date_to and not verdict:
+        return {"error": "date_from, date_to veya verdict belirtilmeli - koruyucu deger"}
+
+    # Dry run: kac kayit
+    count = await db.mail_events.count_documents(q)
+
+    if not confirm:
+        return {
+            "dry_run": True,
+            "would_delete": count,
+            "query": {"date_from": date_from, "date_to": date_to, "verdict": verdict},
+            "hint": "Silmek icin confirm=true ekleyin",
+        }
+
+    # Gercek silme
+    res = await db.mail_events.delete_many(q)
+    deleted = res.deleted_count
+
+    # Ayrica quarantine tablosundan da temizle (referans butunlugu)
+    try:
+        await db.quarantine.delete_many(q)
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "query": {"date_from": date_from, "date_to": date_to, "verdict": verdict},
+    }
 
 
 @router.get("/summary")
