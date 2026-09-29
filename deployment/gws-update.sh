@@ -335,8 +335,27 @@ if command -v docker >/dev/null 2>&1; then
                 docker cp "$TMPTAR" "$CONTAINER_FE":/tmp/fe-build.tar.gz 2>>"$LOG_FILE"
                 docker exec "$CONTAINER_FE" sh -c 'cd /usr/share/nginx/html && tar -xzf /tmp/fe-build.tar.gz && rm /tmp/fe-build.tar.gz' 2>>"$LOG_FILE"
                 log "    ✓ Frontend build container'a yuklendi (nginx html)"
-                rm -f "$TMPTAR"
                 docker restart "$CONTAINER_FE" >/dev/null 2>&1 && log "    ✓ Frontend container restart"
+
+                # v44.00.63 — LiteSpeed docroot'u da senkron guncelle
+                # (panel.gokyuzuhosting.com dis erişim buradan servis eder)
+                for DOCROOT in /home/*/public_html/panel.*.com /home/*/public_html/panel.*.com.tr; do
+                    if [ -d "$DOCROOT" ] && [ -f "$DOCROOT/index.html" ]; then
+                        log "  → LiteSpeed docroot: $DOCROOT"
+                        # .htaccess'i koru, geri kalani temizle
+                        find "$DOCROOT" -mindepth 1 -maxdepth 1 ! -name '.htaccess' -exec rm -rf {} + 2>>"$LOG_FILE"
+                        tar -xzf "$TMPTAR" -C "$DOCROOT/" 2>>"$LOG_FILE"
+                        OWNER=$(stat -c '%U:%G' "$DOCROOT")
+                        chown -R "$OWNER" "$DOCROOT" 2>>"$LOG_FILE"
+                        find "$DOCROOT" -type d -exec chmod 755 {} \; 2>>"$LOG_FILE"
+                        find "$DOCROOT" -type f -exec chmod 644 {} \; 2>>"$LOG_FILE"
+                        log "    ✓ Docroot yenilendi ($OWNER)"
+                    fi
+                done
+                # LiteSpeed varsa cache purge
+                [ -x /usr/local/lsws/bin/lswsctrl ] && /usr/local/lsws/bin/lswsctrl restart >/dev/null 2>&1 && log "    ✓ LiteSpeed restart"
+
+                rm -f "$TMPTAR"
             fi
         elif [ -f /app/frontend-build.tar.gz ]; then
             # Alternatif: hazir tarball varsa onu kullan
