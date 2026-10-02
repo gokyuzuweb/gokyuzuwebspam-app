@@ -235,16 +235,16 @@ export default function LiveMailEvents() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshRate, setRefreshRate] = useState(5000); // 5 saniye default
 
-  // v44.00.66 — Basit arama kutusuna yazilinca otomatik olarak backend'den
-  // 50.000 kayit cek. Boylece kullanici "Son 100" ile acsa bile arama yapinca
-  // tum 50k icinde esleme bulur. Debounce araminin kendisi (search) icin.
+  // v44.00.66 — "search" basit arama kutusu artik client-side degil backend.
+  // Backend /events?q=... parametresi from/to/subject uzerinde Mongo regex yapar.
+  // Boylece 50k kaydi JS'ye cekmek yerine Mongo mikrosaniyede filtreler.
   const debSearch = useDebouncedValue(search);
-  const effectiveLimit = debSearch ? 50000 : limit;
 
   const events = useQuery({
-    queryKey: ["live-events", licenseKey, scopeUser, verdictFilter, effectiveLimit,
+    queryKey: ["live-events", licenseKey, scopeUser, verdictFilter, limit, debSearch,
                 debFromSearch, debToSearch, debSubjectSearch, debIpSearch, debMinScore, debMaxScore, hoursFilter],
-    queryFn: () => api.liveEvents(licenseKey, effectiveLimit, scopeUser, verdictFilter, {
+    queryFn: () => api.liveEvents(licenseKey, limit, scopeUser, verdictFilter, {
+      ...(debSearch ? { q: debSearch } : {}),
       ...(debFromSearch ? { from_search: debFromSearch } : {}),
       ...(debToSearch ? { to_search: debToSearch } : {}),
       ...(debSubjectSearch ? { subject_search: debSubjectSearch } : {}),
@@ -255,7 +255,14 @@ export default function LiveMailEvents() {
     }),
     refetchInterval: autoRefresh ? refreshRate : false,
     enabled: !!licenseKey && licenseKey.length >= 8,
-    retry: false,
+    // v44.00.66 — Lisansla ilgili hatalarda retry YOK (401/403/422).
+    // Gecici ag/sunucu hatalarinda (5xx, timeout) 2 kez retry et.
+    retry: (failureCount, err) => {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403 || status === 404 || status === 422) return false;
+      return failureCount < 2;
+    },
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
   });
   const summary = useQuery({
     queryKey: ["live-events-summary", licenseKey, scopeUser],
@@ -339,18 +346,14 @@ export default function LiveMailEvents() {
   const total = summary.data?.total || 0;
   const invalid = events.isError;
 
-  // Client-side filtering — subject/from/to arama + verdict dropdown + IP drilldown
+  // v44.00.66 — Client-side search KALDIRILDI. Backend /events?q= uzerinden filtreleniyor.
+  // Burada sadece verdict + ipFilter (URL drilldown) kaliyor.
   const filtered = items.filter((e) => {
     if (verdictFilter !== "all" && e.verdict !== verdictFilter) return false;
     if (ipFilter && !(e.from_addr || "").includes(ipFilter) && !(e.server_ip || "").includes(ipFilter)) {
       // Also check for X-Originating-IP inside headers
       const headers = e.headers_full || e.headers_preview || "";
       if (!headers.includes(ipFilter)) return false;
-    }
-    if (search) {
-      const q = search.toLowerCase();
-      const hay = `${e.from_addr || ""} ${e.to_addr || ""} ${e.subject || ""}`.toLowerCase();
-      if (!hay.includes(q)) return false;
     }
     return true;
   }).sort((a, b) => {
@@ -479,14 +482,24 @@ export default function LiveMailEvents() {
         {invalid && (
           <div className="text-xs text-rose-400 bg-rose-500/10 p-2 rounded mb-2" data-testid="live-events-error">
             {(() => {
-              // v44.00.65 — FastAPI 422 => detail bir array olabilir (Pydantic validation).
-              // React obje render edemeyince tum sayfa cokuyordu. Guvenli bicimde string'e cevir.
-              const d = events.error?.response?.data?.detail;
-              if (!d) return "Lisans anahtarı geçersiz.";
-              if (typeof d === "string") return d;
-              if (Array.isArray(d)) return d.map(x => x?.msg || JSON.stringify(x)).join(" · ");
-              if (typeof d === "object") return d.msg || JSON.stringify(d);
-              return String(d);
+              // v44.00.66 — Yanlis "Lisans anahtari gecersiz" mesaji dus(tur)uluyor.
+              // Gercek sebebi HTTP status ve message'dan anlasilir yap.
+              const err = events.error;
+              const status = err?.response?.status;
+              const d = err?.response?.data?.detail;
+              let detailText = "";
+              if (typeof d === "string") detailText = d;
+              else if (Array.isArray(d)) detailText = d.map(x => x?.msg || JSON.stringify(x)).join(" · ");
+              else if (d && typeof d === "object") detailText = d.msg || JSON.stringify(d);
+              // Status'a gore okunur mesaj
+              if (status === 401 || status === 403) return `Lisans anahtari gecersiz veya suresi dolmus (HTTP ${status}). ${detailText}`;
+              if (status === 404) return `Endpoint bulunamadi (HTTP 404). Backend guncel mi? ${detailText}`;
+              if (status === 422) return `Istek parametresi hatali (HTTP 422). ${detailText || "Limit cok yuksek olabilir."}`;
+              if (status === 429) return "Cok fazla istek. Bir dakika bekleyin, otomatik yenileme devam edecek.";
+              if (status >= 500) return `Sunucu hatasi (HTTP ${status}). ${detailText || "Backend overloaded olabilir, 5sn sonra tekrar denenir."}`;
+              if (err?.code === "ECONNABORTED" || err?.message?.includes("timeout")) return "Baglanti zaman asimi. Backend yavas yanit veriyor.";
+              if (err?.message?.includes("Network")) return "Ag hatasi. Backend'e ulasilamiyor (gecici).";
+              return detailText || "Veri cekilemedi (bilinmeyen hata).";
             })()}
           </div>
         )}
@@ -516,7 +529,7 @@ export default function LiveMailEvents() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Ara: from / to / subject (yazinca 50k icinde)"
+                placeholder="Ara: from / to / subject (backend)"
                 className="flex-1 min-w-[220px] bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                 data-testid="live-events-search-input"
               />
@@ -601,11 +614,6 @@ export default function LiveMailEvents() {
                 Gösterilen: <span className="mono text-slate-300">{filtered.length}</span> / {items.length}
                 {events.data?.limit_applied && (
                   <span className="ml-1 text-slate-600">(limit: {events.data.limit_applied})</span>
-                )}
-                {debSearch && (
-                  <span className="ml-1 text-emerald-400" title="Arama aktif - 50.000 kayit icinde taraniyor">
-                    · 🔍 50k'da ara
-                  </span>
                 )}
               </span>
             </div>

@@ -2069,6 +2069,7 @@ async def list_events(
     to_search: Optional[str] = Query(None, description="Alıcı içerir"),
     subject_search: Optional[str] = Query(None, description="Konu içerir"),
     ip_search: Optional[str] = Query(None, description="Gönderici IP içerir"),
+    search: Optional[str] = Query(None, description="Genel arama (from/to/subject)", alias="q"),
     min_score: Optional[float] = Query(None, description="Toplam skor ≥"),
     max_score: Optional[float] = Query(None, description="Toplam skor ≤"),
     hours: Optional[int] = Query(None, ge=1, le=8760, description="Son N saat"),
@@ -2123,6 +2124,16 @@ async def list_events(
             {"sender_ip":   {"$regex": _re.escape(ip_search), "$options": "i"}},
             {"client_ip":   {"$regex": _re.escape(ip_search), "$options": "i"}},
             {"server_ip":   {"$regex": _re.escape(ip_search), "$options": "i"}},
+        ]})
+    # v44.00.66 — Genel arama: from/to/subject uzerinde tek regex ile OR
+    # Boylece frontend 50K kaydi JS'ye cekip tarayarak donmek yerine
+    # Mongo index'li regex ile mikrosaniyede ayni sonucu alir.
+    if search:
+        s_safe = _re.escape(search)
+        contains_filters.append({"$or": [
+            {"from_addr": {"$regex": s_safe, "$options": "i"}},
+            {"to_addr":   {"$regex": s_safe, "$options": "i"}},
+            {"subject":   {"$regex": s_safe, "$options": "i"}},
         ]})
     if contains_filters:
         base_ands: list[dict] = []
