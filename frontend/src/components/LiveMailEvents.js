@@ -182,13 +182,13 @@ export default function LiveMailEvents() {
   const [search, setSearch] = useState("");
   const [verdictFilter, setVerdictFilter] = useState("all");
   const [limit, setLimit] = useState(() => {
-    // v44.00.65 — Stale localStorage degeri (eski 500000 denemesi) React'i cokertiyordu.
-    // Backend limit: int = Query(50, ge=1, le=50000). >50000 => 422 => FastAPI detail
-    // array'ini JSX render edemeyince runtime error ("Objects are not valid as a React child").
-    // Burada degeri her acilista 50000 ile clamp'liyoruz.
+    // v44.00.66 — Stale localStorage degeri (eski 500000 denemesi veya 50000 secimi)
+    // panel acilisinda cok yavasliyor/donduruyor. Kullanici isterse manuel secebilsin,
+    // ama OTOMATIK varsayilan hep 100 olsun. 10000'den buyuk stale deger -> 100'e resetle.
     const v = Number(localStorage.getItem("gws.live_limit") || 100);
     if (!Number.isFinite(v) || v <= 0) return 100;
-    return Math.min(v, 50000);
+    if (v > 10000) return 100;   // stale/zararli degerleri guvenli defaulta cek
+    return v;
   });
   const [advOpen, setAdvOpen] = useState(false);
   // v44.00.62 — Bulk delete modal state
@@ -235,10 +235,16 @@ export default function LiveMailEvents() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshRate, setRefreshRate] = useState(5000); // 5 saniye default
 
+  // v44.00.66 — Basit arama kutusuna yazilinca otomatik olarak backend'den
+  // 50.000 kayit cek. Boylece kullanici "Son 100" ile acsa bile arama yapinca
+  // tum 50k icinde esleme bulur. Debounce araminin kendisi (search) icin.
+  const debSearch = useDebouncedValue(search);
+  const effectiveLimit = debSearch ? 50000 : limit;
+
   const events = useQuery({
-    queryKey: ["live-events", licenseKey, scopeUser, verdictFilter, limit,
+    queryKey: ["live-events", licenseKey, scopeUser, verdictFilter, effectiveLimit,
                 debFromSearch, debToSearch, debSubjectSearch, debIpSearch, debMinScore, debMaxScore, hoursFilter],
-    queryFn: () => api.liveEvents(licenseKey, limit, scopeUser, verdictFilter, {
+    queryFn: () => api.liveEvents(licenseKey, effectiveLimit, scopeUser, verdictFilter, {
       ...(debFromSearch ? { from_search: debFromSearch } : {}),
       ...(debToSearch ? { to_search: debToSearch } : {}),
       ...(debSubjectSearch ? { subject_search: debSubjectSearch } : {}),
@@ -510,7 +516,7 @@ export default function LiveMailEvents() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Ara: from / to / subject (istemci)"
+                placeholder="Ara: from / to / subject (yazinca 50k icinde)"
                 className="flex-1 min-w-[220px] bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                 data-testid="live-events-search-input"
               />
@@ -595,6 +601,11 @@ export default function LiveMailEvents() {
                 Gösterilen: <span className="mono text-slate-300">{filtered.length}</span> / {items.length}
                 {events.data?.limit_applied && (
                   <span className="ml-1 text-slate-600">(limit: {events.data.limit_applied})</span>
+                )}
+                {debSearch && (
+                  <span className="ml-1 text-emerald-400" title="Arama aktif - 50.000 kayit icinde taraniyor">
+                    · 🔍 50k'da ara
+                  </span>
                 )}
               </span>
             </div>
