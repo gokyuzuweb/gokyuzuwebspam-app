@@ -182,8 +182,13 @@ export default function LiveMailEvents() {
   const [search, setSearch] = useState("");
   const [verdictFilter, setVerdictFilter] = useState("all");
   const [limit, setLimit] = useState(() => {
+    // v44.00.65 — Stale localStorage degeri (eski 500000 denemesi) React'i cokertiyordu.
+    // Backend limit: int = Query(50, ge=1, le=50000). >50000 => 422 => FastAPI detail
+    // array'ini JSX render edemeyince runtime error ("Objects are not valid as a React child").
+    // Burada degeri her acilista 50000 ile clamp'liyoruz.
     const v = Number(localStorage.getItem("gws.live_limit") || 100);
-    return Number.isFinite(v) && v > 0 ? v : 100;
+    if (!Number.isFinite(v) || v <= 0) return 100;
+    return Math.min(v, 50000);
   });
   const [advOpen, setAdvOpen] = useState(false);
   // v44.00.62 — Bulk delete modal state
@@ -467,7 +472,16 @@ export default function LiveMailEvents() {
 
         {invalid && (
           <div className="text-xs text-rose-400 bg-rose-500/10 p-2 rounded mb-2" data-testid="live-events-error">
-            {events.error?.response?.data?.detail || "Lisans anahtarı geçersiz."}
+            {(() => {
+              // v44.00.65 — FastAPI 422 => detail bir array olabilir (Pydantic validation).
+              // React obje render edemeyince tum sayfa cokuyordu. Guvenli bicimde string'e cevir.
+              const d = events.error?.response?.data?.detail;
+              if (!d) return "Lisans anahtarı geçersiz.";
+              if (typeof d === "string") return d;
+              if (Array.isArray(d)) return d.map(x => x?.msg || JSON.stringify(x)).join(" · ");
+              if (typeof d === "object") return d.msg || JSON.stringify(d);
+              return String(d);
+            })()}
           </div>
         )}
 

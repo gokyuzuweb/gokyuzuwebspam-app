@@ -66,6 +66,13 @@
 2. `sudo supervisorctl restart backend` (Emergent'te)
 3. Kullanıcı WHM sunucusunda `gws-update` → `/api/plugin/download` tarball'ını çeker → Docker containers otomatik güncellenir
 
+## Aktif Sürüm: v44.00.65 (02 Şubat 2026)
+
+### v44.00.65 — Canlı Mail Trafiği React Çökmesi Düzeltildi
+- **Root cause**: Kullanıcı eski "500.000 limit" deneme değerini localStorage'da bırakmıştı. Her açılışta backend'e `limit=500000` gönderiliyordu. Backend `Query(50, ge=1, le=50000)` ile 422 dönüyordu. FastAPI'nin 422 `detail` cevabı bir **object array** (type/loc/msg/input/ctx/url). React bu objeyi JSX child olarak render edemediği için `Objects are not valid as a React child` fırlatıp **tüm iframe'i çökertiyordu** → kullanıcı Canlı tab'ına tıkladığında bembeyaz/boş sayfa görüyordu.
+- **Fix 1**: `LiveMailEvents.js` useState initializer'da stale localStorage değerini `Math.min(v, 50000)` ile her açılışta clamp.
+- **Fix 2**: `invalid` hata bloğunda FastAPI detail'ını güvenli şekilde string'e çevir (array/object → msg join).
+
 ## Aktif Sürüm: v44.00.60 (24 Eylül 2026)
 
 ## Backlog / Yapılacaklar (P1/P2)
