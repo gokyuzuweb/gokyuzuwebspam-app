@@ -61,7 +61,11 @@ export default function AiSystemAnalysisButton() {
   });
 
   const report = latest.data;
-  const stale = report?.generated_at
+  // v44.00.66 — Backend hic rapor olmadiginda `{}` doner. {} truthy oldugu icin
+  // "report && ..." bloguna girer ve Invalid Date / bos model gosterir.
+  // Gercek rapor varligi icin generated_at veya id kontrol et.
+  const hasReport = !!(report && report.generated_at);
+  const stale = hasReport
     ? (Date.now() - new Date(report.generated_at).getTime()) / 3_600_000 > 6  // 6 saat+
     : false;
 
@@ -93,10 +97,10 @@ export default function AiSystemAnalysisButton() {
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-fuchsia-500/40 bg-fuchsia-500/10 hover:bg-fuchsia-500/20 text-fuchsia-300 text-xs font-semibold disabled:opacity-50">
                 {gen.isPending
                   ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Analiz Ediliyor…</>
-                  : <><RefreshCw className="w-3.5 h-3.5" /> {report ? "Yenile" : "Analizi Başlat"}</>}
+                  : <><RefreshCw className="w-3.5 h-3.5" /> {hasReport ? "Yenile" : "Analizi Başlat"}</>}
               </button>
               {/* v44.00.36 — PDF Export */}
-              {report?.id && (
+              {hasReport && report?.id && (
                 <a
                   href={`${(process.env.REACT_APP_BACKEND_URL || "")}/api/ai/system-analysis/${report.id}/pdf?license_key=${encodeURIComponent(
                     (typeof window !== "undefined" && (localStorage.getItem("gws.master_license") || localStorage.getItem("gws.event_license"))) || ""
@@ -115,14 +119,14 @@ export default function AiSystemAnalysisButton() {
             </div>
             <div className="flex-1 overflow-y-auto p-5">
               {latest.isPending && <div className="text-center text-slate-500 py-12">Yükleniyor…</div>}
-              {!latest.isPending && !report && (
+              {!latest.isPending && !hasReport && (
                 <div className="text-center py-12">
                   <Sparkles className="w-10 h-10 text-fuchsia-500/50 mx-auto mb-3" />
                   <p className="text-slate-400 mb-1">Henüz AI raporu üretilmemiş</p>
                   <p className="text-xs text-slate-500">"Analizi Başlat" butonuna basarak Claude'un sisteminizi analiz etmesini isteyin.</p>
                 </div>
               )}
-              {report && (
+              {hasReport && (
                 <>
                   {stale && (
                     <div className="mb-3 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded px-3 py-1.5">

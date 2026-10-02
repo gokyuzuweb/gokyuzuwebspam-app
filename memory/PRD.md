@@ -66,6 +66,15 @@
 2. `sudo supervisorctl restart backend` (Emergent'te)
 3. Kullanıcı WHM sunucusunda `gws-update` → `/api/plugin/download` tarball'ını çeker → Docker containers otomatik güncellenir
 
+## Aktif Sürüm: v44.00.66 (02 Şubat 2026)
+
+### v44.00.66 — Canlı Trafik Donma + AI Analiz "Invalid Date" + Akıllı Hata Mesajları
+- **Arama donması**: Client-side filtering 50K kaydı JS'ye çekip tarıyor, tarayıcı donuyor. **Fix**: Backend `/events?q=` parametresi (MongoDB $regex). Frontend 100-500 kayıt çekiyor, Mongo kendi tarafında ARA.
+- **Varsayılan limit**: Stale localStorage değeri (500K/50K) her açılışta 100'e sıfırlanıyor. Kullanıcı manuel seçerse o kalır.
+- **"Lisans anahtarı geçersiz" misleading**: Her hata türü için gerçek sebep gösteriliyor (401/403/404/422/429/5xx/timeout/network).
+- **Akıllı retry**: 401/403/422 → retry yok, 5xx/timeout → 2 kez retry (geçici sorunlar kullanıcıdan gizli).
+- **AI Sistem Analizi**: Backend boş `{}` döndüğünde frontend "Invalid Date" gösteriyordu. `hasReport = !!(report && report.generated_at)` ile gerçek varlık kontrolü eklendi.
+
 ## Aktif Sürüm: v44.00.65 (02 Şubat 2026)
 
 ### v44.00.65 — Canlı Mail Trafiği React Çökmesi Düzeltildi
