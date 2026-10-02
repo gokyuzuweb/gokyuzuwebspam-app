@@ -1,6 +1,11 @@
 # =============================================================================
-# GökyüzüWebSpam — Custom SpamAssassin Rules (v44.00.61)
+# GökyüzüWebSpam — Custom SpamAssassin Rules (v44.00.67)
 # =============================================================================
+# v44.00.67 (02 Ekim 2026): Email verification phishing detection
+#   - GWS_IMPERSONATION_NULL_SENDER: null envelope + same-domain = +6.5
+#   - GWS_TR_VERIFY_PHISHING: "e-posta dogrulama gerekli" paterni +5.5
+#   - __GWS_RFC1918_HELO: private IP HELO +2.0
+#   - __GWS_CLOUD_IP_SENDER: Google Cloud / AWS / Azure VM IP +1.5
 # v44.00.61 (24 Eylul 2026): False positive audit + rule tuning
 #   - __GWS_SELF_ADDRESSED: 4.5 -> 0.5 (forward mail'ler false positive uretiyordu)
 #   - __GWS_BULK_LOOPBACK_SEND: 2.0 -> 0.1 (Roundcube 127.0.0.1'den gonderir - normal)
@@ -228,6 +233,78 @@ describe GWS_TR_PHISH_TYPOSQUAT_PW  Turkce sifre phishing + typosquat sender = k
 meta     GWS_TR_PHISH_HTML_ONLY  ( GWS_TR_CREDENTIAL_HARVEST && (MIME_HTML_ONLY || HTML_MESSAGE) )
 score    GWS_TR_PHISH_HTML_ONLY  2.0
 describe GWS_TR_PHISH_HTML_ONLY  HTML-only phishing mail credential harvest
+
+# =============================================================================
+# v44.00.67 — EMAIL VERIFICATION PHISHING (null sender + same-domain spoof)
+# =============================================================================
+# Örnek: Return-Path: <> + From: destek@assonmezyapi.net + To: info@assonmezyapi.net
+# Subject: "İşlem Gerekli E-posta Adresinizin Doğrulanması Gerekiyor"
+# CTA: "E-posta Adresimi Doğrula" (credential harvesting)
+# HELO [10.88.0.4] (RFC1918 private - public SMTP'de kirli)
+
+# --- NULL ENVELOPE SENDER (<>) kombinasyonu ---------------------------------
+# Normal mailler Return-Path: <> KULLANMAZ. Sadece bounce/MDN mesajlarinda.
+# Bu nedenle null sender + From dolu = spoof paterni.
+header   __GWS_NULL_RETURN_PATH  Return-Path =~ /^\s*<>\s*$/i
+score    __GWS_NULL_RETURN_PATH  0.1
+describe __GWS_NULL_RETURN_PATH  Return-Path null (<>) - normalde sadece bounce
+
+# --- SAME-DOMAIN SPOOF: From ve To ayni domain, Return-Path bos ------------
+# "destek@domain.com" bir seyi "info@domain.com"a yolluyor ama envelope bos
+# Bu %100 impersonation paterni (kendi kullanicilarini taklit).
+header   __GWS_SAME_DOMAIN_FROM_TO  ALL =~ /^From:[^\n]*@([a-z0-9.-]+)>?[^\n]*\n(?:(?!^(?:To|From|Subject):)[^\n]*\n)*?^To:[^\n]*@\1[>\s]/mi
+score    __GWS_SAME_DOMAIN_FROM_TO  0.5
+describe __GWS_SAME_DOMAIN_FROM_TO  From ve To ayni domain (potansiyel impersonation)
+
+meta     GWS_IMPERSONATION_NULL_SENDER  ( __GWS_NULL_RETURN_PATH && __GWS_SAME_DOMAIN_FROM_TO )
+score    GWS_IMPERSONATION_NULL_SENDER  6.5
+describe GWS_IMPERSONATION_NULL_SENDER  Null envelope + kendi domaininden gelmis gibi = kesin spoof
+
+# --- RFC1918 HELO (10.x / 192.168.x / 172.16-31.x public MTA'da gorulmez) -
+# Normal public mail sunuculari public IP ile HELO yapar. [10.88.0.4] gibi
+# private IP HELO = sahte veya kotu konfigure spam botu.
+header   __GWS_RFC1918_HELO  Received =~ /\bhelo=\[(?:10\.|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)/i
+score    __GWS_RFC1918_HELO  2.0
+describe __GWS_RFC1918_HELO  HELO parametresi RFC1918 private IP (SMTP botu/sahte sunucu)
+
+# --- GOOGLE CLOUD / AWS / AZURE kaynakli direkt SMTP (reputation'siz) -----
+# 34.x bc.googleusercontent / ec2-xx-xx.compute.amazonaws / azure.com
+# Bu IP range'leri legit mail sunucularinin kullanmadigi cloud compute IPler.
+header   __GWS_CLOUD_IP_SENDER  Received =~ /\bfrom\s+[^\s]*(?:\.(?:googleusercontent|compute\.amazonaws|cloudapp\.azure)\.com|ec2-[0-9-]+\.compute)/i
+score    __GWS_CLOUD_IP_SENDER  1.5
+describe __GWS_CLOUD_IP_SENDER  Google Cloud/AWS/Azure compute IP'den gelen SMTP (phisher VM paterni)
+
+# --- TURKCE E-POSTA DOGRULAMA PHISHING (verification scam) ---------------
+# "E-posta Adresinizin Dogrulanmasi Gerekiyor", "Islem Gerekli", "Hesabinizi Dogrulayin"
+# Klasik credential harvesting Turkce subject.
+header   __GWS_VERIFY_SUBJ_TR  Subject =~ /(?:e-?posta\s*(?:adresi(?:niz(?:in)?)?)?\s*do[gğ]rulan|do[gğ]rula(?:ma|nmas[ıi])\s*gerek|hesab[ıi]n[ıi]z[ıi]\s*do[gğ]rula|i[sş]lem\s*gerekli|hesab[ıi]n[ıi]z[ıi]n\s*do[gğ]rulan|adresinizi\s*do[gğ]rula)/i
+score    __GWS_VERIFY_SUBJ_TR  2.5
+describe __GWS_VERIFY_SUBJ_TR  Turkce "e-posta dogrulama gerekli" phishing subject
+
+# --- "E-posta Adresimi Dogrula" CTA / Buton metni ------------------------
+body     __GWS_VERIFY_CTA_TR  /(?:e-?posta\s*adresim(?:i|izi)\s*do[gğ]rula|adresimi\s*do[gğ]rula|hesab[ıi]m[ıi]\s*do[gğ]rula|do[gğ]rulama\s*ba[gğ]lant[ıi]s[ıi]|resmi\s*do[gğ]rulama)/i
+score    __GWS_VERIFY_CTA_TR  2.0
+describe __GWS_VERIFY_CTA_TR  Turkce "adresimi dogrula" credential CTA
+
+# --- "Hesabinizi devre disi birakma" / aciliyet dili --------------------
+body     __GWS_SUSPEND_URGENCY_TR  /(?:devre\s*d[ıi][sş][ıi]\s*b[ıi]rak(?:il|ma)|aktif\s*olmayan\s*(?:kullan[ıi]c[ıi]|hesap)|hizmetleri(?:ni|mizi)\s*kullanmaya\s*devam|hesab[ıi]n[ıi]z[ıi]n\s*(?:devre\s*d[ıi][sş][ıi]\s*b[ıi]rak|kapat|askiya))/i
+score    __GWS_SUSPEND_URGENCY_TR  1.5
+describe __GWS_SUSPEND_URGENCY_TR  Turkce "hesabiniz devre disi birakilacak" aciliyet dili
+
+# Verify phishing kombosu — kesin credential harvest
+meta     GWS_TR_VERIFY_PHISHING  ( __GWS_VERIFY_SUBJ_TR && ( __GWS_VERIFY_CTA_TR || __GWS_SUSPEND_URGENCY_TR ) )
+score    GWS_TR_VERIFY_PHISHING  5.5
+describe GWS_TR_VERIFY_PHISHING  Turkce "e-posta dogrulama" credential harvest paterni
+
+# Verify + null sender + same-domain = PERFECT STORM phishing
+meta     GWS_TR_VERIFY_IMPERSONATION  ( GWS_TR_VERIFY_PHISHING && __GWS_SAME_DOMAIN_FROM_TO )
+score    GWS_TR_VERIFY_IMPERSONATION  3.5
+describe GWS_TR_VERIFY_IMPERSONATION  Verify phishing + kendi domaininden gelmis gibi (impersonation)
+
+# Verify + Cloud IP sender = cloud VM'den giden phish
+meta     GWS_TR_VERIFY_CLOUD_IP  ( GWS_TR_VERIFY_PHISHING && __GWS_CLOUD_IP_SENDER )
+score    GWS_TR_VERIFY_CLOUD_IP  2.5
+describe GWS_TR_VERIFY_CLOUD_IP  Verify phishing + cloud compute IP sender
 
 # =============================================================================
 # Kurulum sonrasi test:
