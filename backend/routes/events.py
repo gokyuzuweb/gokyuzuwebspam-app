@@ -2061,7 +2061,7 @@ async def normalization_health(request: Request, license_key: Optional[str] = No
 @router.get("")
 async def list_events(
     license_key: str = Query(..., min_length=8),
-    limit: int = Query(50, ge=1, le=500000),
+    limit: int = Query(50, ge=1, le=50000),
     verdict: Optional[str] = Query(None),
     since: Optional[str] = Query(None),
     scope_user: Optional[str] = Query(None),
@@ -2460,7 +2460,7 @@ async def export_events(request: Request,
                         license_key: Optional[str] = None,
                         format: str = Query("csv", pattern="^(csv|json)$"),
                         module: str = Query("live_events", pattern="^(live_events|quarantine)$"),
-                        limit: int = Query(5000, ge=1, le=50000),
+                        limit: int = Query(5000, ge=1, le=500000),
                         verdict: Optional[str] = None,
                         from_search: Optional[str] = None,
                         to_search: Optional[str] = None,

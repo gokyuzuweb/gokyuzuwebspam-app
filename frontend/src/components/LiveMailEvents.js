@@ -529,9 +529,7 @@ export default function LiveMailEvents() {
                 <option value={5000}>Son 5000</option>
                 <option value={10000}>Son 10.000</option>
                 <option value={25000}>Son 25.000</option>
-                <option value={50000}>Son 50.000</option>
-                <option value={100000}>Son 100.000</option>
-                <option value={500000}>Sınırsız (500.000)</option>
+                <option value={50000}>Son 50.000 (max)</option>
               </select>
               <button
                 onClick={() => setAdvOpen(v => !v)}
@@ -557,7 +555,7 @@ export default function LiveMailEvents() {
               )}
               <a data-testid="live-events-export-csv"
                  href={api.eventsExport({ module: "live_events", format: "csv", license_key: licenseKey,
-                   limit: Math.min(limit * 10, 50000),
+                   limit: 500000,
                    ...(verdictFilter && verdictFilter !== "all" ? { verdict: verdictFilter } : {}),
                    ...(debFromSearch ? { from_search: debFromSearch } : {}),
                    ...(debToSearch ? { to_search: debToSearch } : {}),
